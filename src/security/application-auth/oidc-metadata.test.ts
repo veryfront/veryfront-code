@@ -449,6 +449,24 @@ describe("security/application-auth OIDC metadata", () => {
     assertEquals(coldCalls, 2);
   });
 
+  it("isolates shared metadata entries by cache TTL policy", async () => {
+    const cache = createOidcMetadataCache();
+    let calls = 0;
+    await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(metadata()));
+      },
+      async () => {
+        await cache.get({ issuer: ISSUER }, 60);
+        await cache.get({ issuer: ISSUER }, 60);
+        await cache.get({ issuer: ISSUER }, 120);
+      },
+    );
+
+    assertEquals(calls, 2);
+  });
+
   it("keeps pending metadata loads coalesced under cache capacity pressure", async () => {
     const cache = createOidcMetadataCache({ ttlSeconds: 60, maxEntries: 1 });
     const resolvers = new Map<string, (response: Response) => void>();

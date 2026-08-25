@@ -184,6 +184,49 @@ describe("security/application-auth JWKS cache", () => {
     );
   });
 
+  it("isolates shared JWKS entries by issuer and fetch policy", async () => {
+    const cache = createJwksCache();
+    let calls = 0;
+    await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([RSA_KEY])));
+      },
+      async () => {
+        await cache.getKey({
+          issuer: "https://tenant-a.example.com",
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+          timeoutMs: 1_000,
+        });
+        await cache.getKey({
+          issuer: "https://tenant-a.example.com",
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+          timeoutMs: 1_000,
+        });
+        await cache.getKey({
+          issuer: "https://tenant-b.example.com",
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+          timeoutMs: 1_000,
+        });
+        await cache.getKey({
+          issuer: "https://tenant-b.example.com",
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+          timeoutMs: 2_000,
+        });
+      },
+    );
+
+    assertEquals(calls, 3);
+  });
+
   it("rejects malformed JWKS documents and duplicate or missing key ids", async () => {
     for (
       const [body, message] of [
@@ -401,6 +444,37 @@ describe("security/application-auth JWKS cache", () => {
       "kid",
     );
     assertEquals(forcedMissingCalls, 1);
+  });
+
+  it("coalesces concurrent forced refreshes for the same unknown kid generation", async () => {
+    const cache = createJwksCache({ ttlSeconds: 60 });
+    await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+      () => cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
+    );
+
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let forcedRefreshCalls = 0;
+    const outcomes = await withMockFetch(
+      async () => {
+        forcedRefreshCalls += 1;
+        await refreshGate;
+        return jsonResponse(jwks([RSA_KEY]));
+      },
+      async () => {
+        const first = cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" });
+        const second = cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" });
+        await testDelay(10);
+        releaseRefresh?.();
+        return await Promise.allSettled([first, second]);
+      },
+    );
+
+    assertEquals(outcomes.map((outcome) => outcome.status), ["rejected", "rejected"]);
+    assertEquals(forcedRefreshCalls, 1);
   });
 
   it("expires stale entries, evicts failed loads, bounds LRU entries, coalesces concurrency, and stays per-instance", async () => {

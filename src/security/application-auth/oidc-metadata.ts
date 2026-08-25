@@ -34,7 +34,7 @@ export interface OidcMetadataCacheOptions {
 }
 
 export interface OidcMetadataCache {
-  get(options: FetchOidcMetadataOptions): Promise<OidcMetadata>;
+  get(options: FetchOidcMetadataOptions, cacheTtlSeconds?: number): Promise<OidcMetadata>;
 }
 
 interface CacheEntry {
@@ -78,7 +78,7 @@ export async function fetchOidcMetadata(
 export function createOidcMetadataCache(
   options: OidcMetadataCacheOptions = {},
 ): OidcMetadataCache {
-  const ttlMs = parseCacheTtlMs(options.ttlSeconds);
+  const defaultTtlMs = parseCacheTtlMs(options.ttlSeconds);
   const maxEntries = parseMaxEntries(options.maxEntries);
   const now = options.now ?? (() => performance.now());
   const entries = new Map<string, CacheEntry>();
@@ -92,8 +92,12 @@ export function createOidcMetadataCache(
   }
 
   return Object.freeze({
-    get(fetchOptions: FetchOidcMetadataOptions): Promise<OidcMetadata> {
-      const key = cacheKey(fetchOptions);
+    get(
+      fetchOptions: FetchOidcMetadataOptions,
+      cacheTtlSeconds?: number,
+    ): Promise<OidcMetadata> {
+      const ttlMs = cacheTtlSeconds === undefined ? defaultTtlMs : parseCacheTtlMs(cacheTtlSeconds);
+      const key = cacheKey(fetchOptions, ttlMs);
       const current = entries.get(key);
       const currentTime = now();
       if (current?.value !== undefined && current.expiresAt > currentTime) {
@@ -122,12 +126,13 @@ export function createOidcMetadataCache(
   });
 }
 
-function cacheKey(options: FetchOidcMetadataOptions): string {
+function cacheKey(options: FetchOidcMetadataOptions, ttlMs: number): string {
   return JSON.stringify({
     issuer: options.issuer,
     trustedEndpointOrigins: [...(options.trustedEndpointOrigins ?? [])].sort(),
     allowInsecureLoopback: options.allowInsecureLoopback === true,
     timeoutMs: options.timeoutMs,
+    ttlMs,
   });
 }
 

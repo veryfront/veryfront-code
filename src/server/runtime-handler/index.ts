@@ -24,7 +24,7 @@ import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
-import { handleApplicationAuthRequest } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -330,6 +330,7 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+  const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
 

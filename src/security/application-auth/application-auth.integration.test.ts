@@ -19,6 +19,7 @@ import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolati
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { Renderer } from "#veryfront/rendering/renderer.ts";
 import {
   __resetLogRecordEmitterForTests,
@@ -495,6 +496,42 @@ async function startLogin(
     state,
     transaction: transactionCookie(response, state),
   };
+}
+
+async function startLoginWithHandler(
+  handler: ReturnType<typeof createVeryfrontHandler>,
+  returnTo = "/",
+): Promise<{
+  readonly authorizationUrl: string;
+  readonly state: string;
+  readonly transaction: string;
+}> {
+  const response = await handler(
+    new Request(`${APP_ORIGIN}/_veryfront/auth/login?returnTo=${encodeURIComponent(returnTo)}`),
+  );
+  assertEquals(response.status, 302);
+  const authorizationUrl = response.headers.get("location");
+  assert(authorizationUrl);
+  const state = new URL(authorizationUrl).searchParams.get("state");
+  assert(state);
+  return {
+    authorizationUrl,
+    state,
+    transaction: transactionCookie(response, state),
+  };
+}
+
+function callbackRequest(
+  provider: Awaited<ReturnType<typeof createMockOidcProvider>>,
+  login: Awaited<ReturnType<typeof startLoginWithHandler>>,
+  options: {
+    readonly claims: Readonly<Record<string, unknown>>;
+    readonly key?: MockOidcKeyName;
+  },
+): Request {
+  return new Request(provider.authorize(login.authorizationUrl, options), {
+    headers: { cookie: login.transaction },
+  });
 }
 
 async function finishLogin(
@@ -1053,6 +1090,77 @@ describe("security/application-auth composed integration", () => {
     assertEquals(provider.getCallCounts().token, 5);
   });
 
+  it("retains composed OIDC caches per handler and coalesces concurrent unknown-kid refreshes", async () => {
+    const provider = await createMockOidcProvider({
+      issuer: "https://composed-cache.example.test",
+      clientId: CLIENT_ID,
+      clientSecret: CLIENT_SECRET,
+      now: Math.floor(Date.now() / 1_000),
+    });
+    const environment = oidcEnvironment(provider.urls.issuer);
+
+    await withComposedIdentityHarness(async (harness) => {
+      const handler = harness.createRuntime(environment);
+      const logins = await provider.run(() =>
+        Promise.all([
+          startLoginWithHandler(handler, "/warm"),
+          startLoginWithHandler(handler, "/unknown-a"),
+          startLoginWithHandler(handler, "/unknown-b"),
+        ])
+      );
+
+      const warm = await provider.run(() =>
+        handler(callbackRequest(provider, logins[0], {
+          key: "key-a",
+          claims: { sub: "warm-cache-subject" },
+        }))
+      );
+      assertEquals(warm.status, 303);
+
+      const unknownRequests = logins.slice(1).map((login, index) =>
+        callbackRequest(provider, login, {
+          key: "key-b",
+          claims: { sub: `unknown-cache-subject-${index}` },
+        })
+      );
+      const unknown = await withMockFetch(
+        async (input, init) => {
+          if (String(input) === provider.urls.jwks) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          return await provider.fetch(input, init);
+        },
+        () => Promise.all(unknownRequests.map((request) => handler(request))),
+      );
+      assertEquals(unknown.map((response) => response.status), [400, 400]);
+
+      provider.publishKeys(["key-b"]);
+      const coldHandler = harness.createRuntime(environment);
+      const coldLogin = await provider.run(() => startLoginWithHandler(coldHandler, "/cold"));
+      const coldCallback = await provider.run(() =>
+        coldHandler(callbackRequest(provider, coldLogin, {
+          key: "key-b",
+          claims: { sub: "cold-cache-subject" },
+        }))
+      );
+      assertEquals(coldCallback.status, 303);
+
+      const portableSession = await handler(
+        new Request(`${APP_ORIGIN}/api/app-identity`, {
+          headers: { cookie: sessionCookie(coldCallback) },
+        }),
+      );
+      assertEquals(portableSession.status, 200);
+      assertEquals(provider.getCallCounts(), {
+        authorization: 4,
+        discovery: 2,
+        jwks: 3,
+        token: 4,
+        unexpected: 0,
+      });
+    });
+  });
+
   it("binds callbacks to issuer, audience, azp, state, nonce, redirect, and one-time codes", async () => {
     const provider = await createMockOidcProvider({
       issuer: "https://binding.example.test",
@@ -1454,6 +1562,84 @@ describe("security/application-auth composed integration", () => {
       unsubscribe();
       __resetLogRecordEmitterForTests();
     }
+  });
+
+  it("rejects an established session when only the current OIDC client ID changes", async () => {
+    const provider = await createMockOidcProvider({
+      issuer: "https://session-client-binding.example.test",
+      clientId: CLIENT_ID,
+      clientSecret: CLIENT_SECRET,
+      now: Math.floor(Date.now() / 1_000),
+    });
+    const environment = oidcEnvironment(provider.urls.issuer);
+    const login = await startLogin(provider, environment, "/client-binding");
+    const callback = await finishLogin(provider, environment, login, {
+      claims: { sub: "client-bound-subject" },
+    });
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+
+    await withComposedIdentityHarness(async (harness) => {
+      const current = await harness.createRuntime(environment)(
+        new Request(`${APP_ORIGIN}/api/app-identity`, { headers: { cookie: session } }),
+      );
+      assertEquals(current.status, 200);
+
+      const changedClient = await harness.createRuntime({
+        ...environment,
+        OIDC_CLIENT_ID: "replacement-application-client",
+      })(new Request(`${APP_ORIGIN}/api/app-identity`, { headers: { cookie: session } }));
+      assertEquals(changedClient.status, 401);
+      assertEquals(
+        (changedClient.headers.get("set-cookie") ?? "").startsWith("__Host-vf_session=;"),
+        true,
+      );
+    });
+  });
+
+  it("rejects an established session when only the exact claim mapping changes", async () => {
+    const provider = await createMockOidcProvider({
+      issuer: "https://session-claim-binding.example.test",
+      clientId: CLIENT_ID,
+      clientSecret: CLIENT_SECRET,
+      now: Math.floor(Date.now() / 1_000),
+    });
+    const environment = oidcEnvironment(provider.urls.issuer);
+    const login = await startLogin(provider, environment, "/claim-binding");
+    const callback = await finishLogin(provider, environment, login, {
+      claims: {
+        sub: "claim-bound-subject",
+        groups: ["current-group"],
+        legacy_groups: ["must-not-become-current"],
+      },
+    });
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+
+    await withComposedIdentityHarness(async (harness) => {
+      const current = await harness.createRuntime(environment)(
+        new Request(`${APP_ORIGIN}/api/app-identity`, { headers: { cookie: session } }),
+      );
+      assertEquals(current.status, 200);
+      const currentBody = await current.json();
+      assertEquals(currentBody.identity.groups, ["current-group"]);
+
+      const changedMapping = await harness.createRuntime(environment, {
+        oidc: {
+          issuerEnvVar: "OIDC_ISSUER",
+          clientIdEnvVar: "OIDC_CLIENT_ID",
+          clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+          sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+          scopes: ["openid", "profile", "email", "groups"],
+          claims: { groups: "legacy_groups" },
+        },
+      })(new Request(`${APP_ORIGIN}/api/app-identity`, { headers: { cookie: session } }));
+      assertEquals(changedMapping.status, 401);
+      assertEquals(
+        (changedMapping.headers.get("set-cookie") ?? "").startsWith("__Host-vf_session=;"),
+        true,
+      );
+    });
   });
 
   it("fails tenant, cookie, endpoint, and provider-body boundaries closed without reflection", async () => {

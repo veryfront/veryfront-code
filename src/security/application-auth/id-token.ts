@@ -103,6 +103,7 @@ export async function verifyOidcIdToken(
     validateTyp(parsed.protectedHeader.typ);
     await verifySignatureWithRefresh({
       jwksCache: options.jwksCache,
+      issuer,
       jwksUri: options.jwksUri,
       allowInsecureLoopback: options.allowInsecureLoopback === true,
       timeoutMs: options.timeoutMs,
@@ -287,6 +288,7 @@ function validateTyp(value: unknown): void {
 
 async function verifySignatureWithRefresh(options: {
   readonly jwksCache: JwksCache;
+  readonly issuer: string;
   readonly jwksUri: string;
   readonly allowInsecureLoopback: boolean;
   readonly timeoutMs?: number;
@@ -296,6 +298,7 @@ async function verifySignatureWithRefresh(options: {
   readonly signature: Uint8Array;
 }): Promise<void> {
   const firstKey = await options.jwksCache.getKey({
+    issuer: options.issuer,
     jwksUri: options.jwksUri,
     kid: options.kid,
     alg: options.alg,
@@ -306,6 +309,7 @@ async function verifySignatureWithRefresh(options: {
     return;
   }
   const refreshedKey = await options.jwksCache.getKey({
+    issuer: options.issuer,
     jwksUri: options.jwksUri,
     kid: options.kid,
     alg: options.alg,
@@ -425,13 +429,17 @@ function validateClaims(
   if (claims.iss !== options.issuer) {
     throw new TypeError("OIDC ID token issuer must exactly match the configured issuer");
   }
-  validateAudience(claims.aud, claims.azp, options.clientId);
+  validateOidcAudienceClaims(claims.aud, claims.azp, options.clientId);
   validateSubject(claims.sub);
   validateNonce(claims.nonce, options.nonce);
   validateTimeClaims(claims, options.currentTime, options.tolerance, options.maxTokenAge);
 }
 
-function validateAudience(aud: unknown, azp: unknown, clientId: string): void {
+export function validateOidcAudienceClaims(
+  aud: unknown,
+  azp: unknown,
+  clientId: string,
+): void {
   const audiences = parseAudience(aud);
   if (!audiences.includes(clientId)) {
     throw new TypeError("OIDC ID token audience must contain the configured client ID");

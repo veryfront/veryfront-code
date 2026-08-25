@@ -19,9 +19,14 @@ import {
   readTransactionCookie,
 } from "./cookies.ts";
 import { createApplicationIdentity } from "./identity.ts";
-import { verifyOidcIdToken } from "./id-token.ts";
-import { createJwksCache } from "./jwks-cache.ts";
-import { createOidcMetadataCache, parseStrictJsonObject } from "./oidc-metadata.ts";
+import { validateOidcAudienceClaims, verifyOidcIdToken } from "./id-token.ts";
+import { createJwksCache, type JwksCache } from "./jwks-cache.ts";
+import {
+  createOidcMetadataCache,
+  isPlainObject,
+  type OidcMetadataCache,
+  parseStrictJsonObject,
+} from "./oidc-metadata.ts";
 import { parseApplicationAuthReturnPath } from "./return-path.ts";
 import type { ApplicationIdentity } from "./types.ts";
 import type { AuthCookiePayload } from "./crypto.ts";
@@ -59,6 +64,8 @@ export interface OidcApplicationAuthRuntimeOptions {
   readonly env: ApplicationAuthEnvironmentReader;
   readonly now?: () => number;
   readonly randomBytes?: (length: number) => Uint8Array;
+  readonly metadataCache?: OidcMetadataCache;
+  readonly jwksCache?: JwksCache;
 }
 
 export interface OidcApplicationAuthRuntime {
@@ -100,11 +107,11 @@ export function isApplicationAuthAdmittedRequest(request: Request): boolean {
 export function createOidcApplicationAuthRuntime(
   options: OidcApplicationAuthRuntimeOptions,
 ): OidcApplicationAuthRuntime {
-  const metadataCache = createOidcMetadataCache({
+  const metadataCache = options.metadataCache ?? createOidcMetadataCache({
     ttlSeconds: options.config.discoveryCacheTtlSeconds,
     now: () => (options.now?.() ?? Date.now() / 1_000) * 1_000,
   });
-  const jwksCache = createJwksCache();
+  const jwksCache = options.jwksCache ?? createJwksCache();
   const now = () => Math.floor(options.now?.() ?? Date.now() / 1_000);
   const randomBytes = options.randomBytes;
 
@@ -164,7 +171,13 @@ export function createOidcApplicationAuthRuntime(
         return admissionFailure(request, runtime, true);
       }
       try {
-        const identity = identityFromSessionPayload(payload, runtime.issuer, options.config.claims);
+        const expectedBinding = await sessionConfigurationBinding(runtime, options.config);
+        const identity = identityFromSessionPayload(
+          payload,
+          runtime,
+          options.config.claims,
+          expectedBinding,
+        );
         markApplicationAuthAdmittedRequest(request);
         return identity;
       } catch {
@@ -184,11 +197,14 @@ export function createOidcApplicationAuthRuntime(
       return hardenedText("Bad request", 400);
     }
 
-    const metadata = await metadataCache.get({
-      issuer: runtime.issuer,
-      trustedEndpointOrigins: options.config.trustedEndpointOrigins,
-      allowInsecureLoopback: runtime.allowInsecureLoopback,
-    });
+    const metadata = await metadataCache.get(
+      {
+        issuer: runtime.issuer,
+        trustedEndpointOrigins: options.config.trustedEndpointOrigins,
+        allowInsecureLoopback: runtime.allowInsecureLoopback,
+      },
+      options.config.discoveryCacheTtlSeconds,
+    );
     const state = randomBase64Url(randomBytes);
     const nonce = randomBase64Url(randomBytes);
     const verifier = randomBase64Url(randomBytes);
@@ -258,11 +274,14 @@ export function createOidcApplicationAuthRuntime(
       if (params.error !== undefined || params.code === undefined) {
         throw new TypeError("provider returned an error");
       }
-      const metadata = await metadataCache.get({
-        issuer: runtime.issuer,
-        trustedEndpointOrigins: options.config.trustedEndpointOrigins,
-        allowInsecureLoopback: runtime.allowInsecureLoopback,
-      });
+      const metadata = await metadataCache.get(
+        {
+          issuer: runtime.issuer,
+          trustedEndpointOrigins: options.config.trustedEndpointOrigins,
+          allowInsecureLoopback: runtime.allowInsecureLoopback,
+        },
+        options.config.discoveryCacheTtlSeconds,
+      );
       const tokenResponse = await exchangeCode({
         tokenEndpoint: metadata.tokenEndpoint,
         clientId: runtime.clientId,
@@ -289,7 +308,10 @@ export function createOidcApplicationAuthRuntime(
       });
       sessionCookie = await createSessionCookie({
         secret: runtime.sessionSecret,
-        payload: sessionPayload(identity),
+        payload: sessionPayload(
+          identity,
+          await sessionConfigurationBinding(runtime, options.config),
+        ),
         maxAgeSeconds: runtime.sessionTtlSeconds,
         now: now(),
         cookieName: runtime.cookieName,
@@ -561,9 +583,10 @@ function parseTransactionPayload(value: JsonObject): {
   };
 }
 
-function sessionPayload(identity: ApplicationIdentity): AuthCookiePayload {
+function sessionPayload(identity: ApplicationIdentity, binding: string): AuthCookiePayload {
   return {
-    v: 1,
+    v: 2,
+    binding,
     issuer: identity.issuer,
     subject: identity.subject,
     claims: identity.claims,
@@ -572,22 +595,20 @@ function sessionPayload(identity: ApplicationIdentity): AuthCookiePayload {
 
 function identityFromSessionPayload(
   value: JsonObject,
-  issuer: string,
+  runtime: RuntimeConfig,
   claimNames: OidcAuthConfig["claims"],
+  expectedBinding: string,
 ): ApplicationIdentity {
-  if (value.v !== 1) throw new TypeError("session version mismatch");
+  if (value.v !== 2) throw new TypeError("session version mismatch");
+  if (value.binding !== expectedBinding) throw new TypeError("session binding mismatch");
+  if (!isPlainObject(value.claims)) throw new TypeError("session claims must be an object");
+  validateOidcAudienceClaims(value.claims.aud, value.claims.azp, runtime.clientId);
   return createApplicationIdentity({
     issuer: value.issuer,
-    expectedIssuer: issuer,
+    expectedIssuer: runtime.issuer,
     subject: value.subject,
     claims: value.claims,
-    claimNames: {
-      email: "email",
-      name: "name",
-      groups: "groups",
-      roles: "roles",
-      ...claimNames,
-    },
+    claimNames: canonicalClaimNames(claimNames),
   });
 }
 
@@ -760,6 +781,41 @@ async function configurationBinding(
   return encodeAuthBase64Url(
     new Uint8Array(await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes))),
   );
+}
+
+async function sessionConfigurationBinding(
+  runtime: RuntimeConfig,
+  config: OidcAuthConfig,
+): Promise<string> {
+  const authorizationConfig = JSON.stringify({
+    claims: canonicalClaimNames(config.claims),
+    scopes: [...runtime.scopes].sort(),
+    signingAlgorithms: [...(config.signingAlgorithms ?? ["RS256"])].sort(),
+  });
+  const bytes = lengthPrefixed(
+    "oidc-session-v2",
+    runtime.issuer,
+    runtime.clientId,
+    callbackUri(runtime),
+    authorizationConfig,
+  );
+  return encodeAuthBase64Url(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes))),
+  );
+}
+
+function canonicalClaimNames(claimNames: OidcAuthConfig["claims"]): {
+  readonly email: string;
+  readonly name: string;
+  readonly groups: string;
+  readonly roles: string;
+} {
+  return {
+    email: claimNames?.email ?? "email",
+    name: claimNames?.name ?? "name",
+    groups: claimNames?.groups ?? "groups",
+    roles: claimNames?.roles ?? "roles",
+  };
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

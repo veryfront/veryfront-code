@@ -43,6 +43,7 @@ export interface JwksCacheOptions {
 }
 
 export interface GetJwksKeyOptions {
+  readonly issuer?: string;
   readonly jwksUri: string;
   readonly kid: string;
   readonly alg: string;
@@ -62,7 +63,12 @@ interface JwksDocument {
 interface CacheEntry {
   readonly expiresAt: number;
   readonly value?: JwksDocument;
-  readonly pending?: Promise<JwksDocument>;
+  readonly pending?: Promise<JwksLoad>;
+}
+
+interface JwksLoad {
+  readonly document: JwksDocument;
+  readonly refreshed: boolean;
 }
 
 export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
@@ -72,26 +78,30 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
   const entries = new Map<string, CacheEntry>();
 
   async function load(
-    fetchOptions: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
+    fetchOptions: {
+      readonly issuer: string;
+      readonly jwksUri: string;
+      readonly allowInsecureLoopback: boolean;
+    },
     timeoutMs: number,
     forceRefresh: boolean,
-  ): Promise<JwksDocument> {
-    const cacheKey = jwksCacheKey(fetchOptions);
+  ): Promise<JwksLoad> {
+    const cacheKey = jwksCacheKey(fetchOptions, timeoutMs);
     const currentTime = now();
     const current = entries.get(cacheKey);
     if (!forceRefresh && current?.value !== undefined && current.expiresAt > currentTime) {
       entries.delete(cacheKey);
       entries.set(cacheKey, current);
-      return current.value;
+      return { document: current.value, refreshed: false };
     }
-    if (!forceRefresh && current?.pending !== undefined) {
+    if (current?.pending !== undefined) {
       return await current.pending;
     }
 
     const pending = fetchJwks(fetchOptions, timeoutMs).then((value) => {
       entries.set(cacheKey, { value, expiresAt: now() + ttlMs });
       evictIfNeeded(entries, maxEntries);
-      return value;
+      return { document: value, refreshed: forceRefresh };
     }).catch((error) => {
       if (entries.get(cacheKey)?.pending === pending) {
         entries.delete(cacheKey);
@@ -109,18 +119,21 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       const alg = parseAlgorithm(keyOptions.alg);
       const allowInsecureLoopback = keyOptions.allowInsecureLoopback === true;
       const jwksUri = parseJwksUri(keyOptions.jwksUri, allowInsecureLoopback).href;
-      const fetchOptions = { jwksUri, allowInsecureLoopback };
+      const issuer = keyOptions.issuer === undefined
+        ? jwksUri
+        : parseCacheIssuer(keyOptions.issuer);
+      const fetchOptions = { issuer, jwksUri, allowInsecureLoopback };
       const timeoutMs = keyOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-      const firstDocument = await load(fetchOptions, timeoutMs, keyOptions.forceRefresh === true);
-      const firstKey = firstDocument.keys.get(kid);
+      const firstLoad = await load(fetchOptions, timeoutMs, keyOptions.forceRefresh === true);
+      const firstKey = firstLoad.document.keys.get(kid);
       if (firstKey !== undefined) {
         return compatibleKey(firstKey, alg);
       }
-      if (keyOptions.forceRefresh === true) {
+      if (keyOptions.forceRefresh === true || firstLoad.refreshed) {
         throw new TypeError("JWKS does not contain the requested kid");
       }
       const refreshed = await load(fetchOptions, timeoutMs, true);
-      const refreshedKey = refreshed.keys.get(kid);
+      const refreshedKey = refreshed.document.keys.get(kid);
       if (refreshedKey === undefined) {
         throw new TypeError("JWKS does not contain the requested kid");
       }
@@ -321,6 +334,13 @@ function parseAlgorithm(value: unknown): string {
   return value;
 }
 
+function parseCacheIssuer(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2_048) {
+    throw new TypeError("JWKS cache issuer must be a bounded non-empty string");
+  }
+  return value;
+}
+
 function parseBase64UrlMember(value: unknown, member: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 8_192) {
     throw new TypeError(`JWKS key ${member} member is malformed`);
@@ -428,9 +448,19 @@ function isExactLoopbackHostname(hostname: string): boolean {
 }
 
 function jwksCacheKey(
-  options: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
+  options: {
+    readonly issuer: string;
+    readonly jwksUri: string;
+    readonly allowInsecureLoopback: boolean;
+  },
+  timeoutMs: number,
 ): string {
-  return `${options.allowInsecureLoopback ? "loopback-http" : "https-only"}\n${options.jwksUri}`;
+  return JSON.stringify({
+    issuer: options.issuer,
+    jwksUri: options.jwksUri,
+    allowInsecureLoopback: options.allowInsecureLoopback,
+    timeoutMs,
+  });
 }
 
 function parseCacheTtlMs(value: number | undefined): number {
