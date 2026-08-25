@@ -46,9 +46,7 @@ function workflowStepBlock(workflow: string, stepName: string): string {
   assert(start >= 0, `expected ${stepName} step to exist`);
 
   const nextStep = workflow.indexOf("\n      - ", start + marker.length);
-  return nextStep === -1
-    ? workflow.slice(start)
-    : workflow.slice(start, nextStep);
+  return nextStep === -1 ? workflow.slice(start) : workflow.slice(start, nextStep);
 }
 
 describe("repository hardening", () => {
@@ -148,8 +146,7 @@ describe("repository hardening", () => {
     // access cannot be dropped at an individual call site. Collapse the
     // `\`-continuations first so each call site reads as one line.
     const flattenedPublishScript = publishScript.replace(/\\\n\s*/g, " ");
-    const publishInvocations =
-      flattenedPublishScript.match(/npm publish "[^\n]*/g) ?? [];
+    const publishInvocations = flattenedPublishScript.match(/npm publish "[^\n]*/g) ?? [];
     assertEquals(publishInvocations.length, 1);
     assert(
       publishInvocations[0].includes('npm publish "${PUBLISH_SPEC}" "$@"'),
