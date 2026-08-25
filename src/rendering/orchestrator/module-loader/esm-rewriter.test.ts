@@ -339,6 +339,63 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("rejects a root that reused a cycle artifact with an unwritten dependency", async () => {
+      const esmCache = new Map<string, string>();
+      const dWritten = Promise.withResolvers<void>();
+      const gatedAdapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            files.set(path, content);
+            if (content.includes("export const d = 1")) dWritten.resolve();
+            return Promise.resolve();
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return jsonResponse(
+            `import { x } from "https://esm.sh/x";\n` +
+              `import("https://esm.sh/b");`,
+          );
+        }
+        if (url === "https://esm.sh/b") {
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\n` +
+              `import { missing } from "https://esm.sh/broken";\n` +
+              `export const b = d;`,
+          );
+        }
+        if (url === "https://esm.sh/d") {
+          return jsonResponse(
+            `import { b } from "https://esm.sh/b";\nexport const d = 1;`,
+          );
+        }
+        if (url === "https://esm.sh/x") {
+          await dWritten.promise;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+          );
+        }
+        if (url === "https://esm.sh/broken") {
+          return new Response("upstream broken", { status: 500 });
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
+        Error,
+      );
+      assertEquals(
+        esmCache.size,
+        0,
+        "a root that transitively points at an unwritten cycle owner must not be published",
+      );
+    });
+
     it("still throws when a nested URL is imported statically", async () => {
       // The emitted module's own import graph must be local before the runtime
       // loader is handed it. Leaving a static dependency remote would change

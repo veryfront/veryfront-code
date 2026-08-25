@@ -108,6 +108,14 @@ export async function fetchEsmModule(
       new Set(),
       graph,
     );
+    const unwritten = [...(graph.unwritten.get(url) ?? [])].filter(
+      (dependency) => !graph.artifacts.has(dependency) && !esmCache.has(dependency),
+    );
+    if (unwritten.length) {
+      throw MODULE_NOT_FOUND.create({
+        detail: `Failed to materialize cyclic dependencies for ${url}: ${unwritten.join(", ")}`,
+      });
+    }
     for (const [key, value] of graph.artifacts) {
       if (
         !graph.hadFailure || (!graph.provisional.has(key) && !graph.poisoned.has(key))
