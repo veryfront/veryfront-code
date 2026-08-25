@@ -25,6 +25,7 @@ import {
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -118,7 +119,6 @@ import {
   isHMRWebSocketUpgrade,
   isLightweightPath,
   isMonitoringPath,
-  isWebSocketPath,
 } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
@@ -143,7 +143,8 @@ const baseLogger = getBaseLogger("SERVER");
 const logger = baseLogger.component("runtime-handler");
 
 function skipsApplicationAuth(request: Request, pathname: string): boolean {
-  return isWebSocketPath(pathname) ||
+  return request.method === "OPTIONS" ||
+    isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
     isConfigOptionalControlPlaneRunRequest(request.method, pathname);

@@ -34,6 +34,7 @@ import {
 import { parseApplicationAuthReturnPath } from "./return-path.ts";
 import type { ApplicationIdentity } from "./types.ts";
 import type { AuthCookiePayload } from "./crypto.ts";
+import { MAX_APPLICATION_AUTH_SCOPE_COUNT, MAX_APPLICATION_AUTH_SCOPE_LENGTH } from "./policy.ts";
 
 const AUTH_ROUTE_ROOT = "/_veryfront/auth";
 const LOGIN_PATH = `${AUTH_ROUTE_ROOT}/login`;
@@ -46,8 +47,6 @@ const TRANSACTION_TTL_SECONDS = 600;
 const DEFAULT_SESSION_TTL_SECONDS = 28_800;
 const MAX_SESSION_TTL_SECONDS = 2_592_000;
 const MAX_ENV_VALUE_LENGTH = 4_096;
-const MAX_SCOPES = 32;
-const MAX_SCOPE_LENGTH = 128;
 const MAX_CALLBACK_QUERY_LENGTH = 4_096;
 const MAX_CALLBACK_VALUE_LENGTH = 2_048;
 const MAX_ID_TOKEN_LENGTH = 16_384;
@@ -740,7 +739,9 @@ function parseAppUrl(value: string): string {
 }
 
 function parseScopes(value: readonly string[]): readonly string[] {
-  if (!arrayIsArray(value) || value.length < 1 || value.length > MAX_SCOPES) {
+  if (
+    !arrayIsArray(value) || value.length < 1 || value.length > MAX_APPLICATION_AUTH_SCOPE_COUNT
+  ) {
     throw new TypeError("OIDC scopes must include openid");
   }
   const scopes: string[] = [];
@@ -750,7 +751,7 @@ function parseScopes(value: readonly string[]): readonly string[] {
     if (
       typeof scope !== "string" ||
       scope.length === 0 ||
-      scope.length > MAX_SCOPE_LENGTH ||
+      scope.length > MAX_APPLICATION_AUTH_SCOPE_LENGTH ||
       /\s/.test(scope)
     ) {
       throw new TypeError("OIDC scopes must be bounded unique strings");

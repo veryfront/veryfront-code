@@ -408,6 +408,31 @@ describe("configSchema", () => {
     }
   });
 
+  it("uses the runtime OIDC scope bounds", () => {
+    for (
+      const scopes of [
+        ["openid", ...Array.from({ length: 32 }, (_, index) => `scope-${index}`)],
+        ["openid", "s".repeat(129)],
+      ]
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  scopes,
+                },
+              },
+            },
+          }),
+        Error,
+        "security.auth.oidc.scopes",
+      );
+    }
+  });
+
   it("bounds OIDC claim names, lifetimes, endpoint origins, and cookie names", () => {
     for (
       const [oidc, message] of [
@@ -422,6 +447,10 @@ describe("configSchema", () => {
         [{ trustedEndpointOrigins: [] }, "security.auth.oidc.trustedEndpointOrigins"],
         [
           { trustedEndpointOrigins: ["http://idp.example.com"] },
+          "security.auth.oidc.trustedEndpointOrigins.0",
+        ],
+        [
+          { trustedEndpointOrigins: ["https://idp.example.com/"] },
           "security.auth.oidc.trustedEndpointOrigins.0",
         ],
       ] as const
@@ -474,6 +503,29 @@ describe("configSchema", () => {
           }),
         Error,
         message,
+      );
+    }
+  });
+
+  it("rejects trusted-proxy identity headers reserved by the runtime", () => {
+    for (const subject of ["host", "forwarded", "via", "x-real-ip", "X-Forwarded-User"]) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                trustedProxy: {
+                  ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+                  headers: {
+                    ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers,
+                    subject,
+                  },
+                },
+              },
+            },
+          }),
+        Error,
+        "security.auth.trustedProxy.headers.subject",
       );
     }
   });

@@ -2,6 +2,10 @@ import { getRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/s
 import type { TrustedProxyAuthConfig } from "#veryfront/security/http/middleware/types.ts";
 import type { ApplicationIdentity } from "./types.ts";
 import { createApplicationIdentity } from "./identity.ts";
+import {
+  isForbiddenApplicationIdentityHeaderName,
+  MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH,
+} from "./policy.ts";
 
 const TRUSTED_PROXY_ISSUER = "veryfront:trusted-proxy";
 const MAX_SUBJECT_LENGTH = 1_024;
@@ -9,7 +13,6 @@ const MAX_PROFILE_LENGTH = 512;
 const MAX_LIST_ENTRY_LENGTH = 256;
 const MAX_LIST_ENTRIES = 256;
 const MAX_RAW_LIST_LENGTH = 65_536;
-const MAX_HEADER_NAME_LENGTH = 128;
 const MAX_TRUSTED_PEERS = 256;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
@@ -287,19 +290,13 @@ function freezeUniqueHeaderNames(
 }
 
 function normalizeHeaderName(value: string): string | null {
-  if (value.length === 0 || value.length > MAX_HEADER_NAME_LENGTH) return null;
+  if (value.length === 0 || value.length > MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH) {
+    return null;
+  }
   if (!(apply(regexpTest, HEADER_NAME_PATTERN, [value]) as boolean)) return null;
   const normalized = apply(stringToLowerCase, value, []) as string;
-  if (isForbiddenIdentityHeaderName(normalized)) return null;
+  if (isForbiddenApplicationIdentityHeaderName(normalized)) return null;
   return normalized;
-}
-
-function isForbiddenIdentityHeaderName(name: string): boolean {
-  return name === "host" ||
-    name === "forwarded" ||
-    name === "via" ||
-    name === "x-real-ip" ||
-    (apply(stringStartsWith, name, ["x-forwarded-"]) as boolean);
 }
 
 function readClaims(

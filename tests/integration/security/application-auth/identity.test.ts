@@ -342,7 +342,7 @@ describe("security/application-auth/identity", () => {
   it("preserves nested Microsoft overage __proto__ claims as own frozen data", () => {
     const claimNames = { groups: "src1" };
     Object.defineProperty(claimNames, "__proto__", {
-      value: "claim-names-data",
+      value: { source: "claim-names-data" },
       enumerable: true,
       configurable: true,
     });
@@ -386,8 +386,10 @@ describe("security/application-auth/identity", () => {
       null,
     );
     assertEquals(
-      (identity.claims._claim_names as { readonly __proto__: string }).__proto__,
-      "claim-names-data",
+      (identity.claims._claim_names as {
+        readonly __proto__: { readonly source: string };
+      }).__proto__,
+      { source: "claim-names-data" },
     );
     assertEquals(
       (identity.claims._claim_sources as { readonly __proto__: { readonly fallback: string } })
@@ -402,7 +404,7 @@ describe("security/application-auth/identity", () => {
     );
     assertEquals(
       JSON.stringify(identity.claims),
-      '{"_claim_names":{"groups":"src1","__proto__":"claim-names-data"},"_claim_sources":{"src1":{"endpoint":"https://graph.microsoft.com/v1.0/users/user-123/getMemberObjects","__proto__":{"source":"nested"}},"__proto__":{"fallback":"source"}}}',
+      '{"_claim_names":{"groups":"src1","__proto__":{"source":"claim-names-data"}},"_claim_sources":{"src1":{"endpoint":"https://graph.microsoft.com/v1.0/users/user-123/getMemberObjects","__proto__":{"source":"nested"}},"__proto__":{"fallback":"source"}}}',
     );
   });
 

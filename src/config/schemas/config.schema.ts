@@ -65,11 +65,13 @@ import {
   MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH,
 } from "#veryfront/config/server-external-packages.ts";
 import { isValidOAuthEnvironmentVariableName } from "#veryfront/oauth/config-validation.ts";
+import { MAX_OAUTH_URL_LENGTH } from "#veryfront/oauth/limits.ts";
 import {
-  MAX_OAUTH_SCOPE_COUNT,
-  MAX_OAUTH_SCOPE_TOKEN_LENGTH,
-  MAX_OAUTH_URL_LENGTH,
-} from "#veryfront/oauth/limits.ts";
+  isForbiddenApplicationIdentityHeaderName,
+  MAX_APPLICATION_AUTH_SCOPE_COUNT,
+  MAX_APPLICATION_AUTH_SCOPE_LENGTH,
+  MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH,
+} from "#veryfront/security/application-auth/policy.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
@@ -302,7 +304,8 @@ function isSecureOrigin(value: string): boolean {
       url.password === "" &&
       url.pathname === "/" &&
       url.search === "" &&
-      url.hash === "";
+      url.hash === "" &&
+      value === url.origin;
   } catch {
     return false;
   }
@@ -403,11 +406,11 @@ const getOidcAuthSchema = defineSchema((v) =>
       .array(
         v.string()
           .min(1)
-          .max(MAX_OAUTH_SCOPE_TOKEN_LENGTH)
+          .max(MAX_APPLICATION_AUTH_SCOPE_LENGTH)
           .refine(isSafeOidcScope, "Expected an OAuth scope token"),
       )
       .min(1)
-      .max(MAX_OAUTH_SCOPE_COUNT)
+      .max(MAX_APPLICATION_AUTH_SCOPE_COUNT)
       .refine(hasRequiredOpenidScope, "OIDC scopes must include openid")
       .refine(hasUniqueStrings, "OIDC scopes must not contain duplicates"),
     claims: getOidcClaimMappingSchema().optional(),
@@ -438,28 +441,24 @@ const getOidcAuthSchema = defineSchema((v) =>
   }).strict()
 );
 
+const getApplicationIdentityHeaderNameSchema = defineSchema((v) =>
+  v.string()
+    .min(1)
+    .max(MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH)
+    .regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name")
+    .refine(
+      (value) => !isForbiddenApplicationIdentityHeaderName(value),
+      "Expected a non-reserved HTTP header name",
+    )
+);
+
 const getTrustedProxyHeadersSchema = defineSchema((v) =>
   v.object({
-    subject: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
-      HTTP_TOKEN_PATTERN,
-      "Expected a valid HTTP header name",
-    ),
-    email: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
-      HTTP_TOKEN_PATTERN,
-      "Expected a valid HTTP header name",
-    ).optional(),
-    name: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
-      HTTP_TOKEN_PATTERN,
-      "Expected a valid HTTP header name",
-    ).optional(),
-    groups: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
-      HTTP_TOKEN_PATTERN,
-      "Expected a valid HTTP header name",
-    ).optional(),
-    roles: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
-      HTTP_TOKEN_PATTERN,
-      "Expected a valid HTTP header name",
-    ).optional(),
+    subject: getApplicationIdentityHeaderNameSchema(),
+    email: getApplicationIdentityHeaderNameSchema().optional(),
+    name: getApplicationIdentityHeaderNameSchema().optional(),
+    groups: getApplicationIdentityHeaderNameSchema().optional(),
+    roles: getApplicationIdentityHeaderNameSchema().optional(),
   }).strict()
 );
 

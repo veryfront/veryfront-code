@@ -332,6 +332,88 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 0);
   });
 
+  it("keeps CORS preflight ahead of application auth admission", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response(null, { status: 204 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/dashboard", { method: "OPTIONS" }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 1);
+  });
+
+  it("keeps CSP reports ahead of application auth admission", async () => {
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/_vf/csp-report", { method: "POST" }),
+    );
+
+    assertEquals(response.status, 204);
+  });
+
+  it("admits authenticated HMR endpoint requests before AuthHandler", async () => {
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/_ws", {
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals((await response.json()).message, "HMR WebSocket endpoint - connect via WebSocket");
+  });
+
   it("short-circuits OIDC auth route terminal responses before project middleware", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {

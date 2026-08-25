@@ -727,15 +727,33 @@ describe("security/application-auth OIDC ID tokens", () => {
     const keys = await material();
     const token = await signToken(keys.RS256, claims());
     for (
-      const [options, message] of [
-        [{ now: () => Number.NaN }, "clock"],
-        [{ now: () => Number.POSITIVE_INFINITY }, "clock"],
-        [{ now: () => -1 }, "clock"],
-        [{ now: () => Number.MAX_SAFE_INTEGER + 1 }, "clock"],
-        [{ issuer: "" }, "issuer"],
-        [{ issuer: "https://issuer.example.com/" + "i".repeat(2_049) }, "issuer"],
-        [{ clientId: "" }, "client ID"],
-        [{ clientId: "c".repeat(2_049) }, "client ID"],
+      const [options, expectedMessage] of [
+        [
+          { now: () => Number.NaN },
+          "OIDC ID token verifier clock must return a finite non-negative value",
+        ],
+        [
+          { now: () => Number.POSITIVE_INFINITY },
+          "OIDC ID token verifier clock must return a finite non-negative value",
+        ],
+        [
+          { now: () => -1 },
+          "OIDC ID token verifier clock must return a finite non-negative value",
+        ],
+        [
+          { now: () => Number.MAX_SAFE_INTEGER + 1 },
+          "OIDC ID token verifier clock must return a finite non-negative value",
+        ],
+        [{ issuer: "" }, "OIDC ID token verifier issuer must be a bounded non-empty string"],
+        [
+          { issuer: "https://issuer.example.com/" + "i".repeat(2_049) },
+          "OIDC ID token verifier issuer must be a bounded non-empty string",
+        ],
+        [{ clientId: "" }, "OIDC ID token verifier client ID must be a bounded non-empty string"],
+        [
+          { clientId: "c".repeat(2_049) },
+          "OIDC ID token verifier client ID must be a bounded non-empty string",
+        ],
       ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>
     ) {
       let calls = 0;
@@ -758,12 +776,11 @@ describe("security/application-auth OIDC ID tokens", () => {
               }),
           ),
         TypeError,
-        message,
+        expectedMessage,
       );
       assert(error instanceof Error);
       assertEquals(calls, 0);
-      assertEquals(error.message.includes("issuer.example.com"), false);
-      assertEquals(error.message.includes("client-123"), false);
+      assertEquals(error.message, expectedMessage);
     }
   });
 
