@@ -8,6 +8,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
@@ -762,7 +763,7 @@ export default config as const;
         const adapter = setup();
         return await withTempDir(async (projectDir) => {
           const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
-          await Deno.writeTextFile(configPath, source);
+          await writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
           return await assertRejects(
             () => getConfig(projectDir, adapter),
@@ -812,6 +813,24 @@ export default config as const;
         );
 
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("contains a cause getter that throws", async () => {
+        // A trusted config runs in the shared host realm and can define `cause`
+        // as a throwing accessor. Walking the chain must not let that escape in
+        // place of the classification, as the sibling errorChain already avoids.
+        const error = await loadFailure(
+          "vf-config-hostile-cause-",
+          'const e = new Error("boom");\n' +
+            'Object.defineProperty(e, "cause", { get() { throw new Error("hostile"); } });\n' +
+            "throw e;\n",
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assert(
+          error.message.includes("boom"),
+          `error must still report the config's own message, got: ${error.message}`,
+        );
       });
 
       it("keeps a secret in a subpath out of any package claim", async () => {
@@ -871,6 +890,14 @@ export default config as const;
           "an npm: specifier carrying a version",
           "vf-config-npm-version-",
           `Module not found "npm:left-pad@1.3.0".`,
+        ],
+        [
+          // Node CommonJS, which is what a `.js` config without `"type":
+          // "module"` gets. Legitimately multi-line, so it must be matched
+          // whole -- the first-line retry deliberately rejects this trailer.
+          "Node's CommonJS require-stack form",
+          "vf-config-cjs-",
+          `Cannot find module 'left-pad'\nRequire stack:\n- /app/veryfront.config.js`,
         ],
       ];
 

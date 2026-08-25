@@ -277,9 +277,44 @@ function reportedMissingSpecifier(message: string): string | undefined {
   // the anchors instead would let an ordinary error that merely quotes a
   // resolver phrase (`Setup failed: Module not found "db"`) be read as one.
   // Tried second so the genuinely multi-line Require-stack form still wins.
-  const firstLine = message.split("\n", 1)[0];
-  if (firstLine === undefined || firstLine === message) return undefined;
+  const firstLine = firstLineIfOnlyRuntimeTrailerFollows(message);
+  if (firstLine === undefined) return undefined;
   return matchReportedMissingSpecifier(firstLine);
+}
+
+/** What an ANSI SGR sequence leaves behind once its ESC is stripped. */
+const SGR_RESIDUE = /\[[0-9;]*m/g;
+
+/**
+ * The ESC that opens an ANSI sequence.
+ *
+ * Removed by split/join rather than a regex: a character class naming it is a
+ * `no-control-regex` violation, and this repository forbids suppressions.
+ */
+const ESCAPE_CHARACTER = String.fromCharCode(27);
+
+/** The only trailers a runtime appends to a resolution error. */
+const RUNTIME_TRAILER_LINE = /^\s*(?:hint:|at\s)/;
+
+/**
+ * The first line, but only when every line after it is a runtime trailer.
+ *
+ * Retrying on the first line unconditionally would defeat the end anchor for
+ * any multi-line message: an extension or bundler can throw
+ * `Cannot find module 'x'` followed by its own diagnostic, and matching the
+ * first line alone would report the extension as absent and hide the real
+ * failure. Deno colours its `hint:` and `at` lines, so the escape is stripped
+ * before the shape is tested.
+ */
+function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
+  const lines = message.split("\n");
+  if (lines.length < 2) return undefined;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index]!.split(ESCAPE_CHARACTER).join("").replace(SGR_RESIDUE, "");
+    if (line.trim().length === 0) continue;
+    if (!RUNTIME_TRAILER_LINE.test(line)) return undefined;
+  }
+  return lines[0];
 }
 
 function matchReportedMissingSpecifier(message: string): string | undefined {

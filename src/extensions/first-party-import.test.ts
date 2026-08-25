@@ -73,6 +73,23 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("does not read past a line that is not a runtime trailer", () => {
+      // An extension or bundler can throw a resolution-shaped first line
+      // followed by its own diagnostic. Retrying the first line unconditionally
+      // would report the extension as absent and hide that diagnostic.
+      const configThrown = [
+        `Import "@veryfront/ext-auth-jwt" not a dependency`,
+        "caused while initializing the project config",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(configThrown), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
     it("keeps the multi-line Require stack form matching as a whole", () => {
       // Matched against the whole message before the first-line retry, because
       // this form is legitimately multi-line and its trailing lines are part of

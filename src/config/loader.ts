@@ -83,6 +83,10 @@ const PromiseReject = Promise.reject;
 const PromiseResolve = Promise.resolve;
 const PromiseWithResolvers = Promise.withResolvers;
 const ReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrim = String.prototype.trim;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
 const SymbolSpecies = Symbol.species;
@@ -1713,12 +1717,22 @@ const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
  */
 function unresolvedConfigDependency(error: unknown): string | undefined {
   let current: unknown = error;
+  const seen = new Set<unknown>();
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
     if (!(current instanceof Error)) return undefined;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
     const specifier = reportedMissingSpecifier(current.message);
     const packageName = specifier === undefined ? undefined : missingPackageName(specifier);
     if (packageName !== undefined) return packageName;
-    current = current.cause;
+    // `cause` on a config-thrown error can be a getter that throws. Reading it
+    // defensively, as the sibling `errorChain` does, keeps a hostile accessor
+    // from escaping in place of the classification.
+    try {
+      current = current.cause;
+    } catch {
+      return undefined;
+    }
   }
   return undefined;
 }
@@ -1747,7 +1761,13 @@ function reportedMissingSpecifier(message: string): string | undefined {
 
   for (const line of candidates) {
     for (const pattern of MISSING_SPECIFIER_PATTERNS) {
-      const match = line.match(pattern);
+      // Captured intrinsics, like the rest of this module: a trusted config
+      // executes in the shared host realm and can poison `String.prototype`
+      // before throwing, and a classifier that threw would leave the caller
+      // with the poisoned result instead of a VeryfrontError.
+      const match = ReflectApply(RegExpPrototypeExec, pattern, [line]) as
+        | RegExpExecArray
+        | null;
       if (match?.[1] !== undefined) return match[1];
     }
   }
@@ -1781,12 +1801,18 @@ const RUNTIME_TRAILER_LINE = /^\s*(?:hint:|at\s)/;
  * keeps the anchor meaningful for everything else.
  */
 function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
-  const lines = message.split("\n");
+  const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
   if (lines.length < 2) return undefined;
   for (let index = 1; index < lines.length; index += 1) {
-    const line = lines[index]!.replace(CONTROL_CHARACTERS, "").replace(SGR_RESIDUE, "");
-    if (line.trim().length === 0) continue;
-    if (!RUNTIME_TRAILER_LINE.test(line)) return undefined;
+    const stripped = ReflectApply(StringPrototypeReplace, lines[index]!, [
+      CONTROL_CHARACTERS,
+      "",
+    ]) as string;
+    const line = ReflectApply(StringPrototypeReplace, stripped, [SGR_RESIDUE, ""]) as string;
+    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
+    if (ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null) {
+      return undefined;
+    }
   }
   return lines[0];
 }
@@ -1803,6 +1829,10 @@ const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
   // Deno, for a specifier no import map or node_modules entry claims.
   /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
   /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+  // Node CommonJS. Legitimately multi-line, so it is matched against the whole
+  // message; the trailing lines are part of the pattern rather than noise after
+  // it, which is why the first-line retry must not be what handles this form.
+  /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
 ];
 
 /**
