@@ -1255,11 +1255,10 @@ export interface IsolationSurfacePosture {
 /**
  * The resolved isolation configuration, as an operator would need to read it.
  *
- * `requested` and `effective` are separate fields because they diverge: API
- * isolation is requested and not effective when it is downgraded under an
- * explicit host-execution grant. `inForce` is the field that answers the
- * question the per-surface booleans cannot: whether the configuration as a
- * whole isolates anything at all.
+ * `requested` and `effective` are separate fields so posture remains explicit
+ * if a runtime capability changes. A host-execution grant never makes requested
+ * API isolation ineffective: unsupported runtimes keep the gate enabled and
+ * fail closed. `inForce` answers whether any surface is isolated at all.
  */
 export interface IsolationPosture {
   /** WORKER_ISOLATION_ENABLED. On its own it enables no surface. */
