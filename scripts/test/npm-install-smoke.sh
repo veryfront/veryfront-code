@@ -53,30 +53,76 @@ fail() {
   exit 1
 }
 
-[ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
-[ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" ] || fail "ext-node-websocket-ws package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
+REGISTRY_INSTALL_SPECS=()
+REGISTRY_AUTH_SPEC=""
+REGISTRY_URL=""
 
-(cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  [ -n "${VF_NPM_REGISTRY_PACKAGES:-}" ] || fail "registry package list is required in registry mode"
+  REGISTRY_URL="${VF_NPM_REGISTRY_URL:-https://registry.npmjs.org}"
+  case "$REGISTRY_URL" in
+    *"?"* | *"#"*) fail "registry URL must not include a query or fragment" ;;
+    http://* | https://*) ;;
+    *) fail "registry URL must use HTTP or HTTPS" ;;
+  esac
+  REGISTRY_AUTHORITY="${REGISTRY_URL#*://}"
+  REGISTRY_AUTHORITY="${REGISTRY_AUTHORITY%%/*}"
+  case "$REGISTRY_AUTHORITY" in
+    "" | *"@"*) fail "registry URL authority is invalid" ;;
+  esac
+
+  while IFS= read -r PACKAGE_NAME; do
+    [ -n "$PACKAGE_NAME" ] || continue
+    [[ "$PACKAGE_NAME" =~ ^(veryfront|@veryfront/[a-z0-9][a-z0-9._-]*)$ ]] ||
+      fail "registry package list contains an invalid package name"
+    PACKAGE_SPEC="${PACKAGE_NAME}@${VF_NPM_REGISTRY_VERSION}"
+    if [ "$PACKAGE_NAME" = "@veryfront/ext-auth-jwt" ]; then
+      REGISTRY_AUTH_SPEC="$PACKAGE_SPEC"
+    else
+      REGISTRY_INSTALL_SPECS+=("$PACKAGE_SPEC")
+    fi
+  done <<<"$VF_NPM_REGISTRY_PACKAGES"
+
+  [ "${#REGISTRY_INSTALL_SPECS[@]}" -gt 0 ] || fail "registry package list has no root install packages"
+  [ -n "$REGISTRY_AUTH_SPEC" ] || fail "registry package list is missing @veryfront/ext-auth-jwt"
+else
+  if [ -n "${VF_NPM_PACK_DIR:-}" ]; then
+    [ -d "$VF_NPM_PACK_DIR" ] || fail "canonical npm artifact directory missing: $VF_NPM_PACK_DIR"
+    deno run --config="$ROOT_DIR/scripts/test.deno.json" --allow-read \
+      "$ROOT_DIR/scripts/ci/npm-compatibility-artifact.ts" verify "$VF_NPM_PACK_DIR" ||
+      fail "canonical npm artifact verification failed"
+    cp "$VF_NPM_PACK_DIR"/*.tgz "$WORKDIR"/
+  else
+    [ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
+    [ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" ] || fail "ext-node-websocket-ws package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
+
+    (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+  fi
+fi
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
 npm pkg set type=module >/dev/null
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "${REGISTRY_INSTALL_SPECS[@]}"
+else
+  npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
+fi
 
 echo "== 1. root install: CLI and deferred parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
@@ -147,7 +193,11 @@ echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside very
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
 echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "$REGISTRY_AUTH_SPEC"
+else
+  npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
+fi
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
   const mod = await m.importFirstPartyExtensionModule('ext-auth-jwt', '@veryfront/ext-auth-jwt');

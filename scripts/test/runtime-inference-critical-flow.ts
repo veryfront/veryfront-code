@@ -13,6 +13,7 @@ import {
   stopDevServer,
   waitForRoute,
 } from "./runtime-e2e-helpers.ts";
+import { loadNpmCompatibilityArtifact } from "../ci/npm-compatibility-artifact.ts";
 
 export type { RuntimeName } from "./runtime-e2e-helpers.ts";
 
@@ -62,6 +63,24 @@ export function parseRuntimeSelection(args: string[]): RuntimeName[] {
   }
 
   return runtimes;
+}
+
+export function parsePackedArtifactDirectory(
+  args: string[],
+): string | undefined {
+  const inline = args.find((arg) => arg.startsWith("--packed-dir="));
+  if (inline) {
+    const directory = inline.slice("--packed-dir=".length);
+    if (!directory) throw new Error("--packed-dir requires a directory");
+    return directory;
+  }
+  const index = args.indexOf("--packed-dir");
+  if (index < 0) return undefined;
+  const directory = args[index + 1];
+  if (!directory || directory.startsWith("--")) {
+    throw new Error("--packed-dir requires a directory");
+  }
+  return directory;
 }
 
 export function artifactClaim(runtime: RuntimeName): string {
@@ -934,6 +953,7 @@ export async function runRuntimeInferenceCriticalFlow(
   const providerMode = parseProviderMode(args);
   const keepWorkDir = hasFlag(args, "keep");
   const skipBuild = hasFlag(args, "skip-build");
+  const packedDirectory = parsePackedArtifactDirectory(args);
   const workDir = await Deno.makeTempDir({
     prefix: "veryfront-runtime-critical-flow-",
   });
@@ -947,7 +967,7 @@ export async function runRuntimeInferenceCriticalFlow(
     if (runtimes.includes("bun")) await ensureCommand("bun");
     if (runtimes.includes("deno")) await ensureCommand("deno");
 
-    if (!skipBuild) {
+    if (!packedDirectory && !skipBuild) {
       console.log("build npm package");
       await runChecked("deno", ["task", "build:npm"], {
         cwd: rootDir,
@@ -955,8 +975,16 @@ export async function runRuntimeInferenceCriticalFlow(
       });
     }
 
-    console.log("pack npm package");
-    const packed = await packNpmPackage(rootDir, workDir);
+    const packed = packedDirectory
+      ? await loadNpmCompatibilityArtifact(packedDirectory)
+      : await packNpmPackage(rootDir, workDir);
+    if ("manifestSha256" in packed) {
+      console.log(
+        `npm compatibility manifest SHA-256: ${packed.manifestSha256}`,
+      );
+    } else {
+      console.log("pack npm package");
+    }
 
     for (const runtime of runtimes) {
       await assertRuntimeJourney(

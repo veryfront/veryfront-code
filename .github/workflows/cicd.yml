@@ -166,8 +166,43 @@ jobs:
       - name: Run Bun runtime suite
         run: deno task test:bun
 
+  npm-compatibility-artifact:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: npm compatibility artifact
+    outputs:
+      build_duration_seconds: ${{ steps.build.outputs.build_duration_seconds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Build and pack canonical npm output
+        id: build
+        run: |
+          started_at=$(date +%s)
+          deno task build:npm
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm \
+            scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility
+          echo "build_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
+      - name: Upload canonical npm compatibility artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+          retention-days: 1
+
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-compatibility-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: "tests (runtime critical flow: ${{ matrix.runtime }})"
@@ -191,8 +226,13 @@ jobs:
         if: ${{ matrix.runtime == 'bun' }}
         with:
           bun-version: "1.3.6"
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
       - name: Run runtime critical flow
-        run: deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}
+        run: deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility
 
   tests-windows-localhost:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -586,6 +626,35 @@ jobs:
           command: |
             VERYFRONT_BINARY_FRESH=1 deno task test:e2e:binary
 
+  quality-gate-merge:
+    name: quality gate (merge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [ci, unit-tests, tests, tests-binary-e2e]
+    if: ${{ always() }}
+    steps:
+      - name: Require merge correctness dependencies
+        env:
+          SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
+          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+          INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
+          BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
+        run: |
+          failed=0
+          for result_name in \
+            SOURCE_CHECKS_RESULT \
+            UNIT_TESTS_RESULT \
+            INTEGRATION_TESTS_RESULT \
+            BINARY_E2E_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   # ============================================
   # CI: npm Install Smoke
   # ============================================
@@ -616,7 +685,7 @@ jobs:
 
   tests-npm-install-smoke:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    needs: npm-smoke-node-versions
+    needs: [npm-smoke-node-versions, npm-compatibility-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
@@ -636,16 +705,83 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
+      - name: Download canonical npm compatibility artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-compatibility-${{ github.sha }}
+          path: dist/npm-compatibility
+      - name: Materialize canonical npm output
+        run: |
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
+            scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
       - name: Install TypeScript toolchain
         run: npm --prefix storybook ci --ignore-scripts
       - name: Check published package types
-        run: deno task typecheck:consumer
+        run: deno task typecheck:consumer --skip-build
       - name: Report npm package size
         run: |
           deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
             | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Clean-room install/import smoke
+        env:
+          VF_NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: bash scripts/test/npm-install-smoke.sh
+
+  quality-gate-artifact:
+    name: quality gate (artifact)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs:
+      - npm-compatibility-artifact
+      - tests-npm-install-smoke
+      - tests-runtime-critical-flow
+    if: ${{ always() }}
+    steps:
+      - name: Require canonical artifact compatibility
+        env:
+          ARTIFACT_BUILD_RESULT: ${{ needs.npm-compatibility-artifact.result }}
+          NPM_SMOKE_RESULT: ${{ needs.tests-npm-install-smoke.result }}
+          RUNTIME_CRITICAL_FLOW_RESULT: ${{ needs.tests-runtime-critical-flow.result }}
+        run: |
+          failed=0
+          for result_name in \
+            ARTIFACT_BUILD_RESULT \
+            NPM_SMOKE_RESULT \
+            RUNTIME_CRITICAL_FLOW_RESULT
+          do
+            result="${!result_name}"
+            if [ "$result" != "success" ]; then
+              echo "::error::$result_name finished with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Report npm build reuse
+        env:
+          BUILD_DURATION_SECONDS: ${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}
+          LEGACY_BUILD_COUNT: "5"
+          CANONICAL_BUILD_COUNT: "1"
+        run: |
+          case "$BUILD_DURATION_SECONDS" in
+            ''|*[!0-9]*)
+              echo "::error::Missing numeric canonical npm build duration"
+              exit 1
+              ;;
+          esac
+          before=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$LEGACY_BUILD_COUNT" \
+            'BEGIN { printf "%.2f", seconds * count / 60 }')
+          after=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$CANONICAL_BUILD_COUNT" \
+            'BEGIN { printf "%.2f", seconds * count / 60 }')
+          saved=$(awk -v before="$before" -v after="$after" \
+            'BEGIN { printf "%.2f", before - after }')
+          {
+            echo "### Canonical npm build reuse"
+            echo
+            echo "Measured producer duration: ${BUILD_DURATION_SECONDS}s"
+            echo "Before: ${before} npm build runner-minutes"
+            echo "After: ${after} npm build runner-minutes"
+            echo "Saved: ${saved} npm build runner-minutes"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   tests-sentry-runtime-packages:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -960,6 +1096,8 @@ jobs:
     ]
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -1052,30 +1190,6 @@ jobs:
             scripts/install.sh \
             $SBOMS
 
-      - name: Trigger server deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-server
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Trigger job-runner deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-job-runner
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
-      - name: Trigger sandbox deploy
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
-        with:
-          token: ${{ steps.release-app-token.outputs.token }}
-          repository: veryfront/veryfront-sandbox
-          event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
-
   # ============================================
   # CD: Stable Release (clean semver only)
   # Runs when deno.json changes to X.Y.Z (no suffix), or on manual dispatch
@@ -1097,6 +1211,8 @@ jobs:
     ]
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -1250,13 +1366,57 @@ jobs:
             --generate-notes \
             --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
+  quality-gate-registry:
+    name: quality gate (registry)
+    if: ${{ always() && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+    needs: [prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Validate exact registry release
+        env:
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+          GITHUB_SHA: ${{ github.sha }}
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+        run: bash scripts/ci/registry-release-smoke.sh
+
+  dispatch-release:
+    name: dispatch release
+    if: ${{ always() && needs.quality-gate-registry.result == 'success' }}
+    needs: [quality-gate-registry, prerelease, release, version-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release GitHub App token
+        id: release-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
+          owner: veryfront
+          repositories: |
+            veryfront-server
+            veryfront-job-runner
+            veryfront-sandbox
+          permission-contents: write
+
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: >-
+            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
 
       - name: Trigger job-runner deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1264,7 +1424,8 @@ jobs:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: >-
+            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
 
       - name: Trigger sandbox deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1272,7 +1433,8 @@ jobs:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
-          client-payload: '{"version": "${{ steps.version.outputs.version }}"}'
+          client-payload: >-
+            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
 
   # ============================================
   # CD: Update Homebrew (stable releases only)

@@ -11,6 +11,7 @@ import {
   artifactClaim,
   assertListedRunFailure,
   parseAgUiTextDeltas,
+  parsePackedArtifactDirectory,
   parseRuntimeSelection,
   parseScopedResponseJson,
   validateAnthropicRequest,
@@ -99,6 +100,23 @@ function unresolvedCancellationFields(): {
 }
 
 describe("runtime inference critical-flow pure contract", () => {
+  it("accepts the canonical packed artifact directory as an inline or separate flag", () => {
+    assertEquals(
+      parsePackedArtifactDirectory(["--packed-dir=dist/npm-compatibility"]),
+      "dist/npm-compatibility",
+    );
+    assertEquals(
+      parsePackedArtifactDirectory(["--packed-dir", "/tmp/npm-artifact"]),
+      "/tmp/npm-artifact",
+    );
+    assertEquals(parsePackedArtifactDirectory([]), undefined);
+    assertThrows(
+      () => parsePackedArtifactDirectory(["--packed-dir"]),
+      Error,
+      "--packed-dir requires a directory",
+    );
+  });
+
   it("maps only selected packed extensions to local file dependencies", () => {
     const packed = {
       root: "/packs/veryfront.tgz",
@@ -829,9 +847,9 @@ describe("runtime inference critical-flow CI contract", () => {
       steps.some((step) =>
         step.name === "Run runtime critical flow" &&
         step.run ===
-          "deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}"
+          "deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility"
       ),
-      "Runtime critical-flow job should invoke the shared task with the matrix runtime",
+      "Runtime critical-flow job should consume the canonical artifact for the matrix runtime",
     );
   });
 });

@@ -1,0 +1,64 @@
+# Mandatory quality gates
+
+Veryfront uses exactly three mandatory quality gates. Each gate has a stable
+check name, fails closed when an expected dependency does not succeed, and
+protects a distinct delivery boundary.
+
+## 1. Merge correctness
+
+`quality gate (merge)` requires source checks, unit tests, integration tests,
+and binary end-to-end tests to succeed for pull requests and merge queue runs.
+A failed, skipped, or cancelled dependency fails the aggregate check.
+
+Evidence: [CI workflow](workflows/cicd.yml) and
+[merge gate contract](../scripts/ci/merge-quality-gate-workflow.test.ts).
+
+## 2. Same-build artifact compatibility
+
+`quality gate (artifact)` builds and packs one SHA-addressed npm artifact. Its
+manifest records package versions and SHA-256 digests. Clean-room npm install
+smoke tests and the Deno, Node, and Bun critical-flow lanes consume that same
+artifact, so compatibility results describe one build rather than separate
+rebuilds.
+
+Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
+[artifact contract](../scripts/ci/npm-compatibility-artifact.test.ts), and
+[workflow contract](../scripts/ci/npm-compatibility-artifact-workflow.test.ts).
+
+## 3. Registry release integrity
+
+`quality gate (registry)` verifies the exact published package versions,
+commit identity, npm provenance, configured registry, and clean-room package
+behavior. Retries are bounded to registry propagation. Release dispatches run
+only after this gate succeeds, so a failed registry check prevents every
+downstream deployment dispatch.
+
+Evidence: [registry verification](../scripts/ci/registry-release-integrity.ts),
+[registry smoke](../scripts/ci/registry-release-smoke.sh), and
+[release ordering contract](../scripts/ci/registry-release-workflow.test.ts).
+
+## Supporting signals
+
+Coverage, CodeQL, and issue or pull request metrics remain useful supporting
+signals. They help maintainers find risk, security findings, test gaps, and
+process trends, but they are not additional mandatory quality gates.
+
+- Coverage retains its eight shards, 80 percent floor, and Codecov reporting.
+- CodeQL continues to report security and quality findings in its dedicated
+  workflow.
+- Issue and pull request metrics inform maintenance and process improvements.
+
+## Observed baseline and estimated savings
+
+The successful baseline pull request run
+[`32780918864`](https://github.com/veryfront/veryfront-code/actions/runs/32780918864)
+had 12 minutes 17 seconds of active CI wall time. Its 29 non-skipped jobs used
+74.9 observed runner-minutes, and `tests (node)` used 12 minutes 2 seconds.
+
+Estimated npm-build savings: the same-build artifact flow replaces five npm
+builds with one. The estimate is four times the measured producer duration,
+or 80 percent of npm-build runner time before artifact transfer overhead. This
+is a build-reuse estimate, not an observed post-change end-to-end CI result.
+The [workflow summary calculation](workflows/cicd.yml) and
+[contract example](../scripts/ci/npm-compatibility-artifact-workflow.test.ts)
+record the estimate from the measured producer duration.

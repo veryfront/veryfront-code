@@ -1,0 +1,158 @@
+import { assert, assertEquals, assertStringIncludes } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
+import { parse } from "#std/yaml/parse";
+
+type YamlRecord = Record<string, unknown>;
+
+const WORKFLOW_PATH = new URL(
+  "../../.github/workflows/cicd.yml",
+  import.meta.url,
+);
+const REQUIRED_DEPENDENCIES = [
+  "ci",
+  "unit-tests",
+  "tests",
+  "tests-binary-e2e",
+] as const;
+const RESULT_ENV = {
+  SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
+  UNIT_TESTS_RESULT: "${{ needs.unit-tests.result }}",
+  INTEGRATION_TESTS_RESULT: "${{ needs.tests.result }}",
+  BINARY_E2E_RESULT: "${{ needs.tests-binary-e2e.result }}",
+} as const;
+
+function asRecord(value: unknown, context: string): YamlRecord {
+  assert(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+    `${context} must be an object`,
+  );
+  return value as YamlRecord;
+}
+
+async function readWorkflow(): Promise<YamlRecord> {
+  return asRecord(
+    parse(await Deno.readTextFile(WORKFLOW_PATH)),
+    "cicd workflow",
+  );
+}
+
+async function readRepoFile(path: string): Promise<string> {
+  return await Deno.readTextFile(new URL(`../../${path}`, import.meta.url));
+}
+
+async function readMergeGate(): Promise<YamlRecord> {
+  const workflow = await readWorkflow();
+  const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+  return asRecord(jobs["quality-gate-merge"], "merge quality gate job");
+}
+
+function gateStep(job: YamlRecord): YamlRecord {
+  assert(Array.isArray(job.steps), "merge quality gate steps must be an array");
+  const step = job.steps.find((value) =>
+    asRecord(value, "merge quality gate step").name ===
+      "Require merge correctness dependencies"
+  );
+  assert(step, "merge quality gate must require its dependencies");
+  return asRecord(step, "merge quality gate result step");
+}
+
+async function runGate(
+  overrides: Partial<Record<keyof typeof RESULT_ENV, string>> = {},
+): Promise<Deno.CommandOutput> {
+  const job = await readMergeGate();
+  const step = gateStep(job);
+  const env = Object.fromEntries(
+    Object.keys(RESULT_ENV).map((name) => {
+      const resultName = name as keyof typeof RESULT_ENV;
+      return [resultName, overrides[resultName] ?? "success"];
+    }),
+  );
+  return await new Deno.Command("bash", {
+    args: ["-c", String(step.run)],
+    env,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
+describe("merge quality gate workflow", () => {
+  it("exposes one stable check name for branch protection", async () => {
+    const gate = await readMergeGate();
+
+    assertEquals(gate.name, "quality gate (merge)");
+  });
+
+  it("reports the same gate on pull requests and merge queue runs", async () => {
+    const workflow = await readWorkflow();
+    const triggers = asRecord(workflow.on, "cicd workflow triggers");
+
+    assert("pull_request" in triggers, "workflow must run for pull requests");
+    assert(
+      "merge_group" in triggers,
+      "workflow must run for merge queue entries",
+    );
+  });
+
+  it("always reads every required dependency result", async () => {
+    const gate = await readMergeGate();
+    const step = gateStep(gate);
+
+    assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
+    assertEquals(gate.if, "${{ always() }}");
+    assertEquals(
+      asRecord(step.env, "merge quality gate result env"),
+      RESULT_ENV,
+    );
+  });
+
+  it("preserves all required coverage shards, the unit sentinel, and the floor", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+    const coverageShards = asRecord(
+      jobs["coverage-shards"],
+      "coverage shards job",
+    );
+    const strategy = asRecord(
+      coverageShards.strategy,
+      "coverage shard strategy",
+    );
+    const matrix = asRecord(strategy.matrix, "coverage shard matrix");
+    const unitTests = asRecord(jobs["unit-tests"], "unit sentinel job");
+    const coverage = asRecord(jobs.coverage, "coverage gate job");
+
+    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assertEquals(unitTests.name, "tests (unit)");
+    assertEquals(unitTests.needs, ["coverage-shards"]);
+    assertEquals(coverage.name, "coverage gate");
+    assertEquals(coverage.needs, ["coverage-shards"]);
+    assertStringIncludes(
+      await readRepoFile("scripts/test/coverage-ci.ts"),
+      'readOption(args, "--threshold") ?? "80"',
+    );
+  });
+
+  it("succeeds only when every required dependency succeeds", async () => {
+    const result = await runGate();
+
+    assertEquals(result.code, 0);
+  });
+
+  it("fails closed when a required dependency fails", async () => {
+    const result = await runGate({ INTEGRATION_TESTS_RESULT: "failure" });
+    const output = new TextDecoder().decode(result.stdout);
+
+    assertEquals(result.code, 1);
+    assertStringIncludes(
+      output,
+      "INTEGRATION_TESTS_RESULT finished with failure",
+    );
+  });
+
+  it("fails closed when a required dependency is skipped", async () => {
+    const result = await runGate({ BINARY_E2E_RESULT: "skipped" });
+    const output = new TextDecoder().decode(result.stdout);
+
+    assertEquals(result.code, 1);
+    assertStringIncludes(output, "BINARY_E2E_RESULT finished with skipped");
+  });
+});
