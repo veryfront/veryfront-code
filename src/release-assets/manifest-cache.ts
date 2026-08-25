@@ -103,7 +103,7 @@ export interface ReleaseAssetManifestFetchResult {
 }
 
 /**
- * Fetcher used to retrieve a manifest for a release. Registered per-releaseId
+ * Fetcher used to retrieve a manifest for a release. Registered per-release ID
  * by the runtime adapter that owns that release, so the correct project-scoped
  * token is always used. Returns null when the manifest is unavailable.
  */

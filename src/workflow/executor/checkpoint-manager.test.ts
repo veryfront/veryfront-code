@@ -3,6 +3,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { subWorkflow } from "#veryfront/workflow/dsl/sub-workflow.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
@@ -317,47 +318,41 @@ describe("CheckpointManager", () => {
     assertEquals(unfencedCalls, 0);
   });
 
-  it("uses explicit checkpoint policy and ignores inherited agent fields", () => {
-    const backend = {} as WorkflowBackend;
-    const manager = new CheckpointManager({ backend });
-    let accessorCalls = 0;
-    const inheritedAgentConfig = Object.assign(
-      Object.create({ agent: "inherited-agent" }),
-      { type: "step", tool: "noop" },
-    );
-    const accessorConfig = Object.defineProperty(
-      { type: "step", tool: "noop" },
-      "checkpoint",
-      {
-        get() {
-          accessorCalls++;
-          return true;
-        },
-      },
-    );
+  it("keeps the deprecated checkpoint policy method source-compatible", () => {
+    const manager = new CheckpointManager({ backend: new MemoryBackend() });
+    const childWorkflow = {
+      id: "child",
+      steps: [stepNode("child-step")],
+    };
 
     assertEquals(
       manager.shouldCheckpoint({
-        id: "inherited-agent",
-        config: inheritedAgentConfig,
-      } as WorkflowNode),
+        id: "explicit-false",
+        config: { type: "step", agent: "agent", checkpoint: false },
+      }),
       false,
     );
     assertEquals(
       manager.shouldCheckpoint({
-        id: "explicit",
+        id: "explicit-true",
         config: { type: "step", tool: "noop", checkpoint: true },
       }),
       true,
     );
     assertEquals(
       manager.shouldCheckpoint({
-        id: "accessor",
-        config: accessorConfig,
-      } as WorkflowNode),
+        id: "direct-agent",
+        config: { type: "step", agent: "agent" },
+      }),
+      true,
+    );
+    assertEquals(
+      manager.shouldCheckpoint({
+        id: "tool-step",
+        config: { type: "step", tool: "noop" },
+      }),
       false,
     );
-    assertEquals(accessorCalls, 0);
     assertEquals(
       manager.shouldCheckpoint({
         id: "wait",
@@ -367,10 +362,66 @@ describe("CheckpointManager", () => {
     );
     assertEquals(
       manager.shouldCheckpoint({
+        id: "parallel",
+        config: { type: "parallel", nodes: [] },
+      }),
+      true,
+    );
+    assertEquals(
+      manager.shouldCheckpoint(subWorkflow("nested", { workflow: childWorkflow })),
+      true,
+    );
+    assertEquals(
+      manager.shouldCheckpoint({
         id: "branch",
         config: { type: "branch", condition: () => true, then: [] },
       }),
       false,
     );
+  });
+
+  it("reads deprecated checkpoint policy from own data properties only", () => {
+    const manager = new CheckpointManager({ backend: new MemoryBackend() });
+    let checkpointAccessorCalls = 0;
+    let agentAccessorCalls = 0;
+    const stepToolConfig: WorkflowNode["config"] = { type: "step", tool: "noop" };
+    const inheritedAgentConfig = Object.setPrototypeOf(
+      stepToolConfig,
+      { agent: "inherited-agent" },
+    );
+    const accessorConfig = Object.defineProperties(
+      { ...stepToolConfig },
+      {
+        checkpoint: {
+          get() {
+            checkpointAccessorCalls++;
+            return true;
+          },
+        },
+        agent: {
+          get() {
+            agentAccessorCalls++;
+            return "agent";
+          },
+        },
+      },
+    );
+
+    assertEquals(
+      manager.shouldCheckpoint({
+        id: "inherited-agent",
+        config: inheritedAgentConfig,
+      }),
+      false,
+    );
+    assertEquals(
+      manager.shouldCheckpoint({
+        id: "accessor",
+        config: accessorConfig,
+      }),
+      false,
+    );
+    assertEquals(checkpointAccessorCalls, 0);
+    assertEquals(agentAccessorCalls, 0);
   });
 });

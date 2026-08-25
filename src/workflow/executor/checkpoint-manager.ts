@@ -10,14 +10,14 @@ const numberIsSafeInteger = Number.isSafeInteger;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 
-function getOwnDataProperty<T>(value: unknown, key: PropertyKey): T | undefined {
+function getOwnDataProperty(value: unknown, key: PropertyKey): unknown {
   if (
     (typeof value !== "object" && typeof value !== "function") ||
     value === null
   ) return undefined;
   try {
     const descriptor = objectGetOwnPropertyDescriptor(value, key);
-    return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value as T : undefined;
+    return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value : undefined;
   } catch {
     return undefined;
   }
@@ -149,13 +149,20 @@ export class CheckpointManager {
     return getReadyNodes(inDegree, readinessStates)[0] ?? null;
   }
 
+  /**
+   * @deprecated Node checkpoint policy is owned by the DAG executor. This
+   * compatibility wrapper preserves the historical public API until the next
+   * breaking release.
+   */
   shouldCheckpoint(node: WorkflowNode): boolean {
     const { config } = node;
-    const explicitCheckpoint = getOwnDataProperty<unknown>(config, "checkpoint");
+    const explicitCheckpoint = getOwnDataProperty(config, "checkpoint");
 
     if (explicitCheckpoint !== undefined) return explicitCheckpoint === true;
 
-    const configType = getOwnDataProperty<string>(config, "type");
+    const configType = getOwnDataProperty(config, "type");
+    if (typeof configType !== "string") return false;
+
     if (configType === "step") {
       return !!getOwnDataProperty(config, "agent");
     }
@@ -167,12 +174,13 @@ export class CheckpointManager {
       branch: false,
     };
 
-    return configType && objectHasOwn(checkpointDefaults, configType)
-      ? checkpointDefaults[configType]!
-      : false;
+    return checkpointDefaults[configType] === true;
   }
 
-  /** Retain the newest appended checkpoints, independent of their durable timestamps. */
+  /**
+   * @deprecated Checkpoint retention is enforced by built-in backends. This
+   * compatibility wrapper remains for callers that prune checkpoints manually.
+   */
   async cleanup(runId: string, keepCount: number = 5): Promise<void> {
     if (!numberIsSafeInteger(keepCount) || keepCount < 0) {
       throw INVALID_ARGUMENT.create({

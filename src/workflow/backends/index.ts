@@ -10,12 +10,7 @@ export type {
   WorkflowRunObservedState,
   WorkflowRunUpdate,
 } from "./types.ts";
-export {
-  hasEventSupport,
-  hasLockSupport,
-  hasQueueSupport,
-  hasRunObservationSupport,
-} from "./types.ts";
+export { hasLockSupport, hasQueueSupport, hasRunObservationSupport } from "./types.ts";
 
 export { MemoryBackend } from "./memory.ts";
 
