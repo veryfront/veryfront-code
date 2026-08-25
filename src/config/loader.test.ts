@@ -1054,6 +1054,16 @@ export default config as const;
           "vf-config-malformed-package-",
           `throw new Error("Cannot find package 'foo bar' imported from /app/veryfront.config.ts");\n`,
         ],
+        [
+          "the npm-reserved node_modules root",
+          "vf-config-reserved-node-modules-",
+          `throw new Error("Cannot find package 'node_modules' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the npm-reserved favicon.ico root",
+          "vf-config-reserved-favicon-",
+          `throw new Error("Cannot find package 'favicon.ico' imported from /app/veryfront.config.ts");\n`,
+        ],
       ];
 
       for (const [label, prefix, source] of notInstallable) {

@@ -47,10 +47,11 @@ describe("errors/catalog/module-errors", () => {
       assertEquals(solution?.example?.includes("importMap"), true);
     });
 
-    it("dependency-missing should have an example", () => {
+    it("dependency-missing should give package-neutral recovery guidance", () => {
       const solution = MODULE_ERROR_CATALOG["dependency-missing"];
       assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example?.includes("react"), true);
+      assertEquals(solution?.example, "deno add npm:<PACKAGE_NAME>");
+      assertEquals(JSON.stringify(solution).toLowerCase().includes("react"), false);
     });
 
     it("lockfile recovery guidance should use the supported clear command", () => {

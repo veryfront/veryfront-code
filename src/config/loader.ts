@@ -1655,6 +1655,8 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  *   one;
  * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
  *   already rejects: no package named `@/lib/config` exists to install.
+ * - npm-reserved roots, which package managers reject even though their lexical
+ *   shape resembles a package name.
  *
  * Returns the package name rather than the whole specifier. That is the part
  * the reader installs -- `pkg` for `pkg/deep/path` -- and it drops the subpath,
@@ -1694,6 +1696,9 @@ function missingPackageName(specifier: string): string | undefined {
   // error keeps the runtime's own message, which names the whole specifier.
   if (parsed.subpath !== null) return undefined;
   if (!isValidServerExternalPackageName(parsed.packageName)) return undefined;
+  if (parsed.packageName === "node_modules" || parsed.packageName === "favicon.ico") {
+    return undefined;
+  }
 
   const replaced = ReflectApply(
     StringPrototypeReplace,

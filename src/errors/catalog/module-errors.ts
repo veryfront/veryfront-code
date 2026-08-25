@@ -58,19 +58,11 @@ resolve: {
     title: "Required dependency not found",
     message: "A required dependency is missing.",
     steps: [
-      "Add React to your import map",
-      "Ensure all peer dependencies are included",
+      "Install the package named in the error with your project package manager",
+      "Ensure the dependency is declared in your project manifest or import map",
       "Run 'veryfront doctor' to verify setup",
     ],
-    example: `// Minimum required imports
-resolve: {
-  importMap: {
-    imports: {
-      "react": "https://esm.sh/react@19",
-      "react-dom": "https://esm.sh/react-dom@19"
-    }
-  }
-}`,
+    example: "deno add npm:<PACKAGE_NAME>",
   }),
 
   "version-mismatch": createSimpleError(
