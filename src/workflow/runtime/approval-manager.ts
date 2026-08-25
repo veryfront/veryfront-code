@@ -45,6 +45,15 @@ export type ApprovalResponseSchemaResolver = (
   input: ApprovalResponseSchemaResolverInput,
 ) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
 
+export interface InternalApprovalResponseSchemaResolverInput {
+  run: WorkflowRun;
+  approval: PersistedPendingApproval;
+}
+
+export type InternalApprovalResponseSchemaResolver = (
+  input: InternalApprovalResponseSchemaResolverInput,
+) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
+
 export interface ApprovalManagerConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
@@ -54,6 +63,8 @@ export interface ApprovalManagerConfig {
   notifier?: ApprovalNotifier;
   /** Resolve a wait node response schema for persisted approvals. */
   responseSchemaResolver?: ApprovalResponseSchemaResolver;
+  /** Resolve a response schema from backend-only approval metadata. */
+  internalResponseSchemaResolver?: InternalApprovalResponseSchemaResolver;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
   /** Enable debug logging */
@@ -264,22 +275,28 @@ export class ApprovalManager {
 
   private async resolveResponseSchema(
     runId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
   ): Promise<Schema<unknown> | undefined> {
     const localSchema = this.responseSchemas.get(this.responseSchemaKey(runId, approval.id));
     if (localSchema) return localSchema;
 
-    if (!this.config.responseSchemaResolver) return undefined;
-
     const run = await this.config.backend.getRun(runId);
     if (!run) return undefined;
 
-    return await this.config.responseSchemaResolver({ run, approval });
+    if (this.config.responseSchemaResolver) {
+      const publicSchema = await this.config.responseSchemaResolver({
+        run: projectRunPendingApprovals(run),
+        approval: projectPendingApproval(approval),
+      });
+      if (publicSchema) return publicSchema;
+    }
+
+    return await this.config.internalResponseSchemaResolver?.({ run, approval });
   }
 
   private async validateDecisionData(
     runId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
     decision: ApprovalDecision,
   ): Promise<void> {
     const schema = await this.resolveResponseSchema(runId, approval);
@@ -330,8 +347,7 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
-    const publicApproval = projectPendingApproval(approval);
-    await this.validateDecisionData(runId, publicApproval, decision);
+    await this.validateDecisionData(runId, approval, decision);
 
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another
