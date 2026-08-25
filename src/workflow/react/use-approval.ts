@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
 import {
+  encodeWorkflowPathSegment,
   normalizeWorkflowApiBase,
   useStableWorkflowHeaders,
   workflowMutationHeaders,
@@ -58,16 +59,21 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     return err instanceof Error ? err : new Error(String(err));
   }, []);
 
-  useEffect((): void => {
+  useEffect((): (() => void) | void => {
     if (!runId || !approvalId) return;
+    const controller = new AbortController();
+    let current = true;
+    setApproval(null);
+    setError(null);
+    setIsLoading(true);
 
     async function fetchApproval(): Promise<void> {
       try {
         const response = await fetch(
-          `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/approvals/${
-            encodeURIComponent(approvalId)
-          }`,
-          { headers: stableHeaders, credentials },
+          `${normalizedApiBase}/runs/${
+            encodeWorkflowPathSegment(runId, "Workflow run ID")
+          }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`,
+          { signal: controller.signal, headers: stableHeaders, credentials },
         );
 
         if (!response.ok) {
@@ -78,18 +84,24 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         }
 
         const data: PendingApproval = await response.json();
+        if (!current) return;
         setApproval(data);
         setError(null);
       } catch (err) {
+        if (!current || controller.signal.aborted) return;
         const fetchError = toError(err);
         setError(fetchError);
         onError?.(fetchError);
       } finally {
-        setIsLoading(false);
+        if (current) setIsLoading(false);
       }
     }
 
     fetchApproval();
+    return () => {
+      current = false;
+      controller.abort();
+    };
   }, [runId, approvalId, credentials, normalizedApiBase, onError, stableHeaders, toError]);
 
   const submitDecision = useCallback(
@@ -100,9 +112,9 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       setError(null);
 
       try {
-        const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/approvals/${
-          encodeURIComponent(approvalId)
-        }`;
+        const requestUrl = `${normalizedApiBase}/runs/${
+          encodeWorkflowPathSegment(runId, "Workflow run ID")
+        }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`;
         const response = await fetch(requestUrl, {
           method: "POST",
           headers: workflowMutationHeaders(requestUrl, {

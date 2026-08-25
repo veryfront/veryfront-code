@@ -160,9 +160,13 @@ without polling the run endpoint:
 ```ts
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-export function observeWorkflowRun(runId: string): EventSource {
+export function observeWorkflowRun(
+  runId: string,
+  options: { withCredentials?: boolean } = {},
+): EventSource {
   const events = new EventSource(
     `/api/workflows/runs/${encodeURIComponent(runId)}/events`,
+    { withCredentials: options.withCredentials ?? false },
   );
 
   events.addEventListener("snapshot", (message) => {
@@ -200,6 +204,13 @@ export function observeWorkflowRun(runId: string): EventSource {
   return events;
 }
 ```
+
+This native `EventSource` example assumes the handler authorizes a same-origin
+cookie session, which the browser sends automatically. For a cross-origin
+cookie session, call `observeWorkflowRun(runId, { withCredentials: true })` and
+allow credentialed CORS on the workflow origin. Native `EventSource` cannot set
+an `Authorization` header. Bearer-token clients must use a fetch-based SSE
+client and pass the same authorization header used by the workflow hooks.
 
 The first frame is normally `snapshot`, using the same public run projection as
 `GET /runs/{runId}`. When the stored run cannot be serialized, the stream opens

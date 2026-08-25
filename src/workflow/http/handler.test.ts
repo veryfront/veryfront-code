@@ -561,6 +561,21 @@ describe("createWorkflowHandler", () => {
     );
   });
 
+  it("normalizes Unicode and spaces in a custom basePath", async () => {
+    for (const basePath of ["/api/流/", "/api/work flows/"] as const) {
+      const mounted = authorizedHandler(client, { basePath });
+      const requestPath = `${basePath}pipeline/start`;
+      const response = await mounted.POST(post(requestPath, { input: {} }));
+
+      expect(response.status).toBe(200);
+      const { runId } = await response.json() as { runId: string };
+      await until(
+        async () => (await client.getRun(runId))?.status === "completed",
+        `run ${runId} to finish`,
+      );
+    }
+  });
+
   it("does not answer for a path outside its mount point", async () => {
     const response = await handlers.GET(get("/api/something-else/runs"));
     expect(response.status).toBe(404);

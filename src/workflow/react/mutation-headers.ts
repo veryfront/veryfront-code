@@ -6,6 +6,14 @@ export function normalizeWorkflowApiBase(apiBase: string): string {
   return apiBase.replace(/\/+$/, "");
 }
 
+/** Encode an identifier that must remain one WHATWG URL path segment. */
+export function encodeWorkflowPathSegment(value: string, label: string): string {
+  if (value === "." || value === "..") {
+    throw new TypeError(`${label} must not be a dot-only URL path segment`);
+  }
+  return encodeURIComponent(value);
+}
+
 /** Stabilize semantically equal inline header objects across hook renders. */
 export function useStableWorkflowHeaders(headers?: HeadersInit): Headers {
   const key = JSON.stringify(

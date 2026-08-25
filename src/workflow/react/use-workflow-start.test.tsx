@@ -44,6 +44,48 @@ function installDom(): () => void {
 }
 
 describe("useWorkflowStart", () => {
+  it("ignores an obsolete approval response after authorization changes", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const firstResponse = Promise.withResolvers<Response>();
+    const secondResponse = Promise.withResolvers<Response>();
+    let requestCount = 0;
+    let hook: UseApprovalResult | null = null;
+
+    globalThis.fetch = (() => {
+      requestCount++;
+      return requestCount === 1 ? firstResponse.promise : secondResponse.promise;
+    }) as typeof fetch;
+
+    function Capture({ token }: { token: string }): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      flushSync(() => root.render(<Capture token="new" />));
+
+      secondResponse.resolve(Response.json({ id: "approval-1", message: "new session" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(requestCount, 2);
+      assertEquals(hook!.approval?.message, "new session");
+
+      firstResponse.resolve(Response.json({ id: "approval-1", message: "old session" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.approval?.message, "new session");
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("ignores an obsolete list response after request options change", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
@@ -159,6 +201,36 @@ describe("useWorkflowStart", () => {
         requestedUrl,
         "/api/workflows/billing%3Av2%2Bmanual/start",
       );
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("rejects dot-only workflow IDs before fetching", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    globalThis.fetch = (() => {
+      fetchCount++;
+      return Promise.resolve(Response.json({ runId: "unexpected" }));
+    }) as typeof fetch;
+
+    function Capture({ workflowId }: { workflowId: string }): null {
+      hook = useWorkflowStart({ workflowId });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      for (const workflowId of [".", ".."] as const) {
+        flushSync(() => root.render(<Capture workflowId={workflowId} />));
+        await assertRejects(() => hook!.start({}), TypeError, "path segment");
+      }
+      assertEquals(fetchCount, 0);
     } finally {
       flushSync(() => root.unmount());
       globalThis.fetch = originalFetch;

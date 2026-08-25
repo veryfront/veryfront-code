@@ -7,6 +7,7 @@ import type {
 } from "#veryfront/workflow/types.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import {
+  encodeWorkflowPathSegment,
   normalizeWorkflowApiBase,
   useStableWorkflowHeaders,
   workflowMutationHeaders,
@@ -86,11 +87,14 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${normalizedApiBase}/runs/${encodeURIComponent(runId)}`, {
-        signal: abortControllerRef.current?.signal,
-        headers: stableHeaders,
-        credentials,
-      });
+      const response = await fetch(
+        `${normalizedApiBase}/runs/${encodeWorkflowPathSegment(runId, "Workflow run ID")}`,
+        {
+          signal: abortControllerRef.current?.signal,
+          headers: stableHeaders,
+          credentials,
+        },
+      );
 
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -151,7 +155,9 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/cancel`;
+      const requestUrl = `${normalizedApiBase}/runs/${
+        encodeWorkflowPathSegment(runId, "Workflow run ID")
+      }/cancel`;
       const response = await fetch(requestUrl, {
         method: "POST",
         headers: workflowMutationHeaders(requestUrl, stableHeaders),
@@ -175,7 +181,9 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/retry`;
+      const requestUrl = `${normalizedApiBase}/runs/${
+        encodeWorkflowPathSegment(runId, "Workflow run ID")
+      }/retry`;
       const response = await fetch(requestUrl, {
         method: "POST",
         headers: workflowMutationHeaders(requestUrl, stableHeaders),

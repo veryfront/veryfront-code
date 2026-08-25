@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import {
+  encodeWorkflowPathSegment,
   normalizeWorkflowApiBase,
   useStableWorkflowHeaders,
   workflowMutationHeaders,
@@ -52,7 +53,9 @@ export function useWorkflowStart<TInput = unknown>(
       setError(null);
 
       try {
-        const requestUrl = `${normalizedApiBase}/${encodeURIComponent(workflowId)}/start`;
+        const requestUrl = `${normalizedApiBase}/${
+          encodeWorkflowPathSegment(workflowId, "Workflow ID")
+        }/start`;
         const response = await fetch(requestUrl, {
           method: "POST",
           headers: workflowMutationHeaders(requestUrl, {
