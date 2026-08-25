@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -245,8 +242,7 @@ exit 0
       args: [installSmokePath],
       env: {
         VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
-        VF_NPM_REGISTRY_URL:
-          `https://registry-user:${credential}@registry.example.test/npm/`,
+        VF_NPM_REGISTRY_URL: `https://registry-user:${credential}@registry.example.test/npm/`,
         VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
       },
       stdout: "piped",
