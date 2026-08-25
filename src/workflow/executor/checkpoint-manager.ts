@@ -1,10 +1,12 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { buildGraph, getReadyNodes, updateInDegreesForCompletedNodes } from "./dag/graph.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
+const numberIsSafeInteger = Number.isSafeInteger;
 
 export interface CheckpointManagerConfig {
   backend: WorkflowBackend;
@@ -130,5 +132,40 @@ export class CheckpointManager {
     };
     updateInDegreesForCompletedNodes(readinessStates, adjList, inDegree);
     return getReadyNodes(inDegree, readinessStates)[0] ?? null;
+  }
+
+  /**
+   * @deprecated Checkpoint retention is enforced by built-in backends. This
+   * compatibility wrapper remains for callers that prune checkpoints manually.
+   */
+  async cleanup(runId: string, keepCount: number = 5): Promise<void> {
+    if (!numberIsSafeInteger(keepCount) || keepCount < 0) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Checkpoint keepCount must be a non-negative safe integer",
+      });
+    }
+    const all = await this.getAll(runId);
+    if (all.length <= keepCount) return;
+
+    const idsToDelete = all.slice(0, all.length - keepCount).map((checkpoint) => checkpoint.id);
+    if (idsToDelete.length === 0) return;
+
+    logger.debug("Cleaning up old checkpoints", {
+      count: idsToDelete.length,
+      runId,
+    });
+
+    const { backend } = this.config;
+
+    if (backend.deleteCheckpoints) {
+      await backend.deleteCheckpoints(runId, idsToDelete);
+      return;
+    }
+
+    if (!backend.deleteCheckpoint) return;
+
+    for (const id of idsToDelete) {
+      await backend.deleteCheckpoint(runId, id);
+    }
   }
 }
