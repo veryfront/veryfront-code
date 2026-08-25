@@ -32,6 +32,7 @@ import {
   type AgentServiceEvalAdapterConfig,
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
+import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import type {
   EvalAgentAdapter,
@@ -984,6 +985,7 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
 
   return {
     endpoint,
@@ -1009,7 +1011,7 @@ function createEvalAdapterConfig(input: {
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
-    fetch: createLocalEvalAgentFetch({ endpoint, agentId }),
+    fetch: localFetch && agentId ? bindTrustedLocalEvalFetch(localFetch, agentId) : undefined,
   };
 }
 

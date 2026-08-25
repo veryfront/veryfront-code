@@ -23,6 +23,7 @@ import {
   normalizeEvalStringList,
   stringifyEvalError,
 } from "./validation.ts";
+import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -556,6 +557,12 @@ function assertAgentServiceEvalAdapterConfig(config: AgentServiceEvalAdapterConf
   assertCanonicalEvalString(config.authToken, "Agent-service eval auth token");
   assertOptionalAgentServiceConfigString(config.endpoint, "Agent-service eval endpoint");
   assertOptionalAgentServiceConfigString(config.agentId, "Agent-service eval agentId");
+  if (config.agentId != null && config.agentId !== trustedLocalEvalFetchAgentId(config.fetch)) {
+    throw new TypeError(
+      `Agent-service evals cannot select agent "${config.agentId}" through public AG-UI; ` +
+        "provide a trusted fetch bound to that agent or omit agentId",
+    );
+  }
   assertOptionalAgentServiceConfigString(config.projectId, "Agent-service eval projectId");
   assertOptionalAgentServiceConfigString(config.projectSlug, "Agent-service eval projectSlug");
   assertOptionalAgentServiceConfigString(config.releaseId, "Agent-service eval releaseId");
@@ -727,7 +734,7 @@ export function createAgentServiceEvalAdapter(
         exampleId: context.example.id,
         input: context.example.input,
         metadata: context.example.metadata,
-        agentId: config.agentId,
+        agentId: undefined,
         projectId: config.projectId,
         conversationId: config.conversationId,
         branchId: config.branchId,
