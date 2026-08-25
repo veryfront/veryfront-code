@@ -41,21 +41,21 @@ Create a typed prompt definition whose explicit id contains non-whitespace text.
 
 | Name     | Description                                                                      | Source                                                                                    |
 | -------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `prompt` | Create a typed prompt definition whose explicit id contains non-whitespace text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L24) |
+| `prompt` | Create a typed prompt definition whose explicit id contains non-whitespace text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L25) |
 
 ### Types
 
 | Name                  | Description                                                                                                                                                   | Source                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Prompt`              | Public API contract for prompt.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L11)                 |
-| `PromptArgument`      | Public MCP argument metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L79) |
-| `PromptConfig`        | Configuration used by prompt. An explicit id must contain non-whitespace text.                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L77) |
-| `PromptGenerateFn`    | Generate prompt content from interpolation variables.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L16) |
-| `PromptMCPConfig`     | Public MCP exposure metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L81) |
-| `PromptRenderContext` | Cancellation and absolute-deadline controls for one prompt render. A deadline is enforced before work begins and after interpolation or generation completes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L8)  |
+| `Prompt`              | Public API contract for prompt.                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L12)                 |
+| `PromptArgument`      | Public MCP argument metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L80) |
+| `PromptConfig`        | Configuration used by prompt. An explicit id must contain non-whitespace text.                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L78) |
+| `PromptGenerateFn`    | Generate prompt content from interpolation variables.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L17) |
+| `PromptMCPConfig`     | Public MCP exposure metadata for a prompt.                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L82) |
+| `PromptRenderContext` | Cancellation and absolute-deadline controls for one prompt render. A deadline is enforced before work begins and after interpolation or generation completes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L9)  |
 
 ### Constants
 
 | Name             | Description                                              | Source                                                                                     |
 | ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `promptRegistry` | Application-facing project-scoped prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L61) |
+| `promptRegistry` | Application-facing project-scoped prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L62) |
