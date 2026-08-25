@@ -79,10 +79,14 @@ export async function ensurePreviewSourceSnapshotFresh(
 ): Promise<void> {
   if (!hasMutablePreviewSource(ctx)) return;
   const fs = ctx.adapter.fs;
-  if (reasons.maxAgeMs !== undefined && reasons.maxAgeMs <= 0) {
+  if (
+    reasons.maxAgeMs !== undefined && reasons.maxAgeMs <= 0 &&
+    fs.ensureSourceSnapshotFresh &&
+    fs.sourceSnapshotFreshnessOptionsVersion !== 1
+  ) {
     // Legacy custom adapters implemented the original one-argument method and
     // silently ignore freshness options. A document render cannot reuse that
-    // lease, so prefer the unconditional refresh when it is available.
+    // lease, so fall back to unconditional refresh when it is available.
     if (fs.refreshSourceSnapshot) {
       await refreshPreviewSourceSnapshot(ctx, reasons.refreshFallback);
       return;
@@ -90,15 +94,10 @@ export async function ensurePreviewSourceSnapshotFresh(
     // An ensure-only adapter must explicitly advertise the options contract.
     // Function arity is not a capability signal: optional/default parameters
     // and wrappers make it ambiguous, and guessing here can render stale HTML.
-    if (
-      fs.ensureSourceSnapshotFresh &&
-      fs.sourceSnapshotFreshnessOptionsVersion !== 1
-    ) {
-      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-        detail:
-          `The filesystem adapter serving "${ctx.projectSlug}" implements ensureSourceSnapshotFresh() but does not advertise sourceSnapshotFreshnessOptionsVersion: 1, so this document render cannot prove zero-age source freshness.`,
-      });
-    }
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail:
+        `The filesystem adapter serving "${ctx.projectSlug}" implements ensureSourceSnapshotFresh() but does not advertise sourceSnapshotFreshnessOptionsVersion: 1, so this document render cannot prove zero-age source freshness.`,
+    });
   }
 
   if (fs.ensureSourceSnapshotFresh) {

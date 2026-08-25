@@ -10,7 +10,6 @@ import {
   ensurePreviewSourceSnapshotFresh,
   preparePreviewDocumentSourceSnapshot,
 } from "../source-snapshot-freshness.ts";
-import { shouldRejectDueToMemory } from "#veryfront/server/shared/renderer-factory.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
@@ -21,7 +20,6 @@ import {
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { enterContextualAdapterRequestContext } from "../contextual-adapter-context.ts";
-import { ssrOwnsDocumentPathname } from "../ssr/document-ownership.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -151,27 +149,11 @@ export class ApiHandlerWrapper extends BaseHandler {
             !pathname.startsWith("/api/") &&
             (req.method === "GET" || req.method === "HEAD");
 
-          // SSR owns the pressure response, but only for pathnames it will
-          // actually render or shed. Extension paths like GET /file.md belong
-          // to MarkdownPreviewHandler, which serves them even under critical
-          // pressure, so skipping their refresh here would render stale
-          // cached source instead of shedding anything.
-          const ssrOwnsDocument = canResolveAsPage && ssrOwnsDocumentPathname(pathname);
-
-          // Under critical pressure SSR sheds the pages it owns, so a
-          // page-bound request must not fetch and retain a strict source
-          // snapshot it will never render. Route ownership still has to be
-          // classified first, from the snapshot already on hand: an
-          // extensionless path can belong to an API route (app/webhook/
-          // route.ts), which never reaches SSR's shed response and must stay
-          // available while the renderer sheds.
-          const deferShedToSSR = ssrOwnsDocument && shouldRejectDueToMemory();
-
           // A document path can change ownership between App Router page and
           // route.ts without changing the branch identity. Establish strict
           // freshness before classifying it, then let SSR reuse that snapshot.
           if (canResolveAsPage) {
-            if (!deferShedToSSR) await preparePreviewDocumentSourceSnapshot(ctx);
+            await preparePreviewDocumentSourceSnapshot(ctx);
           } else {
             await ensurePreviewSourceSnapshotFresh(ctx);
           }
@@ -184,11 +166,6 @@ export class ApiHandlerWrapper extends BaseHandler {
           if (isPageRequest) {
             return this.continue();
           }
-
-          // The path is API-owned (or unowned), so it never reaches SSR's
-          // pressure response; give it the default leased freshness the
-          // strict preparation was skipped for.
-          if (deferShedToSSR) await ensurePreviewSourceSnapshotFresh(ctx);
 
           if (mustDenyProjectExecution) {
             return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);

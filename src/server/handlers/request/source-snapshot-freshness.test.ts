@@ -56,6 +56,29 @@ it("rejects an unversioned ensure-only adapter for a negative age budget", async
   assertEquals(ensureCalls, 0, "a legacy lease cannot satisfy a negative age budget");
 });
 
+it("prefers a versioned zero-age ensure contract over unconditional refresh", async () => {
+  const ensureCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+  let refreshes = 0;
+  const adapter = createMockAdapter();
+  adapter.fs = {
+    ...adapter.fs,
+    sourceSnapshotFreshnessOptionsVersion: 1,
+    ensureSourceSnapshotFresh: (reason, options) => {
+      ensureCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+      return Promise.resolve();
+    },
+    refreshSourceSnapshot: () => {
+      refreshes++;
+      return Promise.resolve();
+    },
+  };
+
+  await preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter));
+
+  assertEquals(ensureCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
+  assertEquals(refreshes, 0, "the versioned ensure method owns immutable-source short-circuiting");
+});
+
 it("reuses a prepared document snapshot while its identity is unchanged", async () => {
   let refreshes = 0;
   const adapter = createMockAdapter();

@@ -225,7 +225,7 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(events.includes("source-fresh"), false);
   });
 
-  it("does not refresh a page document that SSR will shed for memory pressure", async () => {
+  it("refreshes page ownership before SSR can shed for memory pressure", async () => {
     const ctx = createCtx({});
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
@@ -282,11 +282,11 @@ describe("ApiHandlerWrapper", () => {
         ctx,
       );
       assertEquals(result, { continue: true });
-      assertEquals(refreshes, 0);
+      assertEquals(refreshes, 1);
       assertEquals(
         pageClassifications > 0,
         true,
-        "the shed shortcut must rest on real page ownership, not on the path shape alone",
+        "the shed decision must rest on current page ownership, not on a stale snapshot",
       );
     } finally {
       injectMemoryPressureDeps(null);
@@ -344,6 +344,75 @@ describe("ApiHandlerWrapper", () => {
         "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
       );
       assertEquals(refreshes, 1, "an API-owned path keeps its leased freshness under pressure");
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("refreshes pressured route ownership before classifying a stale page snapshot", async () => {
+    const events: string[] = [];
+    let routeIsCurrent = false;
+    const ctx = createCtx({});
+    ctx.projectSlug = "pressured-route-transition";
+    ctx.config = { router: "pages" };
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string) => Promise<Uint8Array>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      events.push(`classify:${routeIsCurrent ? "route" : "page"}`);
+      return Promise.resolve(
+        !routeIsCurrent && path === "/tmp/project/pages/new-webhook"
+          ? "/tmp/project/pages/new-webhook.tsx"
+          : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path.endsWith("pages/new-webhook.tsx")) {
+        return Promise.resolve("export default function Page() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      if (path.endsWith("pages/new-webhook.tsx")) {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Page() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.refreshSourceSnapshot = () => {
+      events.push("refresh");
+      routeIsCurrent = true;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/new-webhook"),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+      assertEquals(events.slice(0, 2), ["refresh", "classify:route"]);
     } finally {
       injectMemoryPressureDeps(null);
     }
