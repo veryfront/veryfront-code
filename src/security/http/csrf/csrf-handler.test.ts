@@ -321,10 +321,107 @@ describe("security/http/csrf/csrf-handler", () => {
       }
 
       assertEquals(warnings.length, 2);
-      assertStringIncludes(warnings[0]!, "POST /api/cases");
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
       assertStringIncludes(warnings[0]!, "csrfMutationHeaders");
       assertStringIncludes(warnings[0]!, '"veryfront/index.client"');
-      assertStringIncludes(warnings[1]!, "PUT /api/other");
+      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
+    });
+
+    it("does not include raw path segments in the missing-header warning", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      const sensitiveSegment = "private.email@example.com";
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request(`http://localhost/api/orders/${sensitiveSegment}/charge`, {
+            method: "POST",
+          }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 1);
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertEquals(warnings[0]!.includes("/api/orders"), false);
+      assertEquals(warnings[0]!.includes("charge"), false);
+      assertEquals(warnings[0]!.includes(sensitiveSegment), false);
+    });
+
+    it("warns once per local project identity", async () => {
+      const localHandler = new CsrfHandler();
+      const alphaCtx = createCtx();
+      alphaCtx.securityConfig = {};
+      alphaCtx.isLocalProject = true;
+      alphaCtx.projectSlug = "alpha";
+      const betaCtx = createCtx();
+      betaCtx.securityConfig = {};
+      betaCtx.isLocalProject = true;
+      betaCtx.projectSlug = "beta";
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          alphaCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          betaCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/shared", { method: "POST" }),
+          betaCtx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 2);
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertStringIncludes(warnings[1]!, "POST request [path redacted]");
+    });
+
+    it("evicts old warning keys without suppressing new routes", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      ctx.projectSlug = "eviction-project";
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        for (let index = 0; index < 101; index++) {
+          await localHandler.handle(
+            new Request(`http://localhost/api/r${index}`, { method: "POST" }),
+            ctx,
+          );
+        }
+        await localHandler.handle(
+          new Request("http://localhost/api/final-route", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/final-route", { method: "POST" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 102);
+      assertStringIncludes(warnings[101]!, "POST request [path redacted]");
     });
 
     it("does not warn outside the absent-header local development case", async () => {

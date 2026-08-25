@@ -42,6 +42,7 @@ import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { validateCsrf } from "../../csrf/helpers.ts";
@@ -52,12 +53,42 @@ import type {
   HandlerResult,
 } from "#veryfront/types";
 
+type CsrfSetting = NonNullable<HandlerContext["securityConfig"]>["csrf"];
+
 const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_CSRF_HEADER_NAME = "x-csrf-token";
 const MAX_WARNED_PATHS = 100;
+const REDACTED_PATH_LABEL = "request [path redacted]";
+
+function localProjectWarningScope(ctx: HandlerContext): string {
+  return ctx.projectId ?? ctx.projectSlug ?? ctx.projectDir;
+}
+
+function missingCsrfWarningKey(ctx: HandlerContext, method: string, pathname: string): string {
+  return hashString(JSON.stringify([localProjectWarningScope(ctx), method, pathname]));
+}
+
+function shouldWarnAboutProductionDefault(req: Request, ctx: HandlerContext): boolean {
+  return isExplicitlyLocalProject(ctx) && !req.headers.has(DEFAULT_CSRF_HEADER_NAME);
+}
+
+function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean {
+  if (typeof csrfConfig !== "object" || !csrfConfig.excludePaths?.length) return false;
+
+  for (const excludePath of csrfConfig.excludePaths) {
+    if (pathname === excludePath || pathname.startsWith(excludePath + "/")) return true;
+  }
+  return false;
+}
+
+function csrfValidationOptions(csrfConfig: CsrfSetting) {
+  return typeof csrfConfig === "object"
+    ? { cookieName: csrfConfig.cookieName, headerName: csrfConfig.headerName }
+    : undefined;
+}
 
 export class CsrfHandler extends BaseHandler {
-  private readonly warnedMissingCsrfPaths = new Set<string>();
+  private readonly warnedMissingCsrfKeys = new Set<string>();
 
   metadata: HandlerMetadata = {
     name: "CsrfHandler",
@@ -125,29 +156,15 @@ export class CsrfHandler extends BaseHandler {
     if (isSignedChannelDispatch(req)) return this.continue();
 
     if (csrfConfig === undefined) {
-      if (
-        isExplicitlyLocalProject(ctx) &&
-        !req.headers.has(DEFAULT_CSRF_HEADER_NAME)
-      ) {
-        this.warnMissingCsrfHeaderOnce(method, pathname);
+      if (shouldWarnAboutProductionDefault(req, ctx)) {
+        this.warnMissingCsrfHeaderOnce(ctx, method, pathname);
       }
       return this.continue();
     }
 
-    // Check exclude paths
-    if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {
-      for (const excludePath of csrfConfig.excludePaths) {
-        if (pathname === excludePath || pathname.startsWith(excludePath + "/")) {
-          return this.continue();
-        }
-      }
-    }
+    if (isExcludedCsrfPath(csrfConfig, pathname)) return this.continue();
 
-    const options = typeof csrfConfig === "object"
-      ? { cookieName: csrfConfig.cookieName, headerName: csrfConfig.headerName }
-      : undefined;
-
-    if (!validateCsrf(req, options)) {
+    if (!validateCsrf(req, csrfValidationOptions(csrfConfig))) {
       return this.respond(
         this.createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
@@ -160,17 +177,24 @@ export class CsrfHandler extends BaseHandler {
     return this.continue();
   }
 
-  private warnMissingCsrfHeaderOnce(method: string, pathname: string): void {
-    if (
-      this.warnedMissingCsrfPaths.has(pathname) ||
-      this.warnedMissingCsrfPaths.size >= MAX_WARNED_PATHS
-    ) {
+  private warnMissingCsrfHeaderOnce(
+    ctx: HandlerContext,
+    method: string,
+    pathname: string,
+  ): void {
+    const warningKey = missingCsrfWarningKey(ctx, method, pathname);
+    if (this.warnedMissingCsrfKeys.has(warningKey)) {
       return;
     }
 
-    this.warnedMissingCsrfPaths.add(pathname);
+    if (this.warnedMissingCsrfKeys.size >= MAX_WARNED_PATHS) {
+      const oldest = this.warnedMissingCsrfKeys.values().next();
+      if (!oldest.done) this.warnedMissingCsrfKeys.delete(oldest.value);
+    }
+
+    this.warnedMissingCsrfKeys.add(warningKey);
     this.logWarn(
-      `${method} ${pathname} has no ${DEFAULT_CSRF_HEADER_NAME} header. ` +
+      `${method} ${REDACTED_PATH_LABEL} has no ${DEFAULT_CSRF_HEADER_NAME} header. ` +
         "Production enables CSRF protection by default and would reject this request. " +
         'Use csrfMutationHeaders from "veryfront/index.client" for browser mutations, ' +
         "or configure security.csrf explicitly.",
