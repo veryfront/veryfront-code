@@ -3,11 +3,16 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 
-// Match every explicit scheme form plus network-path references. The URL
-// parser canonicalizes single-slash (`https:/host/x`), opaque (`file:/x`), and
-// protocol-relative (`//host/x`) spellings into URLs with the supplied base.
-const RECOVERY_URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:|\/\/)[^\s"\\]+/gi;
+// Match every explicit scheme form plus slash and JSON-escaped backslash
+// network-path references. The URL parser canonicalizes single-slash
+// (`https:/host/x`), opaque (`file:/x`), and network-path spellings into URLs
+// with the supplied base.
+const RECOVERY_URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:|\/\/|(?:\\\\){2})[^\s"]+/gi;
 const PUBLIC_RECOVERY_ORIGIN = "https://veryfront.com";
+
+function normalizeSerializedRecoveryUrl(value: string): string {
+  return value.replaceAll("\\\\", "/");
+}
 
 describe("errors/catalog/server-errors", () => {
   describe("SERVER_ERROR_CATALOG", () => {
@@ -63,7 +68,10 @@ describe("errors/catalog/server-errors", () => {
       assertEquals(solution?.example?.includes("veryfront clean --cache"), true);
 
       for (const match of serialized.matchAll(RECOVERY_URL_PATTERN)) {
-        const normalized = new URL(match[0], PUBLIC_RECOVERY_ORIGIN);
+        const normalized = new URL(
+          normalizeSerializedRecoveryUrl(match[0]),
+          PUBLIC_RECOVERY_ORIGIN,
+        );
         assertEquals(
           normalized.username,
           "",
@@ -137,6 +145,21 @@ describe("errors/catalog/server-errors", () => {
         new URL(matches[0]!, PUBLIC_RECOVERY_ORIGIN).origin === PUBLIC_RECOVERY_ORIGIN,
         false,
       );
+    });
+
+    it("should match backslash network-path recovery URLs", () => {
+      const serialized = JSON.stringify({
+        step: "Open \\\\private-control-plane.example\\runbook",
+      });
+      const matches = [...serialized.matchAll(RECOVERY_URL_PATTERN)].map((match) => match[0]);
+
+      assertEquals(matches.length, 1);
+      const normalized = new URL(
+        normalizeSerializedRecoveryUrl(matches[0]!),
+        PUBLIC_RECOVERY_ORIGIN,
+      );
+      assertEquals(normalized.hostname, "private-control-plane.example");
+      assertEquals(normalized.origin === PUBLIC_RECOVERY_ORIGIN, false);
     });
 
     it("should recognize URL schemes case-insensitively", () => {

@@ -12,6 +12,17 @@ import {
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
 const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const regExpPrototypeExec = RegExp.prototype.exec;
+const regExpPrototypeTest = RegExp.prototype.test;
+
+function execRegExp(pattern: RegExp, value: string): RegExpExecArray | null {
+  return reflectApply(regExpPrototypeExec, pattern, [value]);
+}
+
+function testRegExp(pattern: RegExp, value: string): boolean {
+  return reflectApply(regExpPrototypeTest, pattern, [value]);
+}
 
 function getSolution(errorKey: string): (typeof ERROR_SOLUTIONS)[string] | undefined {
   return objectHasOwn(ERROR_SOLUTIONS, errorKey) ? ERROR_SOLUTIONS[errorKey] : undefined;
@@ -106,28 +117,32 @@ const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 /** Whether a frame's trailing segment is a source location rather than more label. */
 function isSourceLocationText(text: string): boolean {
   const trimmed = text.trim();
-  return URI_SCHEME_LOCATION.test(trimmed) || PATH_SEPARATOR.test(trimmed) ||
-    FILE_LINE_COLUMN_LOCATION.test(trimmed) || SOURCE_FILE_BASENAME_LOCATION.test(trimmed);
+  return testRegExp(URI_SCHEME_LOCATION, trimmed) || testRegExp(PATH_SEPARATOR, trimmed) ||
+    testRegExp(FILE_LINE_COLUMN_LOCATION, trimmed) ||
+    testRegExp(SOURCE_FILE_BASENAME_LOCATION, trimmed);
 }
 
 function isRetainableCallableLabel(label: string): boolean {
   // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
   // label gets the same source-location validation as location text itself.
   return !!label && !isSourceLocationText(label) &&
-    !BRACKETED_IPV6_CALLABLE_LABEL.test(label) &&
-    (!HOSTNAME_SHAPED_CALLABLE_LABEL.test(label) ||
-      SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL.test(label));
+    !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
+    (!testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+      testRegExp(SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL, label));
 }
 
 /** Keep a frame's callable label only when the label itself carries no source location. */
 function retainCallableLabel(label: string): string {
   const trimmed = label.trim();
-  const prefix = CALLABLE_LABEL_PREFIX.exec(trimmed)?.[0] ?? "";
+  const prefix = execRegExp(CALLABLE_LABEL_PREFIX, trimmed)?.[0] ?? "";
   const callableLabel = prefix ? trimmed.slice(prefix.length).trim() : trimmed;
-  const alias = CALLABLE_ALIAS_SUFFIX.exec(callableLabel);
+  const alias = execRegExp(CALLABLE_ALIAS_SUFFIX, callableLabel);
+  const aliasLabel = alias?.[2]?.trim();
+  const aliasPrefix = aliasLabel ? execRegExp(CALLABLE_LABEL_PREFIX, aliasLabel)?.[0] : undefined;
+  const unprefixedAlias = aliasPrefix ? aliasLabel!.slice(aliasPrefix.length).trim() : aliasLabel;
   const isSafe = alias
     ? isRetainableCallableLabel(alias[1]!.trim()) &&
-      isRetainableCallableLabel(alias[2]!.trim())
+      isRetainableCallableLabel(unprefixedAlias ?? "")
     : isRetainableCallableLabel(callableLabel);
   return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
 }
@@ -139,7 +154,7 @@ function sanitizeUserFacingStackFrame(line: string): string {
   if (frame.startsWith("at ") && locationStart > 3 && frame.endsWith(")")) {
     return retainCallableLabel(frame.slice(3, locationStart));
   }
-  const locationOnly = LOCATION_ONLY_FRAME.exec(frame);
+  const locationOnly = execRegExp(LOCATION_ONLY_FRAME, frame);
   if (locationOnly) {
     return isSourceLocationText(locationOnly[1]!)
       ? "at <anonymous>"

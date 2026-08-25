@@ -178,6 +178,7 @@ describe("formatUserError", () => {
     error.stack = [
       "Error: unknown error callable_alias_frames",
       "    at Object.publicAlias [as private-control.example] (/srv/app.ts:1:1)",
+      "    at Object.publicAlias [as async prefixed-private.example] (/srv/app.ts:2:1)",
       "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
     ].join("\n");
 
@@ -191,7 +192,34 @@ describe("formatUserError", () => {
     }
 
     assertEquals(output.includes("private-control.example"), false);
+    assertEquals(output.includes("prefixed-private.example"), false);
     assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+  });
+
+  it("should not call live RegExp prototype hooks while sanitizing stacks", () => {
+    const originalTest = RegExp.prototype.test;
+    const originalEnvironment = getHostEnv("VERYFRONT_ENV");
+    const error = new Error("unknown error mutated_regexp_test");
+    error.stack = [
+      "Error: unknown error mutated_regexp_test",
+      "    at publicHandler (/srv/app.ts:1:1)",
+    ].join("\n");
+
+    let output: string;
+    try {
+      setEnv("VERYFRONT_ENV", "development");
+      RegExp.prototype.test = () => {
+        throw new Error("live RegExp.test must not run");
+      };
+      output = formatUserError(error);
+    } finally {
+      RegExp.prototype.test = originalTest;
+      if (originalEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
+      else setEnv("VERYFRONT_ENV", originalEnvironment);
+    }
+
+    assert(output.includes("publicHandler"));
+    assertEquals(output.includes("live RegExp.test"), false);
   });
 
   it("should not invoke proxy traps in plain output", () => {
