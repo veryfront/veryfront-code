@@ -62,8 +62,8 @@ function quoteYamlString(value: string): string {
  * only stripped the surrounding ones, so a quoted title came back carrying the
  * backslashes as literal characters and compounded on every write.
  *
- * Single-quoted values carry no escapes, and an unquoted value is returned as
- * it stands, so hand-edited frontmatter keeps working.
+ * Single-quoted values encode apostrophes by doubling them. An unquoted value
+ * is returned as it stands, so hand-edited frontmatter keeps working.
  */
 function unquoteYamlString(value: string): string {
   const trimmed = value.trim();
@@ -73,7 +73,14 @@ function unquoteYamlString(value: string): string {
   if ((quote !== '"' && quote !== "'") || !trimmed.endsWith(quote)) return trimmed;
 
   const inner = trimmed.slice(1, -1);
-  return quote === "'" ? inner : inner.replace(/\\(["\\])/g, "$1");
+  return quote === "'" ? inner.replace(/''/g, "'") : inner.replace(/\\(["\\])/g, "$1");
+}
+
+function isQuotedYamlString(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return false;
+  const quote = trimmed[0];
+  return (quote === '"' || quote === "'") && trimmed.endsWith(quote);
 }
 
 /**
@@ -88,7 +95,8 @@ function splitInlineArray(body: string): string[] {
   let quote: string | null = null;
   let escaped = false;
 
-  for (const char of body) {
+  for (let index = 0; index < body.length; index++) {
+    const char = body[index]!;
     if (escaped) {
       current += char;
       escaped = false;
@@ -100,6 +108,11 @@ function splitInlineArray(body: string): string[] {
       continue;
     }
     if (quote) {
+      if (quote === "'" && char === "'" && body[index + 1] === "'") {
+        current += "''";
+        index++;
+        continue;
+      }
       if (char === quote) quote = null;
       current += char;
       continue;
@@ -181,10 +194,13 @@ export function parseYaml(yaml: string): Record<string, unknown> {
       continue;
     }
 
+    const quoted = isQuotedYamlString(value);
     let cleanValue: unknown = unquoteYamlString(value);
-    if (cleanValue === "true") cleanValue = true;
-    else if (cleanValue === "false") cleanValue = false;
-    else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
+    if (!quoted) {
+      if (cleanValue === "true") cleanValue = true;
+      else if (cleanValue === "false") cleanValue = false;
+      else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
+    }
 
     result[key] = cleanValue;
   }

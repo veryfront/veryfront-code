@@ -231,6 +231,29 @@ describe("serializeYaml/parseYaml round trip", () => {
       "an inline array must split on separators between items, not inside them",
     );
   });
+
+  it("quoted YAML keywords remain strings", () => {
+    const base: Omit<IssueMetadata, "title"> = {
+      id: "ISSUE-001",
+      state: "open",
+      labels: [],
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    for (const title of ["true", "false", "null", "~"]) {
+      assertEquals(parseYaml(serializeYaml({ ...base, title })).title, title);
+    }
+  });
+
+  it("decodes doubled apostrophes in single-quoted values", () => {
+    assertEquals(parseYaml("title: 'can''t fail'").title, "can't fail");
+    assertEquals(
+      parseYaml("labels: ['owner''s, urgent', bug]").labels,
+      ["owner's, urgent", "bug"],
+    );
+  });
 });
 
 Deno.test("serializeYaml - preserves empty arrays", () => {
