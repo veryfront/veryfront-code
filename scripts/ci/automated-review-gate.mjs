@@ -1,17 +1,19 @@
 const BOTS = new Map([
-  ["coderabbitai[bot]", 136622811],
   ["chatgpt-codex-connector[bot]", 199175422],
+  ["github-actions[bot]", 41898282],
 ]);
-const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
+const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
-const SUBMITTED_REVIEW_STATES = new Set(["APPROVED", "COMMENTED"]);
 const MAX_ITEMS_PER_SOURCE = 500;
 const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
+const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
+/** @type {(login: string) => Promise<boolean>} */
+const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 
@@ -23,24 +25,28 @@ function isPinnedBot(user, login) {
 
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
-  { reviews, comments, statuses },
+  { reviews, comments },
   headSha,
   resolveCommit = NO_COMMIT,
   { allowPullRequestReviews = true } = {},
+  isTrustedHuman = NO_TRUSTED_HUMAN,
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
 
   if (allowPullRequestReviews) {
+    let codexApproval;
+    let codexFinding = false;
     for (const review of reviews) {
       const state = typeof review?.state === "string"
         ? review.state.toUpperCase()
         : "";
+      const exactHead = review?.commit_id?.toLowerCase() ===
+        headSha.toLowerCase();
       if (
-        isPinnedBot(review?.user, CODEX_LOGIN) &&
-        review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
-        SUBMITTED_REVIEW_STATES.has(state)
+        exactHead && state === "APPROVED" &&
+        isPinnedBot(review?.user, CODEX_LOGIN)
       ) {
-        return {
+        codexApproval = {
           reviewer: CODEX_LOGIN,
           source: "pull-request-review",
           state,
@@ -48,29 +54,33 @@ export async function findAutomatedReview(
             ? review.html_url
             : undefined,
         };
+        continue;
+      }
+      if (
+        exactHead && isPinnedBot(review?.user, CODEX_LOGIN) &&
+        (state === "COMMENTED" || state === "CHANGES_REQUESTED")
+      ) {
+        codexFinding = true;
+        continue;
+      }
+      if (
+        exactHead && state === "APPROVED" &&
+        review?.user?.type === "User" &&
+        typeof review?.user?.login === "string" &&
+        await isTrustedHuman(review.user.login)
+      ) {
+        return {
+          reviewer: review.user.login,
+          source: "human-approval",
+          state,
+          url: typeof review.html_url === "string"
+            ? review.html_url
+            : undefined,
+        };
       }
     }
-  }
-
-  // Commit status history is attached to the captured SHA. An authenticated
-  // exact completion is immutable occurrence proof; later retries do not erase
-  // it. Review and comment objects differ because GitHub can dismiss or delete
-  // them, and their event paths reconcile the resulting current evidence.
-  const status = statuses.find((candidate) =>
-    candidate?.context === "CodeRabbit" &&
-    candidate?.state === "success" &&
-    candidate?.description === "Review completed" &&
-    isPinnedBot(candidate?.creator, CODERABBIT_LOGIN)
-  );
-  if (status) {
-    return {
-      reviewer: CODERABBIT_LOGIN,
-      source: "coderabbit-status",
-      state: "COMMENTED",
-      url: typeof status.target_url === "string"
-        ? status.target_url
-        : undefined,
-    };
+    if (codexFinding) return undefined;
+    if (codexApproval) return codexApproval;
   }
 
   for (const comment of comments) {
@@ -126,115 +136,6 @@ async function collectAll(github, endpoint, parameters, source) {
   return items;
 }
 
-async function uniqueOpenPullForHead(github, owner, repo, headSha) {
-  const pulls = await collectAll(
-    github,
-    github.rest.repos.listPullRequestsAssociatedWithCommit,
-    { owner, repo, commit_sha: headSha },
-    "associated pull requests",
-  );
-  const matches = pulls.filter((pull) =>
-    pull?.state === "open" && pull?.head?.sha === headSha
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      "Captured head must belong to exactly one open pull request",
-    );
-  }
-  return matches[0];
-}
-
-function isCodeRabbitCompletionClaim(status) {
-  return status?.context === "CodeRabbit" &&
-    status?.state === "success" &&
-    status?.description === "Review completed";
-}
-
-function isCodeRabbitCompletion(status) {
-  return isCodeRabbitCompletionClaim(status) &&
-    isPinnedBot(status?.creator, CODERABBIT_LOGIN);
-}
-
-/** Publish monotonic CodeRabbit completion for one uniquely associated PR. */
-export async function publishCodeRabbitCompletionStatus({
-  github,
-  owner,
-  repo,
-  headSha,
-  status,
-  expectedPullNumber = undefined,
-}) {
-  if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletionClaim(status)) {
-    return { state: "ignored", review: undefined, failure: undefined };
-  }
-
-  try {
-    // The status webhook payload carries no creator field, so an event-shaped
-    // claim cannot authenticate itself. Re-read the commit statuses over REST,
-    // where creator does exist, and accept the wakeup only when a pinned
-    // CodeRabbit completion is attached to the captured head. A status that
-    // already carries the pinned creator came from that same REST history.
-    if (!isCodeRabbitCompletion(status)) {
-      const statuses = await collectAll(
-        github,
-        github.rest.repos.listCommitStatusesForRef,
-        { owner, repo, ref: headSha },
-        "completion statuses",
-      );
-      if (!statuses.some(isCodeRabbitCompletion)) {
-        return { state: "ignored", review: undefined, failure: undefined };
-      }
-    }
-    const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
-    if (
-      expectedPullNumber !== undefined && pull.number !== expectedPullNumber
-    ) {
-      throw new Error(
-        "CodeRabbit completion belongs to a different pull request",
-      );
-    }
-    const current = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pull.number,
-    });
-    if (
-      current?.data?.state !== "open" ||
-      current?.data?.head?.sha !== headSha
-    ) {
-      throw new Error(
-        "Associated pull request head changed before publication",
-      );
-    }
-    const pullUrl = current.data.html_url ?? pull.html_url;
-    const state = current.data.draft === true ? "pending" : "success";
-    const description = state === "success"
-      ? `Reviewed by ${CODERABBIT_LOGIN}`
-      : "Draft pull request waits for ready for review";
-    const review = state === "success"
-      ? {
-        reviewer: CODERABBIT_LOGIN,
-        source: "coderabbit-status",
-        state: "COMMENTED",
-        url: pullUrl,
-      }
-      : undefined;
-    await github.rest.repos.createCommitStatus({
-      owner,
-      repo,
-      sha: headSha,
-      state,
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description,
-      target_url: pullUrl,
-    });
-    return { state, review, failure: undefined, description };
-  } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error));
-    return { state: "failure", review: undefined, failure };
-  }
-}
-
 /** Publish the review decision on the captured head after checking for drift. */
 export async function publishAutomatedReviewStatus({
   github,
@@ -248,12 +149,30 @@ export async function publishAutomatedReviewStatus({
 }) {
   let review;
   let failure;
+  let pullAuthor;
   if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
-  } else if (!isDraft) {
+  } else {
+    try {
+      const current = await github.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: pullNumber,
+      });
+      if (current?.data?.head?.sha !== headSha) {
+        throw new Error(
+          "Pull request head changed before checking review evidence",
+        );
+      }
+      pullAuthor = current?.data?.user?.login;
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  if (!failure && !isDraft) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, statuses] = await Promise.all([
+      const [reviews, comments] = await Promise.all([
         collectAll(
           github,
           github.rest.pulls.listReviews,
@@ -266,15 +185,9 @@ export async function publishAutomatedReviewStatus({
           { ...common, issue_number: pullNumber },
           "comments",
         ),
-        collectAll(
-          github,
-          github.rest.repos.listCommitStatusesForRef,
-          { ...common, ref: headSha },
-          "statuses",
-        ),
       ]);
       review = await findAutomatedReview(
-        { reviews, comments, statuses },
+        { reviews, comments },
         headSha,
         async (ref) => {
           try {
@@ -288,15 +201,20 @@ export async function publishAutomatedReviewStatus({
           }
         },
         { allowPullRequestReviews },
+        async (login) => {
+          if (login === pullAuthor) return false;
+          try {
+            const response = await github.rest.repos
+              .getCollaboratorPermissionLevel({
+                ...common,
+                username: login,
+              });
+            return TRUSTED_PERMISSIONS.has(response?.data?.user?.permission);
+          } catch {
+            return false;
+          }
+        },
       );
-      if (review?.source === "coderabbit-status") {
-        const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
-        if (pull.number !== pullNumber) {
-          throw new Error(
-            "CodeRabbit status belongs to a different pull request",
-          );
-        }
-      }
     } catch (error) {
       review = undefined;
       failure = error instanceof Error ? error : new Error(String(error));
@@ -343,32 +261,118 @@ export async function publishAutomatedReviewStatus({
     description,
     target_url: review?.url ?? pullUrl,
   });
-  const result = { state, review, failure, description };
-  if (state === "success") return result;
+  return { state, review, failure, description };
+}
 
+/** Extract the pull request represented by a merge queue head ref. */
+export function parseMergeQueuePullNumber(headRef) {
+  if (typeof headRef !== "string") return undefined;
+  const match = headRef.match(
+    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i,
+  );
+  if (!match) return undefined;
+  const pullNumber = Number(match[1]);
+  return Number.isSafeInteger(pullNumber) ? pullNumber : undefined;
+}
+
+function isTrustedReviewGateStatus(status) {
+  if (
+    status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+    status?.state !== "success" ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
+    typeof status?.description !== "string"
+  ) return false;
+  if (status.description === `Reviewed by ${CODEX_LOGIN}`) return true;
+  return /^Reviewed by [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(
+    status.description,
+  );
+}
+
+/** Reuse a successful exact-head review for a synthetic merge queue commit. */
+export async function publishMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  mergeGroupSha,
+}) {
+  let failure;
+  let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
   try {
+    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+      throw new Error("Merge queue pull request number is invalid");
+    }
+    if (!FULL_SHA.test(mergeGroupSha)) {
+      throw new Error("Merge group commit is malformed");
+    }
+    const pull = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    if (
+      pull?.data?.state !== "open" ||
+      !FULL_SHA.test(pull?.data?.head?.sha ?? "")
+    ) {
+      throw new Error("Merge queue pull request is not open at a valid head");
+    }
+    const sourceHead = pull.data.head.sha;
+    pullUrl = pull.data.html_url ?? pullUrl;
     const statuses = await collectAll(
       github,
       github.rest.repos.listCommitStatusesForRef,
-      { owner, repo, ref: headSha },
-      "repair statuses",
+      { owner, repo, ref: sourceHead },
+      "source review statuses",
     );
-    const completion = statuses.find(isCodeRabbitCompletion);
-    if (!completion) return result;
-    const repaired = await publishCodeRabbitCompletionStatus({
-      github,
+    const currentReviewStatus = statuses.find((status) =>
+      status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
+    );
+    if (!isTrustedReviewGateStatus(currentReviewStatus)) {
+      throw new Error(
+        "Pull request head does not have a current trusted review gate",
+      );
+    }
+    const current = await github.rest.pulls.get({
       owner,
       repo,
-      headSha,
-      status: completion,
-      expectedPullNumber: pullNumber,
+      pull_number: pullNumber,
     });
-    return repaired.state === "success" || repaired.state === "pending"
-      ? repaired
-      : result;
-  } catch {
-    return result;
+    if (
+      current?.data?.state !== "open" ||
+      current?.data?.head?.sha !== sourceHead
+    ) {
+      throw new Error(
+        "Pull request head changed while propagating review evidence",
+      );
+    }
+    const description = `Reused exact-head review for PR #${pullNumber}`;
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: mergeGroupSha,
+      state: "success",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description,
+      target_url: typeof currentReviewStatus.target_url === "string"
+        ? currentReviewStatus.target_url
+        : pullUrl,
+    });
+    return { state: "success", description, failure: undefined };
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
   }
+  if (FULL_SHA.test(mergeGroupSha)) {
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: mergeGroupSha,
+      state: "failure",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description: "Could not reuse an exact-head review",
+      target_url: pullUrl,
+    });
+  }
+  return { state: "failure", description: undefined, failure };
 }
 
 /**

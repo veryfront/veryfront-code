@@ -7,7 +7,8 @@ on:
     types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
-  status:
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
@@ -15,16 +16,12 @@ jobs:
   target:
     name: resolve automated review target
     # Apply publisher eligibility before allocating a resolver runner. The
-    # resolver exists only to feed the two publisher jobs below.
+    # resolver exists only to feed pull request reconciliation below.
     if: >-
-      (github.event_name != 'status' &&
-       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      github.event_name != 'merge_group' &&
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
        (github.event_name != 'pull_request_review' ||
-        github.event.pull_request.head.repo.full_name == github.repository)) ||
-      (github.event_name == 'status' &&
-       github.event.context == 'CodeRabbit' &&
-       github.event.state == 'success' &&
-       github.event.description == 'Review completed')
+        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       pull-requests: read
     runs-on: ubuntu-latest
@@ -65,27 +62,27 @@ jobs:
 
   review:
     name: publish automated review status
-    # pull-requests and issues write let this job post the fixed "@codex
-    # review" request after verifying the current head. This job checks out
+    # Issues write lets this job post the fixed "@codex review" request after
+    # verifying the current head. This job checks out
     # only the trusted default branch and never executes pull request files.
     permissions:
       contents: read
       issues: write
-      pull-requests: write
+      pull-requests: read
       statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
     # pull_request_review hands fork pull requests a read-only token that cannot
     # write a commit status, so skip it there and let the trusted
     # pull_request_target and issue_comment runs publish the decision instead.
     if: >-
-      github.event_name != 'status' &&
+      github.event_name != 'merge_group' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     needs: target
     concurrency:
-      # Every event for one head, including issue comments and status events,
-      # must serialize on the same key so an older pending write cannot win.
+      # Every pull request event for one head must serialize on the same key so
+      # an older pending write cannot win.
       group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
@@ -215,25 +212,14 @@ jobs:
                 : "An automated review request for this head commit already exists.",
             );
 
-  status_review:
-    name: publish completed CodeRabbit review status
+  merge_group:
+    name: reuse exact-head review for merge group
     permissions:
       contents: read
       pull-requests: read
       statuses: write
-    # This SHA-scoped path publishes only durable completion success. It shares
-    # the status publisher queue so it cannot race general PR reconciliation.
-    # The webhook payload carries no creator field. Treat it only as a wakeup;
-    # the helper re-reads status history and requires the pinned CodeRabbit
-    # creator before publishing completion.
-    if: >-
-      github.event_name == 'status' &&
-      github.event.context == 'CodeRabbit' &&
-      github.event.state == 'success' &&
-      github.event.description == 'Review completed'
-    needs: target
     concurrency:
-      group: automated-review-${{ needs.target.outputs.key }}
+      group: automated-review-${{ github.event.merge_group.head_sha }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -242,10 +228,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Publish authenticated CodeRabbit completion
+      - name: Reuse the source pull request review
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           script: |
@@ -253,30 +237,35 @@ jobs:
             const gateUrl = pathToFileURL(
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
-            let publishCodeRabbitCompletionStatus;
+            let parseMergeQueuePullNumber;
+            let publishMergeGroupReviewStatus;
             try {
-              ({ publishCodeRabbitCompletionStatus } = await import(gateUrl));
+              ({
+                parseMergeQueuePullNumber,
+                publishMergeGroupReviewStatus,
+              } = await import(gateUrl));
             } catch (error) {
               core.setFailed(`Could not load the review gate: ${error}`);
               return;
             }
-            const result = await publishCodeRabbitCompletionStatus({
+            const pullNumber = parseMergeQueuePullNumber(
+              context.payload.merge_group.head_ref,
+            );
+            if (!pullNumber) {
+              core.setFailed("Could not resolve the merge queue pull request");
+              return;
+            }
+            const result = await publishMergeGroupReviewStatus({
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              headSha: process.env.TARGET_SHA,
-              // The payload claim carries no creator; the helper authenticates
-              // the completion against the REST status history for the head.
-              status: {
-                context: context.payload.context,
-                state: context.payload.state,
-                description: context.payload.description,
-              },
+              pullNumber,
+              mergeGroupSha: context.payload.merge_group.head_sha,
             });
             if (result.state === "success") {
               core.notice(
-                `Authenticated CodeRabbit completion for ${process.env.TARGET_SHA.slice(0, 12)}.`,
+                `Reused PR #${pullNumber} review for ${context.payload.merge_group.head_sha.slice(0, 12)}.`,
               );
-            } else if (result.failure) {
-              core.warning(result.failure.message);
+            } else {
+              core.setFailed(result.failure.message);
             }

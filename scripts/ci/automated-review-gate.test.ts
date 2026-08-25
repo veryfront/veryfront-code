@@ -7,8 +7,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   findAutomatedReview,
+  parseMergeQueuePullNumber,
   publishAutomatedReviewStatus,
-  publishCodeRabbitCompletionStatus,
+  publishMergeGroupReviewStatus,
   requestAutomatedReview,
 } from "./automated-review-gate.mjs";
 
@@ -16,6 +17,7 @@ const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
 const CODERABBIT_ID = 136622811;
 const CODEX_ID = 199175422;
+const GITHUB_ACTIONS_ID = 41898282;
 const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
   import.meta.url,
@@ -25,7 +27,7 @@ const bot = (login: string, id: number) => ({ login, id, type: "Bot" });
 
 function review(overrides: Record<string, unknown> = {}) {
   return {
-    user: bot("coderabbitai[bot]", CODERABBIT_ID),
+    user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
     state: "COMMENTED",
     commit_id: HEAD,
     html_url: "https://example.test/review",
@@ -33,13 +35,13 @@ function review(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function status(overrides: Record<string, unknown> = {}) {
+function automatedReviewStatus(overrides: Record<string, unknown> = {}) {
   return {
-    context: "CodeRabbit",
+    context: "Automated review",
     state: "success",
-    description: "Review completed",
-    creator: bot("coderabbitai[bot]", CODERABBIT_ID),
-    target_url: "https://example.test/status",
+    description: "Reviewed by chatgpt-codex-connector[bot]",
+    creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+    target_url: "https://example.test/review-proof",
     ...overrides,
   };
 }
@@ -77,30 +79,20 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review evidence", () => {
-  it("replays the compact live verdicts from PRs 4012, 4024, 4025, and 4028", async () => {
+  it("accepts the compact Codex no-findings verdict and rejects stale verdicts", async () => {
     const fixtures = [
       {
         pr: 4012,
         head: HEAD,
         reviews: [],
         comments: [codexComment()],
-        statuses: [status({ description: "Review rate limited" })],
         expected: "codex-comment",
-      },
-      {
-        pr: 4024,
-        head: "2bede33efd10ad0d5c40eaa1603c0cb65da7ce69",
-        reviews: [],
-        comments: [],
-        statuses: [status()],
-        expected: "coderabbit-status",
       },
       {
         pr: 4025,
         head: "666c7af8e7b9245b9449d8a5378ddcc422a6c9f9",
         reviews: [],
         comments: [codexComment("24bb89dc4f")],
-        statuses: [status({ description: "Review rate limited" })],
         expected: undefined,
       },
       {
@@ -108,7 +100,6 @@ describe("automated review evidence", () => {
         head: OTHER_HEAD,
         reviews: [],
         comments: [],
-        statuses: [status({ description: "Review rate limited" })],
         expected: undefined,
       },
     ];
@@ -126,53 +117,60 @@ describe("automated review evidence", () => {
     }
   });
 
-  it("accepts only exact-head submitted Codex reviews", async () => {
-    for (const state of ["COMMENTED", "APPROVED"]) {
-      assertEquals(
-        (await findAutomatedReview({
-          reviews: [review({
-            user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
-            state,
-          })],
-          comments: [],
-          statuses: [],
-        }, HEAD))?.source,
-        "pull-request-review",
-      );
-    }
+  it("accepts an exact-head Codex approval but not a findings review", async () => {
+    assertEquals(
+      (await findAutomatedReview({
+        reviews: [review({ state: "APPROVED" })],
+        comments: [],
+      }, HEAD))?.source,
+      "pull-request-review",
+    );
+    assertEquals(
+      await findAutomatedReview({
+        reviews: [review({
+          state: "COMMENTED",
+          body: "P1: This exact-head review has an actionable finding.",
+        })],
+        comments: [],
+      }, HEAD),
+      undefined,
+    );
   });
 
-  it("rejects CodeRabbit reply reviews unless completion status exists", async () => {
-    for (
-      const body of [
-        "",
-        "Resolved the earlier thread.",
-        "Please address this actionable issue.",
-      ]
-    ) {
-      assertEquals(
-        await findAutomatedReview({
-          reviews: [review({ body })],
-          comments: [],
-          statuses: [],
-        }, HEAD),
-        undefined,
-      );
-      assertEquals(
-        (await findAutomatedReview({
-          reviews: [review({ body })],
-          comments: [],
-          statuses: [status()],
-        }, HEAD))?.source,
-        "coderabbit-status",
-      );
-    }
+  it("lets an exact-head Codex finding supersede an earlier no-findings comment", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "COMMENTED",
+            body: "P1: A later exact-head review found an actionable defect.",
+          })],
+          comments: [codexComment()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("does not let CodeRabbit satisfy the Codex gate", async () => {
+    assertEquals(
+      await findAutomatedReview({
+        reviews: [review({
+          user: bot("coderabbitai[bot]", CODERABBIT_ID),
+          state: "APPROVED",
+        })],
+        comments: [],
+      }, HEAD),
+      undefined,
+    );
   });
 
   it("rejects wrong review identity, head, and non-submitted states", async () => {
     const rejected = [
-      review({ user: bot("maintainer", CODERABBIT_ID) }),
-      review({ user: bot("coderabbitai[bot]", CODERABBIT_ID + 1) }),
+      review({ user: bot("maintainer", CODEX_ID) }),
+      review({ user: bot("chatgpt-codex-connector[bot]", CODEX_ID + 1) }),
       review({ commit_id: OTHER_HEAD }),
       review({ state: "DISMISSED" }),
       review({ state: "CHANGES_REQUESTED" }),
@@ -185,77 +183,17 @@ describe("automated review evidence", () => {
         await findAutomatedReview({
           reviews: [candidate],
           comments: [],
-          statuses: [],
         }, HEAD),
         undefined,
       );
     }
   });
 
-  it("requires the exact CodeRabbit status tuple and pinned creator", async () => {
-    assertEquals(
-      (await findAutomatedReview({
-        reviews: [],
-        comments: [],
-        statuses: [status()],
-      }, HEAD))?.source,
-      "coderabbit-status",
-    );
-    for (
-      const candidate of [
-        status({ context: "Automated review" }),
-        status({ state: "pending" }),
-        status({ description: "Review rate limited" }),
-        status({ description: undefined }),
-        status({ creator: bot("github-actions[bot]", CODERABBIT_ID) }),
-        status({ creator: bot("coderabbitai[bot]", CODERABBIT_ID + 1) }),
-      ]
-    ) {
-      assertEquals(
-        await findAutomatedReview({
-          reviews: [],
-          comments: [],
-          statuses: [candidate],
-        }, HEAD),
-        undefined,
-      );
-    }
-  });
-
-  it("keeps exact-head CodeRabbit completion as monotonic occurrence proof", async () => {
-    const retries = [
-      status({ description: "Review rate limited" }),
-      status({ state: "pending", description: "Review in progress" }),
-      status({ state: "failure", description: "Review failed" }),
-    ];
-    for (const retry of retries) {
-      for (const statuses of [[retry, status()], [status(), retry]]) {
-        assertEquals(
-          (await findAutomatedReview(
-            { reviews: [], comments: [], statuses },
-            HEAD,
-          ))?.source,
-          "coderabbit-status",
-        );
-      }
-    }
-    for (const statuses of [[], ...retries.map((retry) => [retry])]) {
-      assertEquals(
-        await findAutomatedReview({
-          reviews: [],
-          comments: [],
-          statuses,
-        }, HEAD),
-        undefined,
-      );
-    }
-  });
-
-  it("ignores review objects for forks but accepts status and comment proof", async () => {
+  it("ignores review objects for forks but accepts Codex comment proof", async () => {
     const forkOptions = { allowPullRequestReviews: false };
     assertEquals(
       await findAutomatedReview(
-        { reviews: [review()], comments: [], statuses: [] },
+        { reviews: [review()], comments: [] },
         HEAD,
         undefined,
         forkOptions,
@@ -264,21 +202,56 @@ describe("automated review evidence", () => {
     );
     assertEquals(
       (await findAutomatedReview(
-        { reviews: [review()], comments: [], statuses: [status()] },
-        HEAD,
-        undefined,
-        forkOptions,
-      ))?.source,
-      "coderabbit-status",
-    );
-    assertEquals(
-      (await findAutomatedReview(
-        { reviews: [review()], comments: [codexComment()], statuses: [] },
+        { reviews: [review()], comments: [codexComment()] },
         HEAD,
         () => Promise.resolve(HEAD),
         forkOptions,
       ))?.source,
       "codex-comment",
+    );
+  });
+
+  it("accepts only an exact-head approval from a trusted non-author human", async () => {
+    const humanApproval = review({
+      user: { login: "trusted-maintainer", id: 7, type: "User" },
+      state: "APPROVED",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [humanApproval], comments: [] },
+        HEAD,
+        undefined,
+        {},
+        (login: string) => Promise.resolve(login === "trusted-maintainer"),
+      ))?.source,
+      "human-approval",
+    );
+    for (
+      const candidate of [
+        review({ ...humanApproval, commit_id: OTHER_HEAD }),
+        review({ ...humanApproval, state: "COMMENTED" }),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [candidate], comments: [] },
+          HEAD,
+          undefined,
+          {},
+          () => Promise.resolve(true),
+        ),
+        undefined,
+      );
+    }
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [humanApproval], comments: [] },
+        HEAD,
+        undefined,
+        {},
+        () => Promise.resolve(false),
+      ),
+      undefined,
     );
   });
 
@@ -288,7 +261,6 @@ describe("automated review evidence", () => {
         {
           reviews: [],
           comments: [codexComment()],
-          statuses: [],
         },
         HEAD,
         () => Promise.resolve(HEAD),
@@ -324,7 +296,7 @@ describe("automated review evidence", () => {
     for (const candidate of rejected) {
       assertEquals(
         await findAutomatedReview(
-          { reviews: [], comments: [candidate], statuses: [] },
+          { reviews: [], comments: [candidate] },
           HEAD,
           () => Promise.resolve(HEAD),
         ),
@@ -337,7 +309,7 @@ describe("automated review evidence", () => {
     for (const resolved of [OTHER_HEAD, undefined]) {
       assertEquals(
         await findAutomatedReview(
-          { reviews: [], comments: [codexComment()], statuses: [] },
+          { reviews: [], comments: [codexComment()] },
           HEAD,
           () => Promise.resolve(resolved),
         ),
@@ -350,7 +322,6 @@ describe("automated review evidence", () => {
     const evidence = {
       reviews: [],
       comments: [codexComment()],
-      statuses: [],
     };
     assertEquals(
       (await findAutomatedReview(
@@ -367,21 +338,19 @@ describe("automated review evidence", () => {
 
 function githubFixture(options: {
   pages?: Record<string, unknown[][]>;
-  pagesByCall?: Record<string, unknown[][][]>;
   headResponses?: string[];
   commit?: string | undefined;
   failAfterFirstPage?: string;
-  failOnCall?: Record<string, number>;
   pullError?: Error;
+  permission?: string;
+  pullAuthor?: string;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
     comments: () => undefined,
     statuses: () => undefined,
-    associatedPulls: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
-  const endpointCalls: Record<string, number> = {};
   let pullRead = 0;
   const github = {
     paginate: {
@@ -390,15 +359,9 @@ function githubFixture(options: {
           value === endpoint
         )?.[0];
         if (!name) throw new Error("unknown endpoint");
-        const call = endpointCalls[name] ?? 0;
-        endpointCalls[name] = call + 1;
-        const pages = options.pagesByCall?.[name]?.[call] ??
-          options.pages?.[name] ?? [[]];
+        const pages = options.pages?.[name] ?? [[]];
         for (let index = 0; index < pages.length; index++) {
-          if (
-            (options.failAfterFirstPage === name ||
-              options.failOnCall?.[name] === call) && index === 1
-          ) {
+          if (options.failAfterFirstPage === name && index === 1) {
             throw new Error("pagination failed");
           }
           yield { data: pages[index] };
@@ -413,15 +376,22 @@ function githubFixture(options: {
           const heads = options.headResponses ?? [HEAD];
           const head = heads[Math.min(pullRead++, heads.length - 1)];
           return Promise.resolve({
-            data: associatedPull({ head: { sha: head }, draft: false }),
+            data: associatedPull({
+              head: { sha: head },
+              draft: false,
+              user: { login: options.pullAuthor ?? "pull-author" },
+            }),
           });
         },
       },
       issues: { listComments: endpoints.comments },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
-        listPullRequestsAssociatedWithCommit: endpoints.associatedPulls,
         getCommit: () => Promise.resolve({ data: { sha: options.commit } }),
+        getCollaboratorPermissionLevel: () =>
+          Promise.resolve({
+            data: { user: { permission: options.permission ?? "read" } },
+          }),
         createCommitStatus: (value: Record<string, unknown>) => {
           published.push(value);
           return Promise.resolve({ data: value });
@@ -437,11 +407,10 @@ describe("automated review publication", () => {
     const fixture = githubFixture({
       pages: {
         reviews: [[], []],
-        comments: [[], []],
-        statuses: [[], [status()]],
-        associatedPulls: [[associatedPull()]],
+        comments: [[], [codexComment()]],
       },
       headResponses: [HEAD],
+      commit: HEAD,
     });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
@@ -455,14 +424,15 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.sha, HEAD);
   });
 
-  it("keeps completion proof when a later retry appears during pagination", async () => {
+  it("accepts an exact-head trusted human approval as the escalation path", async () => {
     const fixture = githubFixture({
       pages: {
-        statuses: [[status({ description: "Review rate limited" })], [
-          status(),
-        ]],
-        associatedPulls: [[associatedPull()]],
+        reviews: [[review({
+          user: { login: "trusted-maintainer", id: 7, type: "User" },
+          state: "APPROVED",
+        })]],
       },
+      permission: "write",
     });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
@@ -473,6 +443,7 @@ describe("automated review publication", () => {
       pullUrl: "https://example.test/pr/1",
     });
     assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "human-approval");
   });
 
   it("holds an unreviewed head at pending until proof arrives", async () => {
@@ -496,7 +467,7 @@ describe("automated review publication", () => {
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
-    const partialPages = ["reviews", "comments", "statuses"].map((source) =>
+    const partialPages = ["reviews", "comments"].map((source) =>
       githubFixture({
         pages: { [source]: [[], []] },
         failAfterFirstPage: source,
@@ -527,9 +498,9 @@ describe("automated review publication", () => {
   it("fails the captured head when it drifts before publication", async () => {
     const fixture = githubFixture({
       pages: {
-        statuses: [[status()]],
-        associatedPulls: [[associatedPull()]],
+        comments: [[codexComment()]],
       },
+      commit: HEAD,
       headResponses: [OTHER_HEAD],
     });
     const result = await publishAutomatedReviewStatus({
@@ -547,9 +518,9 @@ describe("automated review publication", () => {
   it("clears accepted proof when the final head refetch rejects", async () => {
     const fixture = githubFixture({
       pages: {
-        statuses: [[status()]],
-        associatedPulls: [[associatedPull()]],
+        comments: [[codexComment()]],
       },
+      commit: HEAD,
       pullError: new Error("pull unavailable"),
     });
     const result = await publishAutomatedReviewStatus({
@@ -569,18 +540,21 @@ describe("automated review publication", () => {
     );
   });
 
-  it("binds CodeRabbit status proof to the unique open PR for the head", async () => {
+  it("rejects human approvals from the pull author or a read-only reviewer", async () => {
     for (
-      const associatedPulls of [
-        [associatedPull({ number: 2 })],
-        [associatedPull(), associatedPull({ number: 2 })],
+      const options of [
+        { permission: "write", pullAuthor: "reviewer" },
+        { permission: "read", pullAuthor: "pull-author" },
       ]
     ) {
       const fixture = githubFixture({
         pages: {
-          statuses: [[status()]],
-          associatedPulls: [associatedPulls],
+          reviews: [[review({
+            user: { login: "reviewer", id: 7, type: "User" },
+            state: "APPROVED",
+          })]],
         },
+        ...options,
       });
       const result = await publishAutomatedReviewStatus({
         github: fixture.github,
@@ -590,13 +564,9 @@ describe("automated review publication", () => {
         headSha: HEAD,
         pullUrl: "https://example.test/pr/1",
       });
-      assertEquals(result.state, "failure");
+      assertEquals(result.state, "pending");
       assertEquals(result.review, undefined);
-      assertEquals(fixture.published[0]?.state, "failure");
-      assertEquals(
-        fixture.published[0]?.target_url,
-        "https://example.test/pr/1",
-      );
+      assertEquals(fixture.published[0]?.state, "pending");
     }
   });
 
@@ -616,243 +586,99 @@ describe("automated review publication", () => {
   });
 });
 
-// The status webhook payload has no creator field, so the workflow hands the
-// gate only this claim tuple and the gate authenticates the creator over REST.
-const payloadClaim = () => ({
-  context: "CodeRabbit",
-  state: "success",
-  description: "Review completed",
-});
+describe("merge queue review propagation", () => {
+  it("extracts only a fully qualified merge-queue pull request ref", () => {
+    assertEquals(
+      parseMergeQueuePullNumber(
+        `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}`,
+      ),
+      4135,
+    );
+    for (
+      const ref of [
+        `refs/heads/main/pr-4135-${OTHER_HEAD}`,
+        "refs/heads/gh-readonly-queue/main/pr-0-deadbeef",
+        `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}extra`,
+        `refs/heads/gh-readonly-queue/main/not-pr-4135-${OTHER_HEAD}`,
+        "",
+      ]
+    ) assertEquals(parseMergeQueuePullNumber(ref), undefined);
+  });
 
-describe("CodeRabbit completion status wakeup", () => {
-  it("publishes success for one open PR whose head still matches", async () => {
+  it("reuses the current exact-head Codex gate on the synthetic queue SHA", async () => {
     const fixture = githubFixture({
-      pages: { associatedPulls: [[associatedPull()]] },
+      pages: { statuses: [[automatedReviewStatus()]] },
+      headResponses: [HEAD, HEAD],
     });
-    const result = await publishCodeRabbitCompletionStatus({
+    const result = await publishMergeGroupReviewStatus({
       github: fixture.github,
       owner: "veryfront",
       repo: "veryfront-code",
-      headSha: HEAD,
-      status: status(),
+      pullNumber: 1,
+      mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
-    assertEquals(fixture.published[0]?.state, "success");
-    assertEquals(fixture.published[0]?.sha, HEAD);
+    assertEquals(fixture.published, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      sha: OTHER_HEAD,
+      state: "success",
+      context: "Automated review",
+      description: "Reused exact-head review for PR #1",
+      target_url: "https://example.test/review-proof",
+    }]);
   });
 
-  it("authenticates a creator-less payload claim against REST statuses", async () => {
-    const fixture = githubFixture({
-      pages: {
-        statuses: [[status()]],
-        associatedPulls: [[associatedPull()]],
+  it("fails closed for stale, superseded, spoofed, or missing source proof", async () => {
+    const cases = [
+      { statuses: [] },
+      { statuses: [automatedReviewStatus({ state: "pending" })] },
+      {
+        statuses: [
+          automatedReviewStatus({ state: "pending" }),
+          automatedReviewStatus(),
+        ],
       },
-    });
-    const result = await publishCodeRabbitCompletionStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      headSha: HEAD,
-      status: payloadClaim(),
-    });
-    assertEquals(result.state, "success");
-    assertEquals(fixture.published[0]?.state, "success");
-    assertEquals(fixture.published[0]?.sha, HEAD);
-  });
-
-  it("ignores a payload claim without a pinned REST completion", async () => {
-    for (
-      const statuses of [
-        [],
-        [status({ creator: bot("github-actions[bot]", CODERABBIT_ID) })],
-        [status({ creator: bot("coderabbitai[bot]", CODERABBIT_ID + 1) })],
-        [status({ description: "Review rate limited" })],
-      ]
-    ) {
-      const fixture = githubFixture({ pages: { statuses: [statuses] } });
-      const result = await publishCodeRabbitCompletionStatus({
-        github: fixture.github,
-        owner: "veryfront",
-        repo: "veryfront-code",
-        headSha: HEAD,
-        status: payloadClaim(),
+      {
+        statuses: [automatedReviewStatus({
+          creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID + 1),
+        })],
+      },
+      {
+        statuses: [automatedReviewStatus({
+          description: "Reviewed by coderabbitai[bot]",
+        })],
+      },
+    ];
+    for (const candidate of cases) {
+      const fixture = githubFixture({
+        pages: { statuses: [[...candidate.statuses]] },
+        headResponses: [HEAD, HEAD],
       });
-      assertEquals(result.state, "ignored");
-      assertEquals(fixture.published.length, 0);
-    }
-  });
-
-  it("fails closed when claim verification cannot fully paginate", async () => {
-    const fixture = githubFixture({
-      pages: { statuses: [[], []] },
-      failAfterFirstPage: "statuses",
-    });
-    const result = await publishCodeRabbitCompletionStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      headSha: HEAD,
-      status: payloadClaim(),
-    });
-    assertEquals(result.state, "failure");
-    assertEquals(fixture.published.length, 0);
-  });
-
-  it("resolves an earlier waiting publication into success", async () => {
-    const fixture = githubFixture({
-      pages: { associatedPulls: [[associatedPull()]] },
-    });
-    const beforeCompletion = await publishAutomatedReviewStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      pullNumber: 1,
-      headSha: HEAD,
-      pullUrl: "https://example.test/pr/1",
-    });
-    const completion = await publishCodeRabbitCompletionStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      headSha: HEAD,
-      status: status(),
-    });
-    assertEquals(beforeCompletion.state, "pending");
-    assertEquals(completion.state, "success");
-    assertEquals(fixture.published.map((value) => value.state), [
-      "pending",
-      "success",
-    ]);
-  });
-
-  it("repairs a delayed pending publication after status success", async () => {
-    const fixture = githubFixture({
-      pages: { associatedPulls: [[associatedPull()]] },
-      pagesByCall: { statuses: [[[]], [[status()]]] },
-    });
-    const completion = await publishCodeRabbitCompletionStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      headSha: HEAD,
-      status: status(),
-    });
-    const delayedGeneral = await publishAutomatedReviewStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      pullNumber: 1,
-      headSha: HEAD,
-      pullUrl: "https://example.test/pr/1",
-    });
-    assertEquals(completion.state, "success");
-    assertEquals(delayedGeneral.state, "success");
-    assertEquals(fixture.published.map((value) => value.state), [
-      "success",
-      "pending",
-      "success",
-    ]);
-  });
-
-  it("repairs completion that appears between pending publication and repair", async () => {
-    const fixture = githubFixture({
-      pages: { associatedPulls: [[associatedPull()]] },
-      pagesByCall: { statuses: [[[]], [[status()]]] },
-    });
-    const result = await publishAutomatedReviewStatus({
-      github: fixture.github,
-      owner: "veryfront",
-      repo: "veryfront-code",
-      pullNumber: 1,
-      headSha: HEAD,
-      pullUrl: "https://example.test/pr/1",
-    });
-    assertEquals(result.state, "success");
-    assertEquals(fixture.published.map((value) => value.state), [
-      "pending",
-      "success",
-    ]);
-  });
-
-  it("leaves pending when repair has no proof, fails, or binds another PR", async () => {
-    for (
-      const fixture of [
-        githubFixture(),
-        githubFixture({
-          pagesByCall: { statuses: [[[]], [[], []]] },
-          failOnCall: { statuses: 1 },
-        }),
-        githubFixture({
-          pages: { associatedPulls: [[associatedPull({ number: 2 })]] },
-          pagesByCall: { statuses: [[[]], [[status()]]] },
-        }),
-      ]
-    ) {
-      const result = await publishAutomatedReviewStatus({
+      const result = await publishMergeGroupReviewStatus({
         github: fixture.github,
         owner: "veryfront",
         repo: "veryfront-code",
         pullNumber: 1,
-        headSha: HEAD,
-        pullUrl: "https://example.test/pr/1",
-      });
-      assertEquals(result.state, "pending");
-      assertEquals(fixture.published.map((value) => value.state), ["pending"]);
-    }
-  });
-
-  it("ignores non-completion and wrong-creator status events", async () => {
-    for (
-      const candidate of [
-        status({ description: "Review rate limited" }),
-        status({ creator: bot("coderabbitai[bot]", CODERABBIT_ID + 1) }),
-      ]
-    ) {
-      const fixture = githubFixture();
-      const result = await publishCodeRabbitCompletionStatus({
-        github: fixture.github,
-        owner: "veryfront",
-        repo: "veryfront-code",
-        headSha: HEAD,
-        status: candidate,
-      });
-      assertEquals(result.state, "ignored");
-      assertEquals(fixture.published.length, 0);
-    }
-  });
-
-  it("fails closed for zero, multiple, or drifting associated PRs", async () => {
-    for (
-      const fixture of [
-        githubFixture({ pages: { associatedPulls: [[]] } }),
-        githubFixture({
-          pages: {
-            associatedPulls: [[
-              associatedPull(),
-              associatedPull({ number: 2 }),
-            ]],
-          },
-        }),
-        githubFixture({
-          pages: { associatedPulls: [[associatedPull()]] },
-          headResponses: [OTHER_HEAD],
-        }),
-        githubFixture({
-          pages: { associatedPulls: [[], []] },
-          failAfterFirstPage: "associatedPulls",
-        }),
-      ]
-    ) {
-      const result = await publishCodeRabbitCompletionStatus({
-        github: fixture.github,
-        owner: "veryfront",
-        repo: "veryfront-code",
-        headSha: HEAD,
-        status: status(),
+        mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, "failure");
-      assertEquals(fixture.published.length, 0);
+      assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+      assertEquals(fixture.published[0]?.state, "failure");
     }
+
+    const drift = githubFixture({
+      pages: { statuses: [[automatedReviewStatus()]] },
+      headResponses: [HEAD, OTHER_HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: drift.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
   });
 });
 
@@ -1014,19 +840,18 @@ describe("automated review workflow", () => {
       record(triggers.issue_comment, "issue comment trigger").types,
       ["created", "edited", "deleted"],
     );
-    assert("status" in triggers, "completion status must have a wakeup path");
+    assertEquals(
+      record(triggers.merge_group, "merge group trigger").types,
+      ["checks_requested"],
+    );
+    assertEquals("status" in triggers, false);
     const jobs = record(workflow.jobs, "jobs");
     const targetJob = record(jobs.target, "target job");
     const targetIf = String(targetJob.if);
     for (
       const condition of [
-        "github.event_name != 'status'",
         "github.event.issue.pull_request",
         "github.event.pull_request.head.repo.full_name == github.repository",
-        "github.event_name == 'status'",
-        "github.event.context == 'CodeRabbit'",
-        "github.event.state == 'success'",
-        "github.event.description == 'Review completed'",
       ]
     ) {
       assert(
@@ -1068,7 +893,7 @@ describe("automated review workflow", () => {
     assertEquals(record(job.permissions, "review permissions"), {
       contents: "read",
       issues: "write",
-      "pull-requests": "write",
+      "pull-requests": "read",
       statuses: "write",
     });
     const publisherConcurrency = {
@@ -1080,8 +905,8 @@ describe("automated review workflow", () => {
       ...publisherConcurrency,
     });
     assert(
-      String(job.if).includes("github.event_name != 'status'"),
-      "raw status events must never enter general PR reconciliation",
+      !String(job.if).includes("CodeRabbit"),
+      "CodeRabbit must not be able to enter Codex review reconciliation",
     );
     assert(
       String(job.if).includes("github.event.issue.pull_request"),
@@ -1164,43 +989,34 @@ describe("automated review workflow", () => {
       "the workflow must post review requests through the tested gate helper",
     );
 
-    const statusJob = record(jobs.status_review, "status review job");
-    assertEquals(record(statusJob.permissions, "status review permissions"), {
-      contents: "read",
-      "pull-requests": "read",
-      statuses: "write",
-    });
-    assertEquals(statusJob.needs, "target");
-    const statusIf = String(statusJob.if);
-    for (
-      const condition of [
-        "github.event.context == 'CodeRabbit'",
-        "github.event.state == 'success'",
-        "github.event.description == 'Review completed'",
-      ]
-    ) assert(statusIf.includes(condition));
-    assert(
-      !statusIf.includes("github.event.sender") &&
-        !statusIf.includes("github.event.creator"),
-      "the webhook is only a wakeup; creator trust comes from REST status history",
+    const mergeGroupJob = record(jobs.merge_group, "merge group job");
+    assertEquals(
+      record(mergeGroupJob.permissions, "merge group permissions"),
+      {
+        contents: "read",
+        "pull-requests": "read",
+        statuses: "write",
+      },
     );
-    assertEquals(record(statusJob.concurrency, "status concurrency"), {
-      ...publisherConcurrency,
-    });
-    const statusSteps = statusJob.steps;
-    assert(Array.isArray(statusSteps));
-    const statusScript = String(
-      record(record(statusSteps[1], "status gate").with, "status gate inputs")
-        .script,
+    assertEquals(
+      record(mergeGroupJob.concurrency, "merge group concurrency").group,
+      "automated-review-${{ github.event.merge_group.head_sha }}",
     );
-    assert(statusScript.includes("publishCodeRabbitCompletionStatus"));
-    assert(
-      !statusScript.includes("publishAutomatedReviewStatus"),
-      "completion wakeups must not enter mutable PR reconciliation",
+    const mergeGroupSteps = mergeGroupJob.steps;
+    assert(Array.isArray(mergeGroupSteps));
+    const mergeGroupScript = String(
+      record(
+        record(mergeGroupSteps[1], "merge group gate").with,
+        "merge group inputs",
+      ).script,
     );
+    assert(mergeGroupScript.includes("parseMergeQueuePullNumber"));
+    assert(mergeGroupScript.includes("publishMergeGroupReviewStatus"));
+    assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
+    assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));
     assert(
-      !statusScript.includes("context.payload.creator"),
-      "the status payload has no creator; the gate authenticates over REST",
+      !mergeGroupScript.includes("requestAutomatedReview"),
+      "merge groups must reuse source proof without rerunning Codex",
     );
   });
 });
