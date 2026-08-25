@@ -36,7 +36,6 @@ import { computeShortContentHash } from "../esm/transform-utils.ts";
 
 describe(
   "transformToESM readFile routing",
-  { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterAll(async () => {
       await esbuild.stop();
@@ -76,7 +75,16 @@ export default function App() { return dep; }`;
           projectId: "test-project",
         });
 
-        assertEquals(readCalls.includes(externalFile), false);
+        assertEquals(
+          readCalls.includes(externalFile),
+          false,
+          "external file:// deps must bypass the adapter",
+        );
+        assertEquals(
+          readCalls.includes(mainFile),
+          true,
+          "in-project files must be read through the adapter so depsHash is computed",
+        );
       } finally {
         await remove(projectDir, { recursive: true });
         await remove(externalDir, { recursive: true });

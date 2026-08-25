@@ -323,7 +323,16 @@ describe("rewriteImports with the default strategies", () => {
       defaultCtx(),
     );
 
-    assertStringIncludes(result, "marker-icon.png");
+    assertStringIncludes(
+      result,
+      `"https://esm.sh/leaflet/dist/images/marker-icon.png?external=react,react-dom&target=es2022"`,
+      "the asset inside a dependency must be routed through esm.sh by the bare strategy",
+    );
+    assertEquals(
+      result.includes(`"leaflet/dist/images/marker-icon.png"`),
+      false,
+      "the bare specifier must not survive unrewritten",
+    );
   });
 
   it("leaves a remote asset URL to the url strategy", async () => {

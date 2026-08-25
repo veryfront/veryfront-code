@@ -65,6 +65,21 @@ describe("resolveFrameworkFile", () => {
     assertEquals(lookups[1]?.[1], join(FRAMEWORK_ROOT, "src"));
   });
 
+  it("prefers live src files in source checkouts", () => {
+    const lookups = getFrameworkLookups(false);
+
+    assertEquals(
+      lookups[0]?.[1],
+      join(FRAMEWORK_ROOT, "src"),
+      "source checkouts look at live src/ first so local edits are not shadowed",
+    );
+    assertEquals(
+      lookups[1]?.[1],
+      EMBEDDED_SRC_DIR,
+      "generated embedded sources stay the fallback in source checkouts",
+    );
+  });
+
   it("returns null for unresolvable paths", async () => {
     const fs = createMockFs({});
     const result = await resolveFrameworkFile(

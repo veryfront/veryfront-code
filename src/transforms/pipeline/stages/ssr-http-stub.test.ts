@@ -63,8 +63,17 @@ describe("ssrHttpStubPlugin", () => {
       `import "https://esm.sh/video.js@8/dist/video-js.css";\n`,
     );
     const result = await ssrHttpStubPlugin.transform(ctx);
-    assertEquals(typeof result, "string");
-    assertEquals(result!.includes("/* SSR stub"), true);
+    assertEquals(typeof result, "string", "the side-effect import is rewritten");
+    assertEquals(
+      result,
+      `/* SSR stub: import "https://esm.sh/video.js@8/dist/video-js.css" */;\n`,
+      "the browser-only side-effect import survives only as a comment",
+    );
+    assertEquals(
+      /(^|\n)\s*import\s/.test(result!),
+      false,
+      "no live import statement may survive side-effect stubbing",
+    );
   });
 
   it("passes through non-HTTP imports unchanged", async () => {

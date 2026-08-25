@@ -58,6 +58,14 @@ describe("VendorStrategy", () => {
     it("should not match non-react packages", () => {
       assertEquals(vendorStrategy.matches("lodash", makeCtx()), false);
     });
+
+    it("should not match without a module server URL", () => {
+      assertEquals(
+        vendorStrategy.matches("react", makeCtx({ moduleServerUrl: undefined })),
+        false,
+        "vendor strategy must not claim react without a module server URL",
+      );
+    });
   });
 
   describe("rewrite", () => {
@@ -83,6 +91,33 @@ describe("VendorStrategy", () => {
       assertEquals(result.specifier, null);
       assertEquals(result.statement?.includes("import("), true);
       assertEquals(result.statement?.includes("_vendor.js"), true);
+    });
+
+    it("should select the sanitized export name for a dynamic subpath import", () => {
+      const result = vendorStrategy.rewrite(makeInfo("react-dom/client", true), makeCtx());
+
+      assertEquals(
+        result.statement,
+        "import('http://localhost:3000/_vf_modules/_vendor.js?v=abc123').then(m => m.reactDomClient)",
+        "a dynamic vendor import must select the sanitized export name for the specifier",
+      );
+      assertEquals(
+        result.specifier,
+        null,
+        "a dynamic vendor import replaces the whole statement instead of the specifier",
+      );
+    });
+
+    it("should return null when no module server URL", () => {
+      const result = vendorStrategy.rewrite(
+        makeInfo("react"),
+        makeCtx({ moduleServerUrl: undefined }),
+      );
+      assertEquals(
+        result.specifier,
+        null,
+        "vendor rewrite declines when no module server URL is configured",
+      );
     });
 
     it("should return null when no vendor config", () => {

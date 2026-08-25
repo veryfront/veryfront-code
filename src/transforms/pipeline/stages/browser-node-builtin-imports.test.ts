@@ -63,6 +63,24 @@ describe("browser-node-builtin-imports", () => {
     assertEquals(await rewriteNodeBuiltinNamedImports(code), code);
   });
 
+  it("leaves a clause it cannot parse alone", async () => {
+    const code = `import { "create-hash" as h } from "node:crypto";`;
+    assertEquals(
+      await rewriteNodeBuiltinNamedImports(code),
+      code,
+      "an arbitrary-module-name clause must be left byte-identical, not destructured",
+    );
+  });
+
+  it("leaves a comment-bearing clause alone", async () => {
+    const code = `import { createHash /* c */ } from "node:crypto";`;
+    assertEquals(
+      await rewriteNodeBuiltinNamedImports(code),
+      code,
+      "a clause with a comment must be left byte-identical, not destructured",
+    );
+  });
+
   it("numbers each rewritten import uniquely", async () => {
     const result = await rewriteNodeBuiltinNamedImports(
       `import { createHash } from "node:crypto";\nimport { join } from "node:path";`,

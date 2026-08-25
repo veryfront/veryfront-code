@@ -87,9 +87,11 @@ export { foo } from "bar";
       // statementStart..statementEnd includes the semicolon, so the replacement must include it
       const rewrites = new Map([[0, { statement: `import React from "preact/compat"` }]]);
       const result = applyRewrites(code, parsed, rewrites);
-      // The statement replacement replaces ss..se, which may or may not include the trailing semicolon
-      assertEquals(result.includes("preact/compat"), true);
-      assertEquals(result.includes(`"react"`), false);
+      assertEquals(
+        result,
+        `import React from "preact/compat";`,
+        "the statement is replaced between statementStart and statementEnd, leaving the trailing semicolon",
+      );
     });
 
     it("does nothing for empty rewrites map", async () => {
@@ -118,8 +120,11 @@ import { render } from "react-dom";
         [1, { specifier: "preact-dom" }],
       ]);
       const result = applyRewrites(code, parsed, rewrites);
-      assertEquals(result.includes("preact"), true);
-      assertEquals(result.includes("preact-dom"), true);
+      assertEquals(
+        result,
+        `import React from "preact";\nimport { render } from "preact-dom";`,
+        "both specifiers are rewritten and the surrounding positions stay intact",
+      );
     });
 
     it("restores HTTP URLs in non-rewritten parts", async () => {

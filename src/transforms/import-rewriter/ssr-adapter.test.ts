@@ -9,6 +9,10 @@ import {
   _pendingResolutions,
   _setDependencyResolutionPosterForTest,
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import {
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { rewriteSSRImportsCompat, rewriteSSRImportsCompatAsync } from "./ssr-adapter.ts";
 import type { DependencyResolutionObservation } from "./dependency-resolution.ts";
 
@@ -182,9 +186,25 @@ describe("ssr-adapter — server external packages", () => {
     const reordered = rewriteSSRImportsCompat(code, {
       serverExternalPackages: ["@prisma/client", "knex"],
     });
+    const knexSuperset = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "zod"],
+    });
 
-    assertEquals(knex === prisma, false);
-    assertEquals(ordered, reordered);
+    assertEquals(
+      knex === prisma,
+      false,
+      "different external package sets must not share a cache buster",
+    );
+    assertEquals(
+      ordered,
+      reordered,
+      "the external package set order must not change the cache buster",
+    );
+    assertEquals(
+      knex === knexSuperset,
+      false,
+      "a superset of external packages must not reuse the subset's cache buster",
+    );
   });
 
   it("partitions resolved child module URLs by the canonical external package set", async () => {
@@ -199,9 +219,23 @@ describe("ssr-adapter — server external packages", () => {
     const prisma = await rewrite(["@prisma/client"]);
     const ordered = await rewrite(["knex", "@prisma/client"]);
     const reordered = await rewrite(["@prisma/client", "knex"]);
+    const knexSuperset = await rewrite(["knex", "zod"]);
 
-    assertEquals(knex === prisma, false);
-    assertEquals(ordered, reordered);
+    assertEquals(
+      knex === prisma,
+      false,
+      "different external package sets must not share a cache buster",
+    );
+    assertEquals(
+      ordered,
+      reordered,
+      "the external package set order must not change the cache buster",
+    );
+    assertEquals(
+      knex === knexSuperset,
+      false,
+      "a superset of external packages must not reuse the subset's cache buster",
+    );
   });
 });
 
@@ -369,6 +403,63 @@ describe("ssr-adapter — resolveBareImportPin schedules background resolution",
     await _pendingResolutions();
 
     assertEquals(requests, []);
+  });
+
+  it("schedules special-package imports from a proven writeback source", async () => {
+    const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+    _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+      requests.push({ projectId, specifiers });
+      return Promise.resolve();
+    });
+
+    const content = JSON.stringify({
+      dependencies: { react: "^19.0.0", "react-dom": "next" },
+    });
+    const source: DependencyPinningSource = {
+      projectDir: "/project",
+      cacheNamespace: "ssr-adapter-special",
+      dependencyWritebackTarget: { kind: "main" },
+      fs: {
+        readFile: () => Promise.resolve(content),
+        stat: () =>
+          Promise.resolve({
+            size: content.length,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(1_000),
+          }),
+      },
+    };
+    const snapshot = await getDependencyPinningSnapshot(source);
+
+    rewriteSSRImportsCompat(
+      [
+        `import React from "react";`,
+        `import "react-dom/client";`,
+        `const loadHead = () => import("veryfront/head");`,
+      ].join("\n"),
+      {
+        projectDir: "/project",
+        projectId: "project-ref-authorized",
+        dependencyPinningSource: source,
+        dependencyPinningCacheKey: snapshot.cacheKey,
+        dependencyPinningDependencies: snapshot.dependencies,
+      },
+    );
+    await _pendingResolutions();
+
+    const scheduled = requests.flatMap((request) => request.specifiers);
+    assertEquals(
+      scheduled.includes("react@^19.0.0"),
+      true,
+      "react must be scheduled from an authorized SSR render",
+    );
+    assertEquals(
+      scheduled.includes("react-dom@next"),
+      true,
+      "react-dom must be scheduled from an authorized SSR render",
+    );
   });
 });
 

@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import {
@@ -50,6 +57,22 @@ describe("reactReExportToEsmUrl", () => {
     );
   });
 
+  it("maps the react-dom re-export to the externalized react-dom bundle", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", undefined, true),
+      "react-dom.js must route to the externalized react-dom bundle",
+    );
+  });
+
+  it("maps jsx-dev-runtime re-exports to the dev runtime", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("jsx-dev-runtime.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4", "/jsx-dev-runtime", true),
+      "jsx-dev-runtime.js must route to the dev JSX runtime, not the production one",
+    );
+  });
+
   it("returns null for non-react-re-export framework files", () => {
     assertEquals(reactReExportToEsmUrl(join(FRAMEWORK_ROOT, "src", "foo.js"), "19.2.4"), null);
     assertEquals(reactReExportToEsmUrl(reactPath("not-a-reexport.js"), "19.2.4"), null);
@@ -91,7 +114,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("isolates cached framework transforms by React version", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-cache-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-react-cache-" });
     const sourcePath = `${tmp}/framework-module.js`;
     const source = "export const marker = 1;\n";
 
@@ -118,7 +141,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("isolates cache and singleflight keys by project scope", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-project-cache-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-project-cache-" });
     const sourcePath = `${tmp}/framework-module.js`;
     const projectA = `${tmp}/project-a`;
     const projectB = `${tmp}/project-b`;
@@ -230,7 +253,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("coalesces concurrent transforms instead of reporting a false cycle", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-concurrent-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-concurrent-" });
     const sourcePath = `${tmp}/framework-module.ts`;
     const source = [
       'import { FNV1A_PRIME_32 } from "#veryfront/utils/constants/crypto.ts";',
@@ -288,7 +311,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("returns immediately when traversal ancestry identifies a real cycle", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-real-cycle-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-real-cycle-" });
     const sourcePath = `${tmp}/framework-module.js`;
     const source = "export const marker = 1;\n";
     const transformKey = buildFrameworkTransformCacheKey(
@@ -313,7 +336,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("invalidates a same-path transform when its source content changes", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-source-cache-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-source-cache-" });
     const sourcePath = `${tmp}/framework-module.js`;
     const ctx = { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() };
 
@@ -341,7 +364,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("uses the TypeScript loader for embedded .ts.src modules", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-main-ts-src-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-main-ts-src-" });
     const sourcePath = `${tmp}/framework-module.ts.src`;
     const source = [
       "const value: unknown = 1;",
@@ -366,7 +389,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("rewrites relative imports in the fallback to absolute file:// URLs so the cached output is loadable", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src/utils/constants`;
     await Deno.mkdir(srcDir, { recursive: true });
     const buildJs = `${srcDir}/build.js`;
@@ -407,7 +430,7 @@ describe("transformFrameworkCode depth-limit fallback", {
     // which the runtime cannot import directly. The fallback must materialize
     // a real .mjs cache file and link the import to that, not to the .src
     // source.
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-src-fallback-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-src-fallback-" });
     const srcDir = `${tmp}/src/utils`;
     await Deno.mkdir(srcDir, { recursive: true });
     // Only the .src copy exists (mirrors compiled-binary layout).
@@ -451,7 +474,7 @@ describe("transformFrameworkCode depth-limit fallback", {
 
   it("does not poison frameworkFileCache with fallback output", async () => {
     const { frameworkFileCache } = await import("./constants.ts");
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-cache-iso-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-cache-iso-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     const depPath = `${srcDir}/dep.ts.src`;
@@ -504,7 +527,7 @@ describe("transformFrameworkCode depth-limit fallback", {
     // Indirectly verify the loader picker via the fallback output: pass
     // TypeScript-only syntax (`as const`) through a `.mts.src` source and
     // confirm esbuild produced JS (would throw if loaded as `js`).
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-mts-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-mts-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     const sourcePath = `${srcDir}/uses-as-const.mts.src`;
@@ -532,7 +555,7 @@ describe("transformFrameworkCode depth-limit fallback", {
 
   it("does not propagate a cycle placeholder from frameworkFileCache into the fallback cache file", async () => {
     const { frameworkFileCache } = await import("./constants.ts");
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-cycle-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-cycle-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     const depPath = `${srcDir}/dep.ts.src`;
@@ -581,7 +604,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("rematerializes a cached #veryfront file URL when the target file is missing", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-stale-url-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-stale-url-" });
     const specifier = "#veryfront/utils/hash-utils.ts";
     const sourcePath = await resolveVeryfrontSourcePath(specifier);
     assert(sourcePath, `${specifier} did not resolve to a framework source file`);
@@ -615,7 +638,7 @@ describe("transformFrameworkCode depth-limit fallback", {
   });
 
   it("survives one bad .src dep without aborting the whole parent fallback", async () => {
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-baddep-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-baddep-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     // A dep whose content is invalid TypeScript — esbuild should reject it.
@@ -648,6 +671,100 @@ describe("transformFrameworkCode depth-limit fallback", {
       // Survived: the parent file produced output. The bad-dep handling
       // is verified by the absence of an unhandled exception above.
       assert(transformed.length > 0, "fallback returned empty output");
+
+      // The unresolvable dep is left bare rather than aborting the parent.
+      assertStringIncludes(
+        transformed,
+        "./bad.js",
+        "the unresolvable dep must be left bare rather than aborting the parent",
+      );
+
+      // Control: the same good dep, transformed without a failing sibling.
+      // Comparing the two runs pins "a bad sibling changes nothing about the
+      // good one" without depending on whether this runtime materializes it.
+      const controlPath = `${srcDir}/owner-good.ts.src`;
+      const controlContent = [
+        `import { G } from "./good.js";`,
+        `export const z = G;`,
+      ].join("\n");
+      await Deno.writeTextFile(controlPath, controlContent);
+      const controlTransformed = await transformFrameworkCode(
+        controlContent,
+        controlPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      assertEquals(
+        transformed.includes('from "./good.js"'),
+        controlTransformed.includes('from "./good.js"'),
+        "a failing sibling dep must not change how ./good.js is linked",
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("fails closed on an unresolvable #veryfront import when asked to throw", async () => {
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-missing-vf-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/imports-missing-vf.ts`;
+    const sourceContent = [
+      `import { missing } from "#veryfront/does-not-exist.ts";`,
+      `export const y = missing;`,
+    ].join("\n");
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformFrameworkCode(
+            sourceContent,
+            sourcePath,
+            { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+            true,
+          ),
+        VeryfrontError,
+        "#veryfront/does-not-exist.ts",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "import-resolution-error",
+        "an unresolvable framework import must surface as import-resolution-error",
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("fails closed on an unresolvable relative import when asked to throw", async () => {
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-missing-rel-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/imports-missing-relative.ts`;
+    const sourceContent = [
+      `import { gone } from "./not-on-disk.js";`,
+      `export const y = gone;`,
+    ].join("\n");
+
+    try {
+      const error = await assertRejects(
+        () =>
+          transformFrameworkCode(
+            sourceContent,
+            sourcePath,
+            { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+            true,
+          ),
+        VeryfrontError,
+        "./not-on-disk.js",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "import-resolution-error",
+        "an unresolvable relative framework import must surface as import-resolution-error",
+      );
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
@@ -658,7 +775,7 @@ describe("transformFrameworkCode depth-limit fallback", {
     // npm specifiers are resolved to local file:// bundles rather than left
     // for ad-hoc runtime resolution. This keeps the fallback's cached output
     // self-contained and Node-loadable.
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     const sourcePath = `${srcDir}/uses-lodash.js`;
@@ -680,6 +797,16 @@ describe("transformFrameworkCode depth-limit fallback", {
       // No bare specifier and no remote https: import left behind.
       assertEquals(transformed.includes('from "lodash"'), false);
       assertEquals(/from\s+["']https:\/\//.test(transformed), false);
+      // And the positive half: it became a local bundle that exists on disk.
+      assertStringIncludes(
+        transformed,
+        "file://",
+        "a bare npm specifier must be materialized to a local bundle",
+      );
+      const bundleMatch = transformed.match(/from\s+"(file:\/\/[^"]+)"/);
+      assert(bundleMatch?.[1], "expected a file:// specifier in the fallback output");
+      const bundleStat = await Deno.stat(fromFileUrl(bundleMatch[1]));
+      assertEquals(bundleStat.isFile, true, "the materialized bundle must exist on disk");
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
@@ -695,7 +822,7 @@ describe("transformFrameworkCode depth-limit fallback", {
     // rewrites react/react-dom to the esm.sh bundle, then (like the main path)
     // materializes it to a local file:// bundle so Node can load the cached
     // fallback module (Node rejects `import ... from "https:"`).
-    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-id-" });
+    const tmp = await makeTempDir({ prefix: "vf-vfmod-react-id-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
     const sourcePath = `${srcDir}/uses-react.js`;

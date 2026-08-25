@@ -34,6 +34,8 @@ import type { TransformContext } from "../types.ts";
 const { findVfModuleImports, findRelativeImports, FRAMEWORK_ROOT, EMBEDDED_SRC_DIR, EXTENSIONS } =
   _testExports;
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () => {
   describe("findVfModuleImports", () => {
     it("finds single /_vf_modules/ import", async () => {
@@ -93,9 +95,11 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
     });
 
     it("ignores string literals without from keyword", async () => {
-      const code = `const path = "/_vf_modules/something";`;
+      // The literal carries the framework prefix, so only the import-vs-string
+      // distinction can reject it - not the prefix filter.
+      const code = `const path = "/_vf_modules/_veryfront/react/components/Head.js";`;
       const imports = await findVfModuleImports(code);
-      assertEquals(imports, []);
+      assertEquals(imports, [], "a plain string constant is not an import");
     });
   });
 
@@ -422,6 +426,8 @@ describe("ssr-vf-modules", { sanitizeOps: false, sanitizeResources: false }, () 
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   it("resolves Head.tsx from /_vf_modules/ path", async () => {
     const fs = createFileSystem();
@@ -497,6 +503,8 @@ describe("ssr-vf-modules integration", { sanitizeOps: false, sanitizeResources: 
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules relative import resolution", {
   sanitizeOps: false,
   sanitizeResources: false,
@@ -632,6 +640,8 @@ describe("ssr-vf-modules relative import resolution", {
   });
 });
 
+// esbuild starts a child process that lives across tests, so we disable sanitizers here;
+// see src/transforms/pipeline/stages/ssr-vf-modules/transform.test.ts.
 describe("ssr-vf-modules non-framework source skipping", {
   sanitizeOps: false,
   sanitizeResources: false,
@@ -685,38 +695,34 @@ describe("ssr-vf-modules non-framework source skipping", {
   });
 
   it("resolveRelativeFrameworkImport resolves dnt shim paths at package root", async () => {
-    // When a framework source file imports ../_dnt.shims.js, the path resolves
+    // When a framework source file imports ../../_dnt.shims.js, the path resolves
     // to FRAMEWORK_ROOT/_dnt.shims.js which is outside src/ and should be
     // skipped by the transform (not recursively processed).
+    //
+    // The shim only ships in npm/dnt builds, so existence is stubbed through the
+    // resolver's injectable existsFn rather than gating the assertions on the
+    // checkout layout.
     const { resolveRelativeFrameworkImport } = _testExports;
     const fs = createFileSystem();
-
-    // Simulate a file in src/something/ importing ../../_dnt.shims.js
-    // which would resolve to FRAMEWORK_ROOT/_dnt.shims.js
+    const shimPath = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
     const sourcePath = `${FRAMEWORK_ROOT}/src/some/module.ts`;
 
-    // Check if _dnt.shims.js exists at root (only in npm/dnt builds)
-    const shimPath = `${FRAMEWORK_ROOT}/_dnt.shims.js`;
-    const shimExists = await fs.exists(shimPath);
+    const resolved = await resolveRelativeFrameworkImport(
+      "../../_dnt.shims.js",
+      sourcePath,
+      fs,
+      (path: string) => Promise.resolve(path === shimPath),
+    );
 
-    if (shimExists) {
-      const resolved = await resolveRelativeFrameworkImport(
-        "../../_dnt.shims.js",
-        sourcePath,
-        fs,
-      );
-      assertEquals(resolved !== null, true, "Should resolve _dnt.shims.js path");
+    assertEquals(resolved, shimPath, "Should resolve ../../_dnt.shims.js to the package-root shim");
 
-      // Verify it's outside framework source directories
-      const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
-      const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
-      assertEquals(
-        resolved!.startsWith(frameworkSrcDir) || resolved!.startsWith(embeddedPrefix),
-        false,
-        "Resolved dnt shim path should be outside framework source dirs",
-      );
-    }
-    // If shims don't exist (source dev mode), the test passes - the guard
-    // only matters in npm/dnt package builds
+    // Verify it's outside framework source directories
+    const frameworkSrcDir = `${FRAMEWORK_ROOT}/src/`;
+    const embeddedPrefix = `${EMBEDDED_SRC_DIR}/`;
+    assertEquals(
+      resolved!.startsWith(frameworkSrcDir) || resolved!.startsWith(embeddedPrefix),
+      false,
+      "Resolved dnt shim path should be outside framework source dirs",
+    );
   });
 });
