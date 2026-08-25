@@ -166,13 +166,16 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   ]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    const refreshedRequestContext = requestContext;
+    if (currentRequestContext.current !== refreshedRequestContext) return;
     setIsLoading(true);
     await fetchRun();
-    setIsLoading(false);
-  }, [fetchRun]);
+    if (currentRequestContext.current === refreshedRequestContext) setIsLoading(false);
+  }, [fetchRun, requestContext]);
 
   const cancel = useCallback(async (): Promise<void> => {
     if (!runId) return;
+    const mutatedRequestContext = requestContext;
 
     try {
       const requestUrl = `${normalizedApiBase}/runs/${
@@ -189,16 +192,18 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
           status: response.status,
         });
       }
+      if (currentRequestContext.current !== mutatedRequestContext) return;
       await refresh();
     } catch (err) {
       const cancelError = err instanceof Error ? err : new Error(String(err));
-      setError(cancelError);
+      if (currentRequestContext.current === mutatedRequestContext) setError(cancelError);
       throw cancelError;
     }
-  }, [credentials, normalizedApiBase, refresh, runId, stableHeaders]);
+  }, [credentials, normalizedApiBase, refresh, requestContext, runId, stableHeaders]);
 
   const retry = useCallback(async (): Promise<void> => {
     if (!runId) return;
+    const mutatedRequestContext = requestContext;
 
     try {
       const requestUrl = `${normalizedApiBase}/runs/${
@@ -215,13 +220,14 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
           status: response.status,
         });
       }
+      if (currentRequestContext.current !== mutatedRequestContext) return;
       await refresh();
     } catch (err) {
       const retryError = err instanceof Error ? err : new Error(String(err));
-      setError(retryError);
+      if (currentRequestContext.current === mutatedRequestContext) setError(retryError);
       throw retryError;
     }
-  }, [credentials, normalizedApiBase, refresh, runId, stableHeaders]);
+  }, [credentials, normalizedApiBase, refresh, requestContext, runId, stableHeaders]);
 
   useEffect(() => {
     abortControllerRef.current = new AbortController();

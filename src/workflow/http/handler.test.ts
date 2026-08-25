@@ -204,6 +204,15 @@ describe("createWorkflowHandler", () => {
     ).toBe(403);
   });
 
+  it("accepts the documented empty-string authorization identity", async () => {
+    const emptyIdentity = createWorkflowHandler(client, { authorize: () => "" });
+
+    expect((await emptyIdentity.GET(get("/api/workflows/runs"))).status).toBe(200);
+    expect(
+      (await emptyIdentity.POST(post("/api/workflows/pipeline/start", { input: {} }))).status,
+    ).toBe(200);
+  });
+
   it("preserves the request body when authorization inspects it", async () => {
     const bodyAware = createWorkflowHandler(client, {
       authorize: async (request) => {

@@ -386,7 +386,7 @@ export function createWorkflowHandler(
       if (url.pathname !== canonicalWorkflowPath(basePath, segments)) {
         return problem("Workflow route must use its canonical path", 400);
       }
-      if (!await options.authorize(request)) {
+      if (await options.authorize(request) === null) {
         return problem("Workflow request is not authorized", 403);
       }
 
@@ -439,7 +439,7 @@ export function createWorkflowHandler(
         return problem("Workflow route must use its canonical path", 400);
       }
       const authorizedApprover = await options.authorize(request.clone());
-      if (!authorizedApprover) return problem("Workflow request is not authorized", 403);
+      if (authorizedApprover === null) return problem("Workflow request is not authorized", 403);
 
       const [first, second, third, approvalId] = segments;
 

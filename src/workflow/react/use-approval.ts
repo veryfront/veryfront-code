@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
 import {
@@ -49,6 +49,13 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   } = options;
   const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
   const stableHeaders = useStableWorkflowHeaders(headers);
+  const requestContext = useMemo(
+    () => ({ approvalId, credentials, normalizedApiBase, runId, stableHeaders }),
+    [approvalId, credentials, normalizedApiBase, runId, stableHeaders],
+  );
+  const currentRequestContext = useRef(requestContext);
+  currentRequestContext.current = requestContext;
+  const decisionSequence = useRef(0);
 
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,6 +65,11 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const toError = useCallback((err: unknown): Error => {
     return err instanceof Error ? err : new Error(String(err));
   }, []);
+
+  useEffect(() => {
+    decisionSequence.current++;
+    setIsSubmitting(false);
+  }, [requestContext]);
 
   useEffect((): (() => void) | void => {
     if (!runId || !approvalId) return;
@@ -107,6 +119,11 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const submitDecision = useCallback(
     async (decision: ApprovalDecision): Promise<void> => {
       if (!runId || !approvalId) return;
+      const sequence = ++decisionSequence.current;
+      const submittedRequestContext = requestContext;
+      const isCurrentRequest = (): boolean =>
+        sequence === decisionSequence.current &&
+        submittedRequestContext === currentRequestContext.current;
 
       setIsSubmitting(true);
       setError(null);
@@ -147,6 +164,8 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
           approver: typeof responseResolvedBy === "string" ? responseResolvedBy : decision.approver,
         };
 
+        if (!isCurrentRequest()) return;
+
         setApproval((prev) => {
           if (!prev) return null;
 
@@ -162,11 +181,13 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         onDecision?.(resolvedDecision);
       } catch (err) {
         const submitError = toError(err);
-        setError(submitError);
-        onError?.(submitError);
+        if (isCurrentRequest()) {
+          setError(submitError);
+          onError?.(submitError);
+        }
         throw submitError;
       } finally {
-        setIsSubmitting(false);
+        if (isCurrentRequest()) setIsSubmitting(false);
       }
     },
     [
@@ -176,6 +197,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       normalizedApiBase,
       onDecision,
       onError,
+      requestContext,
       stableHeaders,
       toError,
     ],

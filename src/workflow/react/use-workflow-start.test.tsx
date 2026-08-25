@@ -136,6 +136,57 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("ignores an obsolete approval decision after its request context changes", async () => {
+    const restoreDom = installDom();
+    const oldDecisionResponse = Promise.withResolvers<Response>();
+    const decisions: string[] = [];
+    let hook: UseApprovalResult | null = null;
+
+    installMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST") return oldDecisionResponse.promise;
+        const approvalId = String(input).split("/").at(-1);
+        return Promise.resolve(Response.json({
+          id: approvalId,
+          status: "pending",
+          message: `${approvalId} pending`,
+        }));
+      }) as typeof fetch,
+    );
+
+    function Capture({ approvalId }: { approvalId: string }): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId,
+        onDecision: (decision) => decisions.push(decision.approver),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture approvalId="approval-old" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const obsoleteDecision = hook!.approve();
+
+      flushSync(() => root.render(<Capture approvalId="approval-new" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.approval?.id, "approval-new");
+
+      oldDecisionResponse.resolve(Response.json({ resolvedBy: "old-session" }));
+      await obsoleteDecision;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.approval?.id, "approval-new");
+      assertEquals(hook!.approval?.status, "pending");
+      assertEquals(hook!.isSubmitting, false);
+      assertEquals(decisions, []);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("ignores an obsolete list response after request options change", async () => {
     const restoreDom = installDom();
     const firstResponse = Promise.withResolvers<Response>();
@@ -376,6 +427,74 @@ describe("useWorkflowStart", () => {
     } finally {
       flushSync(() => root.unmount());
       await new Promise((resolve) => setTimeout(resolve, 0));
+      restoreDom();
+    }
+  });
+
+  it("ignores obsolete cancel and retry results after authorization changes", async () => {
+    const restoreDom = installDom();
+    const oldCancelResponse = Promise.withResolvers<Response>();
+    const oldRetryResponse = Promise.withResolvers<Response>();
+    let oldSessionReads = 0;
+    let hook: UseWorkflowResult | null = null;
+
+    installMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (init?.method === "POST" && url.endsWith("/cancel")) {
+          return oldCancelResponse.promise;
+        }
+        if (init?.method === "POST" && url.endsWith("/retry")) {
+          return oldRetryResponse.promise;
+        }
+        if (authorization === "Bearer old") oldSessionReads++;
+        return Promise.resolve(Response.json({
+          id: authorization === "Bearer old" ? "old-run" : "new-run",
+          status: "running",
+          nodeStates: {},
+          currentNodes: [],
+          pendingApprovals: [],
+        }));
+      }) as typeof fetch,
+    );
+
+    function Capture({ token }: { token: string }): null {
+      hook = useWorkflow({
+        runId: "run-1",
+        autoRefresh: false,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const obsoleteCancel = hook!.cancel();
+      const obsoleteRetry = hook!.retry();
+
+      flushSync(() => root.render(<Capture token="new" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.run?.id, "new-run");
+
+      const retryRejection = assertRejects(
+        () => obsoleteRetry,
+        Error,
+        "Failed to retry workflow",
+      );
+      oldCancelResponse.resolve(Response.json({ status: "cancelled" }));
+      oldRetryResponse.resolve(new Response(null, { status: 500 }));
+      await obsoleteCancel;
+      await retryRejection;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.run?.id, "new-run");
+      assertEquals(hook!.error, null);
+      assertEquals(oldSessionReads, 1, "an obsolete mutation must not refresh its old context");
+    } finally {
+      flushSync(() => root.unmount());
       restoreDom();
     }
   });
