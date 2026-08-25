@@ -697,6 +697,14 @@ describe("Salesforce service-account integration source", () => {
     await assertRejects(
       () =>
         source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE NOT(Title = 'x' AND PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
           q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' WITH DATA CATEGORY Confidential__c AT Internal__c ORDER BY LastPublishedDate DESC LIMIT 25",
         }),
       TypeError,
@@ -781,6 +789,19 @@ describe("Salesforce service-account integration source", () => {
       () =>
         source.executeTool("salesforce__list_cases", {
           q: `${projection} WHERE NOT (Status = 'Closed')ORDER BY SensitiveField__c`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE ${
+            Array.from(
+              { length: 20_000 },
+              (_, index) => `unauthorized_${index}=0`,
+            ).join(" ")
+          }`,
         }),
       TypeError,
       "authorized root-object fields",

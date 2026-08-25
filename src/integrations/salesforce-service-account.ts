@@ -671,6 +671,24 @@ function hasSoqlConjunctBoundaryAfter(masked: string, end: number): boolean {
     !/[a-z0-9_]/i.test(masked[cursor + 3] ?? "");
 }
 
+/** Reject a predicate enclosed by any group introduced with unary NOT. */
+function isInsideNegatedSoqlGroup(masked: string, predicateStart: number): boolean {
+  const openGroups: number[] = [];
+  for (let index = 0; index < predicateStart; index++) {
+    if (masked[index] === "(") openGroups.push(index);
+    else if (masked[index] === ")") openGroups.pop();
+  }
+
+  for (const groupStart of openGroups) {
+    let cursor = groupStart - 1;
+    while (/\s/.test(masked[cursor] ?? "")) cursor--;
+    const tokenEnd = cursor + 1;
+    while (/[a-z0-9_]/i.test(masked[cursor] ?? "")) cursor--;
+    if (masked.slice(cursor + 1, tokenEnd).toLowerCase() === "not") return true;
+  }
+  return false;
+}
+
 function hasRequiredSoqlConjunct(value: string, requiredPredicate: string): boolean {
   const masked = maskSoqlStrings(value);
   if (!hasBalancedSoqlParentheses(masked)) return false;
@@ -680,6 +698,7 @@ function hasRequiredSoqlConjunct(value: string, requiredPredicate: string): bool
     if (predicateStart === -1) return false;
     const predicateEnd = predicateStart + requiredPredicate.length;
     if (
+      !isInsideNegatedSoqlGroup(masked, predicateStart) &&
       hasSoqlConjunctBoundaryBefore(masked, predicateStart) &&
       hasSoqlConjunctBoundaryAfter(masked, predicateEnd)
     ) {
@@ -729,8 +748,7 @@ function extractSoqlWhereClause(query: string): string | undefined {
   return query.slice(contentStart, end ? end.index : query.length);
 }
 
-function collectSoqlClauseFields(query: string): Set<string> {
-  const fields = new Set<string>();
+function* iterateSoqlClauseFields(query: string): Generator<string> {
   const masked = collapseSoqlWhitespace(maskSoqlStrings(query));
   for (const match of masked.matchAll(/[a-z][a-z0-9_.]*/gi)) {
     let operatorStart = match.index + match[0].length;
@@ -740,7 +758,7 @@ function collectSoqlClauseFields(query: string): Set<string> {
       remainder.startsWith("=") || remainder.startsWith("!=") ||
       remainder.startsWith("<") || remainder.startsWith(">") ||
       /^(?:like|not in|in|includes|excludes)(?:$|[ (])/.test(remainder)
-    ) fields.add(match[0].toLowerCase());
+    ) yield match[0].toLowerCase();
   }
   for (const startPattern of [/\border\s+by\b/i, /\bgroup\s+by\b/i]) {
     const clause = extractSoqlClause(
@@ -749,9 +767,16 @@ function collectSoqlClauseFields(query: string): Set<string> {
       /\b(?:order\s+by|group\s+by|limit|offset|having|with)\b/gi,
     );
     if (!clause) continue;
-    for (const entry of clause.split(",")) {
-      const field = collapseSoqlWhitespace(entry).split(" ")[0];
-      if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) fields.add(field.toLowerCase());
+    let entryStart = 0;
+    while (entryStart <= clause.length) {
+      const separator = clause.indexOf(",", entryStart);
+      const entry = clause.slice(entryStart, separator === -1 ? clause.length : separator);
+      const normalizedEntry = collapseSoqlWhitespace(entry);
+      const firstSpace = normalizedEntry.indexOf(" ");
+      const field = firstSpace === -1 ? normalizedEntry : normalizedEntry.slice(0, firstSpace);
+      if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) yield field.toLowerCase();
+      if (separator === -1) break;
+      entryStart = separator + 1;
     }
   }
   const dataCategoryClause = extractSoqlClause(
@@ -763,10 +788,9 @@ function collectSoqlClauseFields(query: string): Set<string> {
     const syntaxKeywords = new Set(["and", "at", "above", "below", "above_or_below"]);
     for (const match of dataCategoryClause.matchAll(/[a-z][a-z0-9_]*/gi)) {
       const identifier = match[0].toLowerCase();
-      if (!syntaxKeywords.has(identifier)) fields.add(identifier);
+      if (!syntaxKeywords.has(identifier)) yield identifier;
     }
   }
-  return fields;
 }
 
 function parseSoqlShape(query: string): { projection: string; object: string } | undefined {
@@ -830,8 +854,8 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
   const allowedFields = new Set(
     normalizeSoqlProjection(expectedMatch.projection).map(removeSoqlWhitespace),
   );
-  for (const field of collectSoqlClauseFields(queryDefinition.default)) allowedFields.add(field);
-  for (const field of collectSoqlClauseFields(args.q)) {
+  for (const field of iterateSoqlClauseFields(queryDefinition.default)) allowedFields.add(field);
+  for (const field of iterateSoqlClauseFields(args.q)) {
     if (!allowedFields.has(field)) {
       throw new TypeError(
         "Salesforce curated tool SOQL may only filter or sort by authorized root-object fields",
