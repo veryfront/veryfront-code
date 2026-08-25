@@ -4,7 +4,7 @@ import {
   encodeWorkflowPathSegment,
   normalizeWorkflowApiBase,
   useStableWorkflowHeaders,
-  workflowMutationHeaders,
+  workflowJsonMutationHeaders,
 } from "./mutation-headers.ts";
 
 /** Options accepted by use workflow start. */
@@ -58,10 +58,7 @@ export function useWorkflowStart<TInput = unknown>(
         }/start`;
         const response = await fetch(requestUrl, {
           method: "POST",
-          headers: workflowMutationHeaders(requestUrl, {
-            ...Object.fromEntries(stableHeaders),
-            "Content-Type": "application/json",
-          }),
+          headers: workflowJsonMutationHeaders(requestUrl, stableHeaders),
           credentials,
           body: JSON.stringify({ input }),
         });

@@ -127,6 +127,38 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("does not overlap slow workflow list polls", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const firstResponse = Promise.withResolvers<Response>();
+    let requestCount = 0;
+
+    globalThis.fetch = (() => {
+      requestCount++;
+      return requestCount === 1
+        ? firstResponse.promise
+        : Promise.resolve(Response.json({ runs: [] }));
+    }) as typeof fetch;
+
+    function Capture(): null {
+      useWorkflowList({ autoRefresh: true, refreshInterval: 5 });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assertEquals(requestCount, 1, "polling waits for the active replacement request");
+      firstResponse.resolve(Response.json({ runs: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("does not refetch when inline authorization headers are semantically unchanged", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
@@ -238,16 +270,22 @@ describe("useWorkflowStart", () => {
     }
   });
 
-  it("accepts a successful empty approval response", async () => {
+  it("accepts successful approval responses without an object body", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
     let hook: UseApprovalResult | null = null;
     const approvers: string[] = [];
+    const approvalResponses = [
+      new Response(null, { status: 204 }),
+      Response.json(null),
+      new Response("accepted"),
+    ];
+    let responseIndex = 0;
 
     globalThis.fetch =
       ((_input: string | URL | Request, init?: RequestInit) =>
         init?.method === "POST"
-          ? Promise.resolve(new Response(null, { status: 204 }))
+          ? Promise.resolve(approvalResponses[responseIndex++]!)
           : Promise.resolve(
             Response.json({ id: "approval-1", status: "pending" }),
           )) as typeof fetch;
@@ -266,7 +304,9 @@ describe("useWorkflowStart", () => {
     try {
       flushSync(() => root.render(<Capture />));
       await hook!.approve();
-      assertEquals(approvers, ["legacy-user"]);
+      await hook!.approve();
+      await hook!.approve();
+      assertEquals(approvers, ["legacy-user", "legacy-user", "legacy-user"]);
     } finally {
       flushSync(() => root.unmount());
       globalThis.fetch = originalFetch;
@@ -332,6 +372,7 @@ describe("useWorkflowStart", () => {
     function Capture(): null {
       hook = useWorkflowStart<{ topic: string }>({
         workflowId: "content-pipeline",
+        headers: { "Content-Type": "text/plain" },
         onStart: (runId) => startedRunIds.push(runId),
       });
       return null;

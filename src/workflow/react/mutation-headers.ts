@@ -26,3 +26,13 @@ export function useStableWorkflowHeaders(headers?: HeadersInit): Headers {
 export function workflowMutationHeaders(requestUrl: string | URL, init?: HeadersInit): Headers {
   return csrfMutationHeaders(requestUrl, { headers: init });
 }
+
+/** Replace any caller media type with the JSON type used by workflow mutations. */
+export function workflowJsonMutationHeaders(
+  requestUrl: string | URL,
+  init?: HeadersInit,
+): Headers {
+  const headers = new Headers(init);
+  headers.set("Content-Type", "application/json");
+  return workflowMutationHeaders(requestUrl, headers);
+}

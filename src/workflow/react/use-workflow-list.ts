@@ -61,6 +61,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
   const requestSequence = useRef(0);
+  const activeRequestCount = useRef(0);
 
   const [filter, setFilterState] = useState<RunFilter>({
     workflowId,
@@ -97,6 +98,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const fetchRuns = useCallback(
     async (append = false): Promise<void> => {
       const sequence = ++requestSequence.current;
+      activeRequestCount.current++;
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${normalizedApiBase}/runs?${queryString}`, {
@@ -127,6 +129,8 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
       } catch (err) {
         if (sequence !== requestSequence.current) return;
         setError(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        activeRequestCount.current--;
       }
     },
     [buildQueryString, credentials, cursor, filter, normalizedApiBase, stableHeaders],
@@ -152,6 +156,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     if (!autoRefresh) return;
 
     const intervalId = setInterval(() => {
+      if (activeRequestCount.current > 0) return;
       fetchRuns(false);
     }, refreshInterval);
 

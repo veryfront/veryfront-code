@@ -5,7 +5,7 @@ import {
   encodeWorkflowPathSegment,
   normalizeWorkflowApiBase,
   useStableWorkflowHeaders,
-  workflowMutationHeaders,
+  workflowJsonMutationHeaders,
 } from "./mutation-headers.ts";
 
 /** Options accepted by use approval. */
@@ -117,10 +117,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`;
         const response = await fetch(requestUrl, {
           method: "POST",
-          headers: workflowMutationHeaders(requestUrl, {
-            ...Object.fromEntries(stableHeaders),
-            "Content-Type": "application/json",
-          }),
+          headers: workflowJsonMutationHeaders(requestUrl, stableHeaders),
           credentials,
           body: JSON.stringify(decision),
         });
@@ -133,19 +130,21 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         }
 
         const responseText = await response.text();
-        let responseBody: { resolvedBy?: unknown } = {};
+        let responseBody: unknown;
         if (responseText) {
           try {
-            responseBody = JSON.parse(responseText) as { resolvedBy?: unknown };
+            responseBody = JSON.parse(responseText) as unknown;
           } catch {
             // Successful legacy/proxied endpoints may return a non-JSON body.
           }
         }
+        const responseResolvedBy = responseBody !== null && typeof responseBody === "object" &&
+            "resolvedBy" in responseBody
+          ? responseBody.resolvedBy
+          : undefined;
         const resolvedDecision: ApprovalDecision = {
           ...decision,
-          approver: typeof responseBody.resolvedBy === "string"
-            ? responseBody.resolvedBy
-            : decision.approver,
+          approver: typeof responseResolvedBy === "string" ? responseResolvedBy : decision.approver,
         };
 
         setApproval((prev) => {
