@@ -30,6 +30,7 @@ const MapPrototypeHas = NativeMap.prototype.has;
 const ObjectFreeze = Object.freeze;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
+const RegExpPrototypeTest = RegExp.prototype.test;
 const FORBIDDEN_HEADER_NAMES = ["crit", "b64", "jku", "jwk", "x5u", "x5c"];
 const DEFAULT_ALLOWED_ALGORITHMS = ObjectFreeze(["RS256"]);
 const RSA_ALGORITHMS = new NativeSet([
@@ -68,6 +69,9 @@ const PSS_SALT_LENGTH_BY_ALGORITHM = new NativeMap([
 ]);
 const CryptoSubtle = crypto.subtle;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const SubtleCryptoImportKey = CryptoSubtle.importKey;
 const SubtleCryptoVerify = CryptoSubtle.verify;
 const TextDecoderDecode = TextDecoder.prototype.decode;
@@ -191,11 +195,13 @@ function parseCompactJws(token: string): ParsedToken {
   ) {
     throw new TypeError("OIDC ID token exceeds the size limit");
   }
-  const segments = token.split(".");
+  const segments = ReflectApply(StringPrototypeSplit, token, ["."]) as string[];
   if (segments.length !== 3) {
     throw new TypeError("OIDC ID token must be a compact JWS with exactly three segments");
   }
-  const [headerSegment, payloadSegment, signatureSegment] = segments;
+  const headerSegment = segments[0];
+  const payloadSegment = segments[1];
+  const signatureSegment = segments[2];
   if (
     headerSegment === undefined ||
     payloadSegment === undefined ||
@@ -208,7 +214,7 @@ function parseCompactJws(token: string): ParsedToken {
   }
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index]!;
-    if (!BASE64URL_SEGMENT_PATTERN.test(segment)) {
+    if (!regexpTest(BASE64URL_SEGMENT_PATTERN, segment)) {
       throw new TypeError("OIDC ID token compact JWS segment must use strict base64url");
     }
   }
@@ -267,7 +273,7 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
 
 function isAsciiString(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
+    const code = ReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
     if (code > 0x7F) return false;
   }
   return true;
@@ -458,20 +464,20 @@ function importAlgorithm(
     return { name: "ECDSA", namedCurve };
   }
   return {
-    name: alg.startsWith("PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5",
+    name: stringStartsWith(alg, "PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5",
     hash: hashFor(alg),
   };
 }
 
 function verifyAlgorithm(alg: IdTokenAlgorithm): AlgorithmIdentifier | RsaPssParams | EcdsaParams {
-  if (alg.startsWith("PS")) {
+  if (stringStartsWith(alg, "PS")) {
     const saltLength = mapGet(PSS_SALT_LENGTH_BY_ALGORITHM, alg);
     if (saltLength === undefined) {
       throw new TypeError("OIDC ID token uses an unsupported signing algorithm");
     }
     return { name: "RSA-PSS", saltLength };
   }
-  if (alg.startsWith("ES")) return { name: "ECDSA", hash: hashFor(alg) };
+  if (stringStartsWith(alg, "ES")) return { name: "ECDSA", hash: hashFor(alg) };
   return { name: "RSASSA-PKCS1-v1_5" };
 }
 
@@ -546,7 +552,7 @@ function validateSubject(value: unknown): void {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_SUBJECT_LENGTH ||
-    !PRINTABLE_ASCII_PATTERN.test(value)
+    !regexpTest(PRINTABLE_ASCII_PATTERN, value)
   ) {
     throw new TypeError("OIDC ID token subject must be a printable ASCII string");
   }
@@ -641,17 +647,31 @@ function parseMaxTokenAge(value: number | undefined): number {
 }
 
 function sanitizeVerificationError(error: TypeError): TypeError {
-  if (error.message.startsWith("OIDC ID token")) {
+  if (stringStartsWith(error.message, "OIDC ID token")) {
     return error;
   }
-  if (error.message.startsWith("Application identity")) {
+  if (stringStartsWith(error.message, "Application identity")) {
     return error;
   }
-  if (error.message.includes("JWKS key type") || error.message.includes("compatible")) {
+  if (
+    stringIncludes(error.message, "JWKS key type") || stringIncludes(error.message, "compatible")
+  ) {
     return new TypeError("OIDC ID token key verification failed", { cause: error });
   }
-  if (error.message.includes("JWKS")) {
+  if (stringIncludes(error.message, "JWKS")) {
     return new TypeError("OIDC ID token verification failed", { cause: error });
   }
   return new TypeError("OIDC ID token verification failed", { cause: error });
+}
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpPrototypeTest, pattern, [value]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
 }

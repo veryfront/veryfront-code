@@ -637,6 +637,67 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(forcedRefreshCalls, 1);
   });
 
+  it("serves an unexpired known key while a forced refresh fails", async () => {
+    const cache = createJwksCache({ ttlSeconds: 60 });
+    await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+      () => cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
+    );
+
+    let rejectRefresh: ((reason?: unknown) => void) | undefined;
+    const blockedRefresh = new Promise<Response>((_resolve, reject) => {
+      rejectRefresh = reject;
+    });
+    const outcomes = await withMockFetch(
+      () => blockedRefresh,
+      async () => {
+        const forced = cache.getKey({
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+          forceRefresh: true,
+        });
+        await Promise.resolve();
+        const concurrentKnown = cache.getKey({
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+        rejectRefresh?.(new Error("simulated refresh outage"));
+        return await Promise.allSettled([forced, concurrentKnown]);
+      },
+    );
+
+    assertEquals(outcomes[0]?.status, "rejected");
+    assertEquals(outcomes[1]?.status, "fulfilled");
+    if (outcomes[1]?.status === "fulfilled") {
+      assertEquals(outcomes[1].value.kid, "rsa-1");
+    }
+  });
+
+  it("refreshes once when a warm same-kid key changes algorithm and key type", async () => {
+    const cache = createJwksCache({ ttlSeconds: 60 });
+    const rotatedEcKey = { ...EC_KEY, kid: "rsa-1" };
+    let calls = 0;
+    const keys = await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([calls === 1 ? RSA_KEY : rotatedEcKey])));
+      },
+      async () => {
+        const rsa = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
+        const ec = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "ES256" });
+        const cachedEc = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "ES256" });
+        return { rsa, ec, cachedEc };
+      },
+    );
+
+    assertEquals(keys.rsa.kty, "RSA");
+    assertEquals(keys.ec.kty, "EC");
+    assertEquals(keys.cachedEc.kty, "EC");
+    assertEquals(calls, 2);
+  });
+
   it("bounds staggered unknown-kid refreshes while allowing later rotation", async () => {
     let now = 0;
     let calls = 0;

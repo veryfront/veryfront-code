@@ -8,6 +8,7 @@ import { verifyOidcIdToken } from "./id-token.ts";
 const TestReflectApply = Reflect.apply;
 const TestObjectDefineProperty = Object.defineProperty;
 const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestStringPrototypeSplit = String.prototype.split;
 const TestTextEncoderPrototypeEncode = TextEncoder.prototype.encode;
 
 function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
@@ -215,6 +216,39 @@ describe("security/application-auth OIDC ID tokens", () => {
         message,
       );
       assertEquals(calls, 0);
+    }
+  });
+
+  it("does not let a poisoned string split substitute compact JWS segments", async () => {
+    const keys = await material();
+    const signed = await signToken(keys.RS256, claims());
+    const substituted = TestReflectApply(TestStringPrototypeSplit, signed, ["."]) as string[];
+    const restore = replacePropertyForTest(
+      String.prototype,
+      "split",
+      function (this: string, separator: string | RegExp, limit?: number): string[] {
+        if (this === "x" && separator === ".") return substituted;
+        return TestReflectApply(TestStringPrototypeSplit, this, [separator, limit]) as string[];
+      },
+    );
+
+    try {
+      await assertRejects(
+        () =>
+          verifyOidcIdToken({
+            token: "x",
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: { getKey: () => Promise.resolve(keys.RS256.publicJwk) },
+            now: () => NOW,
+          }),
+        TypeError,
+        "compact JWS",
+      );
+    } finally {
+      restore();
     }
   });
 

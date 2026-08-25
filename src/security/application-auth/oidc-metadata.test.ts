@@ -21,6 +21,8 @@ const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const TestPromisePrototypeThen = Promise.prototype.then;
 const TestPromiseResolve = Promise.resolve;
 const TestReflectApply = Reflect.apply;
+const TestReflectDeleteProperty = Reflect.deleteProperty;
+const TestStringPrototypeSlice = String.prototype.slice;
 
 const ISSUER = "https://issuer.example.com/tenant";
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
@@ -102,9 +104,9 @@ async function expectDiscoveryRejects(
 
 describe("security/application-auth OIDC metadata", () => {
   it("exposes the strict JSON object parser used by discovery and JWKS consumers", () => {
-    assertEquals(parseStrictJsonObject('{"issuer":"https://issuer.example.com"}', "JWT claims"), {
-      issuer: "https://issuer.example.com",
-    });
+    const parsed = parseStrictJsonObject('{"issuer":"https://issuer.example.com"}', "JWT claims");
+    assertEquals(parsed, { issuer: "https://issuer.example.com" });
+    assertEquals(Object.getPrototypeOf(parsed), null);
 
     for (
       const [body, message] of [
@@ -121,6 +123,66 @@ describe("security/application-auth OIDC metadata", () => {
         TypeError,
         message,
       );
+    }
+  });
+
+  it("does not let a poisoned string slice bypass duplicate JSON key rejection", () => {
+    const body = '{"iss":"attacker","iss":"trusted"}';
+    let keySlices = 0;
+    const restore = replacePropertyForTest(
+      String.prototype,
+      "slice",
+      function (this: string, start?: number, end?: number): string {
+        const actual = TestReflectApply(TestStringPrototypeSlice, this, [start, end]) as string;
+        if (this === body && actual === '"iss"') {
+          keySlices += 1;
+          if (keySlices === 2) return '"different"';
+        }
+        return actual;
+      },
+    );
+
+    try {
+      assertThrows(
+        () => parseStrictJsonObject(body, "JWT claims"),
+        TypeError,
+        "duplicate",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not accept inherited OIDC discovery fields", async () => {
+    const inherited = {
+      issuer: ISSUER,
+      authorization_endpoint: `${ISSUER}/authorize`,
+      token_endpoint: `${ISSUER}/token`,
+      jwks_uri: `${ISSUER}/jwks.json`,
+    };
+    const installed: string[] = [];
+    try {
+      for (const [key, value] of Object.entries(inherited)) {
+        TestReflectApply(TestObjectDefineProperty, Object, [
+          Object.prototype,
+          key,
+          { value, configurable: true },
+        ]);
+        installed[installed.length] = key;
+      }
+      await assertRejects(
+        () =>
+          withMockFetch(
+            () => Promise.resolve(jsonResponse("{}")),
+            () => fetchOidcMetadata({ issuer: ISSUER }),
+          ),
+        TypeError,
+        "issuer",
+      );
+    } finally {
+      for (let index = 0; index < installed.length; index += 1) {
+        TestReflectApply(TestReflectDeleteProperty, Reflect, [Object.prototype, installed[index]!]);
+      }
     }
   });
 

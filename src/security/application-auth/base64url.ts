@@ -1,5 +1,8 @@
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/;
+const ReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 
 export function encodeAuthBase64Url(bytes: Uint8Array): string {
   let output = "";
@@ -26,7 +29,7 @@ export function encodeAuthBase64Url(bytes: Uint8Array): string {
 export function decodeAuthBase64Url(value: string): Uint8Array {
   if (
     value.length % 4 === 1 ||
-    !BASE64URL_PATTERN.test(value)
+    ReflectApply(RegExpPrototypeExec, BASE64URL_PATTERN, [value]) === null
   ) {
     throw new TypeError("Auth cookie value must use strict unpadded base64url");
   }
@@ -38,7 +41,7 @@ export function decodeAuthBase64Url(value: string): Uint8Array {
 
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index]!;
-    const decoded = BASE64URL_ALPHABET.indexOf(character);
+    const decoded = ReflectApply(StringPrototypeIndexOf, BASE64URL_ALPHABET, [character]) as number;
     if (decoded < 0) {
       throw new TypeError("Auth cookie value must use strict unpadded base64url");
     }

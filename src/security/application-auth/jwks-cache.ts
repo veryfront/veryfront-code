@@ -98,6 +98,7 @@ interface SettledCacheEntry {
   readonly freshness: JwksFreshnessToken;
   readonly signatureRefreshAllowedAt: number;
   readonly unknownKidRefreshAllowedAt: number;
+  readonly incompatibleKeyRefreshAllowedAt: number;
 }
 
 interface PendingCacheEntry {
@@ -109,7 +110,12 @@ interface PendingCacheEntry {
 
 type CacheEntry = SettledCacheEntry | PendingCacheEntry;
 
-type RefreshKind = "none" | "explicit" | "signature-mismatch" | "unknown-kid";
+type RefreshKind =
+  | "none"
+  | "explicit"
+  | "signature-mismatch"
+  | "unknown-kid"
+  | "incompatible-key";
 
 class JwksFreshnessToken {}
 
@@ -173,6 +179,16 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       };
     }
     if (current?.kind === "pending") {
+      if (
+        !forceRefresh && current.previous !== undefined &&
+        current.previous.expiresAt > currentTime
+      ) {
+        return {
+          document: current.previous.value,
+          freshness: current.previous.freshness,
+          refreshed: false,
+        };
+      }
       return await current.pending;
     }
     if (forceRefresh && refreshIfCurrent !== undefined && current?.freshness !== refreshIfCurrent) {
@@ -267,7 +283,24 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     );
     const firstKey = mapGet(firstLoad.document.keys, kid);
     if (firstKey !== undefined) {
-      return keySnapshot(compatibleKey(firstKey, alg), firstLoad.freshness);
+      const compatible = compatibleKeyOrUndefined(firstKey, alg);
+      if (compatible !== undefined) {
+        return keySnapshot(compatible, firstLoad.freshness);
+      }
+      if (keyOptions.forceRefresh === true || firstLoad.refreshed) {
+        return keySnapshot(compatibleKey(firstKey, alg), firstLoad.freshness);
+      }
+      const refreshed = await load(
+        fetchOptions,
+        timeoutMs,
+        "incompatible-key",
+        firstLoad.freshness,
+      );
+      const refreshedKey = mapGet(refreshed.document.keys, kid);
+      if (refreshedKey === undefined) {
+        throw new TypeError("JWKS does not contain the requested kid");
+      }
+      return keySnapshot(compatibleKey(refreshedKey, alg), refreshed.freshness);
     }
     if (keyOptions.forceRefresh === true || firstLoad.refreshed) {
       throw new TypeError("JWKS does not contain the requested kid");
@@ -295,14 +328,21 @@ function keySnapshot(key: PublicJwk, freshness: JwksFreshnessToken): JwksKeySnap
 
 function emptyRefreshBudget(): Pick<
   SettledCacheEntry,
-  "signatureRefreshAllowedAt" | "unknownKidRefreshAllowedAt"
+  | "signatureRefreshAllowedAt"
+  | "unknownKidRefreshAllowedAt"
+  | "incompatibleKeyRefreshAllowedAt"
 > {
-  return { signatureRefreshAllowedAt: 0, unknownKidRefreshAllowedAt: 0 };
+  return {
+    signatureRefreshAllowedAt: 0,
+    unknownKidRefreshAllowedAt: 0,
+    incompatibleKeyRefreshAllowedAt: 0,
+  };
 }
 
 function refreshAllowedAt(entry: SettledCacheEntry, refreshKind: RefreshKind): number {
   if (refreshKind === "signature-mismatch") return entry.signatureRefreshAllowedAt;
   if (refreshKind === "unknown-kid") return entry.unknownKidRefreshAllowedAt;
+  if (refreshKind === "incompatible-key") return entry.incompatibleKeyRefreshAllowedAt;
   return 0;
 }
 
@@ -321,7 +361,12 @@ function refreshCooldown(
   entry: SettledCacheEntry,
   refreshKind: RefreshKind,
   currentTime: number,
-): Pick<SettledCacheEntry, "signatureRefreshAllowedAt" | "unknownKidRefreshAllowedAt"> {
+): Pick<
+  SettledCacheEntry,
+  | "signatureRefreshAllowedAt"
+  | "unknownKidRefreshAllowedAt"
+  | "incompatibleKeyRefreshAllowedAt"
+> {
   return {
     signatureRefreshAllowedAt: refreshKind === "signature-mismatch"
       ? currentTime + FORCED_REFRESH_COOLDOWN_MS
@@ -329,6 +374,9 @@ function refreshCooldown(
     unknownKidRefreshAllowedAt: refreshKind === "unknown-kid"
       ? currentTime + FORCED_REFRESH_COOLDOWN_MS
       : entry.unknownKidRefreshAllowedAt,
+    incompatibleKeyRefreshAllowedAt: refreshKind === "incompatible-key"
+      ? currentTime + FORCED_REFRESH_COOLDOWN_MS
+      : entry.incompatibleKeyRefreshAllowedAt,
   };
 }
 
@@ -490,9 +538,19 @@ async function parseEcKey(
 }
 
 function compatibleKey(key: PublicJwk, expectedAlg: string): PublicJwk {
+  const compatible = compatibleKeyOrUndefined(key, expectedAlg);
+  if (compatible !== undefined) return compatible;
   if (key.alg !== undefined && key.alg !== expectedAlg) {
     throw new TypeError("JWKS key algorithm must be compatible with the requested algorithm");
   }
+  throw new TypeError("JWKS key type must be compatible with the requested algorithm");
+}
+
+function compatibleKeyOrUndefined(
+  key: PublicJwk,
+  expectedAlg: string,
+): PublicJwk | undefined {
+  if (key.alg !== undefined && key.alg !== expectedAlg) return undefined;
   if (key.kty === "RSA" && setHas(RSA_ALGORITHMS, expectedAlg)) return key;
   if (key.kty === "EC") {
     const compatibleAlgorithms = key.crv === undefined
@@ -500,7 +558,7 @@ function compatibleKey(key: PublicJwk, expectedAlg: string): PublicJwk {
       : mapGet(EC_ALGORITHMS_BY_CURVE, key.crv);
     if (compatibleAlgorithms !== undefined && setHas(compatibleAlgorithms, expectedAlg)) return key;
   }
-  throw new TypeError("JWKS key type must be compatible with the requested algorithm");
+  return undefined;
 }
 
 function defaultEcAlgorithm(curve: string): string | undefined {

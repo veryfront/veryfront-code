@@ -834,7 +834,7 @@ async function sessionConfigurationBinding(
   const signingAlgorithms = canonicalStrings(config.signingAlgorithms ?? ["RS256"]);
   const trustedEndpointOrigins = canonicalStrings(config.trustedEndpointOrigins ?? []);
   const fields = [
-    "oidc-session-v4",
+    "oidc-session-v5",
     runtime.issuer,
     runtime.clientId,
     callbackUri(runtime),

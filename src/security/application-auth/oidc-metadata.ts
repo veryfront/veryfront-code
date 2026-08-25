@@ -26,14 +26,24 @@ const MapPrototypeHas = NativeMap.prototype.has;
 const MapPrototypeSet = NativeMap.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(NativeMap.prototype, "size")?.get;
 const ObjectFreeze = Object.freeze;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectKeys = Object.keys;
 const ObjectPrototype = Object.prototype;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const PromiseReject = NativePromise.reject;
 const PromiseResolve = NativePromise.resolve;
 const PromisePrototypeThen = NativePromise.prototype.then;
 const SetPrototypeAdd = NativeSet.prototype.add;
 const SetPrototypeHas = NativeSet.prototype.has;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+const StringPrototypeTrim = String.prototype.trim;
 const TextDecoderDecode = TextDecoder.prototype.decode;
 const Utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -82,7 +92,7 @@ export async function fetchOidcMetadata(
   const trustedOrigins = parseTrustedEndpointOrigins(options.trustedEndpointOrigins ?? []);
   const discoveryUrl = new URL(
     `${
-      issuer.issuer.endsWith("/") ? issuer.issuer.slice(0, -1) : issuer.issuer
+      stringEndsWith(issuer.issuer, "/") ? stringSlice(issuer.issuer, 0, -1) : issuer.issuer
     }/.well-known/openid-configuration`,
   );
   validateFetchUrl(discoveryUrl, issuer, trustedOrigins);
@@ -356,7 +366,11 @@ function freezeMetadata(metadata: OidcMetadata): OidcMetadata {
 }
 
 function readRequiredString(value: JsonObject, key: string): string {
-  const entry = value[key];
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [
+    value,
+    key,
+  ]) as PropertyDescriptor | undefined;
+  const entry = descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
   if (typeof entry !== "string" || entry.length === 0) {
     throw new TypeError(`OIDC discovery ${key} must be a non-empty string`);
   }
@@ -549,7 +563,10 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
     if (controller.signal.aborted) {
       throw new TypeError(`${options.kind} request timed out`, { cause: error });
     }
-    if (error instanceof Error && error.message.toLowerCase().includes("redirect")) {
+    if (
+      error instanceof Error &&
+      stringIncludes(stringToLowerCase(error.message), "redirect")
+    ) {
       throw new TypeError(`${options.kind} request refused a redirect response`, { cause: error });
     }
     if (error instanceof TypeError) {
@@ -563,9 +580,10 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
 
 function isJsonContentType(value: string | null): boolean {
   if (value === null) return false;
-  const mediaType = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const parts = ReflectApply(StringPrototypeSplit, value, [";", 1]) as string[];
+  const mediaType = parts[0] === undefined ? "" : stringToLowerCase(stringTrim(parts[0]));
   return mediaType === "application/json" ||
-    (mediaType.startsWith("application/") && mediaType.endsWith("+json"));
+    (stringStartsWith(mediaType, "application/") && stringEndsWith(mediaType, "+json"));
 }
 
 function isLoopbackHttpUrl(url: URL): boolean {
@@ -658,6 +676,7 @@ export function parseStrictJsonObject(text: string, kind: string): JsonObject {
   if (!isPlainObject(parsed)) {
     throw new TypeError(`${kind} must be a plain JSON object`);
   }
+  isolateJsonObjectPrototypes(parsed, kind);
   rejectReservedJsonKeys(parsed, kind);
   return parsed;
 }
@@ -804,7 +823,9 @@ class JsonDuplicateKeyParser {
       if (char === '"') {
         this.#index += 1;
         try {
-          const parsed = ReflectApply(JsonParse, JSON, [this.text.slice(start, this.#index)]);
+          const parsed = ReflectApply(JsonParse, JSON, [
+            stringSlice(this.text, start, this.#index),
+          ]);
           if (typeof parsed !== "string") {
             throw new TypeError(`${this.kind} must contain valid JSON`);
           }
@@ -820,10 +841,13 @@ class JsonDuplicateKeyParser {
 
   #parseLiteralOrNumber(): void {
     const start = this.#index;
-    while (this.#index < this.text.length && !/[\s,\]}]/u.test(this.text[this.#index] ?? "")) {
+    while (
+      this.#index < this.text.length &&
+      !regexpTest(/[\s,\]}]/u, this.text[this.#index] ?? "")
+    ) {
       this.#index += 1;
     }
-    const token = this.text.slice(start, this.#index);
+    const token = stringSlice(this.text, start, this.#index);
     if (token.length === 0) {
       throw new TypeError(`${this.kind} must contain valid JSON`);
     }
@@ -835,8 +859,59 @@ class JsonDuplicateKeyParser {
   }
 
   #skipWhitespace(): void {
-    while (/[\t\n\r ]/u.test(this.text[this.#index] ?? "")) {
+    while (regexpTest(/[\t\n\r ]/u, this.text[this.#index] ?? "")) {
       this.#index += 1;
     }
   }
+}
+
+function isolateJsonObjectPrototypes(value: unknown, kind: string): void {
+  if (ArrayIsArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      isolateJsonObjectPrototypes(value[index], kind);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  ReflectApply(ObjectSetPrototypeOf, Object, [value, null]);
+  const keys = ObjectKeys(value);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`${kind} contains an unsupported JSON object property`);
+    }
+    isolateJsonObjectPrototypes(descriptor.value, kind);
+  }
+}
+
+function regexpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpPrototypeTest, pattern, [value]) as boolean;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringSlice(value: string, start?: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringToLowerCase(value: string): string {
+  return ReflectApply(StringPrototypeToLowerCase, value, []) as string;
+}
+
+function stringTrim(value: string): string {
+  return ReflectApply(StringPrototypeTrim, value, []) as string;
 }
