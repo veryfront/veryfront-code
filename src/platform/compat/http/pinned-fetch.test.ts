@@ -168,6 +168,43 @@ describe("fetchWithPinnedAddresses", () => {
     assertEquals(headers.get("accept-encoding"), "gzip, deflate");
   });
 
+  it("sends the origin Host header rather than the dialled address", async () => {
+    // Ungated on purpose: node:http is available under Deno too, and the Node
+    // lane does not run in CI, so this is the only place the wire is inspected.
+    const { createServer } = await import("node:http");
+    let seen: Record<string, string | string[] | undefined> = {};
+    const server = createServer((request, response) => {
+      seen = request.headers;
+      response.writeHead(204);
+      response.end();
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Node test server did not expose a TCP address");
+      }
+      await fetchWithPinnedAddresses(
+        new URL(`http://pinned-host.test:${address.port}/resource`),
+        ["127.0.0.1"],
+        { method: "GET" },
+      );
+      assertEquals(
+        seen["host"],
+        `pinned-host.test:${address.port}`,
+        "the pinned transport must send the origin Host header, not the dialled IP",
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
   it("puts the defaults on the wire through the Node transport", async () => {
     if (!isNode) return;
 

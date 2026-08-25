@@ -162,6 +162,50 @@ describe("DenoHttpServer", () => {
       await server.close();
     });
 
+    it("rejects a startup aborted while binding and cleans up the listener", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      const controller = new AbortController();
+
+      const servePromise = server.serve(
+        () => new Response("unreachable"),
+        {
+          port: 0,
+          signal: controller.signal,
+          onListen: () => controller.abort(new DOMException("cancelled", "AbortError")),
+        },
+      );
+      await assertRejects(
+        () => servePromise,
+        DOMException,
+        "cancelled",
+        "an abort raised while binding must reject serve() with the abort reason",
+      );
+
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      const restarted = server.serve(
+        () => new Response("restarted"),
+        {
+          port: 0,
+          onListen: ({ port }) => resolvePort(port),
+        },
+      );
+      const port = await listening;
+      try {
+        assertEquals(
+          await (await fetch(`http://127.0.0.1:${port}`)).text(),
+          "restarted",
+          "the instance must be reusable after an abort during binding",
+        );
+      } finally {
+        await server.close();
+        await restarted;
+      }
+    });
+
     it("rejects concurrent serve calls without losing the active listener", async () => {
       if (!isDeno) return;
       const server = new DenoHttpServer();

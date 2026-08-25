@@ -1,5 +1,11 @@
+// @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createKVStore, openKv, polyfillDenoKv } from "./factory.ts";
 
@@ -51,8 +57,36 @@ describe("kv/factory", () => {
       assertEquals(typeof polyfillDenoKv, "function");
     });
 
-    it("should be callable without error", () => {
+    it("never clobbers a native Deno namespace and installs openKv only when absent", () => {
+      // polyfillDenoKv returns early under Deno and otherwise fills in the gaps with
+      // ??=, so the contract differs by lane. Assert the contract of whichever lane
+      // this run is on: exactly one branch executes and both assert real behaviour.
+      const g = globalThis as { Deno?: { openKv?: unknown } };
+      const originalDeno = g.Deno;
+      const originalOpenKv = g.Deno?.openKv;
       polyfillDenoKv();
+      if (originalDeno !== undefined) {
+        assertStrictEquals(
+          g.Deno,
+          originalDeno,
+          "a native Deno namespace must never be replaced",
+        );
+        assertStrictEquals(
+          g.Deno?.openKv,
+          originalOpenKv,
+          "a native Deno.openKv must never be overwritten",
+        );
+        return;
+      }
+      assertExists(
+        g.Deno,
+        "a lane without Deno must have the namespace installed by the polyfill",
+      );
+      assertEquals(
+        typeof g.Deno.openKv,
+        "function",
+        "the polyfill must install openKv where the lane has none",
+      );
     });
   });
 

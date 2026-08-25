@@ -1,3 +1,4 @@
+// @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 /**
  * Cross-Runtime Compatibility Tests
@@ -174,10 +175,31 @@ describe("Process Operations", () => {
     );
   });
 
-  it("unrefTimer accepts interval", () => {
-    const timer = setInterval(() => {}, 10000);
-    unrefTimer(timer);
-    clearInterval(timer);
+  it("unrefTimer unreferences a timer-like object through its unref method", () => {
+    let called = false;
+    unrefTimer({
+      unref: () => {
+        called = true;
+      },
+    } as unknown as ReturnType<typeof setInterval>);
+    assertEquals(called, true, "a timer-like object is unreferenced through its unref method");
+  });
+
+  it("unrefTimer hands numeric timer ids to Deno.unrefTimer", () => {
+    if (typeof Deno === "undefined") return;
+    const original = Deno.unrefTimer;
+    const seen: number[] = [];
+    Deno.unrefTimer = (id: number) => {
+      seen.push(id);
+    };
+    try {
+      const timer = setInterval(() => {}, 10000);
+      unrefTimer(timer);
+      clearInterval(timer);
+      assertEquals(seen, [timer], "the timer id is handed to Deno.unrefTimer");
+    } finally {
+      Deno.unrefTimer = original;
+    }
   });
 });
 

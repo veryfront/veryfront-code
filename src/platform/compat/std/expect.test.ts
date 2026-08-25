@@ -7,6 +7,15 @@ const nodeExpect = createNodeExpect();
 
 describe("platform/compat/std/expect Node matchers", () => {
   it("distinguishes an omitted property value from explicit undefined", () => {
+    // The single-argument form is a presence check and must not compare
+    // the value against undefined.
+    nodeExpect({ value: 1 }).toHaveProperty("value");
+    assertThrows(
+      () => nodeExpect({ value: 1 }).toHaveProperty("missing"),
+      Error,
+      "to have property",
+      "an absent key fails the presence check",
+    );
     nodeExpect({ value: undefined }).toHaveProperty("value", undefined);
     assertThrows(
       () => nodeExpect({ value: 1 }).toHaveProperty("value", undefined),
@@ -25,6 +34,21 @@ describe("platform/compat/std/expect Node matchers", () => {
 
   it("allows rejects.not matchers for a different rejection value", async () => {
     await nodeExpect(Promise.reject("actual")).rejects.not.toBe("different");
+  });
+
+  it("fails rejects.not matchers when the rejection matches", async () => {
+    await assertRejects(
+      () => nodeExpect(Promise.reject("actual")).rejects.not.toBe("actual"),
+      Error,
+      "not to reject with",
+      "a matching rejection must fail the negated toBe matcher",
+    );
+    await assertRejects(
+      () => nodeExpect(Promise.reject({ a: 1 })).rejects.not.toEqual({ a: 1 }),
+      Error,
+      "not to reject with",
+      "a deep-equal rejection must fail the negated toEqual matcher",
+    );
   });
 
   it("uses stateful regular expressions deterministically", () => {

@@ -56,6 +56,16 @@ describe("getFrameworkRoot", () => {
       expected: "/home/src-user/projects/veryfront-server",
     },
     {
+      name: "should use the last src segment when a project lives under a src directory",
+      input: "/home/me/src/apps/site/src/modules/server.ts",
+      expected: "/home/me/src/apps/site",
+    },
+    {
+      name: "should use the last src segment on Windows paths",
+      input: String.raw`C:\src\work\app\src\mod.ts`,
+      expected: "C:/src/work/app",
+    },
+    {
       name: "should handle empty string",
       input: "",
       expected: "",

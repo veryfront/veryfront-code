@@ -140,6 +140,15 @@ describe("Process Operations", () => {
   });
 
   it("unrefTimer works", () => {
+    let unrefCalls = 0;
+    const timerLike = {
+      unref: () => {
+        unrefCalls++;
+      },
+    };
+    unrefTimer(timerLike as unknown as ReturnType<typeof setInterval>);
+    assertEquals(unrefCalls, 1, "unrefTimer must detach the timer handle");
+
     const t = setInterval(() => {}, 10000);
     unrefTimer(t);
     clearInterval(t);

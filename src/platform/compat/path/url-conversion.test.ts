@@ -32,6 +32,32 @@ describe("url-conversion", () => {
         "/path/to/\u65E5\u672C\u8A9E.ts",
       );
     });
+
+    it("should reject non-file URLs", () => {
+      assertThrows(
+        () => fromFileUrl("https://example.com/x"),
+        TypeError,
+        "Must be a file URL",
+        "a non-file protocol must be rejected",
+      );
+    });
+
+    it("should reject encoded path separators instead of decoding them", () => {
+      assertThrows(
+        () => fromFileUrl("file:///srv/a%2Fb"),
+        TypeError,
+        "File URL path must not include encoded path separators",
+        "an encoded forward slash must be rejected, not decoded",
+      );
+      if (runtimeUsesWindowsPaths()) {
+        assertThrows(
+          () => fromFileUrl("file:///srv/a%5Cb"),
+          TypeError,
+          "File URL path must not include encoded path separators",
+          "an encoded backslash must be rejected on Windows",
+        );
+      }
+    });
   });
 
   describe("toFileUrl", () => {

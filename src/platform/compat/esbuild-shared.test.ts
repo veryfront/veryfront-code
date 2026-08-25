@@ -6,6 +6,7 @@ import {
   ESBUILD_WASM_URL,
   getEsbuildBinaryName,
   getVFSBasePath,
+  mapEsbuildArch,
 } from "./esbuild-shared.ts";
 
 describe("platform/compat/esbuild-shared", () => {
@@ -31,18 +32,25 @@ describe("platform/compat/esbuild-shared", () => {
       assertEquals(name.includes(Deno.build.os), true);
     });
 
-    it("should map x86_64 to x64", () => {
-      const name = getEsbuildBinaryName();
-      if (Deno.build.arch === "x86_64") {
-        assertEquals(name.endsWith("-x64"), true);
+    it("maps every Deno arch to the esbuild package arch regardless of host", () => {
+      for (
+        const [input, expected] of [
+          ["x86_64", "x64"],
+          ["aarch64", "arm64"],
+          ["riscv64", "riscv64"],
+        ] as const
+      ) {
+        assertEquals(
+          mapEsbuildArch(input),
+          expected,
+          `${input} maps to the esbuild package arch ${expected}`,
+        );
       }
-    });
-
-    it("should map aarch64 to arm64", () => {
-      const name = getEsbuildBinaryName();
-      if (Deno.build.arch === "aarch64") {
-        assertEquals(name.endsWith("-arm64"), true);
-      }
+      assertEquals(
+        getEsbuildBinaryName(),
+        `@esbuild/${Deno.build.os}-${mapEsbuildArch(Deno.build.arch)}`,
+        "binary name is os plus mapped arch",
+      );
     });
   });
 

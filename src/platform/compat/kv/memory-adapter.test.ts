@@ -81,6 +81,82 @@ describe("MemoryKv", () => {
       assertEquals(entries.length, 2);
     });
 
+    it("yields entries in ascending serialized-key order regardless of insert order", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list())).map((entry) => entry.key.join("/")),
+        ["a", "b", "c"],
+        "list yields ascending serialized-key order regardless of insert order",
+      );
+    });
+
+    it("yields entries in descending order with reverse", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list({ reverse: true }))).map((entry) => entry.key.join("/")),
+        ["c", "b", "a"],
+        "reverse yields descending serialized-key order",
+      );
+    });
+
+    it("applies an inclusive start and an exclusive end bound", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["c"], 3);
+      await kv.set(["a"], 1);
+      await kv.set(["b"], 2);
+
+      assertEquals(
+        (await collectEntries(kv.list({ start: ["b"] }))).map((entry) => entry.key.join("/")),
+        ["b", "c"],
+        "start is an inclusive lower bound",
+      );
+      assertEquals(
+        (await collectEntries(kv.list({ end: ["c"] }))).map((entry) => entry.key.join("/")),
+        ["a", "b"],
+        "end is an exclusive upper bound",
+      );
+    });
+
+    it("orders serialized keys by UTF-8 bytes like SqliteKv's binary ORDER BY key", async () => {
+      const kv = new MemoryKv();
+      await kv.set(["a"], 1);
+      await kv.set(["B"], 2);
+      await kv.set(["b"], 3);
+      await kv.set(["\uE000"], 4);
+      await kv.set(["\u{10FFFF}"], 5);
+
+      assertEquals(
+        (await collectEntries(kv.list())).map((entry) => entry.key.join("/")),
+        ["B", "a", "b", "\uE000", "\u{10FFFF}"],
+        "list must sort by serialized UTF-8 bytes so MemoryKv matches SQLite's binary ORDER BY key",
+      );
+      assertEquals(
+        (await collectEntries(kv.list({ reverse: true }))).map((entry) => entry.key.join("/")),
+        ["\u{10FFFF}", "\uE000", "b", "a", "B"],
+        "reverse must use the same serialized byte ordering",
+      );
+      assertEquals(
+        (await collectEntries(kv.list({ start: ["\uE000"] }))).map((entry) => entry.key.join("/")),
+        ["\uE000", "\u{10FFFF}"],
+        "start bounds must use serialized byte ordering",
+      );
+      assertEquals(
+        (await collectEntries(kv.list({ end: ["\u{10FFFF}"] }))).map((entry) =>
+          entry.key.join("/")
+        ),
+        ["B", "a", "b", "\uE000"],
+        "end bounds must use serialized byte ordering",
+      );
+    });
+
     it("matches prefixes by complete key parts", async () => {
       const kv = new MemoryKv();
       await kv.set(["a"], "exact");

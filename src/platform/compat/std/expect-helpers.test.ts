@@ -22,6 +22,12 @@ describe("platform/compat/std/expect-helpers", () => {
   it("asserts matching expectations", () => {
     assertExpectation(true, false, "boom");
     assertExpectation(false, true, "boom");
+    assertThrows(
+      () => assertExpectation(true, true, "boom"),
+      Error,
+      "boom",
+      "a negated expectation must throw when the condition holds",
+    );
   });
 
   it("throws when the expectation fails", () => {
@@ -34,6 +40,12 @@ describe("platform/compat/std/expect-helpers", () => {
       () => assertDeepEqualityMatch({ a: 1 }, { a: 2 }, "equal", false),
       Error,
       "Expected",
+    );
+    assertThrows(
+      () => assertDeepEqualityMatch({ a: 1 }, { a: 1 }, "equal", true),
+      Error,
+      "not to equal",
+      "a negated deep-equality match must throw when the values are equal",
     );
   });
 
