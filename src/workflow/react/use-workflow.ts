@@ -67,6 +67,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     () => ({ credentials, normalizedApiBase, runId, stableHeaders }),
     [credentials, normalizedApiBase, runId, stableHeaders],
   );
+  const currentRequestContext = useRef(requestContext);
+  currentRequestContext.current = requestContext;
 
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [runRequestContext, setRunRequestContext] = useState(requestContext);
@@ -118,6 +120,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       }
 
       const workflowRun = (await response.json()) as WorkflowRun;
+      if (currentRequestContext.current !== requestContext) return;
 
       const previousStatus = previousStatusRef.current;
       if (previousStatus && previousStatus !== workflowRun.status) {
@@ -144,6 +147,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       setError(null);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
+      if (currentRequestContext.current !== requestContext) return;
 
       const fetchError = err instanceof Error ? err : new Error(String(err));
       setError(fetchError);

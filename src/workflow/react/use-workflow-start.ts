@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import {
   encodeWorkflowPathSegment,
@@ -42,13 +42,32 @@ export function useWorkflowStart<TInput = unknown>(
   } = options;
   const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
   const stableHeaders = useStableWorkflowHeaders(headers);
+  const requestContext = useMemo(
+    () => ({ credentials, normalizedApiBase, stableHeaders, workflowId }),
+    [credentials, normalizedApiBase, stableHeaders, workflowId],
+  );
+  const currentRequestContext = useRef(requestContext);
+  currentRequestContext.current = requestContext;
+  const requestSequence = useRef(0);
 
   const [isStarting, setIsStarting] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
+  useEffect(() => {
+    requestSequence.current++;
+    setIsStarting(false);
+    setLastRunId(null);
+    setError(null);
+  }, [requestContext]);
+
   const start = useCallback(
     async (input: TInput): Promise<string> => {
+      const sequence = ++requestSequence.current;
+      const startedRequestContext = requestContext;
+      const isCurrentRequest = (): boolean =>
+        sequence === requestSequence.current &&
+        startedRequestContext === currentRequestContext.current;
       setIsStarting(true);
       setError(null);
 
@@ -77,20 +96,24 @@ export function useWorkflowStart<TInput = unknown>(
         const data = (await response.json()) as { runId?: string; id?: string };
         const runId = data.runId ?? data.id ?? "";
 
-        setLastRunId(runId);
-        onStart?.(runId);
+        if (isCurrentRequest()) {
+          setLastRunId(runId);
+          onStart?.(runId);
+        }
 
         return runId;
       } catch (err) {
         const startError = err instanceof Error ? err : new Error(String(err));
-        setError(startError);
-        onError?.(startError);
+        if (isCurrentRequest()) {
+          setError(startError);
+          onError?.(startError);
+        }
         throw startError;
       } finally {
-        setIsStarting(false);
+        if (isCurrentRequest()) setIsStarting(false);
       }
     },
-    [credentials, normalizedApiBase, onError, onStart, stableHeaders, workflowId],
+    [credentials, normalizedApiBase, onError, onStart, requestContext, stableHeaders, workflowId],
   );
 
   const resetError = useCallback((): void => {

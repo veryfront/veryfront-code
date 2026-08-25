@@ -68,7 +68,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     authorizationContext,
   );
   const requestSequence = useRef(0);
-  const activeRequestCount = useRef(0);
+  const activeRequestSequence = useRef<number | null>(null);
 
   const [filter, setFilterState] = useState<RunFilter>({
     workflowId,
@@ -105,7 +105,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const fetchRuns = useCallback(
     async (append = false): Promise<void> => {
       const sequence = ++requestSequence.current;
-      activeRequestCount.current++;
+      activeRequestSequence.current = sequence;
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${normalizedApiBase}/runs?${queryString}`, {
@@ -138,7 +138,9 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         if (sequence !== requestSequence.current) return;
         setError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        activeRequestCount.current--;
+        if (activeRequestSequence.current === sequence) {
+          activeRequestSequence.current = null;
+        }
       }
     },
     [
@@ -156,6 +158,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     // Data from one authorization context must not remain visible while a
     // replacement request is pending or after it fails.
     requestSequence.current++;
+    activeRequestSequence.current = null;
     setRuns([]);
     setCursor(undefined);
     setHasMore(false);
@@ -183,7 +186,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     if (!autoRefresh) return;
 
     const intervalId = setInterval(() => {
-      if (activeRequestCount.current > 0) return;
+      if (activeRequestSequence.current !== null) return;
       fetchRuns(false);
     }, refreshInterval);
 
