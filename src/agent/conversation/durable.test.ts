@@ -28,6 +28,7 @@ import {
 } from "./durable.ts";
 import { DurableRunEventPersistenceError } from "./private-run-event.ts";
 import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -36,8 +37,6 @@ const MESSAGE_ID = "22222222-2222-4222-a222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-a333-333333333333";
 const ENVIRONMENT_ID = "55555555-5555-4555-8555-555555555555";
 const BRANCH_ID = "44444444-4444-4444-8444-444444444444";
-
-const originalFetch = globalThis.fetch;
 
 function modelCallContextEvent(content: string) {
   return {
@@ -95,10 +94,12 @@ function stubFetchImplementation(
   implementation: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ): FetchCall[] {
   const calls: FetchCall[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push([input, init]);
-    return implementation(input, init);
-  }) as typeof fetch;
+  installMockFetch(
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([input, init]);
+      return implementation(input, init);
+    }) as typeof fetch,
+  );
   return calls;
 }
 
@@ -115,18 +116,19 @@ function stubFetchSequence(...steps: Response[]): FetchCall[] {
 }
 
 function stubFetchUntilAborted(): void {
-  globalThis.fetch =
+  installMockFetch(
     ((_input: RequestInfo | URL, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
         if (!signal) throw new Error("expected request abort signal");
         signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-      })) as typeof fetch;
+      })) as typeof fetch,
+  );
 }
 
 describe("agent/durable", () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   });
 
   it("resolves non-project run targets to nulls", () => {
@@ -808,13 +810,14 @@ describe("agent/durable", () => {
     using time = new FakeTime();
     const caller = new AbortController();
     let rejectRequest: (() => void) | undefined;
-    globalThis.fetch =
+    installMockFetch(
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           const signal = init?.signal;
           if (!signal) throw new Error("expected request abort signal");
           rejectRequest = () => reject(signal.reason);
-        })) as typeof fetch;
+        })) as typeof fetch,
+    );
 
     const assertion = assertRejects(
       () =>
@@ -838,10 +841,12 @@ describe("agent/durable", () => {
   it("fails closed without projection resync on ambiguous durable-ID replay", async () => {
     const event = modelCallContextEvent("A then B");
     let requestCount = 0;
-    globalThis.fetch = (async () => {
-      requestCount += 1;
-      return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-    }) as typeof fetch;
+    installMockFetch(
+      (async () => {
+        requestCount += 1;
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventBatches({
       authToken: AUTH_TOKEN,
@@ -951,22 +956,24 @@ describe("agent/durable", () => {
     }));
     const requests: Array<{ expected_previous_event_id: number; events: unknown[] }> = [];
     let runLookupCount = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (!String(input).endsWith("/events")) {
-        runLookupCount += 1;
-        throw new Error("durable replay must not resync through the run projection");
-      }
-      const body = JSON.parse(String(init?.body)) as {
-        expected_previous_event_id: number;
-        events: unknown[];
-      };
-      requests.push(body);
-      if (body.expected_previous_event_id !== committed.length) {
-        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-      }
-      committed.push(...body.events);
-      throw new Error("append response lost after the event committed");
-    }) as typeof fetch;
+    installMockFetch(
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/events")) {
+          runLookupCount += 1;
+          throw new Error("durable replay must not resync through the run projection");
+        }
+        const body = JSON.parse(String(init?.body)) as {
+          expected_previous_event_id: number;
+          events: unknown[];
+        };
+        requests.push(body);
+        if (body.expected_previous_event_id !== committed.length) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
+        committed.push(...body.events);
+        throw new Error("append response lost after the event committed");
+      }) as typeof fetch,
+    );
     const controller = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
       apiUrl: API_URL,
@@ -1007,23 +1014,25 @@ describe("agent/durable", () => {
     const events = [modelCallContextEvent("x".repeat(4 * 1024 * 1024))];
     let requestCount = 0;
     let latestEventId = 0;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestCount += 1;
-      const body = JSON.parse(String(init?.body)) as { events: unknown[] };
-      assertEquals(body.events, events);
-      latestEventId += body.events.length;
-      return jsonResponse({
-        latest_event_id: latestEventId,
-        latest_external_event_sequence: 0,
-        appended_count: body.events.length,
-        run: {
-          run_id: "run_mcc_bounded",
-          conversation_id: CONVERSATION_ID,
+    installMockFetch(
+      (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestCount += 1;
+        const body = JSON.parse(String(init?.body)) as { events: unknown[] };
+        assertEquals(body.events, events);
+        latestEventId += body.events.length;
+        return jsonResponse({
           latest_event_id: latestEventId,
           latest_external_event_sequence: 0,
-        },
-      }, 200);
-    }) as typeof fetch;
+          appended_count: body.events.length,
+          run: {
+            run_id: "run_mcc_bounded",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: latestEventId,
+            latest_external_event_sequence: 0,
+          },
+        }, 200);
+      }) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventBatches({
       authToken: AUTH_TOKEN,
@@ -1105,19 +1114,21 @@ describe("agent/durable", () => {
       ),
     );
 
-    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
-      if (String(input).endsWith("/events")) {
-        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-      }
+    installMockFetch(
+      (async (input: RequestInfo | URL, _init?: RequestInit) => {
+        if (String(input).endsWith("/events")) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
 
-      return jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_batch_recover_1",
-          latestExternalEventSequence: 4,
-        }),
-        200,
-      );
-    }) as typeof fetch;
+        return jsonResponse(
+          camelCaseDurableRunProjection({
+            runId: "run_batch_recover_1",
+            latestExternalEventSequence: 4,
+          }),
+          200,
+        );
+      }) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventBatches({
       authToken: AUTH_TOKEN,
@@ -1167,46 +1178,48 @@ describe("agent/durable", () => {
       ),
     );
 
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (!String(input).endsWith("/events")) {
+    installMockFetch(
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/events")) {
+          return jsonResponse(
+            camelCaseDurableRunProjection({
+              runId: "run_queue_flush_1",
+              latestExternalEventSequence: 6,
+            }),
+            200,
+          );
+        }
+
+        eventsRequestCount += 1;
+        if (eventsRequestCount === 1) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
+
+        const bodyText = typeof init?.body === "string" ? init.body : "";
+        const body = JSON.parse(bodyText) as {
+          expected_previous_external_event_sequence?: number;
+          events?: unknown[];
+        };
+
+        assertEquals(body.expected_previous_external_event_sequence, 6);
+        assertEquals(body.events, [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
+
         return jsonResponse(
-          camelCaseDurableRunProjection({
-            runId: "run_queue_flush_1",
-            latestExternalEventSequence: 6,
-          }),
-          200,
-        );
-      }
-
-      eventsRequestCount += 1;
-      if (eventsRequestCount === 1) {
-        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-      }
-
-      const bodyText = typeof init?.body === "string" ? init.body : "";
-      const body = JSON.parse(bodyText) as {
-        expected_previous_external_event_sequence?: number;
-        events?: unknown[];
-      };
-
-      assertEquals(body.expected_previous_external_event_sequence, 6);
-      assertEquals(body.events, [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
-
-      return jsonResponse(
-        {
-          latest_event_id: 7,
-          latest_external_event_sequence: 8,
-          appended_count: 2,
-          run: {
-            run_id: "run_queue_flush_1",
-            conversation_id: CONVERSATION_ID,
+          {
             latest_event_id: 7,
             latest_external_event_sequence: 8,
+            appended_count: 2,
+            run: {
+              run_id: "run_queue_flush_1",
+              conversation_id: CONVERSATION_ID,
+              latest_event_id: 7,
+              latest_external_event_sequence: 8,
+            },
           },
-        },
-        200,
-      );
-    }) as typeof fetch;
+          200,
+        );
+      }) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventQueue({
       authToken: AUTH_TOKEN,
@@ -1228,8 +1241,9 @@ describe("agent/durable", () => {
   });
 
   it("returns retry scheduling details when a host-owned queue still cannot append", async () => {
-    globalThis.fetch =
-      (async () => jsonResponse({ detail: "internal failure" }, 500)) as typeof fetch;
+    installMockFetch(
+      (async () => jsonResponse({ detail: "internal failure" }, 500)) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventQueue({
       authToken: AUTH_TOKEN,
@@ -1255,12 +1269,14 @@ describe("agent/durable", () => {
   });
 
   it("tags a timed-out append as a timeout-caused retry", async () => {
-    globalThis.fetch = (() =>
-      Promise.reject(
-        TIMEOUT_ERROR.create({
-          detail: "Append conversation run events timed out after 15000ms",
-        }),
-      )) as typeof fetch;
+    installMockFetch(
+      (() =>
+        Promise.reject(
+          TIMEOUT_ERROR.create({
+            detail: "Append conversation run events timed out after 15000ms",
+          }),
+        )) as typeof fetch,
+    );
 
     const result = await flushConversationRunEventQueue({
       authToken: AUTH_TOKEN,
@@ -1285,46 +1301,48 @@ describe("agent/durable", () => {
 
   it("tracks queue state and drains the queue through the controller", async () => {
     let eventsRequestCount = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (!String(input).endsWith("/events")) {
+    installMockFetch(
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (!String(input).endsWith("/events")) {
+          return jsonResponse(
+            camelCaseDurableRunProjection({
+              runId: "run_queue_controller_1",
+              latestExternalEventSequence: 6,
+            }),
+            200,
+          );
+        }
+
+        eventsRequestCount += 1;
+        if (eventsRequestCount === 1) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
+
+        const bodyText = typeof init?.body === "string" ? init.body : "";
+        const body = JSON.parse(bodyText) as {
+          expected_previous_external_event_sequence?: number;
+          events?: unknown[];
+        };
+
+        assertEquals(body.expected_previous_external_event_sequence, 6);
+        assertEquals(body.events, [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
+
         return jsonResponse(
-          camelCaseDurableRunProjection({
-            runId: "run_queue_controller_1",
-            latestExternalEventSequence: 6,
-          }),
-          200,
-        );
-      }
-
-      eventsRequestCount += 1;
-      if (eventsRequestCount === 1) {
-        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-      }
-
-      const bodyText = typeof init?.body === "string" ? init.body : "";
-      const body = JSON.parse(bodyText) as {
-        expected_previous_external_event_sequence?: number;
-        events?: unknown[];
-      };
-
-      assertEquals(body.expected_previous_external_event_sequence, 6);
-      assertEquals(body.events, [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }]);
-
-      return jsonResponse(
-        {
-          latest_event_id: 7,
-          latest_external_event_sequence: 8,
-          appended_count: 2,
-          run: {
-            run_id: "run_queue_controller_1",
-            conversation_id: CONVERSATION_ID,
+          {
             latest_event_id: 7,
             latest_external_event_sequence: 8,
+            appended_count: 2,
+            run: {
+              run_id: "run_queue_controller_1",
+              conversation_id: CONVERSATION_ID,
+              latest_event_id: 7,
+              latest_external_event_sequence: 8,
+            },
           },
-        },
-        200,
-      );
-    }) as typeof fetch;
+          200,
+        );
+      }) as typeof fetch,
+    );
 
     const controller = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
@@ -1369,17 +1387,19 @@ describe("agent/durable", () => {
 
   it("stops accepting events and abandons in-flight work after dispose", async () => {
     let appendRequestCount = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      if (!String(input).endsWith("/events")) {
-        return jsonResponse(
-          camelCaseDurableRunProjection({ runId: "run_queue_dispose" }),
-          200,
-        );
-      }
+    installMockFetch(
+      (async (input: RequestInfo | URL) => {
+        if (!String(input).endsWith("/events")) {
+          return jsonResponse(
+            camelCaseDurableRunProjection({ runId: "run_queue_dispose" }),
+            200,
+          );
+        }
 
-      appendRequestCount += 1;
-      return jsonResponse({ detail: "internal failure" }, 500);
-    }) as typeof fetch;
+        appendRequestCount += 1;
+        return jsonResponse({ detail: "internal failure" }, 500);
+      }) as typeof fetch,
+    );
 
     const controller = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
@@ -1435,8 +1455,9 @@ describe("agent/durable", () => {
     });
 
     retryController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
-    globalThis.fetch =
-      (async () => jsonResponse({ detail: "internal failure" }, 500)) as typeof fetch;
+    installMockFetch(
+      (async () => jsonResponse({ detail: "internal failure" }, 500)) as typeof fetch,
+    );
 
     assertEquals(await retryController.flush(), {
       outcome: "retry_scheduled",
@@ -1459,8 +1480,9 @@ describe("agent/durable", () => {
     });
 
     authStopController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
-    globalThis.fetch =
-      (async () => jsonResponse({ detail: "Invalid authentication token" }, 401)) as typeof fetch;
+    installMockFetch(
+      (async () => jsonResponse({ detail: "Invalid authentication token" }, 401)) as typeof fetch,
+    );
 
     assertEquals(await authStopController.flush(), {
       outcome: "stopped",
@@ -1492,22 +1514,24 @@ describe("agent/durable", () => {
     });
 
     stopController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      if (String(input).endsWith("/events")) {
-        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-      }
+    installMockFetch(
+      (async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/events")) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
 
-      return jsonResponse(
-        camelCaseDurableRunProjection({
-          runId: "run_queue_controller_stop",
-          latestExternalEventSequence: 4,
-          status: "waiting_for_tool",
-          waitingToolCallId: "tool-call-4",
-          waitingToolName: "form_input",
-        }),
-        200,
-      );
-    }) as typeof fetch;
+        return jsonResponse(
+          camelCaseDurableRunProjection({
+            runId: "run_queue_controller_stop",
+            latestExternalEventSequence: 4,
+            status: "waiting_for_tool",
+            waitingToolCallId: "tool-call-4",
+            waitingToolName: "form_input",
+          }),
+          200,
+        );
+      }) as typeof fetch,
+    );
 
     assertEquals(await stopController.flush(), {
       outcome: "stopped",
@@ -1542,20 +1566,22 @@ describe("agent/durable", () => {
       });
 
       terminalController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        if (String(input).endsWith("/events")) {
-          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
-        }
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          if (String(input).endsWith("/events")) {
+            return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+          }
 
-        return jsonResponse(
-          camelCaseDurableRunProjection({
-            runId: "run_cursor_resync_terminal",
-            latestExternalEventSequence: 4,
-            status,
-          }),
-          200,
-        );
-      }) as typeof fetch;
+          return jsonResponse(
+            camelCaseDurableRunProjection({
+              runId: "run_cursor_resync_terminal",
+              latestExternalEventSequence: 4,
+              status,
+            }),
+            200,
+          );
+        }) as typeof fetch,
+      );
 
       const flushed = await terminalController.flush();
 
@@ -1577,15 +1603,17 @@ describe("agent/durable", () => {
     let resolveAppend: (response: Response) => void = (_response) => {
       throw new Error("Append request was not started");
     };
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input).endsWith("/events")) {
-        return new Promise<Response>((resolve) => {
-          resolveAppend = resolve;
-        });
-      }
+    installMockFetch(
+      ((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/events")) {
+          return new Promise<Response>((resolve) => {
+            resolveAppend = resolve;
+          });
+        }
 
-      return Promise.resolve(jsonResponse(camelCaseDurableRunProjection(), 200));
-    }) as typeof fetch;
+        return Promise.resolve(jsonResponse(camelCaseDurableRunProjection(), 200));
+      }) as typeof fetch,
+    );
 
     const controller = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
@@ -1624,14 +1652,18 @@ describe("agent/durable", () => {
 
   it("requeues buffered events when queue flushing throws before classification completes", async () => {
     let appendRequestCount = 0;
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      if (String(input).endsWith("/events")) {
-        appendRequestCount += 1;
-        return Promise.resolve(jsonResponse({ detail: "External run event cursor mismatch" }, 400));
-      }
+    installMockFetch(
+      ((input: RequestInfo | URL) => {
+        if (String(input).endsWith("/events")) {
+          appendRequestCount += 1;
+          return Promise.resolve(
+            jsonResponse({ detail: "External run event cursor mismatch" }, 400),
+          );
+        }
 
-      return Promise.reject(new Error("run lookup failed"));
-    }) as typeof fetch;
+        return Promise.reject(new Error("run lookup failed"));
+      }) as typeof fetch,
+    );
 
     const controller = createConversationRunEventQueueController({
       authToken: AUTH_TOKEN,
@@ -2398,10 +2430,12 @@ describe("agent/durable", () => {
     abortController.abort();
 
     let fetchCalled = false;
-    globalThis.fetch = (async () => {
-      fetchCalled = true;
-      throw new Error("fetch should not be called");
-    }) as typeof fetch;
+    installMockFetch(
+      (async () => {
+        fetchCalled = true;
+        throw new Error("fetch should not be called");
+      }) as typeof fetch,
+    );
 
     await assertRejects(
       () =>

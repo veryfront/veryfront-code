@@ -11,6 +11,7 @@ import {
   resolveConversationHostedTerminalState,
   toConversationHostedTerminalState,
 } from "./hosted-terminal.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 type RecordedCall = {
   input: string | URL | Request;
@@ -21,8 +22,7 @@ type RecordedCall = {
 const calls: RecordedCall[] = [];
 
 function installFetchMock() {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+  installMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({
       input,
       init,
@@ -38,9 +38,9 @@ function installFetchMock() {
         headers: { "content-type": "application/json" },
       },
     );
-  };
+  });
   return () => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   };
 }
 
@@ -251,8 +251,7 @@ describe("agent/conversation-hosted-terminal", () => {
 
   it("retries the durable finalize after a failed completion request", async () => {
     const attempts: string[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async (input: string | URL | Request, _init?: RequestInit) => {
+    installMockFetch(async (input: string | URL | Request, _init?: RequestInit) => {
       attempts.push(String(input));
       if (attempts.length === 1) {
         return new Response(JSON.stringify({ error: "boom" }), {
@@ -270,7 +269,7 @@ describe("agent/conversation-hosted-terminal", () => {
           headers: { "content-type": "application/json" },
         },
       );
-    };
+    });
     try {
       const adapter = createConversationHostedTerminalAdapter({
         authToken: "tok",
@@ -310,7 +309,7 @@ describe("agent/conversation-hosted-terminal", () => {
         "the retry must target the same durable run completion endpoint",
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
