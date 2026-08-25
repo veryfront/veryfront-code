@@ -2,12 +2,21 @@ name: Automated review gate
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-  pull_request_review:
-    types: [submitted, dismissed]
+    types: [
+      opened,
+      synchronize,
+      reopened,
+      ready_for_review,
+      converted_to_draft,
+      edited,
+    ]
   issue_comment:
     types: [created, edited, deleted]
-  status:
+  workflow_run:
+    workflows: [Automated review wakeup]
+    types: [completed]
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
@@ -15,22 +24,23 @@ jobs:
   target:
     name: resolve automated review target
     # Apply publisher eligibility before allocating a resolver runner. The
-    # resolver exists only to feed the two publisher jobs below.
+    # resolver also gives source and merge-group publishers the same immutable
+    # source-SHA concurrency key.
     if: >-
-      (github.event_name != 'status' &&
-       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-       (github.event_name != 'pull_request_review' ||
-        github.event.pull_request.head.repo.full_name == github.repository)) ||
-      (github.event_name == 'status' &&
-       github.event.context == 'CodeRabbit' &&
-       github.event.state == 'success' &&
-       github.event.description == 'Review completed')
+      github.event_name == 'merge_group' ||
+      ((github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+       (github.event_name != 'workflow_run' ||
+        github.event.workflow_run.event == 'pull_request_review'))
     permissions:
+      contents: read
       pull-requests: read
+      statuses: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      key: ${{ steps.resolve.outputs.result }}
+      key: ${{ steps.resolve.outputs.key }}
+      pull_number: ${{ steps.resolve.outputs.pull-number }}
+      status_id: ${{ steps.resolve.outputs.status-id }}
     steps:
       - name: Resolve the current head commit
         id: resolve
@@ -39,101 +49,291 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            let headSha = context.payload.sha;
-            const pullNumber = context.payload.pull_request?.number ??
+            const fullSha = /^[0-9a-f]{40}$/i;
+            const parseMergeQueuePullNumber = (headRef) => {
+              if (typeof headRef !== "string") return undefined;
+              const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
+              const pullNumber = match ? Number(match[1]) : undefined;
+              return Number.isSafeInteger(pullNumber)
+                ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+                : undefined;
+            };
+            const parseReviewWakeupIdentity = (run) => {
+              const path = typeof run?.path === "string" ? run.path : "";
+              const trustedPath = path === ".github/workflows/automated-review-wakeup.yml" ||
+                path.startsWith(".github/workflows/automated-review-wakeup.yml@");
+              const title = typeof run?.display_title === "string"
+                ? run.display_title
+                : "";
+              const match = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(title);
+              const pullNumber = match ? Number(match[1]) : undefined;
+              const headRepositoryId = run?.head_repository?.id;
+              if (
+                !trustedPath || run?.event !== "pull_request_review" ||
+                !Number.isSafeInteger(run?.id) || run.id < 1 ||
+                !Number.isSafeInteger(pullNumber) ||
+                !Number.isSafeInteger(headRepositoryId) || headRepositoryId < 1 ||
+                typeof run?.head_branch !== "string" || run.head_branch.length === 0 ||
+                typeof run?.head_sha !== "string" || !fullSha.test(run.head_sha)
+              ) return undefined;
+              return {
+                pullNumber,
+                headBranch: run.head_branch,
+                headRepositoryId,
+              };
+            };
+            const workflowRun = context.payload.workflow_run;
+            let wakeupSignal;
+            if (context.eventName === "workflow_run") {
+              wakeupSignal = parseReviewWakeupIdentity(workflowRun);
+              if (!wakeupSignal) {
+                core.setFailed("Could not validate the review wakeup run");
+                core.setOutput("key", `run-${context.runId}`);
+                return;
+              }
+            }
+            let queueEntry;
+            if (context.eventName === "merge_group") {
+              queueEntry = parseMergeQueuePullNumber(
+                context.payload.merge_group?.head_ref,
+              );
+              if (!queueEntry) {
+                core.setFailed("Could not resolve the merge queue source");
+                core.setOutput("key", `run-${context.runId}`);
+                return;
+              }
+            }
+            const pullNumber = queueEntry?.pullNumber ??
+              context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
-                : undefined);
-            if (!headSha && pullNumber) {
-              const response = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-              });
-              headSha = response.data.head.sha;
+                : wakeupSignal?.pullNumber);
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed("Could not resolve a valid pull request number");
+              core.setOutput("key", `run-${context.runId}`);
+              return;
             }
-            // Non-PR issue comments never reach a publisher job, but still
-            // need a harmless key so this resolver succeeds for the trigger.
-            if (!headSha && context.eventName === "issue_comment") {
-              return `issue-${context.payload.issue.number}`;
+            let headSha = queueEntry?.sourceHeadSha;
+            if (!headSha) {
+              try {
+                const response = await github.rest.git.getRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `pull/${pullNumber}/head`,
+                });
+                headSha = response.data?.object?.sha;
+              } catch (error) {
+                try {
+                  const fallbackResponse = await github.rest.pulls.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pullNumber,
+                  });
+                  const fallbackHead = fallbackResponse.data?.head?.sha;
+                  if (typeof fallbackHead === "string" && fullSha.test(fallbackHead)) {
+                    headSha = fallbackHead;
+                  }
+                } catch (fallbackError) {
+                  core.error(
+                    `Could not resolve a failure target from the pull request: ${fallbackError}`,
+                  );
+                }
+                const eventFailureHead =
+                  context.payload.pull_request?.number === pullNumber
+                    ? context.payload.pull_request?.head?.sha
+                    : undefined;
+                if (!headSha && fullSha.test(eventFailureHead ?? "")) {
+                  headSha = eventFailureHead;
+                }
+                core.setFailed(`Could not resolve the pull request head ref: ${error}`);
+              }
             }
-            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+            if (!fullSha.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
-              return `run-${context.runId}`;
+              core.setOutput("key", `run-${context.runId}`);
+              return;
             }
-            return headSha;
+            headSha = headSha.toLowerCase();
+            core.setOutput("key", headSha);
+            core.setOutput("pull-number", String(pullNumber));
+            if (wakeupSignal) {
+              let pullRequest;
+              try {
+                const response = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                pullRequest = response.data;
+              } catch (error) {
+                core.setFailed(`Could not validate the review wakeup: ${error}`);
+                return;
+              }
+              if (
+                pullRequest?.number !== wakeupSignal.pullNumber ||
+                pullRequest?.state !== "open" ||
+                pullRequest?.head?.ref !== wakeupSignal.headBranch ||
+                pullRequest?.head?.sha?.toLowerCase() !== headSha ||
+                pullRequest?.head?.repo?.id !== wakeupSignal.headRepositoryId ||
+                pullRequest?.base?.repo?.id !== context.payload.repository?.id ||
+                typeof pullRequest?.base?.ref !== "string" ||
+                pullRequest.base.ref.length === 0 ||
+                pullRequest.base.ref.length > 1024 ||
+                pullRequest.base.ref.includes("\0")
+              ) {
+                core.setFailed(
+                  "Review wakeup metadata does not match the pull request",
+                );
+                return;
+              }
+            }
+            let statusId = 0;
+            let statusFound = false;
+            try {
+              for (let page = 1; page <= 5; page += 1) {
+                const response = await github.rest.repos.listCommitStatusesForRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: headSha,
+                  per_page: 100,
+                  page,
+                });
+                if (!Array.isArray(response.data)) {
+                  throw new Error("Review status history is malformed");
+                }
+                for (const status of response.data) {
+                  if (
+                    status?.context !== "Automated review" ||
+                    typeof status?.description !== "string" ||
+                    !status.description.startsWith(`PR#${pullNumber} `) ||
+                    status?.creator?.login !== "github-actions[bot]" ||
+                    status?.creator?.id !== 41898282 ||
+                    status?.creator?.type !== "Bot"
+                  ) continue;
+                  if (!Number.isSafeInteger(status?.id) || status.id < 1) {
+                    throw new Error("Review status identity is malformed");
+                  }
+                  statusId = status.id;
+                  statusFound = true;
+                  break;
+                }
+                if (statusFound || response.data.length < 100) break;
+                if (page === 5) {
+                  throw new Error("Review status history exceeded 500 items");
+                }
+              }
+              core.setOutput("status-id", String(statusId));
+            } catch (error) {
+              core.setFailed(`Could not capture the review status boundary: ${error}`);
+              return;
+            }
+            if (workflowRun?.conclusion !== "success") {
+              core.setFailed("The review wakeup did not complete successfully");
+            }
+
+  merge_group_target_failure:
+    name: close unresolved merge group review gate
+    needs: [target, merge_group]
+    if: >-
+      always() &&
+      github.event_name == 'merge_group' &&
+      (needs.target.result != 'success' ||
+       needs.merge_group.result != 'success')
+    permissions:
+      statuses: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Publish the resolver failure
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const mergeGroupSha = context.payload.merge_group?.head_sha;
+            if (!/^[0-9a-f]{40}$/i.test(mergeGroupSha ?? "")) {
+              core.setFailed("Could not resolve the merge group failure target");
+              return;
+            }
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: mergeGroupSha,
+              state: "failure",
+              context: "Automated review",
+              description: "Merge queue review resolver is unavailable",
+            });
+            core.setFailed("Closed the merge group gate after target resolution failed");
 
   review:
     name: publish automated review status
-    # pull-requests and issues write let this job post the fixed "@codex
-    # review" request after verifying the current head. This job checks out
-    # only the trusted default branch and never executes pull request files.
+    # Issues write lets this job post the fixed "@codex review" request after
+    # verifying the current head. This job loads gate code through the API
+    # from the trusted default branch and never executes pull request files.
     permissions:
       contents: read
       issues: write
-      pull-requests: write
+      pull-requests: read
       statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
-    # pull_request_review hands fork pull requests a read-only token that cannot
-    # write a commit status, so skip it there and let the trusted
-    # pull_request_target and issue_comment runs publish the decision instead.
-    if: >-
-      github.event_name != 'status' &&
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-      (github.event_name != 'pull_request_review' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+    # Fork pull_request_review events have read-only tokens. The unprivileged
+    # wakeup workflow observes them, then workflow_run invokes this trusted
+    # default-branch reconciler with write permission. Eligibility comes from
+    # the resolver dependency above. This job never reads wakeup artifacts or
+    # executes pull request code.
     needs: target
+    if: github.event_name != 'merge_group'
     concurrency:
-      # Every event for one head, including issue comments and status events,
-      # must serialize on the same key so an older pending write cannot win.
+      # Every pull request event for one head must serialize on the same key so
+      # an older pending write cannot win.
       group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # This workflow has pull_request_target authority. Check out only the
-      # trusted default branch and never execute files from the PR head. The
-      # base commit of an older pull request predates this gate, so reading the
-      # gate from the default branch is what keeps the status computable.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Require an automated review for the current commit
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ needs.target.outputs.key }}
+          PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
           result-encoding: string
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
-            const pullNumber = context.payload.pull_request?.number ??
-              context.payload.issue.number;
-            const response = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pullNumber,
-            });
-            const pullRequest = response.data;
-            const sameRepository =
-              `${context.repo.owner}/${context.repo.repo}`;
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed("The resolved pull request number is invalid");
+              return "failure";
+            }
             const headSha = process.env.TARGET_SHA;
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("The resolved review target commit is invalid");
               return "failure";
             }
-            if (pullRequest.head.sha !== headSha) {
-              core.notice("Skipped automated review publication after the pull request head changed.");
-              return "stale";
-            }
             let publishAutomatedReviewStatus;
+            let publishReviewResolutionFailure;
+            let reconcileActiveMergeGroupReviewStatuses;
             try {
-              ({ publishAutomatedReviewStatus } = await import(gateUrl));
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
+              ({
+                publishAutomatedReviewStatus,
+                publishReviewResolutionFailure,
+                reconcileActiveMergeGroupReviewStatuses,
+              } = await import(gateUrl));
             } catch (error) {
               // A missing or broken gate must show up as a red status, not as
               // an absent one. Absent is what a skipped review already looks
@@ -146,7 +346,7 @@ jobs:
                 context: "Automated review",
                 description:
                   "Review gate is unavailable on the default branch",
-                target_url: pullRequest.html_url,
+                target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
               });
               core.setFailed(`Could not load the review gate: ${error}`);
               return;
@@ -155,17 +355,45 @@ jobs:
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pullNumber: pullRequest.number,
+              pullNumber,
               headSha,
-              pullUrl: pullRequest.html_url,
-              isDraft: pullRequest.draft === true,
-              // Fork review events cannot publish a status. Ignore review
-              // objects for forks and accept only proof a trusted pull or
-              // comment event can reconcile. This safely stays pending until
-              // a trusted event observes status or comment proof.
-              allowPullRequestReviews:
-                pullRequest.head.repo?.full_name === sameRepository,
+              pullUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
+              reviewResetKey:
+                context.eventName === "pull_request_target" &&
+                context.payload.action === "edited" &&
+                context.payload.changes?.base !== undefined
+                  ? `base-${context.runId}`
+                  : undefined,
             });
+            let queueResultCount;
+            if (
+              result.state === "failure" ||
+              typeof result.baseRef !== "string"
+            ) {
+              const { queueFailures } = await publishReviewResolutionFailure({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                sourceHeadSha: headSha,
+              });
+              queueResultCount = queueFailures;
+            } else {
+              const queueResults = await reconcileActiveMergeGroupReviewStatuses({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                sourceHeadSha: headSha,
+                baseRef: result.baseRef,
+              });
+              queueResultCount = queueResults.length;
+            }
+            if (queueResultCount > 0) {
+              core.notice(
+                `Reconciled ${queueResultCount} active merge queue review status.`,
+              );
+            }
             if (result.state === "pending") {
               core.notice(`${result.description}.`);
             } else if (result.review) {
@@ -181,12 +409,18 @@ jobs:
       # handles open and ready-for-review events, but not a push to an open
       # pull request. Post the "@codex review" request only for synchronize.
       # The helper re-fetches the PR immediately before posting so a queued
-      # stale event cannot bind its marker to a request for a newer head.
+      # stale event cannot bind its marker to a request for a newer head. A
+      # base edit gets a marker scoped to the run, which invalidates
+      # proof issued for an earlier base without coupling normal reviews to a
+      # moving base commit. A rerun keeps the same marker, so it re-evaluates
+      # evidence after the original reset instead of creating another epoch
+      # that would erase a successful review submitted in the meantime.
       - name: Request an automated review of the current commit
         if: >-
           github.event_name == 'pull_request_target' &&
           github.event.pull_request.draft == false &&
-          github.event.action == 'synchronize' &&
+          (github.event.action == 'synchronize' ||
+           (github.event.action == 'edited' && github.event.changes.base)) &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -194,10 +428,21 @@ jobs:
         with:
           retries: 3
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
+            const response = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const file = response.data;
+            if (
+              Array.isArray(file) || file?.type !== "file" ||
+              file?.encoding !== "base64" ||
+              typeof file?.content !== "string"
+            ) throw new Error("Trusted review gate content is malformed");
+            const gateUrl = `data:text/javascript;base64,${
+              Buffer.from(file.content, "base64").toString("base64")
+            }`;
             const { requestAutomatedReview } = await import(gateUrl);
             const pullRequest = context.payload.pull_request;
             const result = await requestAutomatedReview({
@@ -206,6 +451,9 @@ jobs:
               repo: context.repo.repo,
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
+              requestKey: context.payload.action === "edited"
+                ? `base-${context.runId}`
+                : undefined,
             });
             core.notice(
               result.requested
@@ -215,68 +463,299 @@ jobs:
                 : "An automated review request for this head commit already exists.",
             );
 
-  status_review:
-    name: publish completed CodeRabbit review status
+  invalidate:
+    name: invalidate unverified review proof
+    # A reconciliation event is consumed by the run that observes it. If the
+    # resolver or the publisher cannot complete, the previous success stays on
+    # the head and a later merge group reuses it, so a finding, a deleted
+    # verdict, or a dismissed approval is silently lost. A new head has no
+    # status of its own. A base edit does need this fallback because the source
+    # SHA is unchanged and its prior success can otherwise remain current.
+    needs: [target, review]
+    if: >-
+      failure() &&
+      (github.event_name == 'issue_comment' ||
+       github.event_name == 'workflow_run' ||
+       (github.event_name == 'pull_request_target' &&
+        github.event.action == 'edited' &&
+        github.event.changes.base))
     permissions:
       contents: read
       pull-requests: read
       statuses: write
-    # This SHA-scoped path publishes only durable completion success. It shares
-    # the status publisher queue so it cannot race general PR reconciliation.
-    # The webhook payload carries no creator field. Treat it only as a wakeup;
-    # the helper re-reads status history and requires the pinned CodeRabbit
-    # creator before publishing completion.
-    if: >-
-      github.event_name == 'status' &&
-      github.event.context == 'CodeRabbit' &&
-      github.event.state == 'success' &&
-      github.event.description == 'Review completed'
+    env:
+      TARGET_SHA: ${{ needs.target.outputs.key }}
+      PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
+      RECONCILIATION_STATUS_ID: ${{ needs.target.outputs.status_id }}
+    concurrency:
+      # Share the source-head publisher lock so fallback failures cannot race
+      # successful source or merge-group status writes.
+      group: automated-review-${{ needs.target.outputs.key }}
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Close the gate on the unreconciled head
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const fullSha = /^[0-9a-f]{40}$/i;
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const headSha = process.env.TARGET_SHA;
+            const statusIdText = process.env.RECONCILIATION_STATUS_ID ?? "";
+            const reconciliationStatusId = statusIdText === ""
+              ? undefined
+              : Number(statusIdText);
+            if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+              core.setFailed(
+                "Could not resolve the pull request whose review proof is unverified",
+              );
+              return;
+            }
+            if (!fullSha.test(headSha ?? "")) {
+              core.setFailed("Could not resolve the head whose review proof is unverified");
+              return;
+            }
+            if (
+              reconciliationStatusId !== undefined &&
+              (!Number.isSafeInteger(reconciliationStatusId) ||
+                reconciliationStatusId < 0)
+            ) {
+              core.setFailed("The review status boundary is invalid");
+              return;
+            }
+            const collectAll = async (endpoint, parameters, source) => {
+              const items = [];
+              for await (
+                const response of github.paginate.iterator(endpoint, {
+                  ...parameters,
+                  per_page: 100,
+                })
+              ) {
+                if (!Array.isArray(response?.data)) {
+                  throw new Error(`${source} pagination returned malformed data`);
+                }
+                items.push(...response.data);
+                if (items.length > 500) {
+                  throw new Error(`${source} exceeded 500 items`);
+                }
+              }
+              return items;
+            };
+            const publishIndependentFailure = async () => {
+              const pull = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+              if (pull.data?.head?.sha?.toLowerCase() !== headSha.toLowerCase()) {
+                return { headSha, queueFailures: 0, skipped: true };
+              }
+              const baseRepositoryId = pull.data?.base?.repo?.id;
+              const baseRef = pull.data?.base?.ref;
+              if (
+                !Number.isSafeInteger(baseRepositoryId) || baseRepositoryId < 1 ||
+                typeof baseRef !== "string" || baseRef.length === 0 ||
+                baseRef.length > 1024 || baseRef.includes("\0")
+              ) throw new Error("Pull request base is malformed");
+              if (reconciliationStatusId !== undefined) {
+                const { createHash } = require("node:crypto");
+                const baseBinding = createHash("sha256")
+                  .update(`${baseRepositoryId}\0${baseRef}`)
+                  .digest("hex");
+                const statuses = await collectAll(
+                  github.rest.repos.listCommitStatusesForRef,
+                  { owner: context.repo.owner, repo: context.repo.repo, ref: headSha },
+                  "review statuses",
+                );
+                const latest = statuses.find((status) =>
+                  status?.context === "Automated review" &&
+                  typeof status?.description === "string" &&
+                  status.description.startsWith(`PR#${pullNumber} `)
+                );
+                const successPrefix = `PR#${pullNumber} base:${baseBinding} by:`;
+                const reviewer = latest?.description?.startsWith(successPrefix)
+                  ? latest.description.slice(successPrefix.length)
+                  : "";
+                const trustedReviewer =
+                  reviewer === "chatgpt-codex-connector[bot]" ||
+                  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(reviewer);
+                if (
+                  Number.isSafeInteger(latest?.id) &&
+                  latest.id !== reconciliationStatusId &&
+                  latest?.state === "success" &&
+                  latest?.creator?.login === "github-actions[bot]" &&
+                  latest?.creator?.id === 41898282 &&
+                  latest?.creator?.type === "Bot" &&
+                  trustedReviewer
+                ) return { headSha, queueFailures: 0, skipped: true };
+              }
+              const pullUrl = typeof pull.data?.html_url === "string"
+                ? pull.data.html_url
+                : `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`;
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: headSha,
+                state: "failure",
+                context: "Automated review",
+                description: `PR#${pullNumber} review status unavailable`,
+                target_url: pullUrl,
+              });
+              const refs = await collectAll(
+                github.rest.git.listMatchingRefs,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`,
+                },
+                "merge queue refs",
+              );
+              const seen = new Set();
+              const expectedQueueRef =
+                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`;
+              for (const queueRef of refs) {
+                if (queueRef?.ref !== expectedQueueRef) continue;
+                const mergeGroupSha = queueRef?.object?.sha;
+                if (!fullSha.test(mergeGroupSha ?? "")) {
+                  throw new Error("Merge queue ref has a malformed commit");
+                }
+                if (seen.has(mergeGroupSha.toLowerCase())) continue;
+                seen.add(mergeGroupSha.toLowerCase());
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: mergeGroupSha,
+                  state: "failure",
+                  context: "Automated review",
+                  description: `Could not revalidate review for PR #${pullNumber}`,
+                  target_url: pullUrl,
+                });
+              }
+              return {
+                headSha,
+                queueFailures: seen.size,
+                skipped: false,
+              };
+            };
+            let result;
+            try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
+              const { invalidateReviewProof } = await import(gateUrl);
+              result = await invalidateReviewProof({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                expectedHeadSha: headSha,
+                reconciliationStatusId,
+              });
+            } catch (error) {
+              core.warning(
+                `Trusted invalidation was unavailable, using the independent failure path: ${error}`,
+              );
+              result = await publishIndependentFailure();
+            }
+            // Keep the run red: the revocation event was still dropped, and
+            // the closed gate has to be looked at rather than waited out.
+            core.setFailed(
+              result.skipped
+                ? `Skipped stale fallback invalidation for ${result.headSha.slice(0, 12)} after a later reconciliation succeeded.`
+                : `Closed the review gate on ${result.headSha.slice(0, 12)} after reconciliation failed.`,
+            );
+
+  merge_group:
+    name: reuse exact-head review for merge group
+    if: github.event_name == 'merge_group'
     needs: target
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
     concurrency:
       group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-      - name: Publish authenticated CodeRabbit completion
+      - name: Reuse the source pull request review
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TARGET_SHA: ${{ needs.target.outputs.key }}
+          SOURCE_HEAD_SHA: ${{ needs.target.outputs.key }}
+          PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
-            let publishCodeRabbitCompletionStatus;
+            let parseMergeQueuePullNumber;
+            let publishMergeGroupReviewStatus;
             try {
-              ({ publishCodeRabbitCompletionStatus } = await import(gateUrl));
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
+              ({
+                parseMergeQueuePullNumber,
+                publishMergeGroupReviewStatus,
+              } = await import(gateUrl));
             } catch (error) {
               core.setFailed(`Could not load the review gate: ${error}`);
               return;
             }
-            const result = await publishCodeRabbitCompletionStatus({
+            const queueEntry = parseMergeQueuePullNumber(
+              context.payload.merge_group.head_ref,
+            );
+            if (!queueEntry) {
+              core.setFailed("Could not resolve the merge queue pull request");
+              return;
+            }
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
+            if (
+              !Number.isSafeInteger(pullNumber) ||
+              pullNumber !== queueEntry.pullNumber ||
+              sourceHeadSha !== queueEntry.sourceHeadSha
+            ) {
+              core.setFailed("Merge queue source does not match its serialized lock");
+              return;
+            }
+            const result = await publishMergeGroupReviewStatus({
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              headSha: process.env.TARGET_SHA,
-              // The payload claim carries no creator; the helper authenticates
-              // the completion against the REST status history for the head.
-              status: {
-                context: context.payload.context,
-                state: context.payload.state,
-                description: context.payload.description,
-              },
+              pullNumber,
+              sourceHeadSha,
+              mergeGroupSha: context.payload.merge_group.head_sha,
             });
             if (result.state === "success") {
               core.notice(
-                `Authenticated CodeRabbit completion for ${process.env.TARGET_SHA.slice(0, 12)}.`,
+                `Reused PR #${pullNumber} review for ${context.payload.merge_group.head_sha.slice(0, 12)}.`,
               );
-            } else if (result.failure) {
-              core.warning(result.failure.message);
+            } else {
+              core.setFailed(result.failure.message);
             }

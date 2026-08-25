@@ -1,19 +1,103 @@
+import { createHash } from "node:crypto";
+
 const BOTS = new Map([
-  ["coderabbitai[bot]", 136622811],
   ["chatgpt-codex-connector[bot]", 199175422],
+  ["github-actions[bot]", 41898282],
 ]);
-const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
+const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
+const REVIEW_REQUEST_MARKER =
+  /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([a-z0-9-]{1,64}))? -->\n@codex review$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
-const SUBMITTED_REVIEW_STATES = new Set(["APPROVED", "COMMENTED"]);
+const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
-const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
+const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
+/** @type {(login: string) => Promise<boolean>} */
+const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
+
+const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
+
+/** Produce a compact, non-ambiguous binding for a pull request base. */
+export function reviewBaseBinding(baseRepositoryId, baseRef) {
+  if (!Number.isSafeInteger(baseRepositoryId) || baseRepositoryId < 1) {
+    throw new Error("Pull request base repository is invalid");
+  }
+  if (
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error("Pull request base ref is invalid");
+  }
+  return createHash("sha256")
+    .update(`${baseRepositoryId}\0${baseRef}`)
+    .digest("hex");
+}
+
+function pullRequestBaseBinding(pullRequest) {
+  return reviewBaseBinding(
+    pullRequest?.base?.repo?.id,
+    pullRequest?.base?.ref,
+  );
+}
+
+/** Parse immutable PR identity carried by a trusted review wakeup run. */
+export function parseReviewWakeupRun(run) {
+  const path = typeof run?.path === "string" ? run.path : "";
+  const trustedPath = path === REVIEW_WAKEUP_PATH ||
+    path.startsWith(`${REVIEW_WAKEUP_PATH}@`);
+  const displayTitle = typeof run?.display_title === "string"
+    ? run.display_title
+    : "";
+  const titleMatch = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(
+    displayTitle,
+  );
+  const pullNumber = titleMatch ? Number(titleMatch[1]) : undefined;
+  const headRepositoryId = run?.head_repository?.id;
+  if (
+    !trustedPath ||
+    run?.event !== "pull_request_review" ||
+    run?.conclusion !== "success" ||
+    !Number.isSafeInteger(run?.id) ||
+    run.id < 1 ||
+    !Number.isSafeInteger(pullNumber) ||
+    !Number.isSafeInteger(headRepositoryId) ||
+    headRepositoryId < 1 ||
+    typeof run?.head_branch !== "string" ||
+    run.head_branch.length === 0 ||
+    typeof run?.head_sha !== "string" ||
+    !FULL_SHA.test(run.head_sha)
+  ) return undefined;
+  return {
+    pullNumber,
+    headBranch: run.head_branch,
+    headSha: run.head_sha.toLowerCase(),
+    headRepositoryId,
+  };
+}
+
+/** Bind a parsed wakeup to one current PR before granting write authority. */
+export function matchesReviewWakeupPullRequest(
+  signal,
+  pullRequest,
+  repository,
+) {
+  return pullRequest?.number === signal?.pullNumber &&
+    pullRequest?.state === "open" &&
+    pullRequest?.head?.ref === signal?.headBranch &&
+    typeof pullRequest?.head?.sha === "string" &&
+    pullRequest?.head?.repo?.id === signal?.headRepositoryId &&
+    typeof pullRequest?.base?.ref === "string" &&
+    pullRequest.base.ref.length > 0 &&
+    pullRequest.base.ref.length <= 1024 &&
+    !pullRequest.base.ref.includes("\0") &&
+    pullRequest?.base?.repo?.id === repository?.id;
+}
 
 function isPinnedBot(user, login) {
   return user?.login === login &&
@@ -21,26 +105,238 @@ function isPinnedBot(user, login) {
     user?.type === "Bot";
 }
 
+function isLaterReview(candidate, current, candidateIndex, currentIndex) {
+  const candidateTime = Date.parse(candidate?.submitted_at ?? "");
+  const currentTime = Date.parse(current?.submitted_at ?? "");
+  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime)) {
+    if (candidateTime !== currentTime) return candidateTime > currentTime;
+  } else if (Number.isFinite(candidateTime) !== Number.isFinite(currentTime)) {
+    return Number.isFinite(candidateTime);
+  }
+  if (
+    Number.isSafeInteger(candidate?.id) && Number.isSafeInteger(current?.id) &&
+    candidate.id !== current.id
+  ) return candidate.id > current.id;
+  return candidateIndex > currentIndex;
+}
+
+function reviewRequestCandidate(comment, headSha, index) {
+  if (
+    !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
+    typeof comment?.body !== "string"
+  ) return undefined;
+  const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
+  if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) return undefined;
+  // A normal synchronize request is only an idempotency marker. The head SHA
+  // already excludes proof for earlier commits, so treating the marker as a
+  // freshness boundary can erase a valid exact-head review that lands while
+  // the publisher is still running. Only keyed base-edit markers establish a
+  // same-head reset boundary.
+  if (marker[2] === undefined) return undefined;
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  if (!Number.isFinite(createdAt)) {
+    return { time: Number.POSITIVE_INFINITY, id: undefined, index };
+  }
+  const id = Number.isSafeInteger(comment?.id) && comment.id > 0
+    ? comment.id
+    : undefined;
+  return { time: createdAt, id, index };
+}
+
+function isLaterReviewRequest(candidate, current) {
+  if (current === undefined || candidate.time > current.time) return true;
+  if (candidate.time < current.time) return false;
+  if (candidate.id !== undefined && current.id !== undefined) {
+    return candidate.id > current.id;
+  }
+  return candidate.index > current.index;
+}
+
+function latestReviewRequest(comments, headSha) {
+  let latest;
+  for (const [index, comment] of comments.entries()) {
+    const candidate = reviewRequestCandidate(comment, headSha, index);
+    if (candidate && isLaterReviewRequest(candidate, latest)) {
+      latest = candidate;
+    }
+  }
+  return latest;
+}
+
+function hasReviewRequest(comments, headSha, requestKey) {
+  return comments.some((comment) => {
+    if (
+      !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
+      typeof comment?.body !== "string"
+    ) return false;
+    const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
+    return marker?.[1]?.toLowerCase() === headSha.toLowerCase() &&
+      marker?.[2] === requestKey;
+  });
+}
+
+function timelinePosition(timeline, event, id) {
+  if (!Number.isSafeInteger(id) || id < 1) return undefined;
+  let position;
+  for (const [index, item] of timeline.entries()) {
+    if (item?.event !== event || item?.id !== id) continue;
+    if (position !== undefined) return undefined;
+    position = index;
+  }
+  return position;
+}
+
+function latestBaseRefChange(events) {
+  let latest;
+  for (const item of events) {
+    if (item?.event !== "base_ref_changed") continue;
+    const time = Date.parse(item?.created_at ?? "");
+    if (!Number.isFinite(time)) {
+      return { time: Number.POSITIVE_INFINITY, kind: "base-change" };
+    }
+    if (latest === undefined || time > latest.time) {
+      latest = { time, kind: "base-change" };
+    }
+  }
+  return latest;
+}
+
+function activeReviewBoundary(request, reviewNotBefore, baseChange) {
+  // The issue event is GitHub's durable record of the policy change. The
+  // workflow writes its reset status later, so letting that timestamp replace
+  // the event would reject valid evidence submitted between the two writes.
+  if (baseChange !== undefined) return baseChange;
+  const boundary = reviewNotBefore === undefined
+    ? undefined
+    : { time: reviewNotBefore, kind: "status" };
+  if (
+    boundary?.kind === "status" &&
+    request?.time === boundary.time
+  ) return { ...request, timelineEvent: "commented" };
+  if (boundary !== undefined || request === undefined) return boundary;
+  return { ...request, timelineEvent: "commented" };
+}
+
+function evidenceFreshness(
+  evidence,
+  timelineEvent,
+  boundary,
+  timeline,
+) {
+  if (boundary === undefined) return "newer";
+  const evidenceTime = Date.parse(
+    timelineEvent === "reviewed"
+      ? evidence?.submitted_at ?? ""
+      : evidence?.created_at ?? "",
+  );
+  if (!Number.isFinite(evidenceTime)) return "ambiguous";
+  if (evidenceTime < boundary.time) return "older";
+  if (evidenceTime > boundary.time) return "newer";
+  if (boundary.timelineEvent === undefined) return "ambiguous";
+  const boundaryPosition = timelinePosition(
+    timeline,
+    boundary.timelineEvent,
+    boundary.id,
+  );
+  const evidencePosition = timelinePosition(
+    timeline,
+    timelineEvent,
+    evidence?.id,
+  );
+  if (boundaryPosition === undefined || evidencePosition === undefined) {
+    return "ambiguous";
+  }
+  return evidencePosition > boundaryPosition ? "newer" : "older";
+}
+
+function reviewResetDescription(pullNumber, baseBinding, requestKey) {
+  const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
+  return requestKey === undefined
+    ? prefix
+    : `${prefix} key:${
+      createHash("sha256").update(requestKey).digest("hex").slice(0, 12)
+    }`;
+}
+
+function hasReviewReset(statuses, pullNumber, baseBinding, requestKey) {
+  const description = reviewResetDescription(
+    pullNumber,
+    baseBinding,
+    requestKey,
+  );
+  return statuses.some((status) =>
+    status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    status?.state === "pending" &&
+    status?.description === description &&
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  );
+}
+
+function latestReviewResetTime(statuses, pullNumber, baseBinding) {
+  let latest;
+  const descriptionPrefix = reviewResetDescription(pullNumber, baseBinding);
+  for (const status of statuses) {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      typeof status?.description !== "string" ||
+      (status.description !== descriptionPrefix &&
+        !status.description.startsWith(`${descriptionPrefix} key:`)) ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) continue;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt)) return Number.POSITIVE_INFINITY;
+    if (latest === undefined || createdAt > latest) latest = createdAt;
+  }
+  return latest;
+}
+
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
-  { reviews, comments, statuses },
+  {
+    reviews,
+    comments,
+    events = /** @type {unknown[]} */ ([]),
+    timeline = /** @type {unknown[]} */ ([]),
+  },
   headSha,
   resolveCommit = NO_COMMIT,
-  { allowPullRequestReviews = true } = {},
+  isTrustedHuman = NO_TRUSTED_HUMAN,
+  reviewNotBefore = /** @type {number | undefined} */ (undefined),
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
-
-  if (allowPullRequestReviews) {
-    for (const review of reviews) {
+  const request = latestReviewRequest(comments, headSha);
+  const validReviewNotBefore = reviewNotBefore === undefined ||
+      Number.isFinite(reviewNotBefore)
+    ? reviewNotBefore
+    : Number.POSITIVE_INFINITY;
+  const boundary = activeReviewBoundary(
+    request,
+    validReviewNotBefore,
+    latestBaseRefChange(events),
+  );
+  let codexApproval;
+  let codexReviewFinding = false;
+  {
+    const latestHumanReviews = new Map();
+    for (const [index, review] of reviews.entries()) {
       const state = typeof review?.state === "string"
         ? review.state.toUpperCase()
         : "";
+      const exactHead = review?.commit_id?.toLowerCase() ===
+        headSha.toLowerCase();
+      if (!exactHead) continue;
+      const freshness = evidenceFreshness(
+        review,
+        "reviewed",
+        boundary,
+        timeline,
+      );
       if (
-        isPinnedBot(review?.user, CODEX_LOGIN) &&
-        review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
-        SUBMITTED_REVIEW_STATES.has(state)
+        freshness === "newer" && state === "APPROVED" &&
+        isPinnedBot(review?.user, CODEX_LOGIN)
       ) {
-        return {
+        codexApproval = {
           reviewer: CODEX_LOGIN,
           source: "pull-request-review",
           state,
@@ -48,37 +344,57 @@ export async function findAutomatedReview(
             ? review.html_url
             : undefined,
         };
+        continue;
+      }
+      if (
+        freshness !== "older" && isPinnedBot(review?.user, CODEX_LOGIN) &&
+        (state === "COMMENTED" || state === "CHANGES_REQUESTED")
+      ) {
+        codexReviewFinding = true;
+        continue;
+      }
+      if (
+        freshness === "newer" && review?.user?.type === "User" &&
+        typeof review?.user?.login === "string"
+      ) {
+        const current = latestHumanReviews.get(review.user.login);
+        if (
+          !current ||
+          isLaterReview(review, current.review, index, current.index)
+        ) latestHumanReviews.set(review.user.login, { review, index });
+      }
+    }
+    for (const [login, latest] of latestHumanReviews) {
+      const state = typeof latest.review?.state === "string"
+        ? latest.review.state.toUpperCase()
+        : "";
+      if (state === "APPROVED" && await isTrustedHuman(login)) {
+        return {
+          reviewer: login,
+          source: "human-approval",
+          state,
+          url: typeof latest.review.html_url === "string"
+            ? latest.review.html_url
+            : undefined,
+        };
       }
     }
   }
 
-  // Commit status history is attached to the captured SHA. An authenticated
-  // exact completion is immutable occurrence proof; later retries do not erase
-  // it. Review and comment objects differ because GitHub can dismiss or delete
-  // them, and their event paths reconcile the resulting current evidence.
-  const status = statuses.find((candidate) =>
-    candidate?.context === "CodeRabbit" &&
-    candidate?.state === "success" &&
-    candidate?.description === "Review completed" &&
-    isPinnedBot(candidate?.creator, CODERABBIT_LOGIN)
-  );
-  if (status) {
-    return {
-      reviewer: CODERABBIT_LOGIN,
-      source: "coderabbit-status",
-      state: "COMMENTED",
-      url: typeof status.target_url === "string"
-        ? status.target_url
-        : undefined,
-    };
-  }
-
+  let codexNoFindings;
+  let codexFinding = false;
   for (const comment of comments) {
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
-      typeof comment?.body !== "string" ||
-      !comment.body.startsWith(CODEX_NO_FINDINGS)
+      typeof comment?.body !== "string"
     ) continue;
+    const freshness = evidenceFreshness(
+      comment,
+      "commented",
+      boundary,
+      timeline,
+    );
+    if (freshness === "older") continue;
     const reviewedCommits = [...comment.body.matchAll(
       new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
     )];
@@ -94,17 +410,25 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      return {
-        reviewer: CODEX_LOGIN,
-        source: "codex-comment",
-        state: "COMMENTED",
-        url: typeof comment.html_url === "string"
-          ? comment.html_url
-          : undefined,
-      };
+      if (
+        freshness === "newer" && comment.body.startsWith(CODEX_NO_FINDINGS)
+      ) {
+        codexNoFindings = {
+          reviewer: CODEX_LOGIN,
+          source: "codex-comment",
+          state: "COMMENTED",
+          url: typeof comment.html_url === "string"
+            ? comment.html_url
+            : undefined,
+        };
+      } else {
+        codexFinding = true;
+      }
     }
   }
-  return undefined;
+  return codexReviewFinding || codexFinding
+    ? undefined
+    : codexApproval ?? codexNoFindings;
 }
 
 async function collectAll(github, endpoint, parameters, source) {
@@ -126,112 +450,94 @@ async function collectAll(github, endpoint, parameters, source) {
   return items;
 }
 
-async function uniqueOpenPullForHead(github, owner, repo, headSha) {
-  const pulls = await collectAll(
-    github,
-    github.rest.repos.listPullRequestsAssociatedWithCommit,
-    { owner, repo, commit_sha: headSha },
-    "associated pull requests",
-  );
-  const matches = pulls.filter((pull) =>
-    pull?.state === "open" && pull?.head?.sha === headSha
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      "Captured head must belong to exactly one open pull request",
-    );
+async function resolveCommitRef(github, common, ref) {
+  try {
+    const response = await github.rest.repos.getCommit({ ...common, ref });
+    return response?.data?.sha;
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null && error.status === 404
+    ) return undefined;
+    throw error;
   }
-  return matches[0];
 }
 
-function isCodeRabbitCompletionClaim(status) {
-  return status?.context === "CodeRabbit" &&
-    status?.state === "success" &&
-    status?.description === "Review completed";
-}
-
-function isCodeRabbitCompletion(status) {
-  return isCodeRabbitCompletionClaim(status) &&
-    isPinnedBot(status?.creator, CODERABBIT_LOGIN);
-}
-
-/** Publish monotonic CodeRabbit completion for one uniquely associated PR. */
-export async function publishCodeRabbitCompletionStatus({
+/** Fail one source head and every active queue commit derived from it. */
+export async function publishReviewResolutionFailure({
   github,
   owner,
   repo,
-  headSha,
-  status,
-  expectedPullNumber = undefined,
+  pullNumber,
+  sourceHeadSha,
+  pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`,
 }) {
-  if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletionClaim(status)) {
-    return { state: "ignored", review: undefined, failure: undefined };
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Pull request number is invalid");
   }
-
-  try {
-    // The status webhook payload carries no creator field, so an event-shaped
-    // claim cannot authenticate itself. Re-read the commit statuses over REST,
-    // where creator does exist, and accept the wakeup only when a pinned
-    // CodeRabbit completion is attached to the captured head. A status that
-    // already carries the pinned creator came from that same REST history.
-    if (!isCodeRabbitCompletion(status)) {
-      const statuses = await collectAll(
-        github,
-        github.rest.repos.listCommitStatusesForRef,
-        { owner, repo, ref: headSha },
-        "completion statuses",
-      );
-      if (!statuses.some(isCodeRabbitCompletion)) {
-        return { state: "ignored", review: undefined, failure: undefined };
-      }
-    }
-    const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
+  if (!FULL_SHA.test(sourceHeadSha)) {
+    throw new Error("Pull request source commit is malformed");
+  }
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: sourceHeadSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description: `PR#${pullNumber} review status unavailable`,
+    target_url: pullUrl,
+  });
+  const refs = await collectAll(
+    github,
+    github.rest.git.listMatchingRefs,
+    { owner, repo, ref: "heads/gh-readonly-queue/" },
+    "merge queue refs",
+  );
+  const seen = new Set();
+  for (const queueRef of refs) {
+    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+    const mergeGroupSha = queueRef?.object?.sha;
     if (
-      expectedPullNumber !== undefined && pull.number !== expectedPullNumber
-    ) {
-      throw new Error(
-        "CodeRabbit completion belongs to a different pull request",
-      );
+      parsed?.pullNumber !== pullNumber ||
+      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
+    ) continue;
+    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
+      throw new Error("Merge queue ref has a malformed commit");
     }
-    const current = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pull.number,
-    });
-    if (
-      current?.data?.state !== "open" ||
-      current?.data?.head?.sha !== headSha
-    ) {
-      throw new Error(
-        "Associated pull request head changed before publication",
-      );
-    }
-    const pullUrl = current.data.html_url ?? pull.html_url;
-    const state = current.data.draft === true ? "pending" : "success";
-    const description = state === "success"
-      ? `Reviewed by ${CODERABBIT_LOGIN}`
-      : "Draft pull request waits for ready for review";
-    const review = state === "success"
-      ? {
-        reviewer: CODERABBIT_LOGIN,
-        source: "coderabbit-status",
-        state: "COMMENTED",
-        url: pullUrl,
-      }
-      : undefined;
+    if (seen.has(mergeGroupSha.toLowerCase())) continue;
+    seen.add(mergeGroupSha.toLowerCase());
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
-      sha: headSha,
-      state,
+      sha: mergeGroupSha,
+      state: "failure",
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description,
+      description: `Could not revalidate review for PR #${pullNumber}`,
       target_url: pullUrl,
     });
-    return { state, review, failure: undefined, description };
+  }
+  return { queueFailures: seen.size };
+}
+
+async function isCurrentlyTrustedHuman(
+  github,
+  { owner, repo, login, pullAuthor },
+) {
+  if (
+    typeof login !== "string" || typeof pullAuthor !== "string" ||
+    login === pullAuthor
+  ) return false;
+  try {
+    const response = await github.rest.repos.getCollaboratorPermissionLevel({
+      owner,
+      repo,
+      username: login,
+    });
+    return TRUSTED_PERMISSIONS.has(response?.data?.permission);
   } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error));
-    return { state: "failure", review: undefined, failure };
+    if (
+      typeof error === "object" && error !== null && error.status === 404
+    ) return false;
+    throw error;
   }
 }
 
@@ -243,59 +549,100 @@ export async function publishAutomatedReviewStatus({
   pullNumber,
   headSha,
   pullUrl,
-  isDraft = false,
-  allowPullRequestReviews = true,
+  reviewResetKey = /** @type {string | undefined} */ (undefined),
 }) {
   let review;
   let failure;
-  if (!FULL_SHA.test(headSha)) {
+  let pullAuthor;
+  let baseBinding;
+  let baseRef;
+  let isDraft = false;
+  let resetPending = false;
+  if (
+    reviewResetKey !== undefined &&
+    (typeof reviewResetKey !== "string" || !REQUEST_KEY.test(reviewResetKey))
+  ) {
+    failure = new Error("Review reset key is malformed");
+  } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
-  } else if (!isDraft) {
+  } else {
+    try {
+      const current = await github.rest.pulls.get({
+        owner,
+        repo,
+        pull_number: pullNumber,
+      });
+      if (current?.data?.head?.sha !== headSha) {
+        throw new Error(
+          "Pull request head changed before checking review evidence",
+        );
+      }
+      pullAuthor = current?.data?.user?.login;
+      baseBinding = pullRequestBaseBinding(current?.data);
+      baseRef = current?.data?.base?.ref;
+      isDraft = current?.data?.draft === true;
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  if (!failure) {
     try {
       const common = { owner, repo };
-      const [reviews, comments, statuses] = await Promise.all([
-        collectAll(
-          github,
-          github.rest.pulls.listReviews,
-          { ...common, pull_number: pullNumber },
-          "reviews",
-        ),
-        collectAll(
-          github,
-          github.rest.issues.listComments,
-          { ...common, issue_number: pullNumber },
-          "comments",
-        ),
-        collectAll(
-          github,
-          github.rest.repos.listCommitStatusesForRef,
-          { ...common, ref: headSha },
-          "statuses",
-        ),
-      ]);
-      review = await findAutomatedReview(
-        { reviews, comments, statuses },
-        headSha,
-        async (ref) => {
-          try {
-            const response = await github.rest.repos.getCommit({
-              ...common,
-              ref,
-            });
-            return response?.data?.sha;
-          } catch {
-            return undefined;
-          }
-        },
-        { allowPullRequestReviews },
+      const [reviews, comments, events, statuses, timeline] = await Promise.all(
+        [
+          collectAll(
+            github,
+            github.rest.pulls.listReviews,
+            { ...common, pull_number: pullNumber },
+            "reviews",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listComments,
+            { ...common, issue_number: pullNumber },
+            "comments",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listEvents,
+            { ...common, issue_number: pullNumber },
+            "pull request events",
+          ),
+          collectAll(
+            github,
+            github.rest.repos.listCommitStatusesForRef,
+            { ...common, ref: headSha },
+            "review statuses",
+          ),
+          collectAll(
+            github,
+            github.rest.issues.listEventsForTimeline,
+            { ...common, issue_number: pullNumber },
+            "pull request timeline",
+          ),
+        ],
       );
-      if (review?.source === "coderabbit-status") {
-        const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
-        if (pull.number !== pullNumber) {
-          throw new Error(
-            "CodeRabbit status belongs to a different pull request",
-          );
-        }
+      resetPending = reviewResetKey !== undefined &&
+        !hasReviewRequest(comments, headSha, reviewResetKey) &&
+        !hasReviewReset(
+          statuses,
+          pullNumber,
+          baseBinding,
+          reviewResetKey,
+        );
+      if (!resetPending && !isDraft) {
+        review = await findAutomatedReview(
+          { reviews, comments, events, timeline },
+          headSha,
+          (ref) => resolveCommitRef(github, common, ref),
+          (login) =>
+            isCurrentlyTrustedHuman(github, {
+              ...common,
+              login,
+              pullAuthor,
+            }),
+          latestReviewResetTime(statuses, pullNumber, baseBinding),
+        );
       }
     } catch (error) {
       review = undefined;
@@ -315,6 +662,12 @@ export async function publishAutomatedReviewStatus({
         "Pull request head changed while checking review evidence",
       );
     }
+    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+      review = undefined;
+      throw new Error(
+        "Pull request base changed while checking review evidence",
+      );
+    }
   } catch (error) {
     review = undefined;
     failure = error instanceof Error ? error : new Error(String(error));
@@ -326,14 +679,24 @@ export async function publishAutomatedReviewStatus({
   // like a failure and resolves once proof for the head arrives. Malformed
   // heads, pagination caps, ambiguous status ownership, head drift, and API
   // failures stay failures so they are looked at, not waited out.
-  const state = failure ? "failure" : review ? "success" : "pending";
-  const description = failure
-    ? "Could not determine the automated review status"
-    : review
-    ? `Reviewed by ${review.reviewer}`
-    : isDraft
-    ? "Draft pull request waits for ready for review"
-    : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
+  let state = "pending";
+  if (failure) state = "failure";
+  else if (review) state = "success";
+
+  let description;
+  if (failure) description = `PR#${pullNumber} review status unavailable`;
+  else if (resetPending) {
+    description = reviewResetDescription(
+      pullNumber,
+      baseBinding,
+      reviewResetKey,
+    );
+  } else if (review) {
+    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
+  } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
+  else {
+    description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
+  }
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -343,32 +706,381 @@ export async function publishAutomatedReviewStatus({
     description,
     target_url: review?.url ?? pullUrl,
   });
-  const result = { state, review, failure, description };
-  if (state === "success") return result;
+  return { state, review, failure, description, baseRef };
+}
 
-  try {
+/**
+ * Mark the current head of one pull request as unverified review proof.
+ *
+ * A revocation event - a Codex finding, a deleted verdict comment, a
+ * dismissed approval - is consumed by the run that observes it. When that run
+ * cannot resolve its target or publish a status, the older success stays on
+ * the head, and a later merge group reuses that cached success as if nothing
+ * had been revoked. Writing failures for the current head and its active
+ * queue commits keeps every gate closed until a later event recomputes real
+ * evidence.
+ */
+export async function invalidateReviewProof({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  expectedHeadSha = /** @type {string | undefined} */ (undefined),
+  reconciliationStatusId = /** @type {number | undefined} */ (undefined),
+}) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Pull request number is invalid");
+  }
+  if (expectedHeadSha !== undefined && !FULL_SHA.test(expectedHeadSha)) {
+    throw new Error("Expected pull request head commit is invalid");
+  }
+  if (
+    reconciliationStatusId !== undefined &&
+    (!Number.isSafeInteger(reconciliationStatusId) ||
+      reconciliationStatusId < 0)
+  ) {
+    throw new Error("Reconciliation status identity is invalid");
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const resolvedHeadSha = response?.data?.head?.sha;
+  if (typeof resolvedHeadSha !== "string" || !FULL_SHA.test(resolvedHeadSha)) {
+    throw new Error("Could not resolve the pull request head commit");
+  }
+  const headSha = resolvedHeadSha.toLowerCase();
+  const description = `PR#${pullNumber} review status unavailable`;
+  if (
+    expectedHeadSha !== undefined &&
+    headSha !== expectedHeadSha.toLowerCase()
+  ) {
+    return {
+      headSha: expectedHeadSha.toLowerCase(),
+      description,
+      queueFailures: 0,
+      skipped: true,
+    };
+  }
+  if (reconciliationStatusId !== undefined) {
     const statuses = await collectAll(
       github,
       github.rest.repos.listCommitStatusesForRef,
       { owner, repo, ref: headSha },
-      "repair statuses",
+      "review statuses",
     );
-    const completion = statuses.find(isCodeRabbitCompletion);
-    if (!completion) return result;
-    const repaired = await publishCodeRabbitCompletionStatus({
-      github,
+    const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+    if (
+      Number.isSafeInteger(latestStatus?.id) &&
+      latestStatus.id !== reconciliationStatusId &&
+      trustedReviewGateReviewer(
+          latestStatus,
+          pullNumber,
+          pullRequestBaseBinding(response?.data),
+        ) !== undefined
+    ) {
+      return {
+        headSha,
+        description,
+        queueFailures: 0,
+        skipped: true,
+      };
+    }
+  }
+  const result = await publishReviewResolutionFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha: headSha,
+    pullUrl: typeof response?.data?.html_url === "string"
+      ? response.data.html_url
+      : undefined,
+  });
+  return { headSha, description, ...result, skipped: false };
+}
+
+/** Extract the pull request represented by a merge queue head ref. */
+export function parseMergeQueuePullNumber(headRef) {
+  if (typeof headRef !== "string") return undefined;
+  const match =
+    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(
+      headRef,
+    );
+  if (!match) return undefined;
+  const pullNumber = Number(match[1]);
+  return Number.isSafeInteger(pullNumber)
+    ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+    : undefined;
+}
+
+function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Merge queue pull request number is invalid");
+  }
+  if (!FULL_SHA.test(mergeGroupSha)) {
+    throw new Error("Merge group commit is malformed");
+  }
+  if (!FULL_SHA.test(sourceHeadSha)) {
+    throw new Error("Merge queue source commit is malformed");
+  }
+}
+
+function trustedReviewGateReviewer(status, pullNumber, baseBinding) {
+  if (
+    status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+    status?.state !== "success" ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
+    typeof status?.description !== "string"
+  ) return undefined;
+  const prefix = `PR#${pullNumber} base:${baseBinding} by:`;
+  if (status.description === `${prefix}${CODEX_LOGIN}`) return CODEX_LOGIN;
+  if (!status.description.startsWith(prefix)) return undefined;
+  const reviewer = status.description.slice(prefix.length);
+  return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(reviewer)
+    ? reviewer
+    : undefined;
+}
+
+function latestReviewGateStatusForPull(statuses, pullNumber) {
+  const prefix = `PR#${pullNumber} `;
+  return statuses.find((status) =>
+    status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    typeof status?.description === "string" &&
+    status.description.startsWith(prefix)
+  );
+}
+
+/** Reuse a successful exact-head review for a synthetic merge queue commit. */
+export async function publishMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  mergeGroupSha,
+}) {
+  let failure;
+  let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  try {
+    assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha });
+    const pull = await github.rest.pulls.get({
       owner,
       repo,
-      headSha,
-      status: completion,
-      expectedPullNumber: pullNumber,
+      pull_number: pullNumber,
     });
-    return repaired.state === "success" || repaired.state === "pending"
-      ? repaired
-      : result;
-  } catch {
-    return result;
+    if (
+      pull?.data?.state !== "open" ||
+      pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+    ) {
+      throw new Error("Merge queue pull request changed from its queued head");
+    }
+    const baseBinding = pullRequestBaseBinding(pull?.data);
+    pullUrl = pull.data.html_url ?? pullUrl;
+    const common = { owner, repo };
+    const [reviews, comments, events, statuses, timeline] = await Promise.all([
+      collectAll(
+        github,
+        github.rest.pulls.listReviews,
+        { ...common, pull_number: pullNumber },
+        "source reviews",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listComments,
+        { ...common, issue_number: pullNumber },
+        "source comments",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { ...common, issue_number: pullNumber },
+        "source pull request events",
+      ),
+      collectAll(
+        github,
+        github.rest.repos.listCommitStatusesForRef,
+        { ...common, ref: sourceHeadSha },
+        "source review statuses",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEventsForTimeline,
+        { ...common, issue_number: pullNumber },
+        "source review timeline",
+      ),
+    ]);
+    const liveReview = await findAutomatedReview(
+      { reviews, comments, events, timeline },
+      sourceHeadSha,
+      (ref) => resolveCommitRef(github, common, ref),
+      (login) =>
+        isCurrentlyTrustedHuman(github, {
+          ...common,
+          login,
+          pullAuthor: pull?.data?.user?.login,
+        }),
+      latestReviewResetTime(statuses, pullNumber, baseBinding),
+    );
+    if (!liveReview) {
+      throw new Error("Pull request does not have current review evidence");
+    }
+    let currentReviewStatus = latestReviewGateStatusForPull(
+      statuses,
+      pullNumber,
+    );
+    if (
+      !trustedReviewGateReviewer(
+        currentReviewStatus,
+        pullNumber,
+        baseBinding,
+      )
+    ) {
+      throw new Error(
+        "Pull request head does not have a current trusted review gate",
+      );
+    }
+    const current = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    if (
+      current?.data?.state !== "open" ||
+      current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+    ) {
+      throw new Error(
+        "Pull request head changed while propagating review evidence",
+      );
+    }
+    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+      throw new Error(
+        "Pull request base changed while propagating review evidence",
+      );
+    }
+    const latestStatuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: sourceHeadSha },
+      "latest source review statuses",
+    );
+    const latestReviewStatus = latestReviewGateStatusForPull(
+      latestStatuses,
+      pullNumber,
+    );
+    const latestReviewer = trustedReviewGateReviewer(
+      latestReviewStatus,
+      pullNumber,
+      baseBinding,
+    );
+    if (!latestReviewer) {
+      throw new Error(
+        "Pull request review gate changed while propagating review evidence",
+      );
+    }
+    if (
+      latestReviewer !== CODEX_LOGIN &&
+      !await isCurrentlyTrustedHuman(github, {
+        owner,
+        repo,
+        login: latestReviewer,
+        pullAuthor: current?.data?.user?.login,
+      })
+    ) {
+      throw new Error(
+        "Human reviewer is no longer trusted for merge queue reuse",
+      );
+    }
+    currentReviewStatus = latestReviewStatus;
+    const description = `Reused exact-head review for PR #${pullNumber}`;
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: mergeGroupSha,
+      state: "success",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description,
+      target_url: typeof currentReviewStatus.target_url === "string"
+        ? currentReviewStatus.target_url
+        : pullUrl,
+    });
+    return { state: "success", description, failure: undefined };
+  } catch (error) {
+    failure = error instanceof Error ? error : new Error(String(error));
   }
+  if (FULL_SHA.test(mergeGroupSha)) {
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: mergeGroupSha,
+      state: "failure",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description: "Could not reuse an exact-head review",
+      target_url: pullUrl,
+    });
+  }
+  return { state: "failure", description: undefined, failure };
+}
+
+/** Reconcile copied review proof on every active queue ref for one source. */
+export async function reconcileActiveMergeGroupReviewStatuses({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseRef,
+}) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Merge queue pull request number is invalid");
+  }
+  if (!FULL_SHA.test(sourceHeadSha)) {
+    throw new Error("Merge queue source commit is malformed");
+  }
+  if (
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error("Merge queue base ref is invalid");
+  }
+  const refs = await collectAll(
+    github,
+    github.rest.git.listMatchingRefs,
+    {
+      owner,
+      repo,
+      ref:
+        `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${sourceHeadSha}`,
+    },
+    "merge queue refs",
+  );
+  const results = [];
+  const seen = new Set();
+  for (const queueRef of refs) {
+    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+    const mergeGroupSha = queueRef?.object?.sha;
+    if (
+      parsed?.pullNumber !== pullNumber ||
+      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
+    ) continue;
+    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
+      throw new Error("Merge queue ref has a malformed commit");
+    }
+    if (seen.has(mergeGroupSha.toLowerCase())) continue;
+    seen.add(mergeGroupSha.toLowerCase());
+    results.push(
+      await publishMergeGroupReviewStatus({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        sourceHeadSha,
+        mergeGroupSha,
+      }),
+    );
+  }
+  return results;
 }
 
 /**
@@ -397,6 +1109,7 @@ export async function requestAutomatedReview({
   repo,
   pullNumber,
   headSha,
+  requestKey = /** @type {string | undefined} */ (undefined),
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
@@ -406,19 +1119,22 @@ export async function requestAutomatedReview({
       "Refusing to request an automated review of a malformed head commit",
     );
   }
-  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()} -->`;
+  if (
+    requestKey !== undefined &&
+    (typeof requestKey !== "string" || !REQUEST_KEY.test(requestKey))
+  ) {
+    throw new Error("Refusing to use a malformed review request key");
+  }
+  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()}${
+    requestKey === undefined ? "" : ` ${requestKey}`
+  } -->`;
   const comments = await collectAll(
     github,
     github.rest.issues.listComments,
     { owner, repo, issue_number: pullNumber },
     "request comments",
   );
-  const alreadyRequested = comments.some((comment) =>
-    comment?.user?.login === WORKFLOW_COMMENT_LOGIN &&
-    comment?.user?.type === "Bot" &&
-    typeof comment?.body === "string" &&
-    comment.body.includes(marker)
-  );
+  const alreadyRequested = hasReviewRequest(comments, headSha, requestKey);
   if (alreadyRequested) {
     return { requested: false, marker };
   }
