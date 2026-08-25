@@ -18,12 +18,13 @@ import { isEsmShUrl, parseEsmShUrl } from "#veryfront/transforms/shared/esm-sh-s
  * channel segment is removed before parsing, leaving the package coordinate
  * that follows it.
  *
- * A channel introduces a package, so the segment counts as one only when
- * something follows it. That leaves both `https://esm.sh/stable` and
+ * A channel introduces a package, so the segment counts as one only when a
+ * path segment follows it. A query or fragment does not: `stable/?target=es2022`
+ * is the package root written as a directory, not a channel. That leaves both `https://esm.sh/stable` and
  * `https://esm.sh/stable/` for `reservedNamePackage` to read as the package
  * named `stable`, the second being its root written as a directory.
  */
-const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\/(?=.)/;
+const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\/(?=[^?#])/;
 
 /** Removes a trailing separator from the path component, if there is one. */
 function stripTrailingSlash(url: string): string {
@@ -116,12 +117,17 @@ export function parseEsmShSpecifier(url: string): { packageName: string; subpath
 }
 
 /**
- * Module file extensions a mapping can end in when it addresses one module.
+ * File extensions a mapping can end in when it addresses one module.
  *
- * TypeScript is included because remote TypeScript import-map values are
- * ordinary in this Deno-first repository, not just JavaScript ones.
+ * TypeScript is here because remote TypeScript import-map values are ordinary
+ * in this Deno-first repository, and wasm and css because the repository serves
+ * both as modules.
+ *
+ * This stays an explicit list rather than "the last segment contains a dot",
+ * which would misread a versioned coordinate: `https://cdn.jsdelivr.net/npm/
+ * lodash@4.17.21` is a package root and does take a subpath.
  */
-const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json)$/;
+const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json|wasm|css)$/;
 
 /**
  * Reports whether a mapping already addresses a single module rather than a
@@ -153,10 +159,14 @@ function isSingleModuleMapping(mapping: string): boolean {
   const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
   if (!isRemote) return true;
 
-  // An esm.sh target is a package coordinate rather than a path to a file, and
-  // npm names such as "chart.js" end in a module suffix, so the suffix test
-  // would otherwise strip the subpath from `chart.js/auto`.
-  if (isEsmShUrl(mapping) && parseEsmShSpecifier(mapping)?.subpath === "") return false;
+  // An esm.sh target is a package coordinate rather than a path to a file, so
+  // the parser decides rather than the suffix: a root takes a subpath, even
+  // when the npm name ends in a module suffix as `chart.js` does, and one that
+  // already names an export has nothing to append to. Same rule as npm and jsr.
+  if (isEsmShUrl(mapping)) {
+    const parsed = parseEsmShSpecifier(mapping);
+    if (parsed) return parsed.subpath !== "";
+  }
 
   const boundary = mapping.search(/[?#]/);
   return MODULE_FILE_SUFFIX.test(boundary === -1 ? mapping : mapping.slice(0, boundary));

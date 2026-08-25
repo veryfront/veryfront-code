@@ -400,6 +400,55 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("keeps an esm.sh mapping that already selects an export", () => {
+      const map: ImportMapConfig = {
+        imports: { "@scope/pkg": "https://esm.sh/react@19/jsx-runtime" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/other", map),
+        "https://esm.sh/react@19/jsx-runtime",
+        "an esm.sh coordinate naming an export is exact, like npm and jsr ones",
+      );
+    });
+
+    it("keeps a remote wasm mapping as a single module", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/module.wasm" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/module.wasm",
+        "wasm is served as a module here, so a mapping to one addresses a single module",
+      );
+    });
+
+    it("keeps a remote css mapping as a single module", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/styles.css" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/styles.css",
+        "the same holds for remote css modules",
+      );
+    });
+
+    it("still appends a subpath to a versioned package-root mapping", () => {
+      const map: ImportMapConfig = {
+        imports: { pkg: "https://cdn.jsdelivr.net/npm/lodash@4.17.21" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/fp", map),
+        "https://cdn.jsdelivr.net/npm/lodash@4.17.21/fp",
+        "a dot in a version must not be read as a file extension",
+      );
+    });
+
+    it("resolves a channel-named package written with a trailing slash and query", () => {
+      const map: ImportMapConfig = { imports: { stable: "/local/s.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/stable/?target=es2022", map),
+        "/local/s.js",
+        "a query after the separator is not a package, so the segment is not a channel",
+      );
+    });
+
     it("keeps an npm mapping that already selects an export", () => {
       const map: ImportMapConfig = { imports: { foo: "npm:foo@1/sub" } };
       assertEquals(
