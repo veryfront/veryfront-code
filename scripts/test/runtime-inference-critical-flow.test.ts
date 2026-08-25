@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fromFileUrl } from "#std/path/from-file-url";
 import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
@@ -154,7 +155,7 @@ describe("runtime inference critical-flow pure contract", () => {
   });
 
   it("redacts local paths from critical-flow command failures", () => {
-    const checkoutPath = Deno.cwd();
+    const checkoutPath = fromFileUrl(REPO_ROOT);
     const message = sanitizeRuntimeCriticalFlowFailureText(
       [
         "deno task build:npm --packed-dir=/private/tmp/vf/artifact failed",
