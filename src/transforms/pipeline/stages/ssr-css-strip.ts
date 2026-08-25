@@ -601,9 +601,10 @@ const FOR_HEAD_DECLARATION_KEYWORD = /^(?:const|let|using|var)$/;
  * semicolon insertion, leaving the next line in statement position where a `/`
  * opens a regex literal (`debugger\n/re/.test(value);`). `break` and
  * `continue` carry an optional label, but the label is a restricted production
- * that must sit on the same line, so a line terminator ends them too.
+ * that must sit on the same line, so a line terminator ends them too. A bare
+ * `yield` likewise finishes before the next line starts a statement.
  */
-const ASI_TERMINATED_KEYWORD = /^(?:break|continue|debugger|return)$/;
+const ASI_TERMINATED_KEYWORD = /^(?:break|continue|debugger|return|yield)$/;
 
 /**
  * A string line continuation produces no characters, so escapes separated only
@@ -1128,11 +1129,29 @@ class CommentQuoteMasker {
   private startsAsiBlock(char: string): boolean {
     if (!this.lineTerminatorAfterOperand) return false;
     if (char === "{") return true;
+    if (this.startsAsiDeclaration()) return true;
     const identifierEnd = findIdentifierEndIndex(this.code, this.index);
-    const token = this.code.slice(this.index, identifierEnd);
-    if (token === "function" || token === "class") return true;
     return identifierEnd > this.index &&
       this.code[skipTriviaIndex(this.code, identifierEnd)] === ":";
+  }
+
+  private startsAsiDeclaration(): boolean {
+    const tokens: string[] = [];
+    let cursor = this.index;
+    while (cursor !== -1 && tokens.length < 4) {
+      const end = findIdentifierEndIndex(this.code, cursor);
+      if (end === cursor) break;
+      tokens.push(decodeUnicodeEscapes(this.code.slice(cursor, end)));
+      cursor = skipTriviaIndex(this.code, end);
+    }
+    if (tokens[0] === "function" || tokens[0] === "class") return true;
+    if (tokens[0] === "async") return tokens[1] === "function";
+    if (tokens[0] !== "export") return false;
+    if (tokens[1] === "function" || tokens[1] === "class") return true;
+    if (tokens[1] === "async") return tokens[2] === "function";
+    if (tokens[1] !== "default") return false;
+    return tokens[2] === "function" || tokens[2] === "class" ||
+      (tokens[2] === "async" && tokens[3] === "function");
   }
 
   private scanQuoteStart(char: string): boolean {
@@ -1216,7 +1235,8 @@ class CommentQuoteMasker {
     this.precedingLabelCandidate = !context.followsPropertyAccess && context.startsStatement;
     this.canStartDeclaration =
       (!context.followsPropertyAccess && STATEMENT_BODY_KEYWORD.test(token)) ||
-      (this.canStartDeclaration && /^(?:async|default|export)$/.test(token));
+      ((this.canStartDeclaration || context.startsStatement) &&
+        /^(?:async|default|export)$/.test(token));
   }
 
   private trackImportSpecifiers(
@@ -1570,15 +1590,38 @@ class CommentQuoteMasker {
 function restoreCommentMask(
   value: string,
   divisionMask: string,
+  markerSentinel: string,
   quoteToSentinel: ReadonlyMap<string, string>,
   regexMasks: ReadonlyMap<string, string>,
 ): string {
   let restored = value.replaceAll(divisionMask, "/");
-  for (const [marker, literal] of regexMasks) restored = restored.replaceAll(marker, literal);
+  const regexMaskPattern = new RegExp(
+    `;/\\*${markerSentinel}(?:f\\d+\\*/|\\d+\\*/0)`,
+    "g",
+  );
+  restored = restored.replace(
+    regexMaskPattern,
+    (marker) => regexMasks.get(marker) ?? marker,
+  );
   for (const [quote, sentinel] of quoteToSentinel) {
     restored = restored.replaceAll(sentinel, quote);
   }
   return restored;
+}
+
+const IMPORT_DETECTION_QUOTE_MASKS = new Map<string, string>([
+  ['"', " "],
+  ["'", " "],
+  ["`", " "],
+]);
+
+function maskCommentQuotesForImportDetection(code: string): string {
+  return new CommentQuoteMasker(
+    code,
+    IMPORT_DETECTION_QUOTE_MASKS,
+    "%/**/",
+    "_",
+  ).mask();
 }
 
 function maskCommentQuotesForModuleLexer(code: string): {
@@ -1608,7 +1651,13 @@ function maskCommentQuotesForModuleLexer(code: string): {
   return {
     masked,
     restore: (value) =>
-      restoreCommentMask(value, divisionMask, quoteToSentinel, masker.getRegexMasks()),
+      restoreCommentMask(
+        value,
+        divisionMask,
+        markerSentinel,
+        quoteToSentinel,
+        masker.getRegexMasks(),
+      ),
   };
 }
 
@@ -1781,6 +1830,9 @@ export const cssStripPlugin: TransformPlugin = {
     // Skip sentinel allocation entirely for modules that cannot contain a CSS
     // suffix, including one encoded with JavaScript string escapes.
     if (!mayContainCSSSpecifier(ctx.code)) return ctx.code;
+
+    const detectedImports = await parseImports(maskCommentQuotesForImportDetection(ctx.code));
+    if (!detectedImports.some((imp) => isCSSImport(imp.n))) return ctx.code;
 
     const commentMask = maskCommentQuotesForModuleLexer(ctx.code);
     const imports = await parseImports(commentMask.masked);

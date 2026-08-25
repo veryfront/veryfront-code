@@ -1221,6 +1221,10 @@ describe("css-strip plugin", () => {
       const declaration of [
         "function declared() {}",
         "class Declared {}",
+        "async function declaredAsync() {}",
+        "export function exported() {}",
+        "export class Exported {}",
+        "export default async function declaredDefaultAsync() {}",
       ] as const
     ) {
       const ctx = createContext(
@@ -1233,6 +1237,18 @@ describe("css-strip plugin", () => {
       assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
       assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
     }
+  });
+
+  it("treats a bare yield line terminator as statement context", async () => {
+    const ctx = createContext(
+      `const value = '"'; function* generate() { yield\n{} /["]/u.test(value); } generate().next(); import styles /* from "./decoy.module.css" */ from "./Button.module.css"; export const cls = styles.container;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
   it("treats blocks after switch clause colons as statement context", async () => {
@@ -1569,6 +1585,21 @@ describe("css-strip plugin", () => {
         "restoring scanner masks must not rewrite decoded generated names",
       );
     }
+  });
+
+  it("restores many scanner markers in one transform pass", async () => {
+    const regexStatements = Array.from(
+      { length: 1_024 },
+      (_, index) => `function declared${index}() {} /["]/u.test(value);`,
+    ).join(" ");
+    const ctx = createContext(
+      `const value = '"'; ${regexStatements} import styles /* from "./decoy.module.css" */ from "./Button.module.css"; export const cls = styles.container;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    assertEquals(result.includes("./decoy.module.css"), false);
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
   it("reserves a surrogate pair split by a string line continuation", async () => {
@@ -2005,7 +2036,9 @@ describe("css-strip plugin", () => {
   });
 
   it("does not allocate comment-mask sentinels for a module without css", async () => {
-    const code = `const occupied = ${JSON.stringify(allPrivateUseSentinelCandidates())};`;
+    const code = `const suffix = ".css"; const occupied = ${
+      JSON.stringify(allPrivateUseSentinelCandidates())
+    };`;
     const ctx = createContext(code);
 
     const result = await cssStripPlugin.transform(ctx);
