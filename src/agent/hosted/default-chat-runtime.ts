@@ -437,7 +437,6 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,
             projectSlug: taskContext.projectSlug,
-            authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
             resolveProjectContext: () => ({
               ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),
