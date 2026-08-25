@@ -1819,16 +1819,19 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     );
   });
 
-  it("emits a Deno.realPathSync re-canonicalisation on the resolved path", () => {
+  it("canonicalises the resolved path before checking containment", () => {
     const shim = generateCompiledBinaryRequireShim("/fake/project");
     assertEquals(shim.includes("Deno.realPathSync"), true);
-    // And the real path must itself be checked for containment.
-    const realIdx = shim.indexOf("Deno.realPathSync");
-    const realAssertIdx = shim.indexOf("__vf_assertContained(real)", realIdx);
+    // The containment check must run on the canonical path. Asserting on the
+    // pre-canonical one instead compares a non-canonical candidate against an
+    // already-canonical root, which rejects legitimate dependencies whenever
+    // the project root is itself a symlink.
+    const canonIdx = shim.indexOf("resolved = __vf_canonicalize(resolved)");
+    const assertIdx = shim.indexOf("__vf_assertContained(resolved)", canonIdx);
     assertEquals(
-      realAssertIdx > realIdx,
+      canonIdx !== -1 && assertIdx > canonIdx,
       true,
-      "realPathSync result must be containment-checked",
+      "the resolved path must be canonicalised before it is containment-checked",
     );
   });
 
@@ -1943,13 +1946,13 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
   });
 
   denoIt("accepts dependencies through a symlinked project root", async () => {
-    // Regression for Codex review on #1120: if __vf_projectRoot is not
-    // canonicalised at shim init, a legitimate dep inside a symlinked project
-    // fails the post-realPathSync containment check (because realPathSync on
-    // the resolved module returns the canonical prefix while projectRoot is
-    // still the symlinked one).
-    const realProject = await makeTempDir();
-    const symlinkedProject = (await makeTempDir()) + "-link";
+    // Regression for #4091. The previous version of this test re-implemented
+    // __vf_assertContained locally and only ever called it with the already
+    // canonicalised path, so it passed without ever exercising the check that
+    // actually rejected these dependencies. The emitted shim is executed here
+    // so the containment check itself is the thing under test.
+    const realProject = Deno.realPathSync(await makeTempDir());
+    const symlinkedProject = `${realProject}-link`;
     try {
       await Deno.symlink(realProject, symlinkedProject);
     } catch (e) {
@@ -1960,28 +1963,18 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
 
     const depDir = join(realProject, "node_modules", "ok");
     await fs.mkdir(depDir, { recursive: true });
-    const depEntry = join(depDir, "index.js");
-    await fs.writeTextFile(depEntry, "module.exports = 1;");
+    await fs.writeTextFile(join(depDir, "index.js"), "module.exports = { ok: true };");
 
-    // Simulate shim init: projectRoot supplied as the symlinked path, then
-    // canonicalised via realPathSync (the fix).
-    let projectRoot = symlinkedProject;
-    projectRoot = Deno.realPathSync(projectRoot);
+    // The project root is handed to the shim as the symlinked path, which is
+    // what happens with package managers, CI checkouts, and macOS /tmp.
+    const vfRequire = await importCompiledBinaryRequireShim(symlinkedProject);
 
-    const assertContained = (resolved: string): void => {
-      const norm = resolved.replace(/\\/g, "/");
-      const root = projectRoot.replace(/\\/g, "/");
-      if (!norm.startsWith(root + "/") && norm !== root) {
-        throw new Error("CJS loader blocked path outside project: " + resolved);
-      }
-    };
-
-    // Resolve through the symlinked project root (as createRequire would),
-    // then realPathSync (as the shim does). With the fix, projectRoot is
-    // canonical so this passes. Without the fix, it would throw.
-    const resolvedThroughSymlink = join(symlinkedProject, "node_modules/ok/index.js");
-    const real = Deno.realPathSync(resolvedThroughSymlink);
-    assertContained(real);
+    assertEquals(
+      (vfRequire(join(symlinkedProject, "node_modules", "ok", "index.js")) as { ok: boolean })
+        .ok,
+      true,
+      "a dependency genuinely inside the project must load when the root is a symlink",
+    );
 
     try {
       await fs.remove(symlinkedProject);
