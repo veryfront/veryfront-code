@@ -15,6 +15,7 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
@@ -22,6 +23,32 @@ import { createControlPlaneSignature, createCtx } from "./internal-agent-run.tes
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 const encoder = new TextEncoder();
+
+describe("createKnowledgeEventLogger", () => {
+  it("caps the number of accumulated knowledge ingest events", () => {
+    const lines: string[] = [];
+    const logger = createKnowledgeEventLogger(lines);
+
+    for (let index = 0; index < 2_000; index += 1) {
+      logger.info("Knowledge source extraction progress", { slide_current: index + 1 });
+    }
+
+    assertEquals(lines.length, 1_001);
+    assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+
+  it("caps the accumulated knowledge ingest log size", () => {
+    const lines: string[] = [];
+    const logger = createKnowledgeEventLogger(lines);
+
+    for (let index = 0; index < 100; index += 1) {
+      logger.info("x".repeat(10_000));
+    }
+
+    assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
+    assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+});
 
 function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
