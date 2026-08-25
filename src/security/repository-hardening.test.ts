@@ -299,9 +299,12 @@ describe("repository hardening", () => {
           path === ".github/workflows/cicd.yml" &&
           TRUSTED_AGGREGATE_JOBS.has(jobName)
         ) {
+          const expectedCondition = jobName === "quality-gate-merge"
+            ? "if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}"
+            : "if: ${{ always() }}";
           assertEquals(
             jobIf.trim(),
-            "if: ${{ always() }}",
+            expectedCondition,
             `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
           );
           assertEquals(
