@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AppendConversationRunEventsResponseSchema,
   ConversationRunProjectionSchema,
+  createConversationRunTargetRequestFields,
   resolveConversationRunTargets,
 } from "./durable-contracts.ts";
 
@@ -76,6 +77,37 @@ describe("agent/durable-contracts", () => {
         targetBranchId: BRANCH_ID,
       },
       "the branch fallback still applies when the environment id is missing",
+    );
+  });
+
+  it("serializes paired durable run target fields", () => {
+    assertEquals(
+      createConversationRunTargetRequestFields({
+        sourceTargetKind: "environment",
+        runtimeTargetKind: "environment",
+        targetEnvironmentId: ENVIRONMENT_ID,
+        targetBranchId: null,
+      }),
+      {
+        source_target_kind: "environment",
+        runtime_target_kind: "environment",
+        source_target_environment_id: ENVIRONMENT_ID,
+        runtime_target_environment_id: ENVIRONMENT_ID,
+      },
+    );
+    assertEquals(
+      createConversationRunTargetRequestFields({
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        targetEnvironmentId: null,
+        targetBranchId: BRANCH_ID,
+      }),
+      {
+        source_target_kind: "preview_branch",
+        runtime_target_kind: "preview_branch",
+        source_target_branch_id: BRANCH_ID,
+        runtime_target_branch_id: BRANCH_ID,
+      },
     );
   });
 

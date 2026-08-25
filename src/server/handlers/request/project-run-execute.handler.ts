@@ -34,7 +34,10 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
-import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
+import {
+  createConversationRunTargetRequestFields,
+  resolveConversationRunTargets,
+} from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
   EvalAgentAdapter,
   EvalDefinition,
@@ -709,16 +712,11 @@ function createDurableEvalAgentRunBody(
       mode: "agent",
       input: {
         agent_id: input.agentId,
-        source_target_kind: targets.sourceTargetKind ?? "project",
-        messages: [],
+        messages: request.messages,
         tools: request.tools,
         context: request.context,
         forwarded_props: createDurableEvalAgentForwardedProps(request),
-        ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-        ...(targets.targetEnvironmentId
-          ? { target_environment_id: targets.targetEnvironmentId }
-          : {}),
-        ...(targets.targetBranchId ? { target_branch_id: targets.targetBranchId } : {}),
+        ...createConversationRunTargetRequestFields(targets),
       },
     },
   };

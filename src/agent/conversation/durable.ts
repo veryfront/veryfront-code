@@ -5,6 +5,7 @@ import {
   CompleteConversationRunResponseSchema,
   ConversationRunProjectionSchema,
   CreateConversationRunAcceptedSchema,
+  createConversationRunTargetRequestFields,
   resolveConversationRunTargets,
 } from "./durable-contracts.ts";
 import type {
@@ -1298,6 +1299,7 @@ export async function createConversationAgentRun(
     environmentId: input.runtimeTargetEnvironmentId ?? null,
     branchId: input.branchId ?? null,
   });
+  const targetRequestFields = createConversationRunTargetRequestFields(targets);
   const runId = input.runId ?? `run_${crypto.randomUUID()}`;
 
   const request = input.implementationKind
@@ -1306,39 +1308,13 @@ export async function createConversationAgentRun(
       agent_id: input.agentId,
       implementation_kind: input.implementationKind,
       initial_status: "pending" as const,
-      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
-      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-      ...(targets.targetBranchId
-        ? {
-          source_target_branch_id: targets.targetBranchId,
-          runtime_target_branch_id: targets.targetBranchId,
-        }
-        : {}),
-      ...(targets.targetEnvironmentId
-        ? {
-          source_target_environment_id: targets.targetEnvironmentId,
-          runtime_target_environment_id: targets.targetEnvironmentId,
-        }
-        : {}),
+      ...targetRequestFields,
     }
     : {
       mode: "agent" as const,
       agent_id: input.agentId,
       initial_status: "running" as const,
-      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
-      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-      ...(targets.targetBranchId
-        ? {
-          source_target_branch_id: targets.targetBranchId,
-          runtime_target_branch_id: targets.targetBranchId,
-        }
-        : {}),
-      ...(targets.targetEnvironmentId
-        ? {
-          source_target_environment_id: targets.targetEnvironmentId,
-          runtime_target_environment_id: targets.targetEnvironmentId,
-        }
-        : {}),
+      ...targetRequestFields,
     };
 
   await controlPlaneJson({

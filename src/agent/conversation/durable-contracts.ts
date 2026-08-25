@@ -72,6 +72,38 @@ export function resolveConversationRunTargets(input: {
   ) as ConversationRunTargets;
 }
 
+/** Wire fields that bind a durable run to its source and runtime targets. */
+export interface ConversationRunTargetRequestFields {
+  source_target_kind?: ConversationRunSourceTargetKind;
+  runtime_target_kind?: ConversationRunRuntimeTargetKind;
+  source_target_environment_id?: string;
+  runtime_target_environment_id?: string;
+  source_target_branch_id?: string;
+  runtime_target_branch_id?: string;
+}
+
+/** Serializes resolved targets for the durable run API. */
+export function createConversationRunTargetRequestFields(
+  targets: ConversationRunTargets,
+): ConversationRunTargetRequestFields {
+  return {
+    ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
+    ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
+    ...(targets.targetEnvironmentId
+      ? {
+        source_target_environment_id: targets.targetEnvironmentId,
+        runtime_target_environment_id: targets.targetEnvironmentId,
+      }
+      : {}),
+    ...(targets.targetBranchId
+      ? {
+        source_target_branch_id: targets.targetBranchId,
+        runtime_target_branch_id: targets.targetBranchId,
+      }
+      : {}),
+  };
+}
+
 /** Zod schema for get conversation run status. */
 export const getConversationRunStatusSchema = defineSchema((v) =>
   v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"])
