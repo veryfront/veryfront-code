@@ -120,50 +120,41 @@ verify_npm_compatibility_artifact() {
 }
 
 # npm answers a burst of publishes with `409 Conflict - Failed to save
-# packument` when it cannot serialise the writes fast enough. The conflicting
-# write sometimes still lands, so recheck the registry before retrying and give
-# the packument time to settle between attempts.
+# packument`; the conflicting write sometimes still lands.
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
 
 is_transient_publish_conflict() {
-  printf '%s\n' "$1" \
+  CONFLICT_OUTPUT_CANDIDATE="$1"
+  printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
     | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
 }
 
-# Report what the registry holds for PACKAGE_NAME@VERSION after a conflict.
-# Exit status: 0 when the version landed for GITHUB_SHA, 1 when it exists for a
-# different commit, 2 when it is still absent. Leaves the observed value in the
-# global PUBLISHED_GIT_HEAD.
+# 0: landed for GITHUB_SHA. 1: exists for another commit. 2: still absent.
 inspect_publish_conflict_result() {
-  PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead 2>/dev/null || true)"
+  CONFLICT_PACKAGE_NAME="$1"
+  PUBLISHED_GIT_HEAD="$(npm view "${CONFLICT_PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
   if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
-    echo "::notice::$1@${VERSION} landed despite an npm registry conflict; continuing."
+    echo "::notice::${CONFLICT_PACKAGE_NAME}@${VERSION} landed despite an npm registry conflict; continuing."
     return 0
   fi
   if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
-    echo "::error::$1@${VERSION} exists with a different commit after a registry conflict." >&2
+    echo "::error::${CONFLICT_PACKAGE_NAME}@${VERSION} exists with a different commit after a registry conflict." >&2
     return 1
   fi
   return 2
 }
 
-# Publish one spec, absorbing transient registry conflicts. Prints sanitized npm
-# output. Returns 0 when the version is published for GITHUB_SHA.
-#
-# Never toggles errexit: `set -e` is process-global rather than function-scoped,
-# so flipping it here would clobber a caller that disabled it to capture this
-# helper's exit status. Statuses are captured with `&& ... || ...` instead,
-# which suppresses errexit without changing the shell option.
+# Never toggles errexit: `set -e` is process-global, so flipping it here would
+# clobber a caller that disabled it to capture this helper's status.
 publish_npm_package_with_retry() {
   PUBLISH_PACKAGE_NAME="$1"
   PUBLISH_SPEC="$2"
   shift 2
   for PUBLISH_ATTEMPT in $(seq 1 "${NPM_PUBLISH_CONFLICT_ATTEMPTS}"); do
     if [[ "${PUBLISH_ATTEMPT}" -gt 1 ]]; then
-      # The conflicting write can surface while the delay elapses. npm refuses
-      # to reuse a published name/version, so republishing without this recheck
-      # would turn a recoverable conflict into a fatal already-published error.
+      # npm refuses to reuse a published name/version, so a write that landed
+      # during the delay must be caught before republishing.
       inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}" \
         && PUBLISH_CONFLICT_STATE=0 || PUBLISH_CONFLICT_STATE=$?
       if [[ "${PUBLISH_CONFLICT_STATE}" -ne 2 ]]; then
