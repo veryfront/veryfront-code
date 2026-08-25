@@ -438,6 +438,33 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("appends a subpath to an esm.sh root written with a trailing separator", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://esm.sh/react@19/" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/fp", map),
+        "https://esm.sh/react@19/fp",
+        "a separator alone is the package root as a directory, not an export",
+      );
+    });
+
+    it("appends a subpath to a versioned reserved-name package", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://esm.sh/stable@1" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://esm.sh/stable@1/sub",
+        "a version makes the coordinate unambiguous, so the channel collision does not apply",
+      );
+    });
+
+    it("keeps a remote asset mapping as a single module whatever its extension", () => {
+      const map: ImportMapConfig = { imports: { icon: "https://cdn.example/icon.svg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/icon@1/sub", map),
+        "https://cdn.example/icon.svg",
+        "the last segment carrying an extension is the signal, not a list of known ones",
+      );
+    });
+
     it("keeps a remote wasm mapping as a single module", () => {
       const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/module.wasm" } };
       assertEquals(

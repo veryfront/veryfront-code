@@ -76,7 +76,9 @@ const ESM_SH_RESERVED_SEGMENTS: ReadonlySet<string> = new Set([
  *   `gh/owner/repo`. Only a lone segment can be a package name; anything
  *   further along belongs to the source, so it is left unresolved.
  */
-function reservedNamePackage(url: string): { packageName: string; subpath: string } | null {
+function reservedNamePackage(
+  url: string,
+): { packageName: string; subpath: string; version: null } | null {
   let pathname: string;
   try {
     pathname = new URL(url).pathname.slice(1);
@@ -89,9 +91,9 @@ function reservedNamePackage(url: string): { packageName: string; subpath: strin
   const packageName = separator === -1 ? pathname : pathname.slice(0, separator);
   const subpath = separator === -1 ? "" : pathname.slice(separator);
 
-  if (/^v\d+$/.test(packageName)) return { packageName, subpath };
+  if (/^v\d+$/.test(packageName)) return { packageName, subpath, version: null };
   if (subpath === "" && ESM_SH_RESERVED_SEGMENTS.has(packageName)) {
-    return { packageName, subpath };
+    return { packageName, subpath, version: null };
   }
 
   return null;
@@ -102,7 +104,9 @@ function isReservedCoordinateName(packageName: string): boolean {
   return /^v\d+$/.test(packageName) || ESM_SH_RESERVED_SEGMENTS.has(packageName);
 }
 
-export function parseEsmShSpecifier(url: string): { packageName: string; subpath: string } | null {
+export function parseEsmShSpecifier(
+  url: string,
+): { packageName: string; subpath: string; version: string | null } | null {
   const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
   const stripped = stripTrailingSlash(withoutBuildPrefix);
   const hadTrailingSeparator = stripped !== withoutBuildPrefix;
@@ -113,6 +117,7 @@ export function parseEsmShSpecifier(url: string): { packageName: string; subpath
   const { packageName, subpath } = coordinates;
   return {
     packageName,
+    version: coordinates.version ?? null,
     // The separator was removed only so the parse would accept the package-root
     // form. It belongs to the subpath either way: `pkg@1/sub/` addresses a
     // directory below `sub`, and `pkg@1/` addresses the package root as a
@@ -122,28 +127,27 @@ export function parseEsmShSpecifier(url: string): { packageName: string; subpath
 }
 
 /**
- * File extensions a mapping can end in when it addresses one module.
+ * Reports whether a remote mapping addresses a file rather than a package root.
  *
- * TypeScript is here because remote TypeScript import-map values are ordinary
- * in this Deno-first repository, and wasm and css because the repository serves
- * both as modules.
+ * The last path segment decides. One carrying an extension is a file, so a
+ * subpath cannot go below it. One carrying an `@` is a versioned package
+ * coordinate rather than a filename, which is what keeps
+ * `https://cdn.jsdelivr.net/npm/lodash@4.17.21` a package root despite its
+ * dots. That distinction is why this is not simply "the segment contains a dot".
  *
- * This stays an explicit list rather than "the last segment contains a dot",
- * which would misread a versioned coordinate: `https://cdn.jsdelivr.net/npm/
- * lodash@4.17.21` is a package root and does take a subpath.
+ * An extension list was tried first and kept needing new entries, one report at
+ * a time, for TypeScript, then wasm and css, then svg. The shape of the name is
+ * the durable signal, not the set of extensions anyone happened to hit.
  */
-const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json|wasm|css)$/;
+function addressesRemoteFile(mapping: string): boolean {
+  const boundary = mapping.search(/[?#]/);
+  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
+  const lastSegment = path.slice(path.lastIndexOf("/") + 1);
+  if (lastSegment.includes("@")) return false;
 
-/**
- * Reports whether a mapping already addresses a single module rather than a
- * package root. Such a mapping cannot take a subpath: appending one produces a
- * path below a file, as in `https://cdn.example/pkg.js/sub`.
- */
-/**
- * Reports whether a package coordinate already names an export, as
- * `@std/cli@1.0.28/parse-args` and `foo@1/sub` do and `@std/path@1.1.4` does
- * not. A scoped name spends its first separator on the scope.
- */
+  return /\.[A-Za-z0-9]+$/.test(lastSegment);
+}
+
 function coordinateSelectsExport(coordinate: string): boolean {
   const firstSeparator = coordinate.indexOf("/");
   if (firstSeparator === -1) return false;
@@ -177,14 +181,17 @@ function isSingleModuleMapping(mapping: string): boolean {
       // URL would address something else entirely. Keeping the mapping exact
       // resolves the package root, which is wrong in a recoverable way rather
       // than silently pointing at a different package.
-      if (isReservedCoordinateName(parsed.packageName)) return true;
+      // A version disambiguates a reserved name: esm.sh reads `stable@1` as a
+      // package coordinate, so `stable@1/sub` is that package's export rather
+      // than a channel route.
+      if (isReservedCoordinateName(parsed.packageName) && parsed.version === null) return true;
 
-      return parsed.subpath !== "";
+      // A trailing separator alone is the package root written as a directory.
+      return parsed.subpath !== "" && parsed.subpath !== "/";
     }
   }
 
-  const boundary = mapping.search(/[?#]/);
-  return MODULE_FILE_SUFFIX.test(boundary === -1 ? mapping : mapping.slice(0, boundary));
+  return addressesRemoteFile(mapping);
 }
 
 /**
