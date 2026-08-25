@@ -851,32 +851,47 @@ describe("chat-stream-handler", () => {
       const state = createStreamState();
       let nextTimerId = -1;
       const clearedTimeouts: number[] = [];
-      let resolveLocalDeadline: (deadline: {
+      const pendingTimers = new Map<number, {
         callback: () => void;
-        id: number;
         timeoutMs: number;
-      }) => void = () => {};
-      const localDeadline = new Promise<{
-        callback: () => void;
-        id: number;
-        timeoutMs: number;
-      }>((resolve) => {
-        resolveLocalDeadline = resolve;
+      }>();
+      let markPendingReadStarted: () => void = () => {};
+      const pendingReadStarted = new Promise<void>((resolve) => {
+        markPendingReadStarted = resolve;
       });
+      let releasePendingRead: () => void = () => {};
+      const pendingRead = new Promise<IteratorResult<unknown>>((resolve) => {
+        releasePendingRead = () => resolve({ done: true, value: undefined });
+      });
+      const parts = [
+        {
+          type: "tool-input-start",
+          id: "tc-slow",
+          toolName: "retrieveDocumentEvidence",
+        },
+        {
+          type: "tool-input-delta",
+          id: "tc-slow",
+          delta: '{"uploadId":"upload-1",',
+        },
+      ];
+      let nextPartIndex = 0;
       const result = {
         fullStream: {
-          async *[Symbol.asyncIterator]() {
-            yield {
-              type: "tool-input-start",
-              id: "tc-slow",
-              toolName: "retrieveDocumentEvidence",
+          [Symbol.asyncIterator]() {
+            return {
+              next(): Promise<IteratorResult<unknown>> {
+                const part = parts[nextPartIndex++];
+                if (part !== undefined) {
+                  return Promise.resolve({ done: false, value: part });
+                }
+                markPendingReadStarted();
+                return pendingRead;
+              },
+              return(): Promise<IteratorResult<unknown>> {
+                return Promise.resolve({ done: true, value: undefined });
+              },
             };
-            yield {
-              type: "tool-input-delta",
-              id: "tc-slow",
-              delta: '{"uploadId":"upload-1",',
-            };
-            await new Promise(() => {});
           },
         },
         textStream: emptyAsyncIterable(),
@@ -886,31 +901,49 @@ describe("chat-stream-handler", () => {
         localToolInputIdleTimeoutMs: 10,
         setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
           const id = ++nextTimerId;
-          if (state.toolCalls.has("tc-slow")) {
-            resolveLocalDeadline({ callback, id, timeoutMs: timeoutMs ?? 0 });
-          }
+          pendingTimers.set(id, { callback, timeoutMs: timeoutMs ?? 0 });
           return id;
         }) as typeof setTimeout,
         clearTimeoutFn: ((id: number) => {
           clearedTimeouts.push(id);
+          pendingTimers.delete(id);
         }) as typeof clearTimeout,
       });
 
-      const deadline = await localDeadline;
-      assertEquals(
-        deadline.timeoutMs,
-        10,
-        "the active local tool input must schedule the configured 10ms idle deadline",
-      );
-      deadline.callback();
-      await processing;
+      let deadlineId = -1;
+      try {
+        await pendingReadStarted;
+        const pendingDeadlines = [...pendingTimers.entries()];
+        assertEquals(
+          pendingDeadlines.length,
+          1,
+          "only the deadline around the pending iterator read may remain active",
+        );
+        const pendingDeadline = pendingDeadlines[0];
+        if (pendingDeadline === undefined) {
+          throw new Error("the pending iterator read did not schedule a deadline");
+        }
+        const [id, deadline] = pendingDeadline;
+        deadlineId = id;
+        assertEquals(
+          deadline.timeoutMs,
+          10,
+          "the pending local tool input must schedule the configured 10ms idle deadline",
+        );
+        deadline.callback();
+        await processing;
+      } finally {
+        for (const deadline of pendingTimers.values()) deadline.callback();
+        releasePendingRead();
+        await processing.catch(() => {});
+      }
       assertEquals(
         clearedTimeouts.filter((id) => id === 0).length,
         1,
         "the initial stream deadline must clear the valid zero timer handle",
       );
       assertEquals(
-        clearedTimeouts.filter((id) => id === deadline.id).length,
+        clearedTimeouts.filter((id) => id === deadlineId).length,
         1,
         "the settled idle deadline must be cleared exactly once",
       );
