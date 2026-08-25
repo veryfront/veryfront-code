@@ -1807,7 +1807,9 @@ export class RedisBackend implements WorkflowBackend {
               if (unseen.length > 0) {
                 for (const approval of unseen) observedApprovalIds.add(approval.id);
                 const projection = projectPendingApprovals(
-                  approvals.filter((approval) => approval.status === "pending"),
+                  approvals.filter((approval) =>
+                    approval.status === "pending" && !journaledApprovalIds.has(approval.id)
+                  ),
                 );
                 const projectedIds = new Set(projection.map((approval) => approval.id));
                 for (const approval of unseen) {

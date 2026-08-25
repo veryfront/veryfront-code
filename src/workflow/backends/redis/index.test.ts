@@ -1127,6 +1127,71 @@ describe("RedisBackend", () => {
       ]);
     });
 
+    it("does not pre-emit pending approvals represented by queued journal records", async () => {
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-legacy-approval-journaled-pending", { status: "waiting" });
+      await backend.createRun(run);
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+
+      await mockRedis.rpush(
+        "test:schema-v1:approvals:run-legacy-approval-journaled-pending",
+        JSON.stringify({
+          id: "apr-decided",
+          nodeId: "first-review",
+          message: "First review",
+          requestedAt: "2025-01-02T00:00:00.000Z",
+          status: "approved",
+          decidedBy: "reviewer",
+          decidedAt: "2025-01-02T00:01:00.000Z",
+        }),
+        JSON.stringify({
+          id: "apr-pending",
+          nodeId: "second-review",
+          message: "Second review",
+          requestedAt: "2025-01-02T00:02:00.000Z",
+          status: "pending",
+        }),
+      );
+      await backend.updateRun(run.id, { status: "running" });
+
+      mockRedis.hashes.set(
+        "test:schema-v1:run-observation-approvals-v1:run-legacy-approval-journaled-pending",
+        new Map([[
+          "1",
+          JSON.stringify([{
+            id: "apr-pending",
+            nodeId: "second-review",
+            message: "Second review",
+          }]),
+        ]]),
+      );
+      await backend.updateRun(run.id, { status: "completed" });
+
+      const events = [];
+      for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+        events.push(event);
+      }
+      assertEquals(events, [
+        {
+          type: "approval.pending",
+          runId: run.id,
+          approvalId: "apr-decided",
+          nodeId: "first-review",
+          message: "First review",
+        },
+        { type: "run.status", runId: run.id, status: "running" },
+        {
+          type: "approval.pending",
+          runId: run.id,
+          approvalId: "apr-pending",
+          nodeId: "second-review",
+          message: "Second review",
+        },
+        { type: "run.status", runId: run.id, status: "completed" },
+      ]);
+    });
+
     it("does not re-emit approvals decided before legacy observation began", async () => {
       const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
       const run = createTestRun("run-legacy-decided-baseline", { status: "waiting" });
