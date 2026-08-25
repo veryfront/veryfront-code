@@ -12,11 +12,16 @@ import {
   parseReviewWakeupRun,
   publishAutomatedReviewStatus,
   publishMergeGroupReviewStatus,
+  reconcileActiveMergeGroupReviewStatuses,
   requestAutomatedReview,
+  reviewBaseBinding,
 } from "./automated-review-gate.mjs";
 
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
+const BASE_REPOSITORY_ID = 1_101_259_327;
+const BASE_REF = "main";
+const OTHER_BASE_REF = "release";
 const CODERABBIT_ID = 136622811;
 const CODEX_ID = 199175422;
 const GITHUB_ACTIONS_ID = 41898282;
@@ -45,11 +50,27 @@ function automatedReviewStatus(overrides: Record<string, unknown> = {}) {
   return {
     context: "Automated review",
     state: "success",
-    description: "Reviewed by chatgpt-codex-connector[bot]",
+    description: `Reviewed base ${
+      reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+    } by chatgpt-codex-connector[bot]`,
     creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
     target_url: "https://example.test/review-proof",
     ...overrides,
   };
+}
+
+function automatedReviewResetStatus(
+  createdAt = "2026-08-25T08:00:00Z",
+  overrides: Record<string, unknown> = {},
+) {
+  return automatedReviewStatus({
+    state: "pending",
+    description: `Review reset for base ${
+      reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+    }`,
+    created_at: createdAt,
+    ...overrides,
+  });
 }
 
 function codexComment(
@@ -67,7 +88,10 @@ function codexComment(
   };
 }
 
-function codexFindingComment(ref = HEAD.slice(0, 10)) {
+function codexFindingComment(
+  ref = HEAD.slice(0, 10),
+  overrides: Record<string, unknown> = {},
+) {
   return {
     user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
     body: [
@@ -75,6 +99,7 @@ function codexFindingComment(ref = HEAD.slice(0, 10)) {
       `**Reviewed commit:** \`${ref}\``,
     ].join("\n\n"),
     html_url: "https://example.test/finding",
+    ...overrides,
   };
 }
 
@@ -84,6 +109,7 @@ function associatedPull(overrides: Record<string, unknown> = {}) {
     state: "open",
     html_url: "https://example.test/pr/1",
     head: { sha: HEAD },
+    base: { ref: BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
     ...overrides,
   };
 }
@@ -404,11 +430,80 @@ describe("automated review evidence", () => {
     evidence.comments = [];
     assertEquals(await findAutomatedReview(evidence, HEAD), undefined);
   });
+
+  it("requires review evidence newer than the durable base-reset epoch", async () => {
+    const reviewNotBefore = Date.parse("2026-08-25T08:00:00Z");
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "APPROVED",
+            submitted_at: "2026-08-25T07:59:59Z",
+          })],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T07:59:58Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T07:59:59Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        reviewNotBefore,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T07:59:58Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T08:00:01Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        reviewNotBefore,
+      ))?.source,
+      "codex-comment",
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T08:00:01Z",
+            }),
+            codexFindingComment(HEAD.slice(0, 10), {
+              created_at: "2026-08-25T08:00:02Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        undefined,
+        reviewNotBefore,
+      ),
+      undefined,
+    );
+  });
 });
 
 function githubFixture(options: {
   pages?: Record<string, unknown[][]>;
+  pageResponses?: Record<string, unknown[][][]>;
   headResponses?: string[];
+  pullResponses?: Record<string, unknown>[];
   commit?: string | undefined;
   failAfterFirstPage?: string;
   pullError?: Error;
@@ -419,8 +514,10 @@ function githubFixture(options: {
     reviews: () => undefined,
     comments: () => undefined,
     statuses: () => undefined,
+    refs: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const pageReads = new Map<string, number>();
   let pullRead = 0;
   const github = {
     paginate: {
@@ -429,7 +526,10 @@ function githubFixture(options: {
           value === endpoint
         )?.[0];
         if (!name) throw new Error("unknown endpoint");
-        const pages = options.pages?.[name] ?? [[]];
+        const pageRead = pageReads.get(name) ?? 0;
+        pageReads.set(name, pageRead + 1);
+        const pages = options.pageResponses?.[name]?.[pageRead] ??
+          options.pages?.[name] ?? [[]];
         for (let index = 0; index < pages.length; index++) {
           if (options.failAfterFirstPage === name && index === 1) {
             throw new Error("pagination failed");
@@ -443,6 +543,12 @@ function githubFixture(options: {
         listReviews: endpoints.reviews,
         get: () => {
           if (options.pullError) return Promise.reject(options.pullError);
+          if (options.pullResponses) {
+            const data = options.pullResponses[
+              Math.min(pullRead++, options.pullResponses.length - 1)
+            ];
+            return Promise.resolve({ data });
+          }
           const heads = options.headResponses ?? [HEAD];
           const head = heads[Math.min(pullRead++, heads.length - 1)];
           return Promise.resolve({
@@ -455,6 +561,7 @@ function githubFixture(options: {
         },
       },
       issues: { listComments: endpoints.comments },
+      git: { listMatchingRefs: endpoints.refs },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
         getCommit: () => Promise.resolve({ data: { sha: options.commit } }),
@@ -495,6 +602,12 @@ describe("automated review publication", () => {
     });
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.sha, HEAD);
+    assertEquals(
+      fixture.published[0]?.description,
+      `Reviewed base ${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } by chatgpt-codex-connector[bot]`,
+    );
   });
 
   it("accepts an exact-head trusted human approval as the escalation path", async () => {
@@ -540,7 +653,7 @@ describe("automated review publication", () => {
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
-    const partialPages = ["reviews", "comments"].map((source) =>
+    const partialPages = ["reviews", "comments", "statuses"].map((source) =>
       githubFixture({
         pages: { [source]: [[], []] },
         failAfterFirstPage: source,
@@ -657,6 +770,86 @@ describe("automated review publication", () => {
     assertEquals(result.state, "pending");
     assertEquals(fixture.published[0]?.state, "pending");
   });
+
+  it("forces a fresh review after a base edit even when old proof exists", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment()]] },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      forcePending: true,
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
+    assertEquals(
+      fixture.published[0]?.description,
+      `Review reset for base ${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      }`,
+    );
+  });
+
+  it("keeps pre-retarget proof invalid after the request marker is deleted", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          created_at: "2026-08-25T07:59:59Z",
+        })]],
+        statuses: [[automatedReviewResetStatus()]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("fails accepted proof when the base changes during reconciliation", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment()]] },
+      commit: HEAD,
+      pullResponses: [
+        associatedPull({
+          draft: false,
+          user: { login: "pull-author" },
+        }),
+        associatedPull({
+          draft: false,
+          user: { login: "pull-author" },
+          base: {
+            ref: OTHER_BASE_REF,
+            repo: { id: BASE_REPOSITORY_ID },
+          },
+        }),
+      ],
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
 });
 
 describe("merge queue review propagation", () => {
@@ -720,7 +913,16 @@ describe("merge queue review propagation", () => {
       },
       {
         statuses: [automatedReviewStatus({
-          description: "Reviewed by coderabbitai[bot]",
+          description: `Reviewed base ${
+            reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+          } by coderabbitai[bot]`,
+        })],
+      },
+      {
+        statuses: [automatedReviewStatus({
+          description: `Reviewed base ${
+            reviewBaseBinding(BASE_REPOSITORY_ID, OTHER_BASE_REF)
+          } by chatgpt-codex-connector[bot]`,
         })],
       },
     ];
@@ -769,6 +971,61 @@ describe("merge queue review propagation", () => {
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(sourceDriftResult.state, "failure");
+  });
+
+  it("revokes a copied queue status when source review proof is revoked", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+        statuses: [[automatedReviewStatus({ state: "pending" })]],
+      },
+      headResponses: [HEAD, HEAD],
+    });
+    const results = await reconcileActiveMergeGroupReviewStatuses({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseRef: BASE_REF,
+    });
+    assertEquals(results.length, 1);
+    assertEquals(results[0]?.state, "failure");
+    assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("rechecks source proof immediately before publishing queue success", async () => {
+    const fixture = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[automatedReviewStatus()]],
+          [[automatedReviewStatus({ state: "pending" })]],
+        ],
+      },
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      sha: OTHER_HEAD,
+      state: "failure",
+      context: "Automated review",
+      description: "Could not reuse an exact-head review",
+      target_url: "https://example.test/pr/1",
+    }]);
   });
 });
 
@@ -848,7 +1105,7 @@ describe("automated review request", () => {
     // A rerun for the same head finds the workflow-authored marker and does
     // not post again.
     fixture.state.comments.push({
-      user: { login: "github-actions[bot]", type: "Bot" },
+      user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
       body: fixture.posted[0]?.body,
     });
     const second = await request(HEAD);
@@ -879,6 +1136,30 @@ describe("automated review request", () => {
     assertEquals(fixture.posted.length, 0);
   });
 
+  it("uses an idempotent base-edit request key to create a fresh epoch", async () => {
+    const fixture = requestFixture();
+    const request = () =>
+      requestAutomatedReview({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: "base-42",
+      });
+    const first = await request();
+    assertEquals(first.requested, true);
+    assertEquals(
+      fixture.posted[0]?.body,
+      `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+    );
+    fixture.state.comments.push({
+      user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      body: fixture.posted[0]?.body,
+    });
+    assertEquals((await request()).requested, false);
+  });
+
   it("refuses to request a review of a malformed head commit", async () => {
     const fixture = requestFixture();
     for (
@@ -899,6 +1180,26 @@ describe("automated review request", () => {
           }),
         Error,
         "malformed head commit",
+      );
+    }
+    assertEquals(fixture.posted.length, 0);
+  });
+
+  it("refuses malformed base-edit request keys", async () => {
+    const fixture = requestFixture();
+    for (const requestKey of ["", "base_42", "base-42 -->"]) {
+      await assertRejects(
+        () =>
+          requestAutomatedReview({
+            github: fixture.github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            headSha: HEAD,
+            requestKey,
+          }),
+        Error,
+        "malformed review request key",
       );
     }
     assertEquals(fixture.posted.length, 0);
@@ -1022,6 +1323,7 @@ describe("automated review workflow", () => {
         "reopened",
         "ready_for_review",
         "converted_to_draft",
+        "edited",
       ],
     );
     assertEquals(
@@ -1046,6 +1348,7 @@ describe("automated review workflow", () => {
     const targetIf = String(targetJob.if);
     for (
       const condition of [
+        "github.event_name == 'merge_group'",
         "github.event.issue.pull_request",
         "github.event.workflow_run.event == 'pull_request_review'",
         "github.event.workflow_run.conclusion == 'success'",
@@ -1088,6 +1391,7 @@ describe("automated review workflow", () => {
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
         "parseReviewWakeupRun",
+        "parseMergeQueuePullNumber",
         "matchesReviewWakeupPullRequest",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
@@ -1132,11 +1436,7 @@ describe("automated review workflow", () => {
       !String(job.if).includes("CodeRabbit"),
       "CodeRabbit must not be able to enter Codex review reconciliation",
     );
-    assertEquals(
-      job.if,
-      undefined,
-      "publisher eligibility must be inherited from the resolver job",
-    );
+    assertEquals(job.if, "github.event_name != 'merge_group'");
     const steps = job.steps;
     assert(Array.isArray(steps));
     const checkout = record(steps[0], "checkout");
@@ -1155,6 +1455,7 @@ describe("automated review workflow", () => {
       "${{ needs.target.outputs.pull_number }}",
     );
     assert(script.includes("publishAutomatedReviewStatus"));
+    assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
     assert(script.includes("github.rest.pulls.get"));
     assert(script.includes("process.env.TARGET_SHA"));
     assert(script.includes("process.env.PULL_NUMBER"));
@@ -1189,6 +1490,8 @@ describe("automated review workflow", () => {
         "github.event_name == 'pull_request_target'",
         "github.event.pull_request.draft == false",
         "github.event.action == 'synchronize'",
+        "github.event.action == 'edited'",
+        "github.event.changes.base",
         "steps.publish.outputs.result == 'pending'",
       ]
     ) {
@@ -1209,9 +1512,13 @@ describe("automated review workflow", () => {
       requestScript.includes("requestAutomatedReview"),
       "the workflow must post review requests through the tested gate helper",
     );
+    assert(requestScript.includes("requestKey"));
+    assert(requestScript.includes("context.runId"));
+    assert(script.includes("forcePending"));
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
     assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");
+    assertEquals(mergeGroupJob.needs, "target");
     assertEquals(
       record(mergeGroupJob.permissions, "merge group permissions"),
       {
@@ -1222,7 +1529,7 @@ describe("automated review workflow", () => {
     );
     assertEquals(
       record(mergeGroupJob.concurrency, "merge group concurrency").group,
-      "automated-review-${{ github.event.merge_group.head_sha }}",
+      "automated-review-${{ needs.target.outputs.key }}",
     );
     const mergeGroupSteps = mergeGroupJob.steps;
     assert(Array.isArray(mergeGroupSteps));
@@ -1234,6 +1541,8 @@ describe("automated review workflow", () => {
     );
     assert(mergeGroupScript.includes("parseMergeQueuePullNumber"));
     assert(mergeGroupScript.includes("publishMergeGroupReviewStatus"));
+    assert(mergeGroupScript.includes("process.env.SOURCE_HEAD_SHA"));
+    assert(mergeGroupScript.includes("process.env.PULL_NUMBER"));
     assert(mergeGroupScript.includes("sourceHeadSha"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));

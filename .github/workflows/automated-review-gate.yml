@@ -2,7 +2,14 @@ name: Automated review gate
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    types: [
+      opened,
+      synchronize,
+      reopened,
+      ready_for_review,
+      converted_to_draft,
+      edited,
+    ]
   issue_comment:
     types: [created, edited, deleted]
   workflow_run:
@@ -17,13 +24,14 @@ jobs:
   target:
     name: resolve automated review target
     # Apply publisher eligibility before allocating a resolver runner. The
-    # resolver exists only to feed pull request reconciliation below.
+    # resolver also gives source and merge-group publishers the same immutable
+    # source-SHA concurrency key.
     if: >-
-      github.event_name != 'merge_group' &&
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-      (github.event_name != 'workflow_run' ||
-       (github.event.workflow_run.event == 'pull_request_review' &&
-        github.event.workflow_run.conclusion == 'success'))
+      github.event_name == 'merge_group' ||
+      ((github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+       (github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.event == 'pull_request_review' &&
+         github.event.workflow_run.conclusion == 'success')))
     permissions:
       contents: read
       pull-requests: read
@@ -49,10 +57,12 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
             let matchesReviewWakeupPullRequest;
+            let parseMergeQueuePullNumber;
             let parseReviewWakeupRun;
             try {
               ({
                 matchesReviewWakeupPullRequest,
+                parseMergeQueuePullNumber,
                 parseReviewWakeupRun,
               } = await import(gateUrl));
             } catch (error) {
@@ -67,6 +77,17 @@ jobs:
                 core.setFailed("Could not validate the review wakeup run");
                 return `run-${context.runId}`;
               }
+            }
+            if (context.eventName === "merge_group") {
+              const queueEntry = parseMergeQueuePullNumber(
+                context.payload.merge_group?.head_ref,
+              );
+              if (!queueEntry) {
+                core.setFailed("Could not resolve the merge queue source");
+                return `run-${context.runId}`;
+              }
+              core.setOutput("pull-number", String(queueEntry.pullNumber));
+              return queueEntry.sourceHeadSha;
             }
             // pull_request_review workflows use a synthetic merge SHA. For a
             // workflow_run wakeup, resolve the current source head from the
@@ -129,6 +150,7 @@ jobs:
     # the resolver dependency above. This job never reads wakeup artifacts or
     # executes pull request code.
     needs: target
+    if: github.event_name != 'merge_group'
     concurrency:
       # Every pull request event for one head must serialize on the same key so
       # an older pending write cannot win.
@@ -180,8 +202,12 @@ jobs:
               return "stale";
             }
             let publishAutomatedReviewStatus;
+            let reconcileActiveMergeGroupReviewStatuses;
             try {
-              ({ publishAutomatedReviewStatus } = await import(gateUrl));
+              ({
+                publishAutomatedReviewStatus,
+                reconcileActiveMergeGroupReviewStatuses,
+              } = await import(gateUrl));
             } catch (error) {
               // A missing or broken gate must show up as a red status, not as
               // an absent one. Absent is what a skipped review already looks
@@ -207,7 +233,24 @@ jobs:
               headSha,
               pullUrl: pullRequest.html_url,
               isDraft: pullRequest.draft === true,
+              forcePending:
+                context.eventName === "pull_request_target" &&
+                context.payload.action === "edited" &&
+                context.payload.changes?.base !== undefined,
             });
+            const queueResults = await reconcileActiveMergeGroupReviewStatuses({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber: pullRequest.number,
+              sourceHeadSha: headSha,
+              baseRef: pullRequest.base.ref,
+            });
+            if (queueResults.length > 0) {
+              core.notice(
+                `Reconciled ${queueResults.length} active merge queue review status.`,
+              );
+            }
             if (result.state === "pending") {
               core.notice(`${result.description}.`);
             } else if (result.review) {
@@ -223,12 +266,16 @@ jobs:
       # handles open and ready-for-review events, but not a push to an open
       # pull request. Post the "@codex review" request only for synchronize.
       # The helper re-fetches the PR immediately before posting so a queued
-      # stale event cannot bind its marker to a request for a newer head.
+      # stale event cannot bind its marker to a request for a newer head. A
+      # base edit gets a run-specific marker, which invalidates proof issued
+      # for an earlier base without coupling normal reviews to a moving base
+      # commit.
       - name: Request an automated review of the current commit
         if: >-
           github.event_name == 'pull_request_target' &&
           github.event.pull_request.draft == false &&
-          github.event.action == 'synchronize' &&
+          (github.event.action == 'synchronize' ||
+           (github.event.action == 'edited' && github.event.changes.base)) &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -248,6 +295,9 @@ jobs:
               repo: context.repo.repo,
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
+              requestKey: context.payload.action === "edited"
+                ? `base-${context.runId}`
+                : undefined,
             });
             core.notice(
               result.requested
@@ -260,12 +310,13 @@ jobs:
   merge_group:
     name: reuse exact-head review for merge group
     if: github.event_name == 'merge_group'
+    needs: target
     permissions:
       contents: read
       pull-requests: read
       statuses: write
     concurrency:
-      group: automated-review-${{ github.event.merge_group.head_sha }}
+      group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -276,6 +327,9 @@ jobs:
           persist-credentials: false
       - name: Reuse the source pull request review
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SOURCE_HEAD_SHA: ${{ needs.target.outputs.key }}
+          PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
           script: |
@@ -301,7 +355,16 @@ jobs:
               core.setFailed("Could not resolve the merge queue pull request");
               return;
             }
-            const { pullNumber, sourceHeadSha } = queueEntry;
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
+            if (
+              !Number.isSafeInteger(pullNumber) ||
+              pullNumber !== queueEntry.pullNumber ||
+              sourceHeadSha !== queueEntry.sourceHeadSha
+            ) {
+              core.setFailed("Merge queue source does not match its serialized lock");
+              return;
+            }
             const result = await publishMergeGroupReviewStatus({
               github,
               owner: context.repo.owner,

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const BOTS = new Map([
   ["chatgpt-codex-connector[bot]", 199175422],
   ["github-actions[bot]", 41898282],
@@ -6,9 +8,11 @@ const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
+const REVIEW_REQUEST_MARKER =
+  /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([A-Za-z0-9-]{1,64}))? -->\n@codex review$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const REQUEST_KEY = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_ITEMS_PER_SOURCE = 500;
-const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
@@ -18,6 +22,29 @@ const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 
 const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
+
+/** Produce a compact, non-ambiguous binding for a pull request base. */
+export function reviewBaseBinding(baseRepositoryId, baseRef) {
+  if (!Number.isSafeInteger(baseRepositoryId) || baseRepositoryId < 1) {
+    throw new Error("Pull request base repository is invalid");
+  }
+  if (
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error("Pull request base ref is invalid");
+  }
+  return createHash("sha256")
+    .update(`${baseRepositoryId}\0${baseRef}`)
+    .digest("hex");
+}
+
+function pullRequestBaseBinding(pullRequest) {
+  return reviewBaseBinding(
+    pullRequest?.base?.repo?.id,
+    pullRequest?.base?.ref,
+  );
+}
 
 /** Parse immutable PR identity carried by a trusted review wakeup run. */
 export function parseReviewWakeupRun(run) {
@@ -91,14 +118,68 @@ function isLaterReview(candidate, current, candidateIndex, currentIndex) {
   return candidateIndex > currentIndex;
 }
 
+function latestReviewRequestTime(comments, headSha) {
+  let latest;
+  for (const comment of comments) {
+    if (
+      !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
+      typeof comment?.body !== "string"
+    ) continue;
+    const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
+    if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) continue;
+    const createdAt = Date.parse(comment?.created_at ?? "");
+    if (!Number.isFinite(createdAt)) return Number.POSITIVE_INFINITY;
+    if (latest === undefined || createdAt > latest) latest = createdAt;
+  }
+  return latest;
+}
+
+function isEvidenceNewerThan(timestamp, requestTime) {
+  if (requestTime === undefined) return true;
+  const evidenceTime = Date.parse(timestamp ?? "");
+  return Number.isFinite(evidenceTime) && evidenceTime > requestTime;
+}
+
+function reviewResetDescription(baseBinding) {
+  return `Review reset for base ${baseBinding}`;
+}
+
+function latestReviewResetTime(statuses, baseBinding) {
+  let latest;
+  const description = reviewResetDescription(baseBinding);
+  for (const status of statuses) {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      status?.description !== description ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) continue;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt)) return Number.POSITIVE_INFINITY;
+    if (latest === undefined || createdAt > latest) latest = createdAt;
+  }
+  return latest;
+}
+
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
   { reviews, comments },
   headSha,
   resolveCommit = NO_COMMIT,
   isTrustedHuman = NO_TRUSTED_HUMAN,
+  reviewNotBefore = /** @type {number | undefined} */ (undefined),
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
+  const markerTime = latestReviewRequestTime(comments, headSha);
+  const validReviewNotBefore = reviewNotBefore === undefined ||
+      Number.isFinite(reviewNotBefore)
+    ? reviewNotBefore
+    : Number.POSITIVE_INFINITY;
+  const requestTime = markerTime === undefined
+    ? validReviewNotBefore
+    : validReviewNotBefore === undefined
+    ? markerTime
+    : Math.max(markerTime, validReviewNotBefore);
 
   {
     let codexApproval;
@@ -110,6 +191,10 @@ export async function findAutomatedReview(
         : "";
       const exactHead = review?.commit_id?.toLowerCase() ===
         headSha.toLowerCase();
+      if (
+        exactHead &&
+        !isEvidenceNewerThan(review?.submitted_at, requestTime)
+      ) continue;
       if (
         exactHead && state === "APPROVED" &&
         isPinnedBot(review?.user, CODEX_LOGIN)
@@ -168,6 +253,7 @@ export async function findAutomatedReview(
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string"
     ) continue;
+    if (!isEvidenceNewerThan(comment?.created_at, requestTime)) continue;
     const reviewedCommits = [...comment.body.matchAll(
       new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
     )];
@@ -228,10 +314,12 @@ export async function publishAutomatedReviewStatus({
   headSha,
   pullUrl,
   isDraft = false,
+  forcePending = false,
 }) {
   let review;
   let failure;
   let pullAuthor;
+  let baseBinding;
   if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
   } else {
@@ -247,14 +335,15 @@ export async function publishAutomatedReviewStatus({
         );
       }
       pullAuthor = current?.data?.user?.login;
+      baseBinding = pullRequestBaseBinding(current?.data);
     } catch (error) {
       failure = error instanceof Error ? error : new Error(String(error));
     }
   }
-  if (!failure && !isDraft) {
+  if (!failure && !isDraft && !forcePending) {
     try {
       const common = { owner, repo };
-      const [reviews, comments] = await Promise.all([
+      const [reviews, comments, statuses] = await Promise.all([
         collectAll(
           github,
           github.rest.pulls.listReviews,
@@ -266,6 +355,12 @@ export async function publishAutomatedReviewStatus({
           github.rest.issues.listComments,
           { ...common, issue_number: pullNumber },
           "comments",
+        ),
+        collectAll(
+          github,
+          github.rest.repos.listCommitStatusesForRef,
+          { ...common, ref: headSha },
+          "review statuses",
         ),
       ]);
       review = await findAutomatedReview(
@@ -295,6 +390,7 @@ export async function publishAutomatedReviewStatus({
             return false;
           }
         },
+        latestReviewResetTime(statuses, baseBinding),
       );
     } catch (error) {
       review = undefined;
@@ -314,6 +410,12 @@ export async function publishAutomatedReviewStatus({
         "Pull request head changed while checking review evidence",
       );
     }
+    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+      review = undefined;
+      throw new Error(
+        "Pull request base changed while checking review evidence",
+      );
+    }
   } catch (error) {
     review = undefined;
     failure = error instanceof Error ? error : new Error(String(error));
@@ -328,8 +430,10 @@ export async function publishAutomatedReviewStatus({
   const state = failure ? "failure" : review ? "success" : "pending";
   const description = failure
     ? "Could not determine the automated review status"
+    : forcePending
+    ? reviewResetDescription(baseBinding)
     : review
-    ? `Reviewed by ${review.reviewer}`
+    ? `Reviewed base ${baseBinding} by ${review.reviewer}`
     : isDraft
     ? "Draft pull request waits for ready for review"
     : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
@@ -358,17 +462,19 @@ export function parseMergeQueuePullNumber(headRef) {
     : undefined;
 }
 
-function isTrustedReviewGateStatus(status) {
+function isTrustedReviewGateStatus(status, baseBinding) {
   if (
     status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
     status?.state !== "success" ||
     !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
     typeof status?.description !== "string"
   ) return false;
-  if (status.description === `Reviewed by ${CODEX_LOGIN}`) return true;
-  return /^Reviewed by [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(
-    status.description,
-  );
+  const prefix = `Reviewed base ${baseBinding} by `;
+  if (status.description === `${prefix}${CODEX_LOGIN}`) return true;
+  return status.description.startsWith(prefix) &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(
+      status.description.slice(prefix.length),
+    );
 }
 
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
@@ -403,6 +509,7 @@ export async function publishMergeGroupReviewStatus({
     ) {
       throw new Error("Merge queue pull request changed from its queued head");
     }
+    const baseBinding = pullRequestBaseBinding(pull?.data);
     pullUrl = pull.data.html_url ?? pullUrl;
     const statuses = await collectAll(
       github,
@@ -410,10 +517,10 @@ export async function publishMergeGroupReviewStatus({
       { owner, repo, ref: sourceHeadSha },
       "source review statuses",
     );
-    const currentReviewStatus = statuses.find((status) =>
+    let currentReviewStatus = statuses.find((status) =>
       status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
     );
-    if (!isTrustedReviewGateStatus(currentReviewStatus)) {
+    if (!isTrustedReviewGateStatus(currentReviewStatus, baseBinding)) {
       throw new Error(
         "Pull request head does not have a current trusted review gate",
       );
@@ -431,6 +538,26 @@ export async function publishMergeGroupReviewStatus({
         "Pull request head changed while propagating review evidence",
       );
     }
+    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+      throw new Error(
+        "Pull request base changed while propagating review evidence",
+      );
+    }
+    const latestStatuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: sourceHeadSha },
+      "latest source review statuses",
+    );
+    const latestReviewStatus = latestStatuses.find((status) =>
+      status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
+    );
+    if (!isTrustedReviewGateStatus(latestReviewStatus, baseBinding)) {
+      throw new Error(
+        "Pull request review gate changed while propagating review evidence",
+      );
+    }
+    currentReviewStatus = latestReviewStatus;
     const description = `Reused exact-head review for PR #${pullNumber}`;
     await github.rest.repos.createCommitStatus({
       owner,
@@ -461,6 +588,66 @@ export async function publishMergeGroupReviewStatus({
   return { state: "failure", description: undefined, failure };
 }
 
+/** Reconcile copied review proof on every active queue ref for one source. */
+export async function reconcileActiveMergeGroupReviewStatuses({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseRef,
+}) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Merge queue pull request number is invalid");
+  }
+  if (!FULL_SHA.test(sourceHeadSha)) {
+    throw new Error("Merge queue source commit is malformed");
+  }
+  if (
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error("Merge queue base ref is invalid");
+  }
+  const refs = await collectAll(
+    github,
+    github.rest.git.listMatchingRefs,
+    {
+      owner,
+      repo,
+      ref:
+        `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${sourceHeadSha}`,
+    },
+    "merge queue refs",
+  );
+  const results = [];
+  const seen = new Set();
+  for (const queueRef of refs) {
+    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+    const mergeGroupSha = queueRef?.object?.sha;
+    if (
+      parsed?.pullNumber !== pullNumber ||
+      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
+    ) continue;
+    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
+      throw new Error("Merge queue ref has a malformed commit");
+    }
+    if (seen.has(mergeGroupSha.toLowerCase())) continue;
+    seen.add(mergeGroupSha.toLowerCase());
+    results.push(
+      await publishMergeGroupReviewStatus({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        sourceHeadSha,
+        mergeGroupSha,
+      }),
+    );
+  }
+  return results;
+}
+
 /**
  * Ask Codex to review the current head commit, at most once per commit.
  *
@@ -487,6 +674,7 @@ export async function requestAutomatedReview({
   repo,
   pullNumber,
   headSha,
+  requestKey = /** @type {string | undefined} */ (undefined),
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
@@ -496,7 +684,15 @@ export async function requestAutomatedReview({
       "Refusing to request an automated review of a malformed head commit",
     );
   }
-  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()} -->`;
+  if (
+    requestKey !== undefined &&
+    (typeof requestKey !== "string" || !REQUEST_KEY.test(requestKey))
+  ) {
+    throw new Error("Refusing to use a malformed review request key");
+  }
+  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()}${
+    requestKey === undefined ? "" : ` ${requestKey}`
+  } -->`;
   const comments = await collectAll(
     github,
     github.rest.issues.listComments,
@@ -504,10 +700,9 @@ export async function requestAutomatedReview({
     "request comments",
   );
   const alreadyRequested = comments.some((comment) =>
-    comment?.user?.login === WORKFLOW_COMMENT_LOGIN &&
-    comment?.user?.type === "Bot" &&
+    isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) &&
     typeof comment?.body === "string" &&
-    comment.body.includes(marker)
+    comment.body === `${marker}\n@codex review`
   );
   if (alreadyRequested) {
     return { requested: false, marker };
