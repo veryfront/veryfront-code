@@ -14,6 +14,7 @@ import { runWithProjectEnv } from "../project-env/storage.ts";
 import { createVeryfrontHandler } from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -101,6 +102,15 @@ function createDebugTestHandler(
       fs: { veryfront: { proxyMode: true } },
     } as any,
   });
+}
+
+function withTrustedPeer(request: Request): Request {
+  recordRequestPeerFromTransport(request, {
+    runtime: "node",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 describe("server/runtime-handler/index", () => {
@@ -195,6 +205,176 @@ describe("server/runtime-handler/index", () => {
     });
     assertEquals(isolationCalls, { check: 0, start: 0, complete: 0 });
     assertEquals(requestTracker.getStats(), trackerBefore);
+  });
+
+  it("runs application auth admission before project middleware and registry", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: {
+                subject: "x-auth-subject",
+                email: "x-auth-email",
+              },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            (c: { identity: unknown; req: Request }) => {
+              middlewareCalls++;
+              return Response.json({
+                identity: c.identity,
+                subjectHeader: c.req.headers.get("x-auth-subject"),
+                emailHeader: c.req.headers.get("x-auth-email"),
+              });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/dashboard", {
+        headers: {
+          "x-auth-subject": "user-123",
+          "x-auth-email": "user@example.test",
+        },
+      }),
+    ));
+
+    assertEquals(middlewareCalls, 1);
+    assertEquals(await response.json(), {
+      identity: {
+        issuer: "veryfront:trusted-proxy",
+        subject: "user-123",
+        email: "user@example.test",
+        groups: [],
+        roles: [],
+        groupsComplete: true,
+        claims: {
+          sub: "user-123",
+          email: "user@example.test",
+        },
+      },
+      subjectHeader: null,
+      emailHeader: null,
+    });
+  });
+
+  it("short-circuits terminal application auth responses before project middleware", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("project middleware ran", { status: 418 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/dashboard", {
+        headers: { "x-auth-subject": "forged-user" },
+      }),
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.text(), "Unauthorized");
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("short-circuits OIDC auth route terminal responses before project middleware", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            oidc: {
+              issuerEnvVar: "OIDC_ISSUER",
+              clientIdEnvVar: "OIDC_CLIENT_ID",
+              clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+              sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+              scopes: ["openid"],
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("project middleware ran", { status: 418 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    for (
+      const path of [
+        "/_veryfront/auth/login",
+        "/_veryfront/auth/callback?state=bad&code=bad",
+        "/_veryfront/auth/logout",
+      ]
+    ) {
+      const method = path.includes("logout") ? "POST" : "GET";
+      const response = await handler(new Request(`http://localhost${path}`, { method }));
+      assertEquals(response.status, 500);
+      assertEquals(await response.text(), "Authentication unavailable");
+    }
+
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps monitoring bypass ahead of application auth admission", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("project middleware ran", { status: 418 });
+            },
+          ],
+        },
+      } as any,
+    });
+
+    const response = await handler(new Request("http://localhost/healthz"));
+
+    assertEquals(response.status, 200);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("does not emit security guidance for the safe development defaults", async () => {

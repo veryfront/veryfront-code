@@ -5,6 +5,7 @@ import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
 import type { ParsedDomain } from "../server/utils/domain-parser.ts";
 import type { AuthConfig } from "../security/http/middleware/types.ts";
+import type { ApplicationIdentity } from "../security/application-auth/types.ts";
 export type { ParsedDomain } from "../server/utils/domain-parser.ts";
 
 export interface SecurityConfig {
@@ -96,6 +97,10 @@ export interface HandlerContext {
   isProxyMode?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
+  /** Verified application identity admitted by the host-owned auth boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
+  /** Application-auth identity headers to strip before project code sees the request. */
+  applicationIdentityHeaderNames?: readonly string[];
   /**
    * Prepares this request's authenticated hosted evaluation context.
    *

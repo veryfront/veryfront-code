@@ -16,6 +16,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
@@ -83,6 +84,18 @@ const LOCAL_EXECUTION: ExecuteRouteOptions = Object.freeze({
   isLocalProject: true,
   allowHostProjectCodeExecution: true,
 });
+
+function createIdentity(): ApplicationIdentity {
+  return Object.freeze({
+    issuer: "veryfront:trusted-proxy",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: Object.freeze(["admin"]),
+    roles: Object.freeze([]),
+    groupsComplete: true,
+    claims: Object.freeze({ sub: "user-123" }),
+  });
+}
 
 function executeAppRoute(
   handler: Parameters<typeof executeAppRouteRaw>[0],
@@ -318,6 +331,32 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.json(), { ok: true });
+    });
+
+    it("passes admitted application identity to host app route context", async () => {
+      const identity = createIdentity();
+      const handler = {
+        GET: (_req: Request, ctx: { identity: ApplicationIdentity | null }) =>
+          Response.json({
+            sameIdentity: ctx.identity === identity,
+            identity: ctx.identity,
+          }),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { ...LOCAL_EXECUTION, applicationIdentity: identity },
+      );
+
+      assertEquals(await response.json(), {
+        sameIdentity: true,
+        identity,
+      });
     });
 
     it("should reject forged Response-like objects", async () => {
@@ -586,6 +625,33 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "pages get");
+    });
+
+    it("passes admitted application identity to host pages route context", async () => {
+      const identity = createIdentity();
+      const handler = {
+        GET: (ctx: { identity: ApplicationIdentity | null }) =>
+          Response.json({
+            sameIdentity: ctx.identity === identity,
+            identity: ctx.identity,
+          }),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executePagesRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        { ...LOCAL_EXECUTION, applicationIdentity: identity },
+      );
+
+      assertEquals(await response.json(), {
+        sameIdentity: true,
+        identity,
+      });
     });
 
     it("should fall back to default handler", async () => {

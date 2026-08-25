@@ -1,6 +1,14 @@
 import type { HandlerContext, HandlerResult } from "#veryfront/types";
 import { createOidcApplicationAuthRuntime } from "./oidc-runtime.ts";
 import { createTrustedProxyApplicationAuthRuntime } from "./trusted-proxy.ts";
+import type { ApplicationIdentity } from "./types.ts";
+
+export interface ApplicationAuthHandlerResult extends HandlerResult {
+  metadata?: {
+    applicationIdentity?: ApplicationIdentity;
+    applicationIdentityHeaderNames?: readonly string[];
+  };
+}
 
 function unauthorized(): HandlerResult {
   return {
@@ -17,7 +25,7 @@ function unauthorized(): HandlerResult {
 export async function handleApplicationAuthRequest(
   request: Request,
   ctx: HandlerContext,
-): Promise<HandlerResult | null> {
+): Promise<ApplicationAuthHandlerResult | null> {
   const auth = ctx.securityConfig?.auth;
   const oidc = auth?.oidc;
   const trustedProxy = auth?.trustedProxy;

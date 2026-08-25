@@ -17,6 +17,7 @@ import type { HandlerContext } from "../handlers/types.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 export interface HandlerContextOptions {
   /** Project directory */
@@ -66,6 +67,10 @@ export interface HandlerContextOptions {
   moduleServerUrl: string | undefined;
   /** Canonical environment ID resolved at the operator-authenticated proxy boundary. */
   environmentId: string | undefined;
+  /** Verified application identity admitted by the host-owned auth boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
+  /** Application-auth identity headers to strip before project code sees the request. */
+  applicationIdentityHeaderNames?: readonly string[];
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;
   /**
@@ -133,6 +138,8 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
     isProxyMode: opts.isProxyMode,
     environmentId: opts.environmentId,
+    applicationIdentity: opts.applicationIdentity ?? null,
+    applicationIdentityHeaderNames: opts.applicationIdentityHeaderNames ?? [],
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
   };
@@ -154,5 +161,7 @@ export function buildMinimalContext(
     securityConfig,
     debug,
     config,
+    applicationIdentity: null,
+    applicationIdentityHeaderNames: [],
   };
 }

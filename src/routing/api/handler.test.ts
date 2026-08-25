@@ -14,6 +14,7 @@ import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolati
 import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -46,6 +47,18 @@ function localContext(adapter: ReturnType<typeof createMockAdapter>): HandlerCon
     securityConfig: null,
     isLocalProject: true,
   };
+}
+
+function createIdentity(): ApplicationIdentity {
+  return Object.freeze({
+    issuer: "veryfront:trusted-proxy",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: Object.freeze(["admin"]),
+    roles: Object.freeze([]),
+    groupsComplete: true,
+    claims: Object.freeze({ sub: "user-123" }),
+  });
 }
 
 /** App routes receive (request, ctx); Pages routes receive (ctx). */
@@ -152,6 +165,52 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertEquals(response?.status, 404);
+    });
+  });
+
+  describe("application request boundary", () => {
+    it("strips dynamic application identity headers before host route execution", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/profile/route.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            GET: (request: Request, ctx: { identity: ApplicationIdentity | null }) =>
+              Response.json({
+                identity: ctx.identity,
+                subject: request.headers.get("x-auth-subject"),
+                email: request.headers.get("x-auth-email"),
+                authorization: request.headers.get("authorization"),
+              }),
+          }),
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const identity = createIdentity();
+      const response = await handler.handle(
+        new Request("http://localhost/api/profile", {
+          headers: {
+            authorization: "Bearer application-token",
+            "X-Auth-Subject": "forged-user",
+            "x-auth-email": "forged@example.test",
+          },
+        }),
+        {
+          ...localContext(adapter),
+          applicationIdentity: identity,
+          applicationIdentityHeaderNames: ["x-auth-subject", "x-auth-email"],
+        },
+      );
+
+      assertEquals(await response?.json(), {
+        identity,
+        subject: null,
+        email: null,
+        authorization: "Bearer application-token",
+      });
     });
   });
 

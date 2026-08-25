@@ -44,12 +44,16 @@ type ResolvedAuth =
     kind: "oidc";
   }>
   | Readonly<{
+    kind: "trusted-proxy";
+  }>
+  | Readonly<{
     kind: "invalid";
   }>;
 
 const INVALID_AUTH = Object.freeze({ kind: "invalid" } as const);
 const OIDC_AUTH = Object.freeze({ kind: "oidc" } as const);
-const AUTH_CONFIG_KEYS = new Set(["basic", "bearer", "oidc"]);
+const TRUSTED_PROXY_AUTH = Object.freeze({ kind: "trusted-proxy" } as const);
+const AUTH_CONFIG_KEYS = new Set(["basic", "bearer", "oidc", "trustedProxy"]);
 const BASIC_AUTH_CONFIG_KEYS = new Set(["username", "password", "realm"]);
 const BEARER_AUTH_CONFIG_KEYS = new Set(["token"]);
 
@@ -127,7 +131,10 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
   const hasBasic = Object.hasOwn(auth, "basic");
   const hasBearer = Object.hasOwn(auth, "bearer");
   const hasOidc = Object.hasOwn(auth, "oidc");
-  if ([hasBasic, hasBearer, hasOidc].filter(Boolean).length !== 1) return INVALID_AUTH;
+  const hasTrustedProxy = Object.hasOwn(auth, "trustedProxy");
+  if ([hasBasic, hasBearer, hasOidc, hasTrustedProxy].filter(Boolean).length !== 1) {
+    return INVALID_AUTH;
+  }
 
   if (hasBasic) {
     const basic = snapshotOwnDataRecord(auth.basic, BASIC_AUTH_CONFIG_KEYS);
@@ -153,6 +160,10 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
 
   if (hasOidc) {
     return OIDC_AUTH;
+  }
+
+  if (hasTrustedProxy) {
+    return TRUSTED_PROXY_AUTH;
   }
 
   const bearer = snapshotOwnDataRecord(auth.bearer, BEARER_AUTH_CONFIG_KEYS);
@@ -257,6 +268,9 @@ export class AuthHandler extends BaseHandler {
     if (auth.kind === "oidc") {
       if (isApplicationAuthAdmittedRequest(req)) return Promise.resolve(this.continue());
       return Promise.resolve(this.rejectOidcAuth(req, ctx));
+    }
+    if (auth.kind === "trusted-proxy") {
+      return Promise.resolve(this.continue());
     }
     return Promise.resolve(this.rejectInvalidAuth(req, ctx));
   }

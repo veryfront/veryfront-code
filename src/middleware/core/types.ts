@@ -1,3 +1,5 @@
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+
 /** Context for execution. */
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
@@ -8,6 +10,7 @@ export interface ExecutionContext {
 export interface Context {
   req: Request;
   request: Request;
+  identity: ApplicationIdentity | null;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;
   var: Record<string, unknown>;

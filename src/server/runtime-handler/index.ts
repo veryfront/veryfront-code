@@ -19,6 +19,12 @@ import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import {
+  isConfigOptionalControlPlaneRunRequest,
+  isSignedChannelDispatch,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
+import { handleApplicationAuthRequest } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -112,6 +118,7 @@ import {
   isHMRWebSocketUpgrade,
   isLightweightPath,
   isMonitoringPath,
+  isWebSocketPath,
 } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
 import {
@@ -134,6 +141,13 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+function skipsApplicationAuth(request: Request, pathname: string): boolean {
+  return isWebSocketPath(pathname) ||
+    isSignedControlPlaneDispatch(request) ||
+    isSignedChannelDispatch(request) ||
+    isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+}
 
 /** Handler names in registration order. */
 export const HANDLER_NAMES = [
@@ -605,6 +619,14 @@ export function createVeryfrontHandler(
 
           const ctx = runtimeContext.handlerContext!;
           const envVarsForRequest = runtimeContext.rawEnvVars;
+
+          if (!skipsApplicationAuth(request, url.pathname)) {
+            const authResult = await handleApplicationAuthRequest(request, ctx);
+            if (authResult?.response) return authResult.response;
+            ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+            ctx.applicationIdentityHeaderNames =
+              authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+          }
 
           await incrementRequestMetrics();
 

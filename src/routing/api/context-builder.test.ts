@@ -15,6 +15,7 @@ import {
 } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 const mockFs: FileSystemAdapter = {
   readFile: () => Promise.resolve(""),
@@ -31,6 +32,18 @@ const mockFs: FileSystemAdapter = {
 
 function createMatch(pattern: string, page: string, params: RouteMatch["params"] = {}): RouteMatch {
   return { route: { pattern, page }, params };
+}
+
+function createIdentity(): ApplicationIdentity {
+  return Object.freeze({
+    issuer: "veryfront:trusted-proxy",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: Object.freeze(["admin"]),
+    roles: Object.freeze([]),
+    groupsComplete: true,
+    claims: Object.freeze({ sub: "user-123" }),
+  });
 }
 
 describe("API Context Builder", () => {
@@ -164,6 +177,29 @@ describe("API Context Builder", () => {
       );
 
       assertEquals(context.env.API_KEY, "k", "supplied project env must reach handlers verbatim");
+    });
+
+    it("exposes admitted application identity additively", () => {
+      const request = new Request("http://localhost/api/users");
+      const identity = createIdentity();
+      const context = createContext(
+        request,
+        createMatch("/api/users", "/api/users.ts"),
+        mockFs,
+        undefined,
+        identity,
+      );
+
+      assertEquals(context.identity, identity);
+      assertEquals(Object.isFrozen(context.identity), true);
+      assertEquals(Object.isFrozen(context.identity?.claims), true);
+    });
+
+    it("exposes null identity when no application auth admission ran", () => {
+      const request = new Request("http://localhost/api/users");
+      const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
+
+      assertEquals(context.identity, null);
     });
 
     it("should extract route parameters from match", () => {
