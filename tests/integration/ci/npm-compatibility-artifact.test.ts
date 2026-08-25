@@ -179,6 +179,42 @@ describe("npm compatibility artifact", () => {
     });
   });
 
+  it("stamps the release commit into every canonical package tarball", async () => {
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-output-",
+      "vf-npm-artifact-materialized-",
+    ], async ([root, artifact, destination]) => {
+      assertExists(root);
+      assertExists(artifact);
+      assertExists(destination);
+      await writePackage(root, {
+        name: "veryfront",
+        version: "1.2.3",
+        dependencies: { "@veryfront/ext-alpha": "1.2.3" },
+      });
+      await writePackage(join(root, "extensions", "ext-alpha"), {
+        name: "@veryfront/ext-alpha",
+        version: "1.2.3",
+      });
+      const gitHead = "0123456789abcdef0123456789abcdef01234567";
+
+      await createNpmCompatibilityArtifact(root, artifact, { gitHead });
+      await materializeNpmCompatibilityArtifact(artifact, destination);
+
+      const rootManifest = JSON.parse(
+        await Deno.readTextFile(join(destination, "package.json")),
+      );
+      const extensionManifest = JSON.parse(
+        await Deno.readTextFile(
+          join(destination, "extensions", "ext-alpha", "package.json"),
+        ),
+      );
+      assertEquals(rootManifest.gitHead, gitHead);
+      assertEquals(extensionManifest.gitHead, gitHead);
+    });
+  });
+
   it("rejects a package whose bytes do not match the canonical manifest", async () => {
     await withTempDirs([
       "vf-npm-artifact-source-",

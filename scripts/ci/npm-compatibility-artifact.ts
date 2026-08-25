@@ -108,13 +108,35 @@ async function packPackage(
   packageDirectory: string,
   destination: string,
   packageName: string,
+  gitHead?: string,
 ): Promise<string> {
-  const output = await new Deno.Command("npm", {
-    args: ["pack", "--json", "--pack-destination", destination],
-    cwd: packageDirectory,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  const packageManifestPath = join(packageDirectory, "package.json");
+  const originalPackageManifest = gitHead
+    ? await Deno.readTextFile(packageManifestPath)
+    : undefined;
+  if (originalPackageManifest) {
+    const packageManifest = JSON.parse(originalPackageManifest) as Record<
+      string,
+      unknown
+    >;
+    await Deno.writeTextFile(
+      packageManifestPath,
+      `${JSON.stringify({ ...packageManifest, gitHead }, null, 2)}\n`,
+    );
+  }
+  let output: Deno.CommandOutput;
+  try {
+    output = await new Deno.Command("npm", {
+      args: ["pack", "--json", "--pack-destination", destination],
+      cwd: packageDirectory,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  } finally {
+    if (originalPackageManifest) {
+      await Deno.writeTextFile(packageManifestPath, originalPackageManifest);
+    }
+  }
   if (!output.success) {
     throw new NpmCompatibilityArtifactError(
       "pack",
@@ -141,8 +163,17 @@ async function packPackage(
 export async function createNpmCompatibilityArtifact(
   npmDirectory: string,
   destination: string,
+  options: { readonly gitHead?: string } = {},
 ): Promise<NpmCompatibilityManifest> {
   const resolvedDestination = resolve(destination);
+  if (
+    options.gitHead !== undefined &&
+    !/^[0-9a-f]{40}$/.test(options.gitHead)
+  ) {
+    throw new Error(
+      "Canonical npm artifact gitHead must be a 40-character lowercase hexadecimal commit",
+    );
+  }
   await Deno.mkdir(resolvedDestination, { recursive: true });
   const packageSources = await Promise.all(
     (await packageDirectories(npmDirectory)).map(async (directory) => ({
@@ -174,6 +205,7 @@ export async function createNpmCompatibilityArtifact(
       source.directory,
       resolvedDestination,
       source.manifest.name,
+      options.gitHead,
     );
     packages.push({
       name: source.manifest.name,
@@ -304,11 +336,12 @@ export async function materializeNpmCompatibilityArtifact(
 }
 
 async function main(args: string[]): Promise<void> {
-  const [command, directory, destination] = args;
-  if (command === "pack" && directory && destination) {
+  const [command, directory, destination, gitHead] = args;
+  if (command === "pack" && directory && destination && gitHead) {
     const manifest = await createNpmCompatibilityArtifact(
       directory,
       destination,
+      { gitHead },
     );
     const loaded = await loadNpmCompatibilityArtifact(destination);
     console.log(JSON.stringify({
@@ -327,7 +360,7 @@ async function main(args: string[]): Promise<void> {
     return;
   }
   throw new Error(
-    "Usage: npm-compatibility-artifact.ts pack <npm-directory> <destination> | verify <artifact-directory> | materialize <artifact-directory> <npm-directory>",
+    "Usage: npm-compatibility-artifact.ts pack <npm-directory> <destination> <git-head> | verify <artifact-directory> | materialize <artifact-directory> <npm-directory>",
   );
 }
 

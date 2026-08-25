@@ -196,7 +196,7 @@ jobs:
           fi
           deno task build:npm
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm \
-            scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility
+            scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
           echo "build_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
       - name: Upload tested npm compatibility artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1175,6 +1175,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          deno run -A scripts/ci/prepare-rc-build.ts
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 

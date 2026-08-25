@@ -217,6 +217,20 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
+  it("prepares the numbered RC version before prerelease SBOM generation", async () => {
+    const jobs = await readJobs();
+    const prerelease = asRecord(jobs.prerelease, "prerelease job");
+    const generateSbom = namedStep(prerelease, "Generate SBOM");
+    const script = String(generateSbom.run);
+
+    assertStringIncludes(script, "scripts/ci/prepare-rc-build.ts");
+    assert(
+      script.indexOf("scripts/ci/prepare-rc-build.ts") <
+        script.indexOf("deno task sbom:all"),
+      "The prerelease checkout must use the numbered RC version before SBOM generation",
+    );
+  });
+
   it("publishes a stable aggregate that fails for every non-success result", async () => {
     const jobs = await readJobs();
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
