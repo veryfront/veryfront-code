@@ -328,16 +328,17 @@ These variables tune that tier. The defaults are chosen to be safe, and every
 one of them is a bound rather than a performance dial, so raise them
 deliberately.
 
-| Variable                                  | Default    | What it bounds                                                  |
-| ----------------------------------------- | ---------- | --------------------------------------------------------------- |
-| `VERYFRONT_FILE_CACHE_L1_TTL_MS`          | `5000`     | How long a held entry is served without consulting the backend. |
-| `VERYFRONT_FILE_CACHE_L1_MAX_ENTRIES`     | `2000`     | How many entries the tier holds.                                |
-| `VERYFRONT_FILE_CACHE_L1_MAX_VALUE_BYTES` | `524288`   | The largest single value the tier will hold.                    |
-| `VERYFRONT_FILE_CACHE_L1_MAX_TOTAL_BYTES` | `67108864` | Total bytes held across every project and credential.           |
+| Variable                                  | Default    | What it bounds                                                                 |
+| ----------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `VERYFRONT_FILE_CACHE_L1_TTL_MS`          | `5000`     | How long a held entry is served without consulting the backend, up to `60000`. |
+| `VERYFRONT_FILE_CACHE_L1_MAX_ENTRIES`     | `2000`     | How many entries the tier holds.                                               |
+| `VERYFRONT_FILE_CACHE_L1_MAX_VALUE_BYTES` | `524288`   | The largest single value the tier will hold.                                   |
+| `VERYFRONT_FILE_CACHE_L1_MAX_TOTAL_BYTES` | `67108864` | Total bytes held across every project and credential.                          |
 
 Set any of them to `0` to turn the tier off. `VERYFRONT_FILE_CACHE_L1_TTL_MS=0`
 disables it outright; a zero byte or entry ceiling means nothing is ever
-admitted.
+admitted. Values above `60000` for `VERYFRONT_FILE_CACHE_L1_TTL_MS` are clamped
+to `60000`.
 
 The TTL is worth understanding before you raise it, because it bounds two
 different things:

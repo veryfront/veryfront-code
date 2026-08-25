@@ -12,6 +12,9 @@ import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts"
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 import type { FileCacheOptions } from "./types.ts";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { IMMUTABLE_L1_TTL_ENV_VAR } from "#veryfront/cache/immutable-l1.ts";
 
 /** `file:release:<projectSlug>:<releaseId>:<path>`, immutable by construction. */
 const IMMUTABLE_RELEASE_KEY = "file:release:proj-a:rel-1:/app/page.tsx";
@@ -580,6 +583,56 @@ describe("Distributed cache functions", () => {
     it("should export initializeFileCacheBackend function", () => {
       assertExists(initializeFileCacheBackend);
       assertEquals(typeof initializeFileCacheBackend, "function");
+    });
+
+    it("resolves immutable L1 settings after manual runtime initialization", async () => {
+      await runtime.reset();
+      const distributedModule = await import(
+        "./file-cache.ts?runtime-adapter-l1-configuration-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const serialized = JSON.stringify({ value: "held", timestamp: Date.now(), size: 4 });
+      let backendGets = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 1,
+            get: () => {
+              backendGets += 1;
+              return Promise.resolve(serialized);
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      const adapter = createMockAdapter();
+      adapter.env.set(IMMUTABLE_L1_TTL_ENV_VAR, "0");
+      try {
+        await runtime.set(adapter);
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+        const cache = new distributedModule.FileCache();
+        const read = () =>
+          runWithCacheKeyContext(
+            { projectId: "proj-a", mode: "production", versionId: "rel-1" },
+            () => runWithCacheBatching(() => cache.getAsync(IMMUTABLE_RELEASE_KEY)),
+          );
+
+        assertEquals(await read(), "held");
+        assertEquals(await read(), "held");
+        assertEquals(
+          backendGets,
+          2,
+          "the runtime adapter's zero TTL must disable the process-local tier",
+        );
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+        await runtime.reset();
+      }
     });
 
     it("skips non-serializable synchronous writes to a distributed backend", async () => {

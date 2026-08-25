@@ -5,11 +5,18 @@ import {
   buildImmutableL1Scope,
   createImmutableFileCacheL1,
   IMMUTABLE_L1_DEFAULT_MAX_ENTRIES,
+  IMMUTABLE_L1_DEFAULT_MAX_TOTAL_BYTES,
   IMMUTABLE_L1_DEFAULT_MAX_VALUE_BYTES,
   IMMUTABLE_L1_DEFAULT_TTL_MS,
+  IMMUTABLE_L1_MAX_ENTRIES_ENV_VAR,
+  IMMUTABLE_L1_MAX_TOTAL_BYTES_ENV_VAR,
   IMMUTABLE_L1_MAX_TTL_MS,
+  IMMUTABLE_L1_MAX_VALUE_BYTES_ENV_VAR,
   IMMUTABLE_L1_TTL_ENV_VAR,
   isImmutableReleaseFileCacheKey,
+  resolveImmutableL1MaxEntries,
+  resolveImmutableL1MaxTotalBytes,
+  resolveImmutableL1MaxValueBytes,
   resolveImmutableL1Scope,
   resolveImmutableL1TtlMs,
 } from "./immutable-l1.ts";
@@ -185,26 +192,11 @@ describe("resolveImmutableL1Scope", () => {
 });
 
 describe("resolveImmutableL1TtlMs", () => {
-  /**
-   * Run `read` with the TTL override set to `raw`, restoring whatever the
-   * process had before. The resolver reads the environment on every call, so
-   * no module cache has to be defeated.
-   */
-  function withTtlEnv<T>(raw: string | undefined, read: () => T): T {
-    const previous = Deno.env.get(IMMUTABLE_L1_TTL_ENV_VAR);
-    try {
-      if (raw === undefined) Deno.env.delete(IMMUTABLE_L1_TTL_ENV_VAR);
-      else Deno.env.set(IMMUTABLE_L1_TTL_ENV_VAR, raw);
-      return read();
-    } finally {
-      if (previous === undefined) Deno.env.delete(IMMUTABLE_L1_TTL_ENV_VAR);
-      else Deno.env.set(IMMUTABLE_L1_TTL_ENV_VAR, previous);
-    }
-  }
+  const resolveTtl = (raw: string | undefined): number => resolveImmutableL1TtlMs(() => raw);
 
   it("uses the default when nothing is configured", () => {
     assertEquals(
-      withTtlEnv(undefined, resolveImmutableL1TtlMs),
+      resolveTtl(undefined),
       IMMUTABLE_L1_DEFAULT_TTL_MS,
       "an unset override must leave the default lifetime in place",
     );
@@ -212,12 +204,12 @@ describe("resolveImmutableL1TtlMs", () => {
 
   it("honors a configured lifetime at or below the maximum", () => {
     assertEquals(
-      withTtlEnv(String(IMMUTABLE_L1_MAX_TTL_MS), resolveImmutableL1TtlMs),
+      resolveTtl(String(IMMUTABLE_L1_MAX_TTL_MS)),
       IMMUTABLE_L1_MAX_TTL_MS,
       "a lifetime exactly at the maximum must be honored rather than clamped away",
     );
     assertEquals(
-      withTtlEnv("1500", resolveImmutableL1TtlMs),
+      resolveTtl("1500"),
       1500,
       "a lifetime below the maximum must be honored unchanged",
     );
@@ -228,29 +220,61 @@ describe("resolveImmutableL1TtlMs", () => {
     // minutes of BOTH the credential-revocation window and the cross-pod
     // publish-visibility window.
     assertEquals(
-      withTtlEnv("5000000", resolveImmutableL1TtlMs),
+      resolveTtl("5000000"),
       IMMUTABLE_L1_MAX_TTL_MS,
       "a lifetime above the maximum must be clamped to the maximum, not honored",
     );
     assertEquals(
-      withTtlEnv("999999999", resolveImmutableL1TtlMs),
+      resolveTtl("999999999"),
       IMMUTABLE_L1_MAX_TTL_MS,
       "an 11-day lifetime must be clamped rather than widening both windows",
     );
   });
 
-  it("clamps a large finite value written in exponential notation", () => {
-    // Number("1e21") is finite and positive, so every existing guard passes it.
+  it("falls back on an unsafe integer written in exponential notation", () => {
     assertEquals(
-      withTtlEnv("1e21", resolveImmutableL1TtlMs),
-      IMMUTABLE_L1_MAX_TTL_MS,
-      "an exponential lifetime must be clamped rather than parsed straight through",
+      resolveTtl("1e21"),
+      IMMUTABLE_L1_DEFAULT_TTL_MS,
+      "an unsafe integer lifetime must be rejected rather than rounded or clamped",
     );
+  });
+
+  it("rejects fractional overrides instead of rounding them", () => {
+    const cases = [
+      {
+        name: IMMUTABLE_L1_TTL_ENV_VAR,
+        fallback: IMMUTABLE_L1_DEFAULT_TTL_MS,
+        resolve: resolveImmutableL1TtlMs,
+      },
+      {
+        name: IMMUTABLE_L1_MAX_ENTRIES_ENV_VAR,
+        fallback: IMMUTABLE_L1_DEFAULT_MAX_ENTRIES,
+        resolve: resolveImmutableL1MaxEntries,
+      },
+      {
+        name: IMMUTABLE_L1_MAX_VALUE_BYTES_ENV_VAR,
+        fallback: IMMUTABLE_L1_DEFAULT_MAX_VALUE_BYTES,
+        resolve: resolveImmutableL1MaxValueBytes,
+      },
+      {
+        name: IMMUTABLE_L1_MAX_TOTAL_BYTES_ENV_VAR,
+        fallback: IMMUTABLE_L1_DEFAULT_MAX_TOTAL_BYTES,
+        resolve: resolveImmutableL1MaxTotalBytes,
+      },
+    ];
+
+    for (const testCase of cases) {
+      assertEquals(
+        testCase.resolve(() => "0.5"),
+        testCase.fallback,
+        `${testCase.name} must not round a fractional override`,
+      );
+    }
   });
 
   it("still lets zero disable the tier outright", () => {
     assertEquals(
-      withTtlEnv("0", resolveImmutableL1TtlMs),
+      resolveTtl("0"),
       0,
       "zero must keep disabling the tier, since the clamp is an upper bound only",
     );
@@ -259,7 +283,7 @@ describe("resolveImmutableL1TtlMs", () => {
   it("still falls back on a value that is not a usable lifetime", () => {
     for (const raw of ["-1", "abc", "NaN", "Infinity", ""]) {
       assertEquals(
-        withTtlEnv(raw, resolveImmutableL1TtlMs),
+        resolveTtl(raw),
         IMMUTABLE_L1_DEFAULT_TTL_MS,
         `an unusable override (${JSON.stringify(raw)}) must fall back to the default lifetime`,
       );

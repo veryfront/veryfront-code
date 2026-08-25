@@ -308,14 +308,15 @@ function readPositiveIntegerEnv(
   name: string,
   fallback: number,
   maxValue?: number,
+  readEnv: (name: string) => string | undefined = getEnvValue,
 ): number {
-  const raw = getEnvValue(name);
+  const raw = readEnv(name);
   if (raw === undefined || raw.trim() === "") return fallback;
 
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return fallback;
 
-  const value = Math.floor(parsed);
+  const value = parsed;
   if (maxValue !== undefined && value > maxValue) {
     logger.warn(
       "Configured cache limit exceeds its maximum and was clamped to the maximum",
@@ -333,35 +334,50 @@ function readPositiveIntegerEnv(
  * credential-revocation window and of the cross-pod publish-visibility window,
  * not a staleness preference. See that constant for both.
  */
-export function resolveImmutableL1TtlMs(): number {
+export function resolveImmutableL1TtlMs(
+  readEnv: (name: string) => string | undefined = getEnvValue,
+): number {
   return readPositiveIntegerEnv(
     IMMUTABLE_L1_TTL_ENV_VAR,
     IMMUTABLE_L1_DEFAULT_TTL_MS,
     IMMUTABLE_L1_MAX_TTL_MS,
+    readEnv,
   );
 }
 
 /** Configured entry-count ceiling. */
-export function resolveImmutableL1MaxEntries(): number {
+export function resolveImmutableL1MaxEntries(
+  readEnv: (name: string) => string | undefined = getEnvValue,
+): number {
   return readPositiveIntegerEnv(
     IMMUTABLE_L1_MAX_ENTRIES_ENV_VAR,
     IMMUTABLE_L1_DEFAULT_MAX_ENTRIES,
+    undefined,
+    readEnv,
   );
 }
 
 /** Configured per-value ceiling in bytes. */
-export function resolveImmutableL1MaxValueBytes(): number {
+export function resolveImmutableL1MaxValueBytes(
+  readEnv: (name: string) => string | undefined = getEnvValue,
+): number {
   return readPositiveIntegerEnv(
     IMMUTABLE_L1_MAX_VALUE_BYTES_ENV_VAR,
     IMMUTABLE_L1_DEFAULT_MAX_VALUE_BYTES,
+    undefined,
+    readEnv,
   );
 }
 
 /** Configured total-bytes ceiling across every scope. */
-export function resolveImmutableL1MaxTotalBytes(): number {
+export function resolveImmutableL1MaxTotalBytes(
+  readEnv: (name: string) => string | undefined = getEnvValue,
+): number {
   return readPositiveIntegerEnv(
     IMMUTABLE_L1_MAX_TOTAL_BYTES_ENV_VAR,
     IMMUTABLE_L1_DEFAULT_MAX_TOTAL_BYTES,
+    undefined,
+    readEnv,
   );
 }
 

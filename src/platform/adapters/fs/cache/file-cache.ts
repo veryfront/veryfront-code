@@ -27,6 +27,7 @@ import {
 } from "#veryfront/cache/request-cache-batcher.ts";
 import {
   createImmutableFileCacheL1,
+  type ImmutableFileCacheL1,
   isImmutableReleaseFileCacheKey,
   resolveImmutableL1Scope,
   resolveImmutableL1TtlMs,
@@ -58,7 +59,14 @@ const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
  * immutable release-scoped values, and only for a short TTL; see
  * cache/immutable-l1.ts for what that TTL bounds.
  */
-const immutableL1 = createImmutableFileCacheL1();
+let immutableL1: ImmutableFileCacheL1 | null = null;
+let immutableL1TtlMs: number | null = null;
+
+function initializeImmutableL1(): void {
+  if (immutableL1) return;
+  immutableL1TtlMs = resolveImmutableL1TtlMs();
+  immutableL1 = createImmutableFileCacheL1();
+}
 
 // Registered as its own cache: the "file-cache" registration above reports the
 // distributed backend (size -1) and the fallback map's limits, while this tier
@@ -68,14 +76,11 @@ const immutableL1 = createImmutableFileCacheL1();
 // attribute the growth to it.
 registerCache("file-cache-immutable-l1", () => ({
   name: "file-cache-immutable-l1",
-  entries: immutableL1.size,
-  maxEntries: immutableL1.maxEntries,
-  estimatedSizeBytes: immutableL1.retainedBytes,
+  entries: immutableL1?.size ?? 0,
+  maxEntries: immutableL1?.maxEntries ?? 0,
+  estimatedSizeBytes: immutableL1?.retainedBytes ?? 0,
   backend: "memory",
 }));
-
-/** Process-wide default entry lifetime for that tier, overridable per instance. */
-const IMMUTABLE_L1_TTL_MS = resolveImmutableL1TtlMs();
 
 /**
  * The single path by which this module publishes a value into the
@@ -101,7 +106,7 @@ const IMMUTABLE_L1_TTL_MS = resolveImmutableL1TtlMs();
  * would be meaningless for its other callers, which cache unrelated things.
  */
 function publishToRequestCache(key: string, serialized: string | null): void {
-  immutableL1.dropKey(key);
+  immutableL1?.dropKey(key);
   setInRequestCache(key, serialized);
 }
 
@@ -125,6 +130,9 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
   backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
     try {
       cacheBackend = await CacheBackends.file();
+      // Runtime-backed environment bindings are available only after the
+      // adapter has initialized, so resolve every L1 setting here.
+      initializeImmutableL1();
       logger.debug("Backend initialized", { type: cacheBackend.type });
     } catch (error) {
       logger.warn("Backend init failed, using memory fallback", { error });
@@ -156,39 +164,50 @@ export function isFileCacheDistributedEnabled(): boolean {
 export class FileCache {
   private fallbackCache = new Map<string, CacheEntry<unknown>>();
   private fallbackMemoryUsed = 0;
-  private options: Required<FileCacheOptions>;
+  private options: Required<Omit<FileCacheOptions, "immutableL1Ttl">>;
+  private immutableL1TtlOverride: number | undefined;
   private backendTtlSeconds: number;
   private hits = 0;
   private misses = 0;
 
   constructor(options: FileCacheOptions = {}) {
+    const { immutableL1Ttl, ...cacheOptions } = options;
     this.options = {
       enabled: true,
       ttl: DEFAULT_CACHE_TTL_MS,
       maxSize: FALLBACK_MAX_ENTRIES,
       maxMemory: FALLBACK_MAX_MEMORY_BYTES,
-      immutableL1Ttl: IMMUTABLE_L1_TTL_MS,
-      ...options,
+      ...cacheOptions,
     };
+    this.immutableL1TtlOverride = immutableL1Ttl;
+    this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
+
+    const mode = cacheBackend?.type ?? "memory";
+    logger.debug("Initialized", {
+      ...this.options,
+      immutableL1Ttl: this.getImmutableL1Ttl(),
+      mode,
+    });
+  }
+
+  private getImmutableL1Ttl(): number {
     // A non-finite lifetime would either stamp entries that never expire
     // (Infinity) or defeat every comparison it feeds (NaN), so it falls back
-    // to the process-wide default the same way an unparseable env override
-    // does. Zero and negative values still disable the tier.
-    if (!Number.isFinite(this.options.immutableL1Ttl)) {
-      this.options.immutableL1Ttl = IMMUTABLE_L1_TTL_MS;
+    // to the process-wide default. Before backend initialization, fail closed
+    // with a disabled tier instead of resolving environment state too early.
+    let ttl = this.immutableL1TtlOverride;
+    if (ttl === undefined || !Number.isFinite(ttl)) {
+      ttl = immutableL1TtlMs ?? 0;
     }
     // The public filesystem config exposes `ttl` and not `immutableL1Ttl`, so
     // `ttl` is where a caller states its whole freshness bound. A `ttl` below
     // the tier's lifetime would otherwise be widened silently: the backend
     // expires the entry on the configured schedule while the tier keeps
     // serving it. The effective L1 lifetime is therefore capped at `ttl`.
-    if (Number.isFinite(this.options.ttl) && this.options.ttl < this.options.immutableL1Ttl) {
-      this.options.immutableL1Ttl = Math.max(0, this.options.ttl);
+    if (Number.isFinite(this.options.ttl) && this.options.ttl < ttl) {
+      ttl = Math.max(0, this.options.ttl);
     }
-    this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
-
-    const mode = cacheBackend?.type ?? "memory";
-    logger.debug("Initialized", { ...this.options, mode });
+    return ttl;
   }
 
   private getBackend(): CacheBackend | null {
@@ -244,11 +263,13 @@ export class FileCache {
     return withSpan(
       "platform.fs.cache.getAsync",
       async () => {
+        const l1 = immutableL1;
+        const immutableL1Ttl = this.getImmutableL1Ttl();
         // The process-local tier holds only immutable release-scoped values, and
         // only under the authority the backend read itself would have used.
         // Anything else, including every branch-scoped key, falls through to the
         // backend on every request.
-        const l1Scope = this.options.immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)
+        const l1Scope = l1 && immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)
           ? resolveImmutableL1Scope(backend.type, backend.cacheAuthority?.())
           : null;
         // A value already in the request-scoped cache may be this request's own
@@ -268,11 +289,11 @@ export class FileCache {
         const useL1 = l1Scope !== null && !inRequestScope;
 
         try {
-          if (useL1) {
+          if (useL1 && l1) {
             // The instance's own lifetime is enforced at lookup as well as
             // stamped at admission, so a short-TTL instance is never served
             // an entry a longer-TTL instance admitted past its own bound.
-            const held = immutableL1.lookup(l1Scope, key, this.options.immutableL1Ttl);
+            const held = l1.lookup(l1Scope, key, immutableL1Ttl);
             if (held !== null) {
               const entry = JSON.parse(held) as CacheEntry<T>;
               this.hits++;
@@ -280,15 +301,15 @@ export class FileCache {
             }
           }
 
-          const readToken = immutableL1.beginRead(key);
+          const readToken = l1?.beginRead(key);
           // Use request-scoped batching to dedupe and batch cache requests
           // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
           // The backend will add its own namespace prefix, so we pass the key as-is
           const raw = await getCachedWithBatching(backend, key);
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
-            if (useL1) {
-              immutableL1.admit(l1Scope, key, raw, readToken, this.options.immutableL1Ttl);
+            if (useL1 && l1 && readToken) {
+              l1.admit(l1Scope, key, raw, readToken, immutableL1Ttl);
             }
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
@@ -297,7 +318,7 @@ export class FileCache {
           }
         } catch (error) {
           // A held value that will not parse must not be offered again.
-          immutableL1.dropKey(key);
+          l1?.dropKey(key);
           logger.debug("Backend get failed", { key, error });
         }
 
@@ -321,7 +342,7 @@ export class FileCache {
     // including the fallback one that never reaches the request cache. The
     // barrier for a write landing mid-read is a separate concern and lives in
     // publishToRequestCache; dropKey is idempotent, so both may run.
-    immutableL1.dropKey(key);
+    immutableL1?.dropKey(key);
 
     // In distributed mode, fire-and-forget to backend
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
@@ -345,7 +366,7 @@ export class FileCache {
         // Dropped again once the write settles: a read racing this write can
         // have admitted the value the backend held before it landed, on a
         // generation token taken after the pre-write drop.
-        immutableL1.dropKey(key);
+        immutableL1?.dropKey(key);
       });
       return;
     }
@@ -365,7 +386,7 @@ export class FileCache {
     // including the fallback one that never reaches the request cache. The
     // barrier for a write landing mid-read is a separate concern and lives in
     // publishToRequestCache; dropKey is idempotent, so both may run.
-    immutableL1.dropKey(key);
+    immutableL1?.dropKey(key);
 
     // Try backend first
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
@@ -389,7 +410,7 @@ export class FileCache {
           // Dropped again once the write settles: a read racing this write can
           // have admitted the value the backend held before it landed, on a
           // generation token taken after the pre-write drop.
-          immutableL1.dropKey(key);
+          immutableL1?.dropKey(key);
         }
       },
       { "cache.key": key, "cache.backend": backend.type, "cache.size": size },
@@ -424,7 +445,7 @@ export class FileCache {
   }
 
   delete(key: string): boolean {
-    immutableL1.dropKey(key);
+    immutableL1?.dropKey(key);
     const entry = this.fallbackCache.get(key);
     if (entry) this.fallbackMemoryUsed -= entry.size;
     return this.fallbackCache.delete(key);
@@ -448,7 +469,7 @@ export class FileCache {
             // Dropped again after the backend deletion settles: a read that
             // raced it took its generation token after the drop above and can
             // have admitted the value the backend still held.
-            immutableL1.dropKey(key);
+            immutableL1?.dropKey(key);
           }
         }
         return deletedFromFallback;
@@ -459,7 +480,7 @@ export class FileCache {
 
   /** Clears only the in-memory fallback cache entries by prefix. Does NOT touch the backend. */
   private clearLocalByPrefix(prefix: string): number {
-    immutableL1.dropPrefix(prefix);
+    immutableL1?.dropPrefix(prefix);
     let count = 0;
     for (const key of this.fallbackCache.keys()) {
       if (!key.startsWith(prefix)) continue;
@@ -473,7 +494,7 @@ export class FileCache {
 
   /** Clears only the in-memory fallback cache entries by prefix+suffix. Does NOT touch the backend. */
   private clearLocalByPrefixAndSuffix(prefix: string, suffix: string): number {
-    immutableL1.dropPrefix(prefix);
+    immutableL1?.dropPrefix(prefix);
     let count = 0;
     const suffixWithColon = `:${suffix}`;
     for (const key of this.fallbackCache.keys()) {
@@ -497,7 +518,7 @@ export class FileCache {
     }).finally(() => {
       // Dropped again after the backend deletion settles, so a read that
       // raced it cannot leave a just-invalidated value behind in the tier.
-      immutableL1.dropPrefix(prefix);
+      immutableL1?.dropPrefix(prefix);
     });
 
     return count;
@@ -520,7 +541,7 @@ export class FileCache {
           } finally {
             // Dropped again after the backend deletion settles, so a read that
             // raced it cannot leave a just-invalidated value behind in the tier.
-            immutableL1.dropPrefix(prefix);
+            immutableL1?.dropPrefix(prefix);
           }
         }
 
@@ -541,7 +562,7 @@ export class FileCache {
     }).finally(() => {
       // Dropped again after the backend deletion settles; dropping the whole
       // prefix over-invalidates, which fails toward extra backend reads.
-      immutableL1.dropPrefix(prefix);
+      immutableL1?.dropPrefix(prefix);
     });
 
     return count;
@@ -565,7 +586,7 @@ export class FileCache {
             // Dropped again after the backend deletion settles; dropping the
             // whole prefix over-invalidates, which fails toward extra backend
             // reads.
-            immutableL1.dropPrefix(prefix);
+            immutableL1?.dropPrefix(prefix);
           }
         }
 
@@ -578,7 +599,7 @@ export class FileCache {
   clear(): void {
     // Coarser than the instance it is called on: this drops every scope's
     // entries. It fails toward extra backend reads, never toward stale content.
-    immutableL1.clear();
+    immutableL1?.clear();
     this.fallbackCache.clear();
     this.fallbackMemoryUsed = 0;
     this.hits = 0;
@@ -612,7 +633,7 @@ export class FileCache {
     // admission and on touch; this maintenance entry point reclaims them for
     // an idle store as well, so expired file content is not retained until
     // the next admission happens to sweep it.
-    let evicted = immutableL1.evictExpired();
+    let evicted = immutableL1?.evictExpired() ?? 0;
 
     for (const [key, entry] of this.fallbackCache) {
       if (now - entry.timestamp <= this.options.ttl) continue;
