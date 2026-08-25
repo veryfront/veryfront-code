@@ -1,5 +1,5 @@
 import { isAbsolute, join, normalize } from "#veryfront/compat/path";
-import { rendererLogger } from "#veryfront/utils";
+import { memoizeHash, rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -318,6 +318,7 @@ export interface LayoutCollectionResult {
 export interface LayoutCollectorOptions {
   projectDir: string;
   projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   compileMDX: (
@@ -330,6 +331,7 @@ export interface LayoutCollectorOptions {
 export class LayoutCollector {
   private projectDir: string;
   private projectId?: string;
+  private contentSourceId?: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
   private compileMDX: (
@@ -341,6 +343,7 @@ export class LayoutCollector {
   constructor(options: LayoutCollectorOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
+    this.contentSourceId = options.contentSourceId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.compileMDX = options.compileMDX;
@@ -560,12 +563,16 @@ export class LayoutCollector {
       this.config,
     );
 
-    return this.collectLayoutsUnified(pageFilePath, rootDir);
+    const contentSourceId = this.contentSourceId ?? pageInfo.bundle?.hash ??
+      memoizeHash(pageInfo.entity.content);
+
+    return this.collectLayoutsUnified(pageFilePath, rootDir, contentSourceId);
   }
 
   private async collectLayoutsUnified(
     pageFilePath: string,
     rootDir: string,
+    contentSourceId: string,
   ): Promise<LayoutItem[]> {
     logger.debug("collectLayoutsUnified", {
       pageFilePath,
@@ -578,6 +585,10 @@ export class LayoutCollector {
       rootDir,
       this.projectDir,
       this.adapter,
+      {
+        projectId: this.projectId ?? this.projectDir,
+        contentSourceId,
+      },
     );
 
     if (nestedLayouts.length > 0) {

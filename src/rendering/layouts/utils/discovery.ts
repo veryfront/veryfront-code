@@ -15,6 +15,11 @@ interface CacheEntry {
   projectDir: string;
 }
 
+export interface LayoutDiscoveryIdentity {
+  projectId: string;
+  contentSourceId: string;
+}
+
 const MAX_CACHE_SIZE = 500;
 const layoutDiscoveryCache = new LRUCache<string, CacheEntry>({
   maxEntries: MAX_CACHE_SIZE,
@@ -57,14 +62,26 @@ export async function discoverNestedLayouts(
   rootDir: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  identity: LayoutDiscoveryIdentity = {
+    projectId: projectDir,
+    contentSourceId: "mutable",
+  },
 ): Promise<LayoutItem[]> {
-  const key = simpleHash(projectDir, pageFilePath, rootDir);
+  const key = simpleHash(
+    identity.projectId,
+    identity.contentSourceId,
+    projectDir,
+    pageFilePath,
+    rootDir,
+  );
   const cached = layoutDiscoveryCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
     discoveryLog.debug("Layout cache HIT", {
       pageFilePath,
       rootDir,
+      projectId: identity.projectId,
+      contentSourceId: identity.contentSourceId,
       layoutCount: cached.layouts.length,
       layoutPaths: cached.layouts.map((l) => l.path),
     });
@@ -75,6 +92,8 @@ export async function discoverNestedLayouts(
     pageFilePath,
     rootDir,
     projectDir,
+    projectId: identity.projectId,
+    contentSourceId: identity.contentSourceId,
   });
 
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);

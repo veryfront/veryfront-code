@@ -24,6 +24,7 @@ export function createLayoutCollector(
   return new LayoutCollector({
     projectDir: ctx.projectDir,
     projectId: ctx.projectId,
+    contentSourceId: ctx.contentSourceId,
     adapter: ctx.adapter,
     config: ctx.config,
     compileMDX,

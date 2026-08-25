@@ -8,6 +8,7 @@ import {
   LayoutCollector,
   resolveLayoutRouterRootDir,
 } from "./layout-collector.ts";
+import { clearLayoutDiscoveryCache } from "./utils/discovery.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle } from "#veryfront/types";
@@ -59,6 +60,69 @@ function createPageInfo(path: string, frontmatter: Record<string, unknown> = {})
 }
 
 describe("LayoutCollector", () => {
+  it("does not reuse layout discovery across projects that share virtual paths", async () => {
+    clearLayoutDiscoveryCache();
+    const sharedOptions = {
+      projectDir: "/",
+      contentSourceId: "preview-main",
+      config: {} as VeryfrontConfig,
+      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
+    };
+    const projectA = new LayoutCollector({
+      ...sharedOptions,
+      projectId: "project-a",
+      adapter: createCollectorAdapter({
+        "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
+      }),
+    });
+    const projectB = new LayoutCollector({
+      ...sharedOptions,
+      projectId: "project-b",
+      adapter: createCollectorAdapter({}),
+    });
+
+    const projectAResult = await projectA.collectLayouts(createPageInfo("/app/page.tsx"));
+    const projectBResult = await projectB.collectLayouts(createPageInfo("/app/page.tsx"));
+
+    assertEquals(projectAResult.nestedLayouts.map((layout) => layout.path), ["/app/layout.tsx"]);
+    assertEquals(
+      projectBResult.nestedLayouts,
+      [],
+      "a project without app/layout.tsx must not receive another project's cached layout",
+    );
+  });
+
+  it("does not reuse layout discovery across content source snapshots", async () => {
+    clearLayoutDiscoveryCache();
+    const sharedOptions = {
+      projectDir: "/",
+      projectId: "project-a",
+      config: {} as VeryfrontConfig,
+      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
+    };
+    const releaseA = new LayoutCollector({
+      ...sharedOptions,
+      contentSourceId: "release-a",
+      adapter: createCollectorAdapter({
+        "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
+      }),
+    });
+    const releaseB = new LayoutCollector({
+      ...sharedOptions,
+      contentSourceId: "release-b",
+      adapter: createCollectorAdapter({}),
+    });
+
+    await releaseA.collectLayouts(createPageInfo("/app/page.tsx"));
+    const releaseBResult = await releaseB.collectLayouts(createPageInfo("/app/page.tsx"));
+
+    assertEquals(
+      releaseBResult.nestedLayouts,
+      [],
+      "a source snapshot without app/layout.tsx must not receive a cached layout from another release",
+    );
+  });
+
   it("resolves configured App Router and Pages Router roots", () => {
     const config = {
       directories: { app: "src/site", pages: "src/content" },
