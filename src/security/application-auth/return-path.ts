@@ -1,4 +1,5 @@
 const MAX_RETURN_PATH_CODE_UNITS = 2_048;
+const MAX_PERCENT_DECODE_PASSES = 8;
 const RETURN_PATH_ORIGIN = "https://veryfront.local";
 const AUTH_ROUTE_PATH = "/_veryfront/auth";
 
@@ -37,23 +38,36 @@ export function parseApplicationAuthReturnPath(value: unknown): string {
 }
 
 function rejectUnsafeDecodedReturnPath(value: string): void {
-  let decoded = value;
-  for (let iteration = 0; iteration < 8; iteration += 1) {
+  decodeRepeatedly(value, (decoded) => {
     rejectNonRelativeDecodedPath(decoded);
     rejectRawControlOrBackslash(decoded);
-    let next: string;
-    try {
-      next = decodeURIComponent(decoded);
-    } catch (error) {
-      throw new TypeError("Application auth return path contains invalid percent encoding", {
-        cause: error,
-      });
-    }
-    if (next === decoded) return;
+  });
+}
+
+function decodeRepeatedly(value: string, inspect: (decoded: string) => void): string {
+  let decoded = value;
+  for (let iteration = 0; iteration < MAX_PERCENT_DECODE_PASSES; iteration += 1) {
+    inspect(decoded);
+    const next = decodeOnePass(decoded);
+    if (next === decoded) return decoded;
     decoded = next;
   }
-  rejectNonRelativeDecodedPath(decoded);
-  rejectRawControlOrBackslash(decoded);
+
+  inspect(decoded);
+  if (decodeOnePass(decoded) !== decoded) {
+    throw new TypeError("Application auth return path exceeds the percent-decode limit");
+  }
+  return decoded;
+}
+
+function decodeOnePass(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    throw new TypeError("Application auth return path contains invalid percent encoding", {
+      cause: error,
+    });
+  }
 }
 
 function rejectNonRelativeDecodedPath(value: string): void {
@@ -73,14 +87,10 @@ function rejectRawControlOrBackslash(value: string): void {
 
 function rejectAuthRoute(value: string): void {
   const path = new URL(value, RETURN_PATH_ORIGIN).pathname;
-  let decodedPath = path;
-  for (let iteration = 0; iteration < 8; iteration += 1) {
+  decodeRepeatedly(path, (decodedPath) => {
     const normalized = new URL(decodedPath, RETURN_PATH_ORIGIN).pathname;
     if (normalized === AUTH_ROUTE_PATH || normalized.startsWith(`${AUTH_ROUTE_PATH}/`)) {
       throw new TypeError("Application auth return path must not target the auth route");
     }
-    const next = decodeURIComponent(normalized);
-    if (next === decodedPath) return;
-    decodedPath = next;
-  }
+  });
 }

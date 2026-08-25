@@ -3,6 +3,14 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseApplicationAuthReturnPath } from "./return-path.ts";
 
+function encodeRepeatedly(value: string, count: number): string {
+  let output = value;
+  for (let index = 0; index < count; index += 1) {
+    output = encodeURIComponent(output);
+  }
+  return output;
+}
+
 describe("security/application-auth return-path", () => {
   it("accepts app-relative path and query values and returns canonical path plus query", () => {
     assertEquals(parseApplicationAuthReturnPath("/dashboard"), "/dashboard");
@@ -55,6 +63,19 @@ describe("security/application-auth return-path", () => {
         "/%5fveryfront/auth",
         "/%255fveryfront/auth/callback",
         "/safe/../_veryfront/auth",
+      ]
+    ) {
+      assertThrows(() => parseApplicationAuthReturnPath(value), TypeError, "return path");
+    }
+  });
+
+  it("fails closed when deeply encoded unsafe return paths do not stabilize within the decode bound", () => {
+    for (
+      const value of [
+        encodeRepeatedly("//evil.example", 9),
+        encodeRepeatedly("/_veryfront/auth/login", 9),
+        `/safe${encodeRepeatedly("\\", 9)}path`,
+        `/safe${encodeRepeatedly("\n", 9)}path`,
       ]
     ) {
       assertThrows(() => parseApplicationAuthReturnPath(value), TypeError, "return path");
