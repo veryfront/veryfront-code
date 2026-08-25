@@ -85,6 +85,7 @@ const MISSING_DATA_FIELD = Symbol("missing-data-field");
 const FORWARD_SLASH_CODE_UNIT = 47;
 const BACKSLASH_CODE_UNIT = 92;
 const COLON_CODE_UNIT = 58;
+const VERTICAL_BAR_CODE_UNIT = 124;
 const ASCII_UPPERCASE_A_CODE_UNIT = 65;
 const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
 const ASCII_LOWERCASE_OFFSET = 32;
@@ -661,6 +662,17 @@ function platformPathFromNormalizedFileUrl(normalizedPath: string): string | und
   }
   if (decodedAuthority && lowercaseString(decodedAuthority) !== "localhost") {
     return `//${decodedAuthority}/${decodedBody}`;
+  }
+  // The WHATWG file URL parser also accepts the legacy vertical-bar drive
+  // spelling ("file:///C|/nope"), which the host resolves to "C:\nope", so
+  // that form must normalize to a colon drive before the alias is derived.
+  if (
+    decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === VERTICAL_BAR_CODE_UNIT &&
+    (decodedBody.length === 2 || isPathSeparatorCodeUnit(charCodeAtString(decodedBody, 2)))
+  ) {
+    decodedBody = `${sliceString(decodedBody, 0, 1)}:${sliceString(decodedBody, 2)}`;
   }
   const hasDrive = decodedBody.length >= 2 &&
     isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&

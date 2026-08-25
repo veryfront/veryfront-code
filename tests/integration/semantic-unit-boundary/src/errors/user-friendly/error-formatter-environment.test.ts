@@ -321,7 +321,7 @@ describe("formatUserError environment gating", () => {
     error.stack = [
       "Error: unknown error receiver_callable_label_dev",
       "    at Object.handler (file:///app/a.ts:1:1)",
-      "    at async UserService.load (file:///app/b.ts:2:2)",
+      "    at async JSON.parse (file:///app/b.ts:2:2)",
     ].join("\n");
 
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
@@ -329,9 +329,35 @@ describe("formatUserError environment gating", () => {
 
       assert(result.includes("at Object.handler"), "a standard V8 method label is preserved");
       assert(
-        result.includes("at async UserService.load"),
-        "an async receiver-qualified callable label is preserved",
+        result.includes("at async JSON.parse"),
+        "an async built-in receiver-qualified callable label is preserved",
       );
+      return Promise.resolve();
+    });
+  });
+
+  it("withholds CamelCase hostname-shaped receiver labels", async () => {
+    const error = new Error("unknown error camelcase_hostname_label_dev");
+    error.stack = [
+      "Error: unknown error camelcase_hostname_label_dev",
+      "    at PrivateControl.example (file:///app/a.ts:1:1)",
+      "    at async UserService.load (file:///app/b.ts:2:2)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const result = formatUserError(error);
+
+      assert(
+        result.includes("at <anonymous>"),
+        "a CamelCase hostname-shaped label is withheld",
+      );
+      for (const label of ["PrivateControl.example", "UserService.load"]) {
+        assertEquals(
+          result.includes(label),
+          false,
+          "DNS names are case-insensitive, so a capitalized hostname-shaped label must not reach user-facing output",
+        );
+      }
       return Promise.resolve();
     });
   });

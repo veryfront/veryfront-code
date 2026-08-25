@@ -85,9 +85,14 @@ const HOSTNAME_SHAPED_CALLABLE_LABEL =
 /** A bracketed IPv6 literal can be emitted as a custom callable label. */
 const BRACKETED_IPV6_CALLABLE_LABEL = /^\[[0-9a-f:.]*:[0-9a-f:.]*(?:%[a-z0-9._~-]+)?\]$/i;
 
-/** Preserve unambiguous receiver method labels despite their DNS-like shape. */
+/**
+ * Preserve well-known built-in receiver method labels despite their DNS-like
+ * shape. Only this fixed receiver set is exempt: DNS names are case-insensitive,
+ * so capitalization alone cannot prove a hostname-shaped label such as
+ * `PrivateControl.example` names a callable rather than a private hostname.
+ */
 const SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL =
-  /^(?:Object|Array|Boolean|Date|Error|Function|JSON|Map|Math|Number|Promise|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet|[A-Z][A-Za-z0-9_$]*[A-Z_$][A-Za-z0-9_$]*)\.[a-z_$][A-Za-z0-9_$]*$/;
+  /^(?:Object|Array|Boolean|Date|Error|Function|JSON|Map|Math|Number|Promise|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet)\.[a-z_$][A-Za-z0-9_$]*$/;
 
 /** Standard V8 modifiers are syntax around the callable label, not part of it. */
 const CALLABLE_LABEL_PREFIX = /^(?:(?:async|new)\s+)+/;

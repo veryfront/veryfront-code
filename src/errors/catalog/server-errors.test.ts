@@ -3,7 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 
-const EXPLICIT_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s"\\]*/gi;
+// Match every absolute scheme form, not only hierarchical `://` spellings:
+// the URL parser canonicalizes single-slash (`https:/host/x`) and opaque
+// (`file:/x`, `mailto:x`) forms into absolute URLs just the same.
+const EXPLICIT_URL_PATTERN = /[a-z][a-z0-9+.-]*:[^\s"\\]+/gi;
 const PUBLIC_RECOVERY_ORIGIN = "https://veryfront.com";
 
 describe("errors/catalog/server-errors", () => {
@@ -101,6 +104,26 @@ describe("errors/catalog/server-errors", () => {
 
       assertEquals(smuggled.origin, PUBLIC_RECOVERY_ORIGIN, "origin normalizes userinfo away");
       assertEquals(smuggled.username, "private-control-plane.example");
+    });
+
+    it("should match single-slash and opaque absolute URL spellings", () => {
+      const serialized = JSON.stringify({
+        step:
+          "Open https:/private-control-plane.example/runbook or file:/home/alice/runbook instead",
+      });
+
+      const matches = [...serialized.matchAll(EXPLICIT_URL_PATTERN)].map((match) => match[0]);
+      assertEquals(matches, [
+        "https:/private-control-plane.example/runbook",
+        "file:/home/alice/runbook",
+      ]);
+      for (const match of matches) {
+        assertEquals(
+          new URL(match).origin === PUBLIC_RECOVERY_ORIGIN,
+          false,
+          `single-slash spelling ${match} must not normalize to the public origin`,
+        );
+      }
     });
 
     it("should recognize URL schemes case-insensitively", () => {
