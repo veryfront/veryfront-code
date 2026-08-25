@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type BatchHandlerOptions,
+  buildBatchCacheProjectKey,
   buildBatchTransformCacheKey,
   clearBatchCache,
   getBatchCacheStats,
@@ -132,6 +133,28 @@ describe(
         assertEquals(knex === baseline, false);
         assertEquals(prismaAndKnex === knex, false);
         assertEquals(reordered, prismaAndKnex);
+      });
+    });
+
+    describe("buildBatchCacheProjectKey", () => {
+      it("prefers the projectId over the slug", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({ projectId: "id-1", projectSlug: "slug-1" }),
+          "id-1",
+          "the id identifies a project across slug renames, so it wins",
+        );
+      });
+
+      it("uses the slug when no projectId is supplied", () => {
+        assertEquals(buildBatchCacheProjectKey({ projectSlug: "slug-1" }), "slug-1");
+      });
+
+      it("falls back to a shared default when neither is supplied", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({}),
+          "default",
+          "an unidentified project must still land under a stable, clearable namespace",
+        );
       });
     });
 
