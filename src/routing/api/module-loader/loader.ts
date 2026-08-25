@@ -545,29 +545,16 @@ async function canDirectImportModuleGraph(args: {
     visited.add(filePath);
 
     if (!isWithinDirectory(projectRoot, filePath)) return false;
-
-    // A `.json` module is data: the runtime parses it as JSON, so it can
-    // neither execute nor name an import. Scanning it as JavaScript would
-    // reject an ordinary value such as `{ "label": "Function" }`.
+    // JSON is data, so it cannot execute or introduce another module edge.
     if (isJSONModulePath(filePath)) continue;
 
-    let source: string;
-    try {
-      source = await fs.readTextFile(filePath);
-    } catch {
-      return false;
-    }
+    const source = await readDirectGraphSource(fs, filePath);
+    if (source === null) return false;
 
     // Reuse the parser-aware public validator so direct and bundled routes
     // enforce the same remote-import, Worker, and generated-code contract.
     const scan = await validateHTTPImports(source, allowedHosts);
-    if (
-      scan.hasUnconstrainedDynamicImport ||
-      // Slash syntax is ambiguous only to the conservative text scanner. Once
-      // parser-backed capability and edge analysis succeeds, relocating the
-      // module into a bundle is unnecessary and changes import.meta.url.
-      (scan.requiresBundling && !scan.parserBacked)
-    ) {
+    if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) {
       canDirectImport = false;
       continue;
     }
@@ -576,63 +563,112 @@ async function canDirectImportModuleGraph(args: {
     // this file's import list nor the HTTP plugin ever sees. Vet it as part of
     // the graph; one whose base this scanner does not follow cannot be walked,
     // so the route bundles instead.
-    for (const workerSpecifier of scan.localWorkerSpecifiers) {
-      if (!workerSpecifier.startsWith("./") && !workerSpecifier.startsWith("../")) return false;
-      pending.push(resolveContainedLocalModule(projectRoot, filePath, workerSpecifier));
+    if (!enqueueDirectWorkerEntries(scan.localWorkerSpecifiers, projectRoot, filePath, pending)) {
+      return false;
     }
-
-    const walkMappedTarget = (target: string): void => {
-      // An import map can rename a restricted runtime module (node:vm,
-      // node:module) behind an ordinary-looking alias; the target decides
-      // what the runtime loads.
-      const restrictedReason = restrictedRuntimeModuleReason(target);
-      if (restrictedReason !== null) {
-        throw toError(
-          createError({
-            type: "api",
-            message: `[API] handler build failed: ${restrictedReason}.`,
-          }),
-        );
-      }
-      if (pathHelper.isAbsolute(target)) {
-        pending.push(modulePathOfSpecifier(target));
-        return;
-      }
-      if (canDirectImportSpecifier(target)) return;
-      validateModuleSpecifierHosts([target], allowedHosts);
-      canDirectImport = false;
-    };
-
-    for (const specifier of scan.specifiers) {
-      if (importMap !== null) {
-        const target = lookupImportMapEntry(importMap, specifier, filePath);
-        if (target !== null) {
-          walkMappedTarget(target);
-          continue;
-        }
-      }
-
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
-        continue;
-      }
-      // Explicit installed-dependency schemes are safe to leave to the
-      // runtime; every other absolute or custom scheme bundles.
-      if (canDirectImportSpecifier(specifier)) continue;
-      if (!isBareModuleSpecifier(specifier)) return false;
-
-      // A bare specifier is whatever the project's own Deno import map makes
-      // of it, and the bundler never reads that map. Resolve it here so an
-      // alias for an installed package or a project file keeps loading
-      // directly, while one the map turns into a remote URL still bundles,
-      // where the HTTP plugin governs every fetch.
-      if (importMap === null) return false;
-      // Unmapped: the runtime can only resolve it to an installed package.
-      continue;
-    }
+    const specifierResult = inspectDirectModuleSpecifiers({
+      specifiers: scan.specifiers,
+      importMap,
+      filePath,
+      projectRoot,
+      allowedHosts,
+      pending,
+    });
+    if (specifierResult === "reject") return false;
+    if (specifierResult === "bundle") canDirectImport = false;
   }
 
   return canDirectImport;
+}
+
+async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<string | null> {
+  try {
+    return await fs.readTextFile(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function enqueueDirectWorkerEntries(
+  workerSpecifiers: readonly string[],
+  projectRoot: string,
+  filePath: string,
+  pending: string[],
+): boolean {
+  for (const specifier of workerSpecifiers) {
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) return false;
+    pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
+  }
+  return true;
+}
+
+type DirectSpecifierResult = "direct" | "bundle" | "reject";
+
+interface DirectSpecifierOptions {
+  importMap: DenoImportMap | null;
+  filePath: string;
+  projectRoot: string;
+  allowedHosts: string[];
+  pending: string[];
+}
+
+function inspectDirectModuleSpecifiers(
+  options: DirectSpecifierOptions & { specifiers: readonly string[] },
+): DirectSpecifierResult {
+  let result: DirectSpecifierResult = "direct";
+  for (const specifier of options.specifiers) {
+    const specifierResult = inspectDirectModuleSpecifier(specifier, options);
+    if (specifierResult === "reject") return "reject";
+    if (specifierResult === "bundle") result = "bundle";
+  }
+  return result;
+}
+
+function inspectDirectModuleSpecifier(
+  specifier: string,
+  options: DirectSpecifierOptions,
+): DirectSpecifierResult {
+  const { importMap, filePath, projectRoot, allowedHosts, pending } = options;
+  const mappedTarget = importMap === null
+    ? null
+    : lookupImportMapEntry(importMap, specifier, filePath);
+  if (mappedTarget !== null) {
+    return inspectDirectMappedTarget(mappedTarget, allowedHosts, pending);
+  }
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
+    return "direct";
+  }
+  // Explicit installed-dependency schemes are safe to leave to the runtime;
+  // every other absolute or custom scheme bundles.
+  if (canDirectImportSpecifier(specifier)) return "direct";
+  if (!isBareModuleSpecifier(specifier) || importMap === null) return "reject";
+  // An unmapped bare specifier can only resolve to an installed package.
+  return "direct";
+}
+
+function inspectDirectMappedTarget(
+  target: string,
+  allowedHosts: string[],
+  pending: string[],
+): DirectSpecifierResult {
+  // An import map can hide a restricted runtime module behind an ordinary alias.
+  const restrictedReason = restrictedRuntimeModuleReason(target);
+  if (restrictedReason !== null) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] handler build failed: ${restrictedReason}.`,
+      }),
+    );
+  }
+  if (pathHelper.isAbsolute(target)) {
+    pending.push(modulePathOfSpecifier(target));
+    return "direct";
+  }
+  if (canDirectImportSpecifier(target)) return "direct";
+  validateModuleSpecifierHosts([target], allowedHosts);
+  return "bundle";
 }
 
 function resolveContainedLocalModule(
@@ -977,6 +1013,13 @@ function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string)
   ) {
     return specifier;
   }
+  if (REMOTE_URL_SPECIFIER.test(referrer)) {
+    try {
+      return new URL(specifier, referrer).href;
+    } catch {
+      return specifier;
+    }
+  }
   const modulePath = modulePathOfSpecifier(specifier);
   const referrerModule = modulePathOfSpecifier(referrer);
   if (REMOTE_URL_SPECIFIER.test(referrerModule)) {
@@ -992,7 +1035,7 @@ function lookupSpecifierMapping(
   imports: Record<string, string>,
   specifier: string,
 ): string | null {
-  if (Object.prototype.hasOwnProperty.call(imports, specifier)) {
+  if (Object.hasOwn(imports, specifier)) {
     const exact = imports[specifier];
     if (typeof exact === "string") return exact;
   }
@@ -1303,7 +1346,7 @@ function bundledWorkerImportTarget(options: {
     if (importMap === null) rejectUnvalidatedWorkerImport(specifier);
     return null;
   }
-  if (REMOTE_URL_SPECIFIER.test(specifier)) return null;
+  if (REMOTE_URL_SPECIFIER.test(specifier)) return rejectRemoteWorkerImport(specifier);
   return rejectUnvalidatedWorkerImport(specifier);
 }
 
@@ -1329,8 +1372,18 @@ function validatedWorkerImportTarget(options: {
   }
   if (canDirectImportSpecifier(target)) return null;
   validateModuleSpecifierHosts([target], allowedHosts);
-  if (REMOTE_URL_SPECIFIER.test(target)) return null;
+  if (REMOTE_URL_SPECIFIER.test(target)) return rejectRemoteWorkerImport(originalSpecifier);
   return rejectUnvalidatedWorkerImport(originalSpecifier);
+}
+
+function rejectRemoteWorkerImport(specifier: string): never {
+  throw toError(
+    createError({
+      type: "api",
+      message:
+        `[API] handler build failed: Worker remote import cannot be validated transitively: ${specifier}`,
+    }),
+  );
 }
 
 function rejectUnvalidatedWorkerImport(specifier: string): never {
