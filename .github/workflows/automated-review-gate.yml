@@ -25,6 +25,7 @@ jobs:
        (github.event.workflow_run.event == 'pull_request_review' &&
         github.event.workflow_run.conclusion == 'success'))
     permissions:
+      contents: read
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -32,6 +33,10 @@ jobs:
       key: ${{ steps.resolve.outputs.result }}
       pull_number: ${{ steps.resolve.outputs.pull-number }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Resolve the current head commit
         id: resolve
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -39,29 +44,26 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
+            const { pathToFileURL } = require("node:url");
+            const gateUrl = pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
+            ).href;
+            let matchesReviewWakeupPullRequest;
+            let parseReviewWakeupRun;
+            try {
+              ({
+                matchesReviewWakeupPullRequest,
+                parseReviewWakeupRun,
+              } = await import(gateUrl));
+            } catch (error) {
+              core.setFailed(`Could not load the review target resolver: ${error}`);
+              return `run-${context.runId}`;
+            }
             const workflowRun = context.payload.workflow_run;
-            let workflowPullNumber;
+            let wakeupSignal;
             if (context.eventName === "workflow_run") {
-              const trustedPath =
-                ".github/workflows/automated-review-wakeup.yml";
-              const runIsTrusted =
-                (workflowRun?.path === trustedPath ||
-                  workflowRun?.path?.startsWith(`${trustedPath}@`)) &&
-                workflowRun.event === "pull_request_review" &&
-                workflowRun?.conclusion === "success" &&
-                Number.isSafeInteger(workflowRun?.id) &&
-                workflowRun.id > 0;
-              const titleMatch =
-                /^automated-review-wakeup-pr-([1-9][0-9]*)$/.exec(
-                  workflowRun?.display_title ?? "",
-                );
-              workflowPullNumber = titleMatch
-                ? Number(titleMatch[1])
-                : undefined;
-              if (
-                !runIsTrusted ||
-                !Number.isSafeInteger(workflowPullNumber)
-              ) {
+              wakeupSignal = parseReviewWakeupRun(workflowRun);
+              if (!wakeupSignal) {
                 core.setFailed("Could not validate the review wakeup run");
                 return `run-${context.runId}`;
               }
@@ -75,24 +77,39 @@ jobs:
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
-                : workflowPullNumber);
+                : wakeupSignal?.pullNumber);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed("Could not resolve a valid pull request number");
               return `run-${context.runId}`;
             }
-            core.setOutput("pull-number", String(pullNumber));
-            if (!headSha && pullNumber) {
+            let pullRequest;
+            if (!headSha || wakeupSignal) {
               const response = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pullNumber,
               });
-              headSha = response.data.head.sha;
+              pullRequest = response.data;
+              headSha = pullRequest.head.sha;
+            }
+            if (
+              wakeupSignal &&
+              !matchesReviewWakeupPullRequest(
+                wakeupSignal,
+                pullRequest,
+                context.payload.repository,
+              )
+            ) {
+              core.setFailed(
+                "Review wakeup metadata does not match the pull request",
+              );
+              return `run-${context.runId}`;
             }
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
               return `run-${context.runId}`;
             }
+            core.setOutput("pull-number", String(pullNumber));
             return headSha;
 
   review:

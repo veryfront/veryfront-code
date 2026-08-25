@@ -17,6 +17,55 @@ const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 
+const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
+
+/** Parse immutable PR identity carried by a trusted review wakeup run. */
+export function parseReviewWakeupRun(run) {
+  const path = typeof run?.path === "string" ? run.path : "";
+  const trustedPath = path === REVIEW_WAKEUP_PATH ||
+    path.startsWith(`${REVIEW_WAKEUP_PATH}@`);
+  const displayTitle = typeof run?.display_title === "string"
+    ? run.display_title
+    : "";
+  const titleMatch = /^automated-review-wakeup-pr-([1-9][0-9]*)$/.exec(
+    displayTitle,
+  );
+  const pullNumber = titleMatch ? Number(titleMatch[1]) : undefined;
+  const headRepositoryId = run?.head_repository?.id;
+  if (
+    !trustedPath ||
+    run?.event !== "pull_request_review" ||
+    run?.conclusion !== "success" ||
+    !Number.isSafeInteger(run?.id) ||
+    run.id < 1 ||
+    !Number.isSafeInteger(pullNumber) ||
+    !Number.isSafeInteger(headRepositoryId) ||
+    headRepositoryId < 1 ||
+    typeof run?.head_branch !== "string" ||
+    run.head_branch.length === 0 ||
+    typeof run?.head_sha !== "string" ||
+    !FULL_SHA.test(run.head_sha)
+  ) return undefined;
+  return {
+    pullNumber,
+    headBranch: run.head_branch,
+    headSha: run.head_sha.toLowerCase(),
+    headRepositoryId,
+  };
+}
+
+/** Bind a parsed wakeup to one current PR before granting write authority. */
+export function matchesReviewWakeupPullRequest(signal, pullRequest, repository) {
+  return pullRequest?.number === signal?.pullNumber &&
+    pullRequest?.state === "open" &&
+    pullRequest?.head?.ref === signal?.headBranch &&
+    typeof pullRequest?.head?.sha === "string" &&
+    pullRequest.head.sha.toLowerCase() === signal?.headSha &&
+    pullRequest?.head?.repo?.id === signal?.headRepositoryId &&
+    pullRequest?.base?.ref === repository?.default_branch &&
+    pullRequest?.base?.repo?.id === repository?.id;
+}
+
 function isPinnedBot(user, login) {
   return user?.login === login &&
     user?.id === BOTS.get(login) &&

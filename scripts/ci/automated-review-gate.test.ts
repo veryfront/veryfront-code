@@ -7,7 +7,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   findAutomatedReview,
+  matchesReviewWakeupPullRequest,
   parseMergeQueuePullNumber,
+  parseReviewWakeupRun,
   publishAutomatedReviewStatus,
   publishMergeGroupReviewStatus,
   requestAutomatedReview,
@@ -883,6 +885,104 @@ describe("automated review request", () => {
   });
 });
 
+describe("review wakeup identity", () => {
+  const wakeupRun = (overrides: Record<string, unknown> = {}) => ({
+    id: 42,
+    path: ".github/workflows/automated-review-wakeup.yml@main",
+    event: "pull_request_review",
+    conclusion: "success",
+    display_title: "automated-review-wakeup-pr-123",
+    head_branch: "contributor-branch",
+    head_sha: HEAD,
+    head_repository: { id: 77 },
+    ...overrides,
+  });
+  const pullRequest = (overrides: Record<string, unknown> = {}) => ({
+    number: 123,
+    state: "open",
+    head: {
+      ref: "contributor-branch",
+      sha: HEAD,
+      repo: { id: 77 },
+    },
+    base: { ref: "main", repo: { id: 88 } },
+    ...overrides,
+  });
+  const repository = { id: 88, default_branch: "main" };
+
+  it("parses only a trusted completed wakeup run", () => {
+    assertEquals(parseReviewWakeupRun(wakeupRun()), {
+      pullNumber: 123,
+      headBranch: "contributor-branch",
+      headSha: HEAD,
+      headRepositoryId: 77,
+    });
+    for (
+      const candidate of [
+        wakeupRun({ path: ".github/workflows/untrusted.yml@main" }),
+        wakeupRun({ path: 42 }),
+        wakeupRun({ event: "pull_request" }),
+        wakeupRun({ conclusion: "failure" }),
+        wakeupRun({ id: 0 }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-0" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-123-extra" }),
+        wakeupRun({ display_title: 123 }),
+        wakeupRun({ head_repository: undefined }),
+        wakeupRun({ head_branch: "" }),
+        wakeupRun({ head_sha: OTHER_HEAD.slice(0, 39) }),
+      ]
+    ) {
+      assertEquals(parseReviewWakeupRun(candidate), undefined);
+    }
+  });
+
+  it("binds the title PR number to GitHub-owned head and base metadata", () => {
+    const signal = parseReviewWakeupRun(wakeupRun());
+    assert(signal);
+    assert(matchesReviewWakeupPullRequest(signal, pullRequest(), repository));
+    for (
+      const candidate of [
+        pullRequest({ number: 2 }),
+        pullRequest({ state: "closed" }),
+        pullRequest({
+          head: {
+            ref: "other-branch",
+            sha: HEAD,
+            repo: { id: 77 },
+          },
+        }),
+        pullRequest({
+          head: {
+            ref: "contributor-branch",
+            sha: OTHER_HEAD,
+            repo: { id: 77 },
+          },
+        }),
+        pullRequest({
+          head: {
+            ref: "contributor-branch",
+            sha: 123,
+            repo: { id: 77 },
+          },
+        }),
+        pullRequest({
+          head: {
+            ref: "contributor-branch",
+            sha: HEAD,
+            repo: { id: 78 },
+          },
+        }),
+        pullRequest({ base: { ref: "release", repo: { id: 88 } } }),
+        pullRequest({ base: { ref: "main", repo: { id: 89 } } }),
+      ]
+    ) {
+      assert(
+        !matchesReviewWakeupPullRequest(signal, candidate, repository),
+      );
+    }
+  });
+});
+
 describe("automated review workflow", () => {
   it("uses the tested gate from the trusted default branch", async () => {
     const workflow = record(
@@ -937,6 +1037,7 @@ describe("automated review workflow", () => {
       );
     }
     assertEquals(record(targetJob.permissions, "target permissions"), {
+      contents: "read",
       "pull-requests": "read",
     });
     assertEquals(
@@ -949,9 +1050,14 @@ describe("automated review workflow", () => {
     );
     const targetSteps = targetJob.steps;
     assert(Array.isArray(targetSteps));
+    const targetCheckout = record(targetSteps[0], "target checkout");
+    assertEquals(
+      record(targetCheckout.with, "target checkout inputs").ref,
+      "${{ github.event.repository.default_branch }}",
+    );
     const targetScript = String(
       record(
-        record(targetSteps[0], "target resolver").with,
+        record(targetSteps[1], "target resolver").with,
         "target resolver inputs",
       )
         .script,
@@ -961,10 +1067,8 @@ describe("automated review workflow", () => {
         "context.payload.sha",
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
-        "workflowRun?.display_title",
-        "workflowRun?.path",
-        ".github/workflows/automated-review-wakeup.yml",
-        "automated-review-wakeup-pr-",
+        "parseReviewWakeupRun",
+        "matchesReviewWakeupPullRequest",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
         'core.setOutput("pull-number"',
