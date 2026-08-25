@@ -44,7 +44,7 @@ const VALID_OIDC_AUTH = {
       roles: "roles",
     },
   },
-} as const;
+} satisfies AuthConfig;
 
 const VALID_TRUSTED_PROXY_AUTH = {
   trustedProxy: {
@@ -57,7 +57,7 @@ const VALID_TRUSTED_PROXY_AUTH = {
       roles: "x-auth-roles",
     },
   },
-} as const;
+} satisfies AuthConfig;
 
 describe("configSchema", () => {
   it("validates valid config", () => {

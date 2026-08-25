@@ -24,14 +24,14 @@ export interface OidcAuthConfig {
   clientIdEnvVar: string;
   clientSecretEnvVar: string;
   sessionSecretEnvVar: string;
-  scopes: string[];
+  scopes: readonly string[];
   claims?: {
     email?: string;
     name?: string;
     groups?: string;
     roles?: string;
   };
-  signingAlgorithms?: Array<
+  signingAlgorithms?: ReadonlyArray<
     | "RS256"
     | "RS384"
     | "RS512"
@@ -42,14 +42,14 @@ export interface OidcAuthConfig {
     | "ES384"
     | "ES512"
   >;
-  trustedEndpointOrigins?: string[];
+  trustedEndpointOrigins?: readonly string[];
   sessionTtlSeconds?: number;
   discoveryCacheTtlSeconds?: number;
   cookieName?: string;
 }
 
 export interface TrustedProxyAuthConfig {
-  trustedPeers: string[];
+  trustedPeers: readonly string[];
   headers: {
     subject: string;
     email?: string;
