@@ -203,7 +203,7 @@ jobs:
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
-          retention-days: 1
+          retention-days: 7
 
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}

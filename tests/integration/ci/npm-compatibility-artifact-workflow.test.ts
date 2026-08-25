@@ -90,6 +90,11 @@ describe("canonical npm artifact workflow", () => {
       "dist/npm-compatibility",
     );
     assertEquals(
+      asRecord(upload.with, "artifact upload inputs")["retention-days"],
+      7,
+      "The tested npm artifact must remain available through production approval",
+    );
+    assertEquals(
       asRecord(producer.outputs, "producer outputs").build_duration_seconds,
       "${{ steps.build.outputs.build_duration_seconds }}",
     );
