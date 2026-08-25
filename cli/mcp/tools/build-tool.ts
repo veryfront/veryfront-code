@@ -73,8 +73,8 @@ export const vfBuild: MCPTool<BuildInput, BuildResult> = {
   description: "Use this when you need to run a production build for the current project. " +
     "Bundles, optimises, and writes output to the dist directory. " +
     "Use dryRun=true to preview the build without writing files. " +
-    "Do not use for development — use the dev server tools instead. " +
-    "Do not use for lint checks — use vf_run_lint instead.",
+    "Do not use for development. Use the dev server tools instead. " +
+    "Do not use for lint checks. Use vf_run_lint instead.",
   inputSchema: buildInput,
   execute: (input) =>
     withSpan(

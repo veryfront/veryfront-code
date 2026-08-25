@@ -130,7 +130,7 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
   title: "Debug Context",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Returns project info and server mode. Do not use for error details — use vf_get_errors instead.",
+    "Use this when you need the dev server's debug context including project slug, environment, request context mode, and multi-project configuration. Returns project info and server mode. Do not use for error details. Use vf_get_errors instead.",
   inputSchema: getDebugContextInput,
   execute: (input) =>
     withSpan(
@@ -194,7 +194,7 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected — check vf_get_flywheel_status first.",
+    "Use this when you need to force an HMR update for a specific file path. Sends a WebSocket reload notification to connected browsers. Returns success status and active listener count. Do not use if no browser is connected. Check vf_get_flywheel_status first.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
@@ -254,7 +254,7 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   title: "Preview Route",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes — use vf_list_routes instead.",
+    "Use this when you need to test-render a route and inspect the response. Returns rendered output, HTTP status, and render time. Note: API routes may have side effects. Do not use for listing routes. Use vf_list_routes instead.",
   inputSchema: previewRouteInput,
   execute: (input) =>
     withSpan(
@@ -340,7 +340,7 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   title: "Wait for Ready",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to wait for the dev server to become ready after restart. Polls the health endpoint until responsive. Returns success status and elapsed time. Do not use for error counts or uptime — use vf_get_status instead.",
+    "Use this when you need to wait for the dev server to become ready after restart. Polls the health endpoint until responsive. Returns success status and elapsed time. Do not use for error counts or uptime. Use vf_get_status instead.",
   inputSchema: waitForReadyInput,
   execute: (input) =>
     withSpan(
@@ -433,7 +433,7 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
   title: "Flywheel Status",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Returns server status, error/log counts, and HMR metrics in one response. Do not use for detailed error or log content — use vf_get_errors or vf_get_logs instead.",
+    "Use this when you need a comprehensive status overview combining server health, error counts, and HMR statistics. Returns server status, error/log counts, and HMR metrics in one response. Do not use for detailed error or log content. Use vf_get_errors or vf_get_logs instead.",
   inputSchema: getFlywheelStatusInput,
   execute: (input) =>
     withSpan(

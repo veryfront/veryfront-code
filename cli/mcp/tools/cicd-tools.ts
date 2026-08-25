@@ -1,5 +1,5 @@
 /**
- * CI/CD MCP tools — placeholder
+ * CI/CD MCP tools placeholder
  *
  * These tools require backend API support that is not yet available.
  * They were previously registered as stubs returning "not_implemented",

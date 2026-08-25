@@ -39,6 +39,13 @@ describe("mcp/tools", () => {
       assertEquals(names.length, uniqueNames.size, "Tool names must be unique");
     });
 
+    it("uses ASCII punctuation in public tool copy", () => {
+      const publicCopy = JSON.stringify(
+        allTools.map(({ title, description }) => ({ title, description })),
+      );
+      assertEquals(/[\u2013\u2014]/.test(publicCopy), false);
+    });
+
     it("every tool has title and annotations", () => {
       for (const tool of allTools) {
         assertExists(tool.title, `Tool ${tool.name} missing title`);

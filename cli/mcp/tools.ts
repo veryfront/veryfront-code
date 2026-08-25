@@ -57,7 +57,7 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   title: "Get Errors",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to check for compilation, runtime, bundle, HMR, or module errors in the dev server. Returns error details including file path, line number, and message. Do not use for server logs — use vf_get_logs instead.",
+    "Use this when you need to check for compilation, runtime, bundle, HMR, or module errors in the dev server. Returns error details including file path, line number, and message. Do not use for server logs. Use vf_get_logs instead.",
   inputSchema: getErrorsInput,
   execute: async (input) => {
     const errors = getErrorCollector().getAll({
@@ -98,7 +98,7 @@ export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   title: "Get Logs",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to inspect server logs to understand runtime behavior or debug request handling. Returns log entries with timestamp, level, source, and message. Do not use for build/compile errors — use vf_get_errors instead.",
+    "Use this when you need to inspect server logs to understand runtime behavior or debug request handling. Returns log entries with timestamp, level, source, and message. Do not use for build/compile errors. Use vf_get_errors instead.",
   inputSchema: getLogsInput,
   execute: async (input) => {
     return getLogBuffer().query({
@@ -137,7 +137,7 @@ export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
     openWorldHint: false,
   },
   description:
-    "Use this when the dev server shows stale modules or MDX content. Returns the list of cleared cache directories. Do not use to fix code errors — those require code changes.",
+    "Use this when the dev server shows stale modules or MDX content. Returns the list of cleared cache directories. Do not use to fix code errors. Code errors require code changes.",
   inputSchema: clearCacheInput,
   execute: async (input) => {
     const fs = createFileSystem();
@@ -181,7 +181,7 @@ export function createVfGetStatus(
     title: "Server Status",
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     description:
-      "Use this when you need a quick summary of the dev server's uptime, error counts, and warning counts. Note: always reports running=true when the MCP server is reachable. Do not use for detailed error info — use vf_get_errors instead.",
+      "Use this when you need a quick summary of the dev server's uptime, error counts, and warning counts. Note: always reports running=true when the MCP server is reachable. Do not use for detailed error info. Use vf_get_errors instead.",
     inputSchema: getStatusInput,
     execute: async () => {
       const errors = getErrorCollector();
@@ -232,7 +232,7 @@ export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
     openWorldHint: false,
   },
   description:
-    "Use this when you need to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors. Do not use for viewing errors — use vf_get_errors instead.",
+    "Use this when you need to clear accumulated errors from the error collector, optionally filtering by file or type. Returns the number of cleared errors. Do not use for viewing errors. Use vf_get_errors instead.",
   inputSchema: clearErrorsInput,
   execute: async (input) => {
     const collector = getErrorCollector();

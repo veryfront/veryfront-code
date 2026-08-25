@@ -242,7 +242,7 @@ export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
   title: "List Examples",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to browse example projects that demonstrate Veryfront features and integrations. Returns an array of example info with name, description, and category. Do not use for project templates — use vf_list_templates instead.",
+    "Use this when you need to browse example projects that demonstrate Veryfront features and integrations. Returns an array of example info with name, description, and category. Do not use for project templates. Use vf_list_templates instead.",
   inputSchema: listExamplesInput,
   execute: () => Promise.resolve(EXAMPLES),
 };
@@ -261,7 +261,7 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
   title: "List Templates",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true }, // openWorldHint: templates come from remote catalog API
   description:
-    "Use this when you need to list available project templates for creating new projects. Returns an array of template info with name and description. Do not use for example projects — use vf_list_examples instead.",
+    "Use this when you need to list available project templates for creating new projects. Returns an array of template info with name and description. Do not use for example projects. Use vf_list_examples instead.",
   inputSchema: listTemplatesInput,
   execute: () => Promise.resolve(TEMPLATES),
 };
@@ -301,7 +301,7 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
   title: "List Integrations",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to list available service integrations (Gmail, Slack, GitHub, etc.) that can be added to AI projects. Returns an array of integration info with name, category, and description. Do not use for adding integrations to a project — use vf_create_project with the integrations parameter instead.",
+    "Use this when you need to list available service integrations (Gmail, Slack, GitHub, etc.) that can be added to AI projects. Returns an array of integration info with name, category, and description. Do not use for adding integrations to a project. Use vf_create_project with the integrations parameter instead.",
   inputSchema: listIntegrationsInput,
   execute: (input) => {
     const { category } = input;
@@ -325,7 +325,7 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
   title: "List Use Cases",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Use this when you need to browse pre-configured use-case templates with recommended integrations and UI layouts. Returns an array of use-case info with name, integrations, and layout. Do not use for raw templates — use vf_list_templates instead.",
+    "Use this when you need to browse pre-configured use-case templates with recommended integrations and UI layouts. Returns an array of use-case info with name, integrations, and layout. Do not use for raw templates. Use vf_list_templates instead.",
   inputSchema: listUsecasesInput,
   execute: () => Promise.resolve(USECASES),
 };
@@ -384,7 +384,7 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
   title: "Create Project",
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
-    "Use this when you need to create a new Veryfront project from a template. Returns the project directory and next steps. Do not use for scaffolding individual files — use vf_scaffold instead.",
+    "Use this when you need to create a new Veryfront project from a template. Returns the project directory and next steps. Do not use for scaffolding individual files. Use vf_scaffold instead.",
   inputSchema: createProjectInput,
   execute: (input) =>
     withSpan(
