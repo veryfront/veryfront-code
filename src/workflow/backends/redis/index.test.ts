@@ -1011,9 +1011,7 @@ describe("RedisBackend", () => {
           nodeId: "review",
           message: "Please review",
           requestedAt: "2025-01-02T00:00:00.000Z",
-          status: "approved",
-          decidedAt: "2025-01-02T00:00:01.000Z",
-          decidedBy: "admin",
+          status: "pending",
         }),
       );
       await backend.updateRun(run.id, { status: "running" });
@@ -1079,6 +1077,49 @@ describe("RedisBackend", () => {
       try {
         assertEquals(await events.next(), {
           value: { type: "run.status", runId: run.id, status: "completed" },
+          done: false,
+        });
+      } finally {
+        await observation.close();
+      }
+    });
+
+    it("does not project decided legacy approvals as pending events", async () => {
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-legacy-approval-decided", { status: "waiting" });
+      await backend.createRun(run);
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+
+      await mockRedis.rpush(
+        "test:schema-v1:approvals:run-legacy-approval-decided",
+        JSON.stringify({
+          id: "apr-legacy-approved",
+          nodeId: "review",
+          message: "Approved",
+          requestedAt: "2025-01-02T00:00:00.000Z",
+          status: "approved",
+          decidedAt: "2025-01-02T00:00:01.000Z",
+          decidedBy: "admin",
+        }),
+        JSON.stringify({
+          id: "apr-legacy-rejected",
+          nodeId: "review",
+          message: "Rejected",
+          requestedAt: "2025-01-02T00:00:00.000Z",
+          status: "rejected",
+          decidedAt: "2025-01-02T00:00:01.000Z",
+          decidedBy: "admin",
+        }),
+      );
+      await backend.updateRun(run.id, { status: "running" });
+
+      const events = deriveWorkflowRunEventObservation(observation).events[
+        Symbol.asyncIterator
+      ]();
+      try {
+        assertEquals(await events.next(), {
+          value: { type: "run.status", runId: run.id, status: "running" },
           done: false,
         });
       } finally {
