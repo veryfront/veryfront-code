@@ -480,6 +480,48 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       }
     });
 
+    it("fails the load when a line continuation precedes a relative path", async () => {
+      // `\\.` cannot consume a backslash-newline pair, so an escape scan built
+      // on it would stop inside the first string and pair its closing quote
+      // with the import's opening one.
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode = `/* reject-configured-lexer */ const s = "a\\\nb"; import "./dep.js";`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
+
+      try {
+        await assertRejects(
+          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
+          Error,
+          "./dep.js",
+          "a line continuation must not desynchronise the fallback scan",
+        );
+        assertEquals(
+          files.size,
+          0,
+          "no artifact may be written for a specifier hidden behind a line continuation",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
+    });
+
     it("still accepts an unlexable module whose specifiers are all absolute", async () => {
       // The companion to the case above: a lexer failure is not fatal by
       // itself, only a lexer failure that leaves a specifier resolving against

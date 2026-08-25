@@ -80,10 +80,15 @@ export async function rewriteEsmPaths(code: string, urlBase: string): Promise<st
     // The three alternatives are the three JS string forms, each matched
     // escape-aware: an earlier `"a\"b"` would otherwise pair its escaped quote
     // with the next real one and walk the scan out of phase, hiding every
-    // specifier after it. Within each alternative the character class and the
+    // specifier after it. The escape pair is `\\[\s\S]` rather than `\\.` so that
+    // a line continuation - a backslash before a real newline - is consumed
+    // too; `.` stops at a newline and would desynchronise the scan the same
+    // way. An unescaped newline still terminates a quoted string, because the
+    // character class excludes it. Within each alternative that class and the
     // escape pair are disjoint, so the scan cannot backtrack. Declared inside
     // the handler so `lastIndex` cannot leak between calls.
-    const stringLiteral = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
+    const stringLiteral =
+      /"((?:[^"\\\n]|\\[\s\S])*)"|'((?:[^'\\\n]|\\[\s\S])*)'|`((?:[^`\\]|\\[\s\S])*)`/g;
     for (let match = stringLiteral.exec(code); match; match = stringLiteral.exec(code)) {
       const specifier = match[1] ?? match[2] ?? match[3];
       if (specifier === undefined || !needsEsmRewrite(specifier)) continue;
