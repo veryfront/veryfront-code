@@ -1096,15 +1096,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/1/indexes",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
-            "required": true,
-          },
           "page": {
             "type": "number",
             "in": "query",
@@ -1131,15 +1124,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/query",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
-            "required": true,
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -1176,15 +1162,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/browse",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/browse",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
-            "required": true,
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -1215,15 +1194,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/1/indexes/{indexName}/{objectID}",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/{objectID}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
-            "required": true,
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -1250,15 +1222,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/batch",
+        "url": "https://{{env.ALGOLIA_APP_ID}}.algolia.net/1/indexes/{indexName}/batch",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              'Algolia host built from your application ID: pass "<ALGOLIA_APP_ID>-dsn.algolia.net", e.g. B1G2GM9NG0-dsn.algolia.net',
-            "required": true,
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -1306,7 +1271,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 3,
         "title": "Note your host",
         "description":
-          "Tools take a 'host' parameter: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\" (your application ID followed by -dsn.algolia.net).",
+          "Veryfront derives the Algolia API hostname from ALGOLIA_APP_ID. Tool callers cannot override it.",
       }, {
         "step": 4,
         "title": "Verify access",
@@ -48070,6 +48035,12 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started",
+    }, {
+      "name": "SEGMENT_API_HOST",
+      "description": "Segment Public API host for your workspace region",
+      "required": false,
+      "sensitive": false,
+      "default": "api.segmentapis.com",
     }],
     "tools": [{
       "id": "segment__list_sources",
@@ -48078,15 +48049,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/sources",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host: api.segmentapis.com (US, default) or eu1.api.segmentapis.com (EU workspaces)",
-            "default": "api.segmentapis.com",
-          },
           "count": {
             "type": "number",
             "in": "query",
@@ -48126,15 +48090,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/sources/{sourceId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources/{sourceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
           "sourceId": {
             "type": "string",
             "in": "path",
@@ -48151,16 +48108,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/sources",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
-        },
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources",
+        "params": {},
         "body": {
           "slug": {
             "type": "string",
@@ -48191,15 +48140,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{host}/sources/{sourceId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources/{sourceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
           "sourceId": {
             "type": "string",
             "in": "path",
@@ -48222,15 +48164,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/destinations",
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
           "count": {
             "type": "number",
             "in": "query",
@@ -48265,15 +48200,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/destinations/{destinationId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations/{destinationId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
           "destinationId": {
             "type": "string",
             "in": "path",
@@ -48290,16 +48218,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/destinations",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description":
-              "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com",
-          },
-        },
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations",
+        "params": {},
         "body": {
           "sourceId": {
             "type": "string",
@@ -48360,11 +48280,11 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Verify access",
         "description":
-          "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call.",
+          "Run List Sources. EU-hosted workspaces must set SEGMENT_API_HOST=eu1.api.segmentapis.com in their environment.",
       }],
       "notes": [
         "The Public API authenticates with 'Authorization: Bearer <token>'",
-        "US workspaces use api.segmentapis.com (the default); EU workspaces use eu1.api.segmentapis.com via the host parameter",
+        "US workspaces use api.segmentapis.com (the default); EU workspaces set the SEGMENT_API_HOST environment variable to eu1.api.segmentapis.com",
         "Creating sources/destinations needs a catalog metadataId from the /catalog endpoints",
       ],
       "documentation": "https://docs.segmentapis.com/",

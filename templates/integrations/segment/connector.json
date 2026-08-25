@@ -22,6 +22,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://docs.segmentapis.com/tag/Getting-Started"
+    },
+    {
+      "name": "SEGMENT_API_HOST",
+      "description": "Segment Public API host for your workspace region",
+      "required": false,
+      "sensitive": false,
+      "default": "api.segmentapis.com"
     }
   ],
   "tools": [
@@ -32,14 +39,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/sources",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host: api.segmentapis.com (US, default) or eu1.api.segmentapis.com (EU workspaces)",
-            "default": "api.segmentapis.com"
-          },
           "count": {
             "type": "number",
             "in": "query",
@@ -101,14 +102,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/sources/{sourceId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources/{sourceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          },
           "sourceId": {
             "type": "string",
             "in": "path",
@@ -128,15 +123,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/sources",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          }
-        },
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources",
+        "params": {},
         "body": {
           "slug": {
             "type": "string",
@@ -170,14 +158,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{host}/sources/{sourceId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/sources/{sourceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          },
           "sourceId": {
             "type": "string",
             "in": "path",
@@ -215,14 +197,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/destinations",
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          },
           "count": {
             "type": "number",
             "in": "query",
@@ -281,14 +257,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/destinations/{destinationId}",
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations/{destinationId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          },
           "destinationId": {
             "type": "string",
             "in": "path",
@@ -308,15 +278,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/destinations",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Segment Public API host (api.segmentapis.com or eu1.api.segmentapis.com)",
-            "default": "api.segmentapis.com"
-          }
-        },
+        "url": "https://{{env.SEGMENT_API_HOST}}/destinations",
+        "params": {},
         "body": {
           "sourceId": {
             "type": "string",
@@ -380,7 +343,7 @@
       {
         "step": 2,
         "title": "Create a Public API token",
-        "description": "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once."
+        "description": "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token \u2014 it is shown only once."
       },
       {
         "step": 3,
@@ -390,12 +353,12 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call."
+        "description": "Run List Sources. EU-hosted workspaces must set SEGMENT_API_HOST=eu1.api.segmentapis.com in their environment."
       }
     ],
     "notes": [
       "The Public API authenticates with 'Authorization: Bearer <token>'",
-      "US workspaces use api.segmentapis.com (the default); EU workspaces use eu1.api.segmentapis.com via the host parameter",
+      "US workspaces use api.segmentapis.com (the default); EU workspaces set the SEGMENT_API_HOST environment variable to eu1.api.segmentapis.com",
       "Creating sources/destinations needs a catalog metadataId from the /catalog endpoints"
     ],
     "documentation": "https://docs.segmentapis.com/"

@@ -1321,6 +1321,41 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("does not allow tool arguments to control endpoint authorities", () => {
+    for (const connectorName of ["algolia", "segment"]) {
+      const connector = getConnector(connectorName);
+      for (const tool of connector.tools) {
+        const url = tool.endpoint?.url;
+        if (!url) continue;
+
+        // Parse the authority scheme-independently so URLs that deviate from
+        // the trusted https:// form (e.g. http://{host}/) fail instead of
+        // silently skipping the placeholder check.
+        const authorityMatch = url.match(/^([a-z][a-z0-9+.-]*):\/\/([^/]+)/i);
+        assertExists(
+          authorityMatch,
+          `${connector.name}:${
+            tool.id ?? tool.name
+          } endpoint URL has no parseable authority: ${url}`,
+        );
+        const [, scheme, authority] = authorityMatch;
+        assertEquals(
+          scheme,
+          "https",
+          `${connector.name}:${tool.id ?? tool.name} endpoint URL must use https: ${url}`,
+        );
+        const callerControlledPlaceholder = authority!.match(/(?<!\{)\{([A-Za-z0-9_$.-]+)\}(?!\})/);
+        assertEquals(
+          callerControlledPlaceholder,
+          null,
+          `${connector.name}:${
+            tool.id ?? tool.name
+          } lets a tool argument control its endpoint authority`,
+        );
+      }
+    }
+  });
+
   it("keeps endpoint path params aligned with URL placeholders", () => {
     const oauthMetadataTemplate =
       /{{\s*(?:oauth\.raw\.[A-Za-z0-9_.-]+|auth\.token|env\.[A-Za-z0-9_]+)\s*}}/g;
