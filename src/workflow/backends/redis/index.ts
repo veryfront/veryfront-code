@@ -1784,7 +1784,8 @@ export class RedisBackend implements WorkflowBackend {
             // revisions. Compare every retained id before consuming a queued
             // batch, while the last observed run state is still waiting. A
             // decided record is included once when it first appears so a fast
-            // legacy decision cannot erase the preceding pending transition.
+            // legacy decision cannot erase the preceding pending transition,
+            // even when a queued pending-only projection already names it.
             if (lastObservedState.status === "waiting") {
               let approvals: PendingApproval[];
               const journaledApprovalIds = new Set<string>();
@@ -1801,7 +1802,7 @@ export class RedisBackend implements WorkflowBackend {
               }
               const unseen = approvals.filter((approval) =>
                 !observedApprovalIds.has(approval.id) &&
-                !journaledApprovalIds.has(approval.id)
+                (approval.status !== "pending" || !journaledApprovalIds.has(approval.id))
               );
               if (unseen.length > 0) {
                 for (const approval of unseen) observedApprovalIds.add(approval.id);
