@@ -121,6 +121,8 @@ function createCompletedDurableRunCanaryApiClient(
   };
 }
 
+const NODE_TIMER_EARLY_FIRE_MS = 1;
+
 describe("eval/agent-service hardening", () => {
   it("does not let explicit case ids bypass write authorization", () => {
     const readCase = createLiveCase("read");
@@ -1106,9 +1108,9 @@ describe("eval/agent-service hardening", () => {
       "the canary polls once for running state and once for the deadline-bounded pending request",
     );
     assertEquals(
-      result.durationMs >= requestTimeoutMs,
+      result.durationMs >= requestTimeoutMs - NODE_TIMER_EARLY_FIRE_MS,
       true,
-      "the canary waits out the configured terminal-poll deadline",
+      `the canary waits out the configured terminal-poll deadline, took ${result.durationMs}ms`,
     );
   });
 
