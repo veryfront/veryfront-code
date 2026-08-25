@@ -19,6 +19,7 @@ export interface BearerAuthConfig {
   token: string;
 }
 
+/** OpenID Connect authentication configured through environment-backed credentials. */
 export interface OidcAuthConfig {
   issuerEnvVar: string;
   clientIdEnvVar: string;
@@ -48,6 +49,7 @@ export interface OidcAuthConfig {
   cookieName?: string;
 }
 
+/** Identity headers accepted from explicitly trusted reverse-proxy peers. */
 export interface TrustedProxyAuthConfig {
   trustedPeers: readonly string[];
   headers: {
@@ -59,6 +61,7 @@ export interface TrustedProxyAuthConfig {
   };
 }
 
+/** One supported application authentication mode. */
 export type AuthConfig =
   | {
     basic: BasicAuthConfig;

@@ -746,7 +746,7 @@ describe("security/application-auth OIDC ID tokens", () => {
         ],
         [{ issuer: "" }, "OIDC ID token verifier issuer must be a bounded non-empty string"],
         [
-          { issuer: "https://issuer.example.com/" + "i".repeat(2_049) },
+          { issuer: "i".repeat(2_049) },
           "OIDC ID token verifier issuer must be a bounded non-empty string",
         ],
         [{ clientId: "" }, "OIDC ID token verifier client ID must be a bounded non-empty string"],
