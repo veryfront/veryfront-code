@@ -1364,6 +1364,32 @@ describe("css-strip plugin", () => {
     );
   });
 
+  it("retains semicolonless class fields after direct object-literal heritage", async () => {
+    const ctx = createContext(
+      `const unused = () => { class C extends {} { class\nextends = {} / 2 } return C; }; import styles /* from "./decoy.module.css" */ from "./Button.module.css"; export const cls = styles.container; export { unused };`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
+    assertEquals(typeof namespace.unused, "function");
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("retains direct object-literal heritage inside a template expression", async () => {
+    const ctx = createContext(
+      'const unused = () => `${class extends {} { class\nextends = {} / 2 }}`; import styles /* from "./decoy.module.css" */ from "./Button.module.css"; export const cls = styles.container; export { unused };',
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
+    assertEquals(typeof namespace.unused, "function");
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("masks comment quotes after division following a function expression", () => {
     const { masked } = __maskCommentQuotesForModuleLexer(
       `const ratio = function() {} / 2; import styles /* from "./decoy.module.css" */ from "./Button.module.css";`,
