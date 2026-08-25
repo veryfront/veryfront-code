@@ -7998,6 +7998,43 @@ describe("semantic audit task wiring", () => {
     );
   });
 
+  it("rejects a merge base that predates an inventory present on the source ref", async () => {
+    const mergeBase = "5c2d0f2c9a8e7d6c5b4a39281706f5e4d3c2b1a0";
+    const sourceRef = "refs/heads/divergent";
+    const migrationPath = "scripts/test/test-semantic-audit-migration.ts";
+    const git = recordingGit((args) => {
+      if (args[0] === "merge-base") {
+        return { ok: true, stdout: `${mergeBase}\n`, stderr: "" };
+      }
+      if (args.at(-1) === `${mergeBase}^{commit}`) {
+        return { ok: true, stdout: "", stderr: "" };
+      }
+      if (args.at(-1) === `${mergeBase}:${migrationPath}`) {
+        return { ok: false, stdout: "", stderr: "missing at merge base" };
+      }
+      if (args.at(-1) === `${sourceRef}:${migrationPath}`) {
+        return { ok: true, stdout: "", stderr: "" };
+      }
+      return {
+        ok: false,
+        stdout: "",
+        stderr: `unexpected git call: ${args.join(" ")}`,
+      };
+    });
+
+    const baseline = await resolveSemanticBaselineFromGit({
+      configuredRef: sourceRef,
+      git: git.run,
+    });
+
+    assertEquals(baseline.kind, "malformed");
+    if (baseline.kind !== "malformed") return;
+    assertEquals(
+      baseline.reason,
+      `normalized baseline ${mergeBase} predates the semantic audit inventory present at ${sourceRef}`,
+    );
+  });
+
   it("fails loudly when the local baseline has no merge-base", async () => {
     const git = recordingGit(() => ({
       ok: false,

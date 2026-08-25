@@ -102,9 +102,11 @@ export async function resolveSemanticBaselineFromGit(
   options: SemanticBaselineFromGitOptions = {},
 ): Promise<SemanticDispositionBaseline> {
   const git = options.git ?? runGit;
+  const configuredRef = options.configuredRef ??
+    Deno.env.get("TEST_SEMANTIC_AUDIT_BASE_REF") ?? undefined;
+  const sourceRef = configuredRef?.trim() || "origin/main";
   const ref = await resolveSemanticAuditBaselineRef({
-    configuredRef: options.configuredRef ??
-      Deno.env.get("TEST_SEMANTIC_AUDIT_BASE_REF") ?? undefined,
+    configuredRef,
     git,
   });
   const commitCheck = await git(["cat-file", "-e", `${ref}^{commit}`]);
@@ -120,7 +122,22 @@ export async function resolveSemanticBaselineFromGit(
     "-e",
     `${ref}:${MIGRATION_FILE_PATH}`,
   ]);
-  if (!fileCheck.ok) return { kind: "missing", ref };
+  if (!fileCheck.ok) {
+    const sourceFileCheck = await git([
+      "cat-file",
+      "-e",
+      `${sourceRef}:${MIGRATION_FILE_PATH}`,
+    ]);
+    if (sourceFileCheck.ok) {
+      return {
+        kind: "malformed",
+        ref,
+        reason:
+          `normalized baseline ${ref} predates the semantic audit inventory present at ${sourceRef}`,
+      };
+    }
+    return { kind: "missing", ref };
+  }
   const source = await git(["show", `${ref}:${MIGRATION_FILE_PATH}`]);
   if (!source.ok) {
     return {
