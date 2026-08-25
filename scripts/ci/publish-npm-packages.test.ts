@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
