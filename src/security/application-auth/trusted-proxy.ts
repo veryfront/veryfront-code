@@ -39,6 +39,8 @@ const regexpExec = RegExp.prototype.exec;
 const regexpTest = RegExp.prototype.test;
 const setAdd = NativeSet.prototype.add;
 const setHas = NativeSet.prototype.has;
+const weakSetAdd = NativeWeakSet.prototype.add;
+const weakSetHas = NativeWeakSet.prototype.has;
 const rawRequestHeadersGetter = getOwnPropertyDescriptor(
   NativeRequest.prototype,
   "headers",
@@ -84,11 +86,11 @@ export interface TrustedProxyApplicationAuthRuntimeOptions {
 }
 
 export function markTrustedProxyApplicationAuthAdmittedRequest(request: Request): void {
-  admittedTrustedProxyRequests.add(request);
+  apply(weakSetAdd, admittedTrustedProxyRequests, [request]);
 }
 
 export function isTrustedProxyApplicationAuthAdmittedRequest(request: Request): boolean {
-  return admittedTrustedProxyRequests.has(request);
+  return apply(weakSetHas, admittedTrustedProxyRequests, [request]) as boolean;
 }
 
 interface TrustedProxyConfigSnapshot {

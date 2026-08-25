@@ -326,6 +326,10 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
           dependencies?: Readonly<Record<string, string>>;
           requestUrl?: string;
           requestPinHeader?: string | null;
+          requestAuthEmailHeader?: string | null;
+          requestAuthSubjectHeader?: string | null;
+          requestForwardedHostHeader?: string | null;
+          requestUnrelatedHeader?: string | null;
           url?: string;
         }
         | undefined;
@@ -338,6 +342,10 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
             requestPinHeader: options?.request?.headers.get(
               "x-veryfront-dependency-pins",
             ),
+            requestAuthEmailHeader: options?.request?.headers.get("x-auth-email"),
+            requestAuthSubjectHeader: options?.request?.headers.get("x-auth-subject"),
+            requestForwardedHostHeader: options?.request?.headers.get("x-forwarded-host"),
+            requestUnrelatedHeader: options?.request?.headers.get("x-unrelated"),
             url: options?.url?.href,
           };
           return Promise.resolve(createPageData(slug, 1));
@@ -350,10 +358,17 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
           {
             headers: {
               "x-veryfront-dependency-pins": snapshotA.cacheKey,
+              "X-Auth-Email": "forged-email@example.test",
+              "x-auth-subject": "forged-user",
+              "x-forwarded-host": "internal-proxy.example",
+              "x-unrelated": "kept",
             },
           },
         ),
-        makeCtx({ projectDir }),
+        makeCtx({
+          projectDir,
+          applicationIdentityHeaderNames: ["x-auth-subject", "X-Auth-Email"],
+        }),
       );
       const body = await response.json();
 
@@ -362,6 +377,10 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       assertEquals(observed?.cacheKey, snapshotA.cacheKey);
       assertEquals(observed?.dependencies?.example, "1.0.0");
       assertEquals(observed?.requestPinHeader, null);
+      assertEquals(observed?.requestAuthEmailHeader, null);
+      assertEquals(observed?.requestAuthSubjectHeader, null);
+      assertEquals(observed?.requestForwardedHostHeader, null);
+      assertEquals(observed?.requestUnrelatedHeader, "kept");
       assertEquals(
         response.headers.get("x-veryfront-dependency-pins"),
         snapshotA.cacheKey,
@@ -384,6 +403,60 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
       clearReactVersionCache();
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not pass the original host Request to page data when no snapshot is requested", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let observedRequest: Request | undefined;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((slug, _ctx, options) => {
+          observedRequest = options?.request;
+          return Promise.resolve(createPageData(slug, 1));
+        }),
+      );
+      const hostRequest = new Request(
+        "http://localhost/_veryfront/page-data/index.json?visible=yes",
+        {
+          headers: {
+            authorization: "Bearer application-token",
+            cookie: "session=application-cookie",
+            "proxy-authorization": "Basic infrastructure-proxy-token",
+            "x-forwarded-host": "internal-proxy.example",
+            "X-Auth-Email": "forged-email@example.test",
+            "x-auth-subject": "forged-user",
+            "x-project-id": "infrastructure-project",
+            "x-unrelated": "kept",
+            "x-token": "platform-service-token",
+          },
+        },
+      );
+
+      const response = await callPageDataEndpoint(
+        hostRequest,
+        makeCtx({
+          applicationIdentityHeaderNames: ["x-auth-subject", "X-Auth-Email"],
+        }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(observedRequest === hostRequest, false);
+      assertEquals(observedRequest?.headers.get("authorization"), "Bearer application-token");
+      assertEquals(observedRequest?.headers.get("cookie"), "session=application-cookie");
+      assertEquals(observedRequest?.headers.get("x-unrelated"), "kept");
+      assertEquals(observedRequest?.headers.get("proxy-authorization"), null);
+      assertEquals(observedRequest?.headers.get("x-forwarded-host"), null);
+      assertEquals(observedRequest?.headers.get("x-auth-email"), null);
+      assertEquals(observedRequest?.headers.get("x-auth-subject"), null);
+      assertEquals(observedRequest?.headers.get("x-project-id"), null);
+      assertEquals(observedRequest?.headers.get("x-token"), null);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
     }
   });
 
@@ -691,9 +764,8 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
 
     setRendererInitializer(
       createInitializer(async (slug, _ctx, options) => {
-        const producer = options?.request?.headers.get("x-veryfront-prefetch") === "1"
-          ? "prefetch"
-          : "foreground";
+        assertEquals(options?.request?.headers.get("x-veryfront-prefetch"), null);
+        const producer = producers.length === 0 ? "prefetch" : "foreground";
         producers.push(producer);
         if (producers.length === 1) {
           prefetchStarted.resolve();

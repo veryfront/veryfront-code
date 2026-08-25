@@ -379,6 +379,66 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
     }
   });
 
+  it("passes only application headers into project data rendering", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-data-headers-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let observedRequest: Request | undefined;
+
+    try {
+      deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((_slug, _ctx, options) => {
+          observedRequest = options?.request;
+          return Promise.resolve({
+            html: "<main>headers</main>",
+            frontmatter: {},
+          });
+        }),
+      );
+      const hostRequest = new Request(
+        "http://localhost/_veryfront/data/docs.json?visible=yes",
+        {
+          headers: {
+            authorization: "Bearer application-token",
+            cookie: "session=application-cookie",
+            "proxy-authorization": "Basic infrastructure-proxy-token",
+            "x-forwarded-host": "internal-proxy.example",
+            "X-Auth-Email": "forged-email@example.test",
+            "x-auth-subject": "forged-user",
+            "x-project-id": "infrastructure-project",
+            "x-unrelated": "kept",
+            "x-token": "platform-service-token",
+          },
+        },
+      );
+
+      const response = await callDataEndpoint(
+        hostRequest,
+        {
+          ...makeCtx(projectDir),
+          applicationIdentityHeaderNames: ["x-auth-subject", "X-Auth-Email"],
+        },
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(observedRequest === hostRequest, false);
+      assertEquals(observedRequest?.headers.get("authorization"), "Bearer application-token");
+      assertEquals(observedRequest?.headers.get("cookie"), "session=application-cookie");
+      assertEquals(observedRequest?.headers.get("x-unrelated"), "kept");
+      assertEquals(observedRequest?.headers.get("proxy-authorization"), null);
+      assertEquals(observedRequest?.headers.get("x-forwarded-host"), null);
+      assertEquals(observedRequest?.headers.get("x-auth-email"), null);
+      assertEquals(observedRequest?.headers.get("x-auth-subject"), null);
+      assertEquals(observedRequest?.headers.get("x-project-id"), null);
+      assertEquals(observedRequest?.headers.get("x-token"), null);
+    } finally {
+      restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("varies error responses on the snapshot header while pinning is disabled", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-data-pins-error-" });
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);

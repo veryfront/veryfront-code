@@ -29,6 +29,7 @@ import {
   stripSnapshotHeader,
   withSnapshotResponseHeaders,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
 const PAGE_DATA_CACHE_TTL_MS = readPositiveIntegerEnv("VERYFRONT_PAGE_DATA_CACHE_TTL_MS", 60_000);
@@ -163,8 +164,12 @@ export function handlePageDataEndpoint(
         dependencySnapshot = resolvedDependencySnapshot;
 
         const url = new URL(req.url);
-        const applicationRequest = requested.kind === "absent" ? req : new Request(req, {
-          headers: stripSnapshotHeader(req.headers),
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
+        );
+        const applicationRequest = new Request(req, {
+          headers: applicationHeaders,
         });
         const renderer = await getRendererForProject(ctx);
         const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";

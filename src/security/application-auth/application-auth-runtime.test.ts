@@ -113,6 +113,76 @@ describe("security/application-auth runtime integration", () => {
     assertEquals(result.response?.status, 401);
   });
 
+  it("keeps unmarked OIDC and trusted-proxy requests rejected after WeakSet.has poisoning", async () => {
+    const originalHas = WeakSet.prototype.has;
+    WeakSet.prototype.has = function (_value: object): boolean {
+      return true;
+    };
+    try {
+      const oidcResult = await new AuthHandler().handle(
+        new Request(`${APP_ORIGIN}/dashboard`),
+        createCtx(),
+      );
+      const trustedProxyResult = await new AuthHandler().handle(
+        trustedProxyRequest(),
+        createTrustedProxyCtx(),
+      );
+      let registryReachedProjectCode = false;
+      const registry = new RouteRegistry();
+      registry.registerAll([
+        new AuthHandler(),
+        {
+          metadata: {
+            name: "ProjectCode",
+            priority: HandlerPriority.LOW,
+            patterns: [{ pattern: "/", prefix: true }],
+          },
+          handle: () => {
+            registryReachedProjectCode = true;
+            return Promise.resolve({ response: new Response("project reached") });
+          },
+        },
+      ]);
+      const registryResponse = await registry.execute(
+        trustedProxyRequest(),
+        createTrustedProxyCtx(),
+      );
+
+      assertEquals(oidcResult.continue, false);
+      assertEquals(oidcResult.response?.status, 401);
+      assertEquals(trustedProxyResult.continue, false);
+      assertEquals(trustedProxyResult.response?.status, 401);
+      assertEquals(registryReachedProjectCode, false);
+      assertEquals(registryResponse?.status, 401);
+    } finally {
+      WeakSet.prototype.has = originalHas;
+    }
+  });
+
+  it("keeps OIDC admission proof request-object scoped after WeakSet.add poisoning", async () => {
+    const originalAdd = WeakSet.prototype.add;
+    WeakSet.prototype.add = function (_value: object): WeakSet<object> {
+      throw new Error("poisoned WeakSet.add");
+    };
+    try {
+      const request = new Request(`${APP_ORIGIN}/dashboard`);
+      markApplicationAuthAdmittedRequest(request);
+
+      const admitted = await new AuthHandler().handle(request, createCtx());
+      const cloned = await new AuthHandler().handle(request.clone(), createCtx());
+      const fresh = await new AuthHandler().handle(new Request(request), createCtx());
+
+      assertEquals(admitted.continue, true);
+      assertEquals(admitted.response, undefined);
+      assertEquals(cloned.continue, false);
+      assertEquals(cloned.response?.status, 401);
+      assertEquals(fresh.continue, false);
+      assertEquals(fresh.response?.status, 401);
+    } finally {
+      WeakSet.prototype.add = originalAdd;
+    }
+  });
+
   it("redirects HTML requests to login when the OIDC wrapper finds no valid session", async () => {
     const result = await handleApplicationAuthRequest(
       new Request(`${APP_ORIGIN}/dashboard?view=home`, { headers: { accept: "text/html" } }),
@@ -205,6 +275,32 @@ describe("security/application-auth runtime integration", () => {
 
     assertEquals(result.continue, true);
     assertEquals(result.response, undefined);
+  });
+
+  it("keeps trusted-proxy admission proof request-object scoped after WeakSet.add poisoning", async () => {
+    const originalAdd = WeakSet.prototype.add;
+    WeakSet.prototype.add = function (_value: object): WeakSet<object> {
+      throw new Error("poisoned WeakSet.add");
+    };
+    try {
+      const request = trustedProxyRequest();
+      const admission = await handleApplicationAuthRequest(request, createTrustedProxyCtx());
+
+      assertEquals(admission?.continue, true);
+
+      const admitted = await new AuthHandler().handle(request, createTrustedProxyCtx());
+      const cloned = await new AuthHandler().handle(request.clone(), createTrustedProxyCtx());
+      const fresh = await new AuthHandler().handle(new Request(request), createTrustedProxyCtx());
+
+      assertEquals(admitted.continue, true);
+      assertEquals(admitted.response, undefined);
+      assertEquals(cloned.continue, false);
+      assertEquals(cloned.response?.status, 401);
+      assertEquals(fresh.continue, false);
+      assertEquals(fresh.response?.status, 401);
+    } finally {
+      WeakSet.prototype.add = originalAdd;
+    }
   });
 
   it("does not let cloned or new trusted-proxy requests inherit application-auth proof", async () => {

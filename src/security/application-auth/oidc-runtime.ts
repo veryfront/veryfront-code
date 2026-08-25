@@ -45,6 +45,10 @@ const MAX_ID_TOKEN_LENGTH = 16_384;
 const MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
 const TOKEN_TIMEOUT_MS = 5_000;
 const textEncoder = new TextEncoder();
+const apply = Reflect.apply;
+const NativeWeakSet = WeakSet;
+const weakSetAdd = NativeWeakSet.prototype.add;
+const weakSetHas = NativeWeakSet.prototype.has;
 
 export interface ApplicationAuthEnvironmentReader {
   get(name: string): string | undefined;
@@ -83,14 +87,14 @@ interface CallbackParams {
 
 type JsonObject = { readonly [key: string]: unknown };
 
-const admittedRequests = new WeakSet<Request>();
+const admittedRequests = new NativeWeakSet<Request>();
 
 export function markApplicationAuthAdmittedRequest(request: Request): void {
-  admittedRequests.add(request);
+  apply(weakSetAdd, admittedRequests, [request]);
 }
 
 export function isApplicationAuthAdmittedRequest(request: Request): boolean {
-  return admittedRequests.has(request);
+  return apply(weakSetHas, admittedRequests, [request]) as boolean;
 }
 
 export function createOidcApplicationAuthRuntime(
