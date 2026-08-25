@@ -67,20 +67,25 @@ export async function rewriteEsmPaths(code: string, urlBase: string): Promise<st
     logger.debug("Could not lex a fetched module; leaving its specifiers unrewritten", {
       error: error instanceof Error ? error.message : String(error),
     });
-    // Every quoted string is examined, not just the ones in an import-looking
+    // Every string literal is examined, not just the ones in an import-looking
     // position. Anchoring on `import`/`from` would mean re-implementing JS
-    // syntax with a regex — comments between the keyword and the specifier,
-    // line continuations, and the `export {a} from` forms each need their own
+    // syntax with a regex - a comment between the keyword and the specifier, a
+    // line continuation, or an `export {a} from` form each need their own
     // case, and a missed one silently reinstates the unloadable artifact this
     // guards against. The lexer has already refused the source by this point,
     // so the only safe direction to err in is refusing too much: a data string
     // that merely looks like a path costs a failed load, never a broken
-    // module. Declared inside the handler so `lastIndex` cannot leak between
-    // calls; backticks are included because esm.sh emits template-literal
-    // dynamic imports.
-    const quotedString = /(["'`])([^"'`\n]*)\1/g;
-    for (let match = quotedString.exec(code); match; match = quotedString.exec(code)) {
-      const specifier = match[2];
+    // module.
+    //
+    // The three alternatives are the three JS string forms, each matched
+    // escape-aware: an earlier `"a\"b"` would otherwise pair its escaped quote
+    // with the next real one and walk the scan out of phase, hiding every
+    // specifier after it. Within each alternative the character class and the
+    // escape pair are disjoint, so the scan cannot backtrack. Declared inside
+    // the handler so `lastIndex` cannot leak between calls.
+    const stringLiteral = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
+    for (let match = stringLiteral.exec(code); match; match = stringLiteral.exec(code)) {
+      const specifier = match[1] ?? match[2] ?? match[3];
       if (specifier === undefined || !needsEsmRewrite(specifier)) continue;
       throw MODULE_NOT_FOUND.create({
         detail: `Cannot rewrite ${specifier} in an unlexable module from ${urlBase}: leaving it ` +
