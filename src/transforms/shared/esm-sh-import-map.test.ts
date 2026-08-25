@@ -198,4 +198,20 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "the last component of a version is not an extension, since one starts with a letter",
     );
   });
+
+  it("treats an npm mapping ending in a separator as a package root", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "npm:react@19/" }),
+      "npm:react@19/sub",
+      "a trailing separator reads as a root here exactly as it does for a URL",
+    );
+  });
+
+  it("treats a jsr mapping ending in a separator as a package root", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "jsr:@std/path@1/" }),
+      "jsr:@std/path@1/sub",
+      "the scope must not be mistaken for an export when the separator trails",
+    );
+  });
 });

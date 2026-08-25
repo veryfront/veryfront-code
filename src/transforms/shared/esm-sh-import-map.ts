@@ -218,6 +218,10 @@ function addressesRemoteFile(mapping: string): boolean {
 }
 
 function coordinateSelectsExport(coordinate: string): boolean {
+  // A trailing separator is the package root written as a directory, the same
+  // reading the remote branch gives it.
+  if (coordinate.endsWith("/")) return false;
+
   const firstSeparator = coordinate.indexOf("/");
   if (firstSeparator === -1) return false;
   if (!coordinate.startsWith("@")) return true;
