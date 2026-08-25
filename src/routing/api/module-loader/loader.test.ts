@@ -2389,6 +2389,39 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("rejects bundled data URL import-map targets before local path fallback", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "data-import-map-route.ts");
+
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "inline-lib": "data:text/javascript,export%20const%20value%20%3D%20%22inline%22",
+        },
+      }),
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "inline-lib";`,
+        `const marker = /force-bundle/;`,
+        `export const GET = () => new Response(value + marker.source);`,
+      ].join("\n"),
+    );
+
+    const error = await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "inline module URLs",
+    );
+    assertEquals(
+      /No such file|ENOENT/i.test(String((error as Error).message)),
+      false,
+      "an import-map data target must be rejected as a URL, not read as a project file",
+    );
+  });
+
   it("rejects eval-created imports before direct module evaluation", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "eval-remote-route.ts");
@@ -2839,6 +2872,52 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("validates manifest-like remote URLs through the HTTP bundler", async () => {
+    const tmpDir = await makeTempDir();
+    const remoteUrl = "https://esm.sh/bundle-manifest-kv-vf-loader-test@1";
+    const modulePath = join(tmpDir, "manifest-like-remote-route.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "${remoteUrl}";`,
+        `export const GET = () => new Response(value);`,
+      ].join("\n"),
+    );
+
+    let fetchCalls = 0;
+    const serveModule: typeof globalThis.fetch = (input) => {
+      fetchCalls += 1;
+      const url = input instanceof Request ? input.url : String(input);
+      assertEquals(
+        url.startsWith(remoteUrl),
+        true,
+        "the manifest-like remote URL must still be fetched by the HTTP plugin",
+      );
+      return Promise.resolve(
+        new Response(
+          [
+            `import "https://blocked.example.com/transitive.js";`,
+            `export const value = "unreachable";`,
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "content-type": "application/javascript" },
+          },
+        ),
+      );
+    };
+
+    await withMockFetch(serveModule, async () => {
+      await assertRejects(
+        () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+        Error,
+        "Remote import blocked by allow-list",
+      );
+    });
+    assertEquals(fetchCalls, 1);
+  });
+
   it("refuses to direct-import a route whose graph uses a root-absolute specifier", async () => {
     // A root-absolute specifier resolves from the filesystem root, outside the
     // project boundary, so the walk must refuse the graph rather than hand it
@@ -3165,6 +3244,76 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("vets encoded delimiter filenames after an import-map remap", async () => {
+    for (
+      const { target, actualFile, decoyFile } of [
+        {
+          target: "./helper%3Fignored.ts",
+          actualFile: "helper?ignored.ts",
+          decoyFile: "helper",
+        },
+        {
+          target: "./helper%23ignored.ts",
+          actualFile: "helper#ignored.ts",
+          decoyFile: "helper",
+        },
+      ]
+    ) {
+      const tmpDir = await makeTempDir();
+      await fs.writeTextFile(
+        join(tmpDir, "deno.json"),
+        JSON.stringify({ imports: { "encoded-helper": target } }),
+      );
+      await fs.writeTextFile(join(tmpDir, decoyFile), `export const value = "decoy";`);
+      await fs.writeTextFile(
+        join(tmpDir, actualFile),
+        `export const value = eval('"actual"');`,
+      );
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        `import { value } from "encoded-helper";` +
+          `\nexport const GET = () => new Response(value);`,
+      );
+
+      await assertRejects(
+        () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+        Error,
+        "dynamic code generation",
+        "the import-map walk must inspect the decoded filename, not a delimiter-split decoy",
+      );
+    }
+  });
+
+  denoIt("vets encoded delimiter file URL targets after an import-map remap", async () => {
+    const tmpDir = await makeTempDir();
+    const actualFile = "helper?ignored.ts";
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({
+        imports: { "encoded-helper": toFileUrl(join(tmpDir, actualFile)).href },
+      }),
+    );
+    await fs.writeTextFile(join(tmpDir, "helper"), `export const value = "decoy";`);
+    await fs.writeTextFile(
+      join(tmpDir, actualFile),
+      `export const value = eval('"actual"');`,
+    );
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "encoded-helper";` +
+        `\nexport const GET = () => new Response(value);`,
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "dynamic code generation",
+      "file URL import-map targets must inspect the decoded filename, not a delimiter-split decoy",
+    );
+  });
+
   denoIt("does not direct-import an unchecked package imports alias", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(
@@ -3223,6 +3372,82 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(route),
       "helpedx",
       "a local Deno alias must resolve through the bundler once the route must bundle",
+    );
+  });
+
+  denoIt("bundles encoded delimiter filenames after an import-map remap", async () => {
+    for (
+      const { target, actualFile, decoyFile } of [
+        {
+          target: "./helper%3Fignored.ts",
+          actualFile: "helper?ignored.ts",
+          decoyFile: "helper",
+        },
+        {
+          target: "./helper%23ignored.ts",
+          actualFile: "helper#ignored.ts",
+          decoyFile: "helper",
+        },
+      ]
+    ) {
+      const tmpDir = await makeTempDir();
+      await fs.writeTextFile(
+        join(tmpDir, "deno.json"),
+        JSON.stringify({ imports: { "encoded-helper": target } }),
+      );
+      await fs.writeTextFile(join(tmpDir, decoyFile), `export const value = "decoy";`);
+      await fs.writeTextFile(
+        join(tmpDir, actualFile),
+        `export const value = eval('"actual"');`,
+      );
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { value } from "encoded-helper";`,
+          `const marker = /force-bundle/;`,
+          `export const GET = () => new Response(value + marker.source);`,
+        ].join("\n"),
+      );
+
+      await assertRejects(
+        () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+        Error,
+        "dynamic code generation",
+        "the import-map bundler path must read the decoded filename, not a delimiter-split decoy",
+      );
+    }
+  });
+
+  denoIt("bundles encoded delimiter file URL targets after an import-map remap", async () => {
+    const tmpDir = await makeTempDir();
+    const actualFile = "helper?ignored.ts";
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({
+        imports: { "encoded-helper": toFileUrl(join(tmpDir, actualFile)).href },
+      }),
+    );
+    await fs.writeTextFile(join(tmpDir, "helper"), `export const value = "decoy";`);
+    await fs.writeTextFile(
+      join(tmpDir, actualFile),
+      `export const value = eval('"actual"');`,
+    );
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "encoded-helper";`,
+        `const marker = /force-bundle/;`,
+        `export const GET = () => new Response(value + marker.source);`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "dynamic code generation",
+      "file URL import-map targets must bundle the decoded filename, not a delimiter-split decoy",
     );
   });
 
