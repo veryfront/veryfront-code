@@ -3,6 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type BatchHandlerOptions,
+  buildBatchCacheProjectKey,
   buildBatchTransformCacheKey,
   clearBatchCache,
   getBatchCacheStats,
@@ -135,6 +136,28 @@ describe(
       });
     });
 
+    describe("buildBatchCacheProjectKey", () => {
+      it("prefers the projectId over the slug", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({ projectId: "id-1", projectSlug: "slug-1" }),
+          "id-1",
+          "the id identifies a project across slug renames, so it wins",
+        );
+      });
+
+      it("uses the slug when no projectId is supplied", () => {
+        assertEquals(buildBatchCacheProjectKey({ projectSlug: "slug-1" }), "slug-1");
+      });
+
+      it("falls back to a shared default when neither is supplied", () => {
+        assertEquals(
+          buildBatchCacheProjectKey({}),
+          "default",
+          "an unidentified project must still land under a stable, clearable namespace",
+        );
+      });
+    });
+
     describe("clearBatchCache / getBatchCacheStats", () => {
       it("should start with empty cache stats", () => {
         clearBatchCache();
@@ -179,6 +202,56 @@ describe(
           stats.keys.every((key) => key.startsWith("b:")),
           true,
           "clearing project a must leave only project b entries",
+        );
+
+        clearBatchCache();
+      });
+
+      it("clears entries for a project that supplies a projectId", async () => {
+        clearBatchCache();
+
+        async function cacheOneTransform(
+          identity: { projectSlug: string; projectId?: string },
+        ): Promise<void> {
+          const adapter = createMockAdapter();
+          adapter.fs.files.set(
+            `/test-project/${identity.projectSlug}.tsx`,
+            "export const value = 1;",
+          );
+          const url = new URL("/_vf_modules/_batch", "http://localhost:8080");
+          url.searchParams.set("paths", `${identity.projectSlug}.js`);
+          const response = await handleModuleBatch(new Request(url.toString()), {
+            projectDir: "/test-project",
+            adapter,
+            projectSlug: identity.projectSlug,
+            projectId: identity.projectId,
+            releaseId: `rel-${identity.projectSlug}`,
+            dev: false,
+          });
+          assertEquals(
+            response.status,
+            200,
+            `project ${identity.projectSlug} must serve its module`,
+          );
+          await response.text();
+        }
+
+        await cacheOneTransform({ projectSlug: "slug-a", projectId: "id-a" });
+        await cacheOneTransform({ projectSlug: "slug-b", projectId: "id-b" });
+        assertEquals(getBatchCacheStats().size, 2, "both projects cached a transform");
+
+        clearBatchCache({ projectSlug: "slug-a", projectId: "id-a" });
+
+        const stats = getBatchCacheStats();
+        assertEquals(
+          stats.size,
+          1,
+          "clearing a project that supplies a projectId must delete its entry, not silently match nothing",
+        );
+        assertEquals(
+          stats.keys.every((key) => key.startsWith("id-b:")),
+          true,
+          "only the other project's entries may survive the invalidation",
         );
 
         clearBatchCache();

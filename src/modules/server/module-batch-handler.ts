@@ -95,6 +95,25 @@ const FRAMEWORK_EXTENSIONS = [
   ".js", // Regular sources for dev mode
 ] as const;
 
+/** Identity a batch transform is cached under. */
+export interface BatchCacheProjectIdentity {
+  projectId?: string;
+  projectSlug?: string;
+}
+
+/**
+ * Derives the cache key namespace a project's batch transforms are stored
+ * under. Every key this module writes begins with `<projectKey>:`.
+ *
+ * Both the request path and `clearBatchCache` must derive the namespace here.
+ * They previously disagreed: writes preferred `projectId` while deletion built
+ * its prefix from `projectSlug`, so a project supplying an id stored entries
+ * under that id and the deletion prefix matched nothing.
+ */
+export function buildBatchCacheProjectKey(identity: BatchCacheProjectIdentity): string {
+  return identity.projectId || identity.projectSlug || "default";
+}
+
 export function buildBatchTransformCacheKey(
   projectKey: string,
   modulePath: string,
@@ -221,7 +240,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         config,
       } = options;
 
-      const projectKey = projectId || projectSlug || "default";
+      const projectKey = buildBatchCacheProjectKey({ projectId, projectSlug });
       const pinValues = url.searchParams.getAll("pins");
       const requestedPinKey = pinValues[0];
       const hasRequestedPinKey = pinValues.length > 0;
@@ -731,21 +750,28 @@ function transformExportsForBundle(code: string): string {
 
 /**
  * Clear the transform cache (on deployment or memory pressure)
+ *
+ * Pass nothing to clear every project. Pass the project's identity to clear
+ * only its entries; supply the same `projectId` and `projectSlug` the request
+ * path was given, since the namespace prefers the id. A bare string is treated
+ * as an already-derived project key.
  */
-export function clearBatchCache(projectSlug?: string): void {
+export function clearBatchCache(project?: string | BatchCacheProjectIdentity): void {
   clearSourceMissCache("module-batch");
 
-  if (!projectSlug) {
+  if (project === undefined) {
     transformCache.clear();
     logger.debug("Cleared all cache");
     return;
   }
 
-  const prefix = `${projectSlug}:`;
+  const projectKey = typeof project === "string" ? project : buildBatchCacheProjectKey(project);
+
+  const prefix = `${projectKey}:`;
   for (const key of [...transformCache.keys()]) {
     if (key.startsWith(prefix)) transformCache.delete(key);
   }
-  logger.debug("Cleared cache for project", { projectSlug });
+  logger.debug("Cleared cache for project", { projectKey });
 }
 
 /**
