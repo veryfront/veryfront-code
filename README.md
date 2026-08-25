@@ -23,6 +23,42 @@ Veryfront account. Use the [Veryfront Cloud AI Gateway](https://veryfront.com/do
 for managed model access, and use [Veryfront Cloud](https://veryfront.com/docs/code/getting-started/cloud-quickstart)
 for previews and production hosting.
 
+## Why Veryfront Code?
+
+Purpose-built for TypeScript and React, Veryfront Code gives you everything you need to build agentic full-stack applications out-of-the-box.
+
+- [**Agents**](https://veryfront.com/docs/code/guides/agents) - Build AI agents that reason and act. Give them instructions, models, tools, skills, memory, and durable hosted execution.
+
+- [**Skills**](https://veryfront.com/docs/code/guides/skills) - Add project-level agent capabilities with `SKILL.md` files. Skills package instructions, allowed tools, and scripts.
+
+- [**Tools**](https://veryfront.com/docs/code/guides/tools) - Define Zod-validated functions that agents can call. Tools are discovered from files, so you do not need manual registration.
+
+- [**Prompts**](https://veryfront.com/docs/code/concepts/prompt) - Reuse named prompt templates across agents, tools, MCP servers, and application code.
+
+- [**Knowledge**](https://veryfront.com/docs/code/guides/cli-knowledge-ingestion) - Turn source documents into project knowledge files that agents can use as context.
+
+- [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) - Give agents conversation history, streamed responses, and React chat UI components with AG-UI support.
+
+- [**Multi-Agent Systems**](https://veryfront.com/docs/code/guides/multi-agent) - Compose orchestrators and sub-agents that delegate to each other as tools for coordinated work.
+
+- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) - Define file-based background jobs that Veryfront Code discovers and runs as task executions.
+
+- [**Workflows**](https://veryfront.com/docs/code/guides/workflows) - Orchestrate multi-step AI pipelines with branching, parallel steps, approval gates, and durable Redis checkpoints.
+
+- [**Runs**](https://veryfront.com/docs/code/guides/runs) - Execute durable task, workflow, and agent work through project-scoped run records.
+
+- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) - Expose tools, prompts, and resources through MCP with SSE transport, sessions, and elicitation.
+
+- [**Sandbox**](https://veryfront.com/docs/code/guides/sandbox) - Run isolated code in ephemeral compute environments with shell tools and agent-service integration.
+
+- [**Integrations**](https://veryfront.com/docs/code/guides/integrations) - Add third-party services with connectors for OAuth, remote tools, and service metadata.
+
+- [**Pages & Routing**](https://veryfront.com/docs/code/guides/pages-and-routing) - Build app routes with files, React Server Components, layouts, and server-side rendering.
+
+- [**Data Fetching & API Routes**](https://veryfront.com/docs/code/guides/data-fetching) - Load server data, define API handlers, and add [middleware](https://veryfront.com/docs/code/guides/middleware) with built-in [OAuth](https://veryfront.com/docs/code/guides/oauth).
+
+- [**Extensions**](https://veryfront.com/docs/code/guides/extensions) - Extend Veryfront Code with contract-based packages for LLM providers, bundling, CSS, tracing, caching, and more.
+
 ## Get started
 
 The default `ai-agent` starter targets Node.js 22.3 or later. This path uses
@@ -136,20 +172,6 @@ runs, MCP-aware coding agents can use Veryfront MCP tools for live errors, route
 inspection, scaffolding, tests, linting, and HMR. See
 [Coding agents](https://veryfront.com/docs/code/guides/coding-agents) and the
 [project structure guide](https://veryfront.com/docs/code/guides/project-structure).
-
-## Capabilities
-
-- **Agents and tools** - Build [agents](https://veryfront.com/docs/code/guides/agents) with instructions, models, memory, delegation, and file-discovered [Zod-validated tools](https://veryfront.com/docs/code/guides/tools).
-
-- **Instructions and context** - Package reusable behavior as [skills](https://veryfront.com/docs/code/guides/skills), share named [prompts](https://veryfront.com/docs/code/concepts/prompt), and ingest source-controlled [project knowledge](https://veryfront.com/docs/code/guides/cli-knowledge-ingestion).
-
-- **Evaluation and execution** - Test behavior with [evals](https://veryfront.com/docs/code/guides/evals). Execute [workflows](https://veryfront.com/docs/code/guides/workflows) and [tasks](https://veryfront.com/docs/code/guides/tasks) through durable [runs](https://veryfront.com/docs/code/guides/runs). Trigger runs with [schedules](https://veryfront.com/docs/code/concepts/schedule) and [webhooks](https://veryfront.com/docs/code/concepts/webhook).
-
-- **Application stack** - Build [React pages and routes](https://veryfront.com/docs/code/guides/pages-and-routing), React Server Components, and API routes with server-side rendering. Add [middleware](https://veryfront.com/docs/code/guides/middleware), [OAuth](https://veryfront.com/docs/code/guides/oauth), and [AG-UI streaming](https://veryfront.com/docs/code/guides/memory-and-streaming) to applications.
-
-- **Protocols and integrations** - Expose tools, prompts, and resources over [MCP](https://veryfront.com/docs/code/guides/mcp-server). Connect third-party services through [integrations](https://veryfront.com/docs/code/guides/integrations).
-
-- **Providers and runtime** - Configure [model providers](https://veryfront.com/docs/code/guides/providers), add optional [extensions](https://veryfront.com/docs/code/guides/extensions) such as in-process ONNX inference, and connect a compatible backing service for isolated [sandbox sessions](https://veryfront.com/docs/code/guides/sandbox).
 
 ## Contributing
 
