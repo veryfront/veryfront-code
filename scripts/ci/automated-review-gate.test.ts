@@ -281,9 +281,19 @@ describe("automated review evidence", () => {
 
   it("honors each trusted human reviewer's latest exact-head state", async () => {
     const human = { login: "trusted-maintainer", id: 7, type: "User" };
-    const approval = review({ user: human, state: "APPROVED" });
-    const withdrawal = review({ user: human, state: "CHANGES_REQUESTED" });
-    const isTrusted = () => Promise.resolve(true);
+    const approval = review({
+      id: 100,
+      user: human,
+      state: "APPROVED",
+      submitted_at: "2026-08-25T07:00:00Z",
+    });
+    const withdrawal = review({
+      id: 101,
+      user: human,
+      state: "CHANGES_REQUESTED",
+      submitted_at: "2026-08-25T07:01:00Z",
+    });
+    const isTrusted = (login: string) => Promise.resolve(login === human.login);
 
     assertEquals(
       await findAutomatedReview(
@@ -296,7 +306,17 @@ describe("automated review evidence", () => {
     );
     assertEquals(
       (await findAutomatedReview(
-        { reviews: [withdrawal, approval], comments: [] },
+        {
+          reviews: [
+            withdrawal,
+            review({
+              ...approval,
+              id: 102,
+              submitted_at: "2026-08-25T07:02:00Z",
+            }),
+          ],
+          comments: [],
+        },
         HEAD,
         undefined,
         isTrusted,

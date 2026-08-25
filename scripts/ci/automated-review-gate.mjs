@@ -76,6 +76,21 @@ function isPinnedBot(user, login) {
     user?.type === "Bot";
 }
 
+function isLaterReview(candidate, current, candidateIndex, currentIndex) {
+  const candidateTime = Date.parse(candidate?.submitted_at ?? "");
+  const currentTime = Date.parse(current?.submitted_at ?? "");
+  if (Number.isFinite(candidateTime) && Number.isFinite(currentTime)) {
+    if (candidateTime !== currentTime) return candidateTime > currentTime;
+  } else if (Number.isFinite(candidateTime) !== Number.isFinite(currentTime)) {
+    return Number.isFinite(candidateTime);
+  }
+  if (
+    Number.isSafeInteger(candidate?.id) && Number.isSafeInteger(current?.id) &&
+    candidate.id !== current.id
+  ) return candidate.id > current.id;
+  return candidateIndex > currentIndex;
+}
+
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
   { reviews, comments },
@@ -89,7 +104,7 @@ export async function findAutomatedReview(
     let codexApproval;
     let codexFinding = false;
     const latestHumanReviews = new Map();
-    for (const review of reviews) {
+    for (const [index, review] of reviews.entries()) {
       const state = typeof review?.state === "string"
         ? review.state.toUpperCase()
         : "";
@@ -120,17 +135,22 @@ export async function findAutomatedReview(
         exactHead && review?.user?.type === "User" &&
         typeof review?.user?.login === "string"
       ) {
-        // GitHub returns reviews in chronological order. Replacing the entry
-        // makes an approval withdrawable by that reviewer's later state.
-        latestHumanReviews.set(review.user.login, { review, state });
+        const current = latestHumanReviews.get(review.user.login);
+        if (
+          !current ||
+          isLaterReview(review, current.review, index, current.index)
+        ) latestHumanReviews.set(review.user.login, { review, index });
       }
     }
     for (const [login, latest] of latestHumanReviews) {
-      if (latest.state === "APPROVED" && await isTrustedHuman(login)) {
+      const state = typeof latest.review?.state === "string"
+        ? latest.review.state.toUpperCase()
+        : "";
+      if (state === "APPROVED" && await isTrustedHuman(login)) {
         return {
           reviewer: login,
           source: "human-approval",
-          state: latest.state,
+          state,
           url: typeof latest.review.html_url === "string"
             ? latest.review.html_url
             : undefined,
