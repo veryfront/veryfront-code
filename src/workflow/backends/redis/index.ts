@@ -1780,31 +1780,9 @@ export class RedisBackend implements WorkflowBackend {
               }
             }
 
-            // Older workers append and decide approvals without observation
-            // revisions. Compare every retained id before consuming a queued
-            // batch, while the last observed run state is still waiting. A
-            // decided record is included once when it first appears so a fast
-            // legacy decision cannot erase the preceding pending transition,
-            // even when a queued pending-only projection already names it.
-            let legacyApprovalBaseState = lastObservedState.status === "waiting"
-              ? lastObservedState
-              : undefined;
-            if (legacyApprovalBaseState === undefined) {
-              try {
-                for (const record of records) {
-                  const state = parseRunObservedState(record.data);
-                  if (state.revision <= initialRevision) continue;
-                  if (state.status === "waiting") {
-                    legacyApprovalBaseState = state;
-                    break;
-                  }
-                }
-              } catch {
-                throw new Error("Workflow run observation failed");
-              }
-            }
-
-            if (legacyApprovalBaseState !== undefined) {
+            const readLegacyApprovalState = async (
+              baseState: WorkflowRunObservedState,
+            ): Promise<WorkflowRunObservedState | undefined> => {
               let approvals: PendingApproval[];
               const journaledApprovalIds = new Set<string>();
               try {
@@ -1835,10 +1813,23 @@ export class RedisBackend implements WorkflowBackend {
                 for (const approval of unseen) {
                   if (!projectedIds.has(approval.id)) projection.push(projectApproval(approval));
                 }
-                const legacyApprovalState = {
-                  ...legacyApprovalBaseState,
+                return {
+                  ...baseState,
                   approvals: projection,
                 };
+              }
+              return undefined;
+            };
+
+            // Older workers append and decide approvals without observation
+            // revisions. Compare every retained id only when the currently
+            // observed state is waiting. A decided record is included once
+            // when it first appears so a fast legacy decision cannot erase the
+            // preceding pending transition, even when a queued pending-only
+            // projection already names it.
+            if (lastObservedState.status === "waiting") {
+              const legacyApprovalState = await readLegacyApprovalState(lastObservedState);
+              if (legacyApprovalState !== undefined) {
                 lastObservedState = legacyApprovalState;
                 yield legacyApprovalState;
               }
@@ -1864,12 +1855,20 @@ export class RedisBackend implements WorkflowBackend {
                 throw new Error("Workflow run observation failed");
               }
               expectedRevision++;
-              lastObservedState = state;
-              if (state.approvals !== undefined) {
-                for (const approval of state.approvals) observedApprovalIds.add(approval.id);
+              let observedState = state;
+              if (observedState.status === "waiting") {
+                observedState = await readLegacyApprovalState(observedState) ?? observedState;
               }
-              yield state;
-              if (TERMINAL_RUN_STATUSES.has(state.status)) return;
+              lastObservedState = observedState;
+              if (observedState.approvals !== undefined) {
+                for (const approval of observedState.approvals) {
+                  observedApprovalIds.add(
+                    approval.id,
+                  );
+                }
+              }
+              yield observedState;
+              if (TERMINAL_RUN_STATUSES.has(observedState.status)) return;
             }
           }
         } finally {

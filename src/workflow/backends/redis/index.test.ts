@@ -1192,7 +1192,7 @@ describe("RedisBackend", () => {
       ]);
     });
 
-    it("polls legacy approvals when a queued batch first enters waiting", async () => {
+    it("polls legacy approvals when a queued batch enters waiting after earlier revisions", async () => {
       const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
       const run = createTestRun("run-legacy-approval-first-waiting", { status: "running" });
       await backend.createRun(run);
@@ -1209,6 +1209,7 @@ describe("RedisBackend", () => {
           status: "pending",
         }),
       );
+      await backend.updateRun(run.id, { status: "running" });
       await backend.updateRun(run.id, { status: "waiting" });
       await backend.updateRun(run.id, { status: "running" });
       await backend.updateRun(run.id, { status: "completed" });
