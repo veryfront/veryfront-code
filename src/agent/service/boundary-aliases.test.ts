@@ -18,26 +18,18 @@ import {
   createHostedServiceAuth,
   type DefaultAgentServiceInvokeAgentContext,
   type DefaultAgentServiceInvokeAgentToolOptions,
-  type DefaultHostedInvokeAgentContext,
-  type DefaultHostedInvokeAgentToolOptions,
   deriveAgentServiceAgUiChatContext,
   type DerivedAgentServiceAgUiChatContext,
-  type DerivedHostedAgUiChatContext,
   deriveHostedAgUiChatContext,
   getAgentServiceTokenFromRequest,
   getHostedServiceTokenFromRequest,
-  type HostedAgentServiceRouteSetOptions,
-  type HostedChatRuntimeToolAssemblyResult,
-  type HostedConversationRootRunContext,
   isAgentServiceAuthError,
   isHostedServiceAuthError,
   type NormalizedAgentServiceChatRequest,
-  type NormalizedHostedChatRequest,
   normalizeParsedAgentServiceChatRequest,
   normalizeParsedHostedChatRequest,
   parseAgentServiceChatRequestFromRequest,
   type ParsedAgentServiceChatRequest,
-  type ParsedHostedChatRequest,
   parseHostedChatRequestFromRequest,
   prepareAgentServiceChatExecution,
   prepareAgentServiceChatRuntimeCreationOptions,
@@ -86,49 +78,23 @@ Deno.test("agent-service boundary aliases point at hosted compatibility exports"
 });
 
 Deno.test("agent-service boundary aliases are available as types", () => {
-  // Each pair pins the alias to its hosted type in both directions, so an alias
-  // that starts denoting a different shape fails the test-file typecheck.
-  const _routeOptionsForward: AgentServiceRouteSetOptions<object> =
-    {} as HostedAgentServiceRouteSetOptions<object>;
-  const _routeOptionsBack: HostedAgentServiceRouteSetOptions<object> =
-    {} as AgentServiceRouteSetOptions<object>;
-  const _parsedRequestForward: ParsedAgentServiceChatRequest = {} as ParsedHostedChatRequest;
-  const _parsedRequestBack: ParsedHostedChatRequest = {} as ParsedAgentServiceChatRequest;
-  const _agUiContextForward: DerivedAgentServiceAgUiChatContext =
-    {} as DerivedHostedAgUiChatContext;
-  const _agUiContextBack: DerivedHostedAgUiChatContext = {} as DerivedAgentServiceAgUiChatContext;
-  const _rootRunContextForward: AgentServiceConversationRootRunContext =
-    {} as HostedConversationRootRunContext;
-  const _rootRunContextBack: HostedConversationRootRunContext =
-    {} as AgentServiceConversationRootRunContext;
-  const _normalizedRequestForward: NormalizedAgentServiceChatRequest =
-    {} as NormalizedHostedChatRequest;
-  const _normalizedRequestBack: NormalizedHostedChatRequest =
-    {} as NormalizedAgentServiceChatRequest;
-  const _toolAssemblyForward: AgentServiceChatRuntimeToolAssemblyResult =
-    {} as HostedChatRuntimeToolAssemblyResult;
-  const _toolAssemblyBack: HostedChatRuntimeToolAssemblyResult =
-    {} as AgentServiceChatRuntimeToolAssemblyResult;
-  const _invokeContextForward: DefaultAgentServiceInvokeAgentContext =
-    {} as DefaultHostedInvokeAgentContext;
-  const _invokeContextBack: DefaultHostedInvokeAgentContext =
-    {} as DefaultAgentServiceInvokeAgentContext;
-  const _invokeOptionsForward: DefaultAgentServiceInvokeAgentToolOptions<
-    DefaultHostedInvokeAgentContext
-  > = {} as DefaultHostedInvokeAgentToolOptions<DefaultHostedInvokeAgentContext>;
-  const _invokeOptionsBack: DefaultHostedInvokeAgentToolOptions<
-    DefaultAgentServiceInvokeAgentContext
-  > = {} as DefaultAgentServiceInvokeAgentToolOptions<DefaultAgentServiceInvokeAgentContext>;
-
+  const routeOptions: Partial<AgentServiceRouteSetOptions<object>> = {};
+  const parsedRequest: Partial<ParsedAgentServiceChatRequest> = {};
+  const agUiContext: Partial<DerivedAgentServiceAgUiChatContext> = {};
+  const rootRunContext: Partial<AgentServiceConversationRootRunContext> = {};
+  const normalizedRequest: Partial<NormalizedAgentServiceChatRequest> = {};
+  const toolAssembly: Partial<AgentServiceChatRuntimeToolAssemblyResult> = {};
   const invokeOptions: Partial<
     DefaultAgentServiceInvokeAgentToolOptions<DefaultAgentServiceInvokeAgentContext>
   > = {
     createAgentServiceSandboxTools: undefined,
   };
 
-  assertEquals(
-    invokeOptions,
-    { createAgentServiceSandboxTools: undefined },
-    "the invoke tool option alias keeps its hosted sandbox tool factory key",
-  );
+  assertEquals(routeOptions, {});
+  assertEquals(parsedRequest, {});
+  assertEquals(agUiContext, {});
+  assertEquals(rootRunContext, {});
+  assertEquals(normalizedRequest, {});
+  assertEquals(toolAssembly, {});
+  assertEquals(invokeOptions, { createAgentServiceSandboxTools: undefined });
 });

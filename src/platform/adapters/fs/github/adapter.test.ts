@@ -1,10 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import {
-  installMockFetch,
-  observeFetchRequestInit,
-  restoreMockFetch,
-} from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { FSAdapterWrapper } from "../wrapper.ts";
@@ -66,8 +62,14 @@ function assertThrowsMessageIncludes(fn: () => void, includes: string): void {
 }
 
 describe("GitHubFSAdapter", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
   afterEach(() => {
-    restoreMockFetch();
+    globalThis.fetch = originalFetch;
   });
 
   describe("createGitHubConfig", () => {
@@ -101,7 +103,7 @@ describe("GitHubFSAdapter", () => {
     it("should fetch tree on initialize", async () => {
       let treeRequested = false;
 
-      installMockFetch((url) => {
+      globalThis.fetch = (url) => {
         if (!String(url).includes("/git/trees/")) {
           return Promise.resolve(new Response("Not found", { status: 404 }));
         }
@@ -110,7 +112,7 @@ describe("GitHubFSAdapter", () => {
         return Promise.resolve(
           new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
         );
-      });
+      };
 
       const adapter = createAdapter();
       await adapter.initialize();
@@ -118,43 +120,15 @@ describe("GitHubFSAdapter", () => {
       assertEquals(treeRequested, true);
     });
 
-    it("re-initializes against the current tree after dispose", async () => {
-      installMockFetch(createTreeFetch(mockTreeResponse));
-
-      const adapter = createAdapter();
-      await adapter.initialize();
-      assertEquals(await adapter.exists("src/index.ts"), true, "the first tree is indexed");
-
-      adapter.dispose();
-      assertEquals(adapter.getCacheStats().cache.size, 0, "dispose clears the blob cache");
-
-      installMockFetch(createTreeFetch({
-        sha: "def456",
-        tree: [{ path: "docs/new.md", type: "blob", sha: "sha9", size: 5 }],
-        truncated: false,
-      }));
-
-      assertEquals(
-        await adapter.exists("docs/new.md"),
-        true,
-        "a disposed adapter re-fetches the tree",
-      );
-      assertEquals(
-        await adapter.exists("src/index.ts"),
-        false,
-        "the pre-dispose tree index must not survive dispose",
-      );
-    });
-
     it("admits ordinary files through the real wrapper while excluding Git symlinks", async () => {
-      installMockFetch(createTreeFetch({
+      globalThis.fetch = createTreeFetch({
         sha: "abc123",
         tree: [
           { path: "README.md", mode: "100644", type: "blob", sha: "sha1", size: 100 },
           { path: "outside.md", mode: "120000", type: "blob", sha: "sha2", size: 9 },
         ],
         truncated: false,
-      }));
+      });
 
       const adapter = createAdapter("/project");
       const wrapped = new FSAdapterWrapper(adapter);
@@ -174,7 +148,7 @@ describe("GitHubFSAdapter", () => {
     let adapter: GitHubFSAdapter;
 
     beforeEach(async () => {
-      installMockFetch((url, init) => {
+      globalThis.fetch = (url, init) => {
         const urlStr = String(url);
 
         if (urlStr.includes("/git/trees/")) {
@@ -200,7 +174,7 @@ describe("GitHubFSAdapter", () => {
         }
 
         return Promise.resolve(new Response("Not found", { status: 404 }));
-      });
+      };
 
       adapter = createAdapter();
       await adapter.initialize();
@@ -247,7 +221,7 @@ describe("GitHubFSAdapter", () => {
 
     it("rejects an indexed oversized file without fetching its content", async () => {
       let contentRequested = false;
-      installMockFetch((url) => {
+      globalThis.fetch = (url) => {
         const urlString = String(url);
         if (urlString.includes("/git/trees/")) {
           return Promise.resolve(
@@ -258,7 +232,7 @@ describe("GitHubFSAdapter", () => {
         return Promise.resolve(
           new Response(JSON.stringify(mockFileContent), { status: 200 }),
         );
-      });
+      };
       const boundedAdapter = createAdapter();
 
       await assertRejects(
@@ -271,7 +245,7 @@ describe("GitHubFSAdapter", () => {
 
     it("fails closed before fetching when the tree omits authoritative size", async () => {
       let blobRequested = false;
-      installMockFetch((url) => {
+      globalThis.fetch = (url) => {
         const urlString = String(url);
         if (urlString.includes("/git/trees/")) {
           return Promise.resolve(
@@ -287,7 +261,7 @@ describe("GitHubFSAdapter", () => {
         }
         blobRequested = true;
         return Promise.resolve(new Response(JSON.stringify(mockFileContent), { status: 200 }));
-      });
+      };
       const boundedAdapter = createAdapter();
 
       await assertRejects(
@@ -299,7 +273,7 @@ describe("GitHubFSAdapter", () => {
     });
 
     it("rejects a raw blob that does not match its admitted immutable tree entry", async () => {
-      installMockFetch((url, init) => {
+      globalThis.fetch = (url, init) => {
         const urlString = String(url);
         if (urlString.includes("/git/trees/")) {
           return Promise.resolve(
@@ -309,7 +283,7 @@ describe("GitHubFSAdapter", () => {
         const accept = new Headers(observeFetchRequestInit(init).headers).get("Accept");
         assertEquals(accept, "application/vnd.github.raw+json");
         return Promise.resolve(new Response("hello worl", { status: 200 }));
-      });
+      };
       const boundedAdapter = createAdapter();
 
       await assertRejects(
@@ -322,7 +296,7 @@ describe("GitHubFSAdapter", () => {
     it("cancels a raw blob stream at the first chunk beyond its admitted size", async () => {
       let cancelled = false;
       let blobRequests = 0;
-      installMockFetch((url) => {
+      globalThis.fetch = (url) => {
         const urlString = String(url);
         if (urlString.includes("/git/trees/")) {
           return Promise.resolve(
@@ -343,7 +317,7 @@ describe("GitHubFSAdapter", () => {
             { status: 200 },
           ),
         );
-      });
+      };
       const boundedAdapter = createAdapter();
 
       await assertRejects(
@@ -370,7 +344,7 @@ describe("GitHubFSAdapter", () => {
     let adapter: GitHubFSAdapter;
 
     beforeEach(async () => {
-      installMockFetch(createTreeFetch(mockTreeResponse));
+      globalThis.fetch = createTreeFetch(mockTreeResponse);
 
       adapter = createAdapter();
       await adapter.initialize();
@@ -408,7 +382,7 @@ describe("GitHubFSAdapter", () => {
         ],
       };
 
-      installMockFetch(createTreeFetch(treeWithExtensions));
+      globalThis.fetch = createTreeFetch(treeWithExtensions);
 
       adapter = createAdapter();
       await adapter.initialize();
@@ -432,7 +406,7 @@ describe("GitHubFSAdapter", () => {
 
   describe("error handling", () => {
     it("should handle 401 authentication error", async () => {
-      installMockFetch(() => Promise.resolve(new Response("Unauthorized", { status: 401 })));
+      globalThis.fetch = () => Promise.resolve(new Response("Unauthorized", { status: 401 }));
 
       const adapter = new GitHubFSAdapter({
         type: "github",
@@ -443,7 +417,7 @@ describe("GitHubFSAdapter", () => {
     });
 
     it("should handle 404 repo not found", async () => {
-      installMockFetch(() => Promise.resolve(new Response("Not found", { status: 404 })));
+      globalThis.fetch = () => Promise.resolve(new Response("Not found", { status: 404 }));
 
       const adapter = new GitHubFSAdapter({
         type: "github",

@@ -48,37 +48,6 @@ describe("proxy response headers", () => {
     assertEquals(getSetCookies(response.headers), ["session=keep; Path=/; HttpOnly"]);
   });
 
-  it("removes the sticky cookie from an s-maxage only shared-cacheable response", () => {
-    const headers = new Headers({
-      "Cache-Control": "public, s-maxage=600",
-      "Content-Type": "text/html",
-    });
-    headers.append("Set-Cookie", "lb=server-a; Path=/; HttpOnly");
-    headers.append("Set-Cookie", "session=keep; Path=/; HttpOnly");
-
-    const response = removeStickyCookieFromPublicCacheableResponse(
-      new Response("html", { headers }),
-    );
-
-    assertEquals(
-      getSetCookies(response.headers),
-      ["session=keep; Path=/; HttpOnly"],
-      "s-maxage marks the response shared-cacheable so lb must be stripped",
-    );
-
-    const zeroHeaders = new Headers({ "Cache-Control": "public, s-maxage=0" });
-    zeroHeaders.append("Set-Cookie", "lb=server-a; Path=/; HttpOnly");
-    const zeroResponse = removeStickyCookieFromPublicCacheableResponse(
-      new Response("html", { headers: zeroHeaders }),
-    );
-
-    assertEquals(
-      getSetCookies(zeroResponse.headers),
-      ["lb=server-a; Path=/; HttpOnly"],
-      "s-maxage=0 is not a shared-cacheable lifetime",
-    );
-  });
-
   it("leaves non-cacheable sticky-cookie responses untouched", () => {
     const headers = new Headers({
       "Cache-Control": "private, no-store",

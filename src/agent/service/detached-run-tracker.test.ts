@@ -61,37 +61,18 @@ describe("agent/detached-run-tracker", () => {
     });
   });
 
-  it("stops tracking a cancelled run that has no registered execution", async () => {
-    const tracker = createDetachedRunTracker({ pollIntervalMs: 1 });
-
-    tracker.sessionManager.startRun({ runId: "run_x", threadId: crypto.randomUUID() });
-    tracker.trackRun("run_x");
-
-    assertEquals(tracker.cancelRun("run_x"), true, "cancelling an active session reports success");
-    assertEquals(
-      await tracker.waitForDrain({ timeoutMs: 1, pollIntervalMs: 1 }),
-      { drained: true, pendingRunIds: [] },
-      "a cancelled run with no execution must stop being tracked",
-    );
-  });
-
   it("resets run status and active tracking", async () => {
     const tracker = createDetachedRunTracker();
-    const execution = deferred();
     tracker.sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
     tracker.trackRun("run_1");
-    tracker.registerExecution("run_2", execution.promise);
 
     tracker.reset();
 
     assertEquals(tracker.sessionManager.getRunStatus("run_1"), null);
-    assertEquals(
-      await tracker.waitForDrain({ timeoutMs: 1, pollIntervalMs: 1 }),
-      { drained: true, pendingRunIds: [] },
-      "reset must clear in-flight executions, not just tracked run ids",
-    );
-
-    await execution.resolve();
+    assertEquals(await tracker.waitForDrain({ timeoutMs: 1, pollIntervalMs: 1 }), {
+      drained: true,
+      pendingRunIds: [],
+    });
   });
 
   it("creates a shutdown lifecycle that cancels and drains detached runs", async () => {

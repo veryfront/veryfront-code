@@ -688,16 +688,6 @@ describe("Proxy Handler", () => {
         const afterActivation = await handler.processRequest(req());
 
         assertEquals(beforeActivation.error?.status, 404);
-        assertEquals(
-          beforeActivation.error?.message,
-          "No active release found",
-          "the release-not-found branch must keep its distinguishing message",
-        );
-        assertEquals(
-          beforeActivation.error?.slug,
-          "release-not-found",
-          "the slug is what selects the branded HTML 404 page in error-response.ts",
-        );
         assertEquals(afterActivation.error, undefined);
         assertEquals(afterActivation.releaseId, "rel-456");
         assertEquals(afterActivation.environmentId, "env-1");

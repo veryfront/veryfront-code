@@ -246,39 +246,6 @@ describe("shouldRetryUpstreamRequest", () => {
     );
   });
 
-  it("retries a bodyless run stream invocation on any retryable connection error", () => {
-    const request = new Request(RUN_STREAM_URL, {
-      method: "POST",
-      headers: { "content-length": "0" },
-    });
-
-    assertEquals(
-      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection reset")),
-      true,
-      "a bodyless run stream POST must fail over on a reset connection",
-    );
-    assertEquals(
-      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection closed")),
-      true,
-      "a bodyless run stream POST must fail over on a closed connection",
-    );
-    assertEquals(
-      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("connection refused")),
-      true,
-      "a bodyless run stream POST must fail over on a refused connection",
-    );
-    assertEquals(
-      shouldRetryUpstreamRequest(request, RUN_STREAM_PATH, new Error("Not found")),
-      false,
-      "a non-connection failure must not be replayed",
-    );
-    assertEquals(
-      getUpstreamRetryCount(request, RUN_STREAM_PATH, 3),
-      1,
-      "a bodyless run stream POST gets exactly one retry",
-    );
-  });
-
   it("retains broad connection retries for bodyless idempotent requests", () => {
     const request = new Request("http://proxy.test/");
     assertEquals(

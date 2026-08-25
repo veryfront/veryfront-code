@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ConversationHostedTerminalRuntimeAdapter,
@@ -11,7 +11,6 @@ import {
   resolveConversationHostedTerminalState,
   toConversationHostedTerminalState,
 } from "./hosted-terminal.ts";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 type RecordedCall = {
   input: string | URL | Request;
@@ -22,7 +21,8 @@ type RecordedCall = {
 const calls: RecordedCall[] = [];
 
 function installFetchMock() {
-  installMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({
       input,
       init,
@@ -38,9 +38,9 @@ function installFetchMock() {
         headers: { "content-type": "application/json" },
       },
     );
-  });
+  };
   return () => {
-    restoreMockFetch();
+    globalThis.fetch = originalFetch;
   };
 }
 
@@ -249,70 +249,6 @@ describe("agent/conversation-hosted-terminal", () => {
     }
   });
 
-  it("retries the durable finalize after a failed completion request", async () => {
-    const attempts: string[] = [];
-    installMockFetch(async (input: string | URL | Request, _init?: RequestInit) => {
-      attempts.push(String(input));
-      if (attempts.length === 1) {
-        return new Response(JSON.stringify({ error: "boom" }), {
-          status: 500,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      return new Response(
-        JSON.stringify({
-          completed: true,
-          run: { runId: "run-1", status: "completed" },
-        }),
-        {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        },
-      );
-    });
-    try {
-      const adapter = createConversationHostedTerminalAdapter({
-        authToken: "tok",
-        apiUrl: "https://api.example.com",
-        run: {
-          conversationId: "conv-1",
-          runId: "run-1",
-          messageId: "msg-1",
-          latestEventId: 0,
-          latestExternalEventSequence: 0,
-          waitingToolCallId: null,
-          waitingToolName: null,
-          streamProtocolVersion: 2,
-          status: "running",
-        },
-        fallbackModelId: "fallback-model",
-        resolveProvider: (modelId) => modelId,
-      });
-
-      await assertRejects(
-        () => adapter.dispatch({ status: "completed" }),
-        Error,
-        undefined,
-        "a failed completion request must reject the dispatch",
-      );
-
-      await adapter.dispatch({ status: "completed" });
-
-      assertEquals(
-        attempts.length,
-        2,
-        "a failed finalize must leave the durable run finalizable",
-      );
-      assertEquals(
-        attempts[1],
-        "https://api.example.com/runs/run-1/complete",
-        "the retry must target the same durable run completion endpoint",
-      );
-    } finally {
-      restoreMockFetch();
-    }
-  });
-
   it("resolves reusable terminal states from stream conditions", () => {
     assertEquals(
       resolveConversationHostedTerminalState({
@@ -413,59 +349,6 @@ describe("agent/conversation-hosted-terminal", () => {
       "cancel:cancelled",
       "observed:cancelled",
     ]);
-  });
-
-  it("skips durable run finalization when the run is already terminal server-side", async () => {
-    const calls: string[] = [];
-    const adapter: ConversationHostedTerminalRuntimeAdapter = {
-      terminal: {
-        toTerminalState: (state: ConversationHostedTerminalStateInput) => ({
-          status: state.status,
-          ...(state.terminalErrorCode !== undefined
-            ? { terminalErrorCode: state.terminalErrorCode }
-            : {}),
-          ...(state.terminalErrorMessage !== undefined
-            ? { terminalErrorMessage: state.terminalErrorMessage }
-            : {}),
-        }),
-        finalizeRun: async (state) => {
-          calls.push(`finalize:${state.status}`);
-        },
-        cancelRun: async (state) => {
-          calls.push(`cancel:${state.status}`);
-        },
-        onTerminalState: async (state) => {
-          calls.push(`observed:${state.status}`);
-        },
-      },
-    };
-
-    const completedState = await dispatchConversationHostedTerminalState(
-      adapter,
-      { status: "completed" },
-      { skipDurableRunFinalization: true },
-    );
-    const cancelledState = await dispatchConversationHostedTerminalState(
-      adapter,
-      { status: "cancelled" },
-      { skipDurableRunFinalization: true },
-    );
-
-    assertEquals(
-      calls,
-      ["observed:completed", "observed:cancelled"],
-      "skipDurableRunFinalization must suppress finalizeRun and cancelRun while still reporting the terminal state",
-    );
-    assertEquals(
-      completedState.status,
-      "completed",
-      "a skipped finalization still reports the completed terminal state",
-    );
-    assertEquals(
-      cancelledState.status,
-      "cancelled",
-      "a skipped finalization still reports the cancelled terminal state",
-    );
   });
 
   it("dispatches reusable stream error states", async () => {

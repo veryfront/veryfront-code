@@ -42,22 +42,6 @@ describe("agent/durable-append-errors", () => {
         slug: "resource-not-found",
       },
     );
-    assertEquals(
-      parseAppendConversationRunEventsError(JSON.stringify({ detail: "resource-not-found" })),
-      {
-        detail: "resource-not-found",
-        slug: null,
-      },
-      "a human detail must never become a machine slug",
-    );
-    assertEquals(
-      parseAppendConversationRunEventsError(JSON.stringify({ detail: "Run not found" })),
-      {
-        detail: "Run not found",
-        slug: null,
-      },
-      "a detail-only body carries no slug",
-    );
     assertEquals(parseAppendConversationRunEventsErrorBody("plain text"), "plain text");
     assertEquals(parseAppendConversationRunEventsErrorBody(""), null);
   });

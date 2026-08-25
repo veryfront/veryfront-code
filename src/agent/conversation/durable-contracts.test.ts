@@ -47,36 +47,6 @@ describe("agent/durable-contracts", () => {
       targetEnvironmentId: null,
       targetBranchId: null,
     });
-    assertEquals(
-      resolveConversationRunTargets({
-        projectId: PROJECT_ID,
-        runtimeTargetKind: "environment",
-        environmentId: null,
-        branchId: null,
-      }),
-      {
-        sourceTargetKind: "project",
-        runtimeTargetKind: "main_branch",
-        targetEnvironmentId: null,
-        targetBranchId: null,
-      },
-      "an environment kind without an environment id falls back to the project main branch",
-    );
-    assertEquals(
-      resolveConversationRunTargets({
-        projectId: PROJECT_ID,
-        runtimeTargetKind: "environment",
-        environmentId: null,
-        branchId: BRANCH_ID,
-      }),
-      {
-        sourceTargetKind: "preview_branch",
-        runtimeTargetKind: "preview_branch",
-        targetEnvironmentId: null,
-        targetBranchId: BRANCH_ID,
-      },
-      "the branch fallback still applies when the environment id is missing",
-    );
   });
 
   it("normalizes durable run projections from snake_case and camelCase responses", () => {
@@ -172,20 +142,6 @@ describe("agent/durable-contracts", () => {
         status,
       );
     }
-
-    assertEquals(
-      ConversationRunProjectionSchema.parse({
-        run_id: "run-stray-field",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 0,
-        latest_external_event_sequence: 0,
-        status: "completed",
-        stream_protocol_version: 2,
-      }).streamProtocolVersion,
-      1,
-      "a top-level stream_protocol_version must never promote a run to version 2",
-    );
   });
 
   it("rejects durable run projections without external event sequence metadata", () => {

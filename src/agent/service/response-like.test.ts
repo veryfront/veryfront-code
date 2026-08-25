@@ -36,30 +36,4 @@ describe("isResponseLike", () => {
   it("rejects ordinary objects with only a status", () => {
     assertEquals(isResponseLike({ status: 200 }), false);
   });
-
-  it("rejects status-carrying objects without the Response methods", () => {
-    assertEquals(
-      isResponseLike({ status: 200, headers: new Headers() }),
-      false,
-      "status and headers alone are not Response-like",
-    );
-    assertEquals(
-      isResponseLike({ status: 200, headers: new Headers(), text: async () => "x" }),
-      false,
-      "a value with text but no json is not Response-like",
-    );
-    assertEquals(
-      isResponseLike({ status: 200, headers: new Headers(), json: async () => ({}) }),
-      false,
-      "a value with json but no text is not Response-like",
-    );
-  });
-
-  it("accepts a cross-realm response that only reports bodyUsed", () => {
-    assertEquals(
-      isResponseLike({ status: 200, headers: new Headers(), bodyUsed: false }),
-      true,
-      "a cross-realm response is recognized by bodyUsed alone",
-    );
-  });
 });

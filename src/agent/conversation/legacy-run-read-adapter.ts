@@ -164,34 +164,18 @@ function readVersion1(
         resultToolCallIds.add(toolCallId);
         const tool = reducer.tools.get(toolCallId);
         if (tool?.providerExecuted === true) {
-          // A version 1 result carries no tool name of its own, so recover the
-          // name the call was started with, exactly as TOOL_CALL_END does.
-          const providerToolName = toolNameFor(reducer, toolCallId) ?? toolName;
-          // The reducer only accepts a provider result for a running tool, so the
-          // stored call must be started before its result is replayed -- exactly
-          // as the version 2 reader and the missing-result repair below do.
-          reduce({
-            type: "provider_tool_start",
-            toolCallId,
-            toolName: providerToolName,
-            providerExecuted: true,
-          });
           reduce({
             type: "provider_tool_result",
             toolCallId,
-            toolName: providerToolName,
-            // Durable writers serialize structured tool output into `content`,
-            // so decode it exactly as the version 2 reader does; otherwise a
-            // stored object replays to the runs UI as its JSON source text.
-            output: parseToolResultContent(event.content, event.contentEncoding),
+            toolName,
+            output: event.content,
             isError: event.isError === true,
             providerExecuted: true,
           });
           break;
         }
-        // A call that stored no provider marker cannot be attributed to a
-        // provider tool -- the reducer rejects a provider start for it -- so the
-        // result is retained as a semantic custom compatibility event.
+        // Version 1 events never mark provider execution, so the result is
+        // retained as a semantic custom compatibility event.
         reduce({
           type: "custom",
           name: "legacy-tool-result",
@@ -486,7 +470,7 @@ function readVersion2(
             type: "provider_tool_result",
             toolCallId,
             toolName,
-            output: parseToolResultContent(event.content, event.contentEncoding),
+            output: parseToolResultContent(event.content),
             isError: event.isError === true,
             providerExecuted: true,
           });
@@ -526,8 +510,7 @@ function readVersion2(
   return { status: "ok", frames, repairs: [] };
 }
 
-function parseToolResultContent(content: unknown, contentEncoding: unknown): unknown {
-  if (contentEncoding === "text") return content;
+function parseToolResultContent(content: unknown): unknown {
   if (typeof content !== "string") return content;
   try {
     return JSON.parse(content);

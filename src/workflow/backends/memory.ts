@@ -9,6 +9,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
+  PendingApproval,
   RunFilter,
   WorkflowQueueItem,
   WorkflowRun,
@@ -16,7 +17,6 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
-  type PersistedPendingApproval,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -112,7 +112,7 @@ interface MemoryRunObserver {
 export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
-  private approvals = new Map<string, PersistedPendingApproval[]>();
+  private approvals = new Map<string, PendingApproval[]>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
@@ -458,7 +458,7 @@ export class MemoryBackend implements WorkflowBackend {
   // Approvals
   // =========================================================================
 
-  savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
+  savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
     try {
@@ -479,7 +479,7 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId: string,
-    approval: PersistedPendingApproval,
+    approval: PendingApproval,
   ): Promise<boolean> {
     const run = this.runs.get(runId);
     if (
@@ -502,7 +502,7 @@ export class MemoryBackend implements WorkflowBackend {
   updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PersistedPendingApproval>,
+    patch: Partial<PendingApproval>,
   ): Promise<void> {
     const approvals = this.approvals.get(runId);
     const index = approvals?.findIndex((approval) => approval.id === approvalId) ?? -1;
@@ -520,17 +520,14 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]> {
+  getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     const approvals = this.approvals.get(runId) ?? [];
     return Promise.resolve(
       approvals.filter((a) => a.status === "pending").map((a) => structuredClone(a)),
     );
   }
 
-  getPendingApproval(
-    runId: string,
-    approvalId: string,
-  ): Promise<PersistedPendingApproval | null> {
+  getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
     const approvals = this.approvals.get(runId) ?? [];
     const approval = approvals.find((a) => a.id === approvalId);
     return Promise.resolve(approval ? structuredClone(approval) : null);
@@ -570,8 +567,8 @@ export class MemoryBackend implements WorkflowBackend {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
-  }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
-    const result: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
+  }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
+    const result: Array<{ runId: string; approval: PendingApproval }> = [];
 
     for (const [runId, approvals] of this.approvals) {
       const run = this.runs.get(runId);

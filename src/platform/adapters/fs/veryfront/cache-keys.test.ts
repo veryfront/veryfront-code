@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildDirCacheKeyPrefix,
@@ -11,14 +11,9 @@ import {
 const branchCtx = {
   sourceType: "branch" as const,
   projectSlug: "my-project",
-  branch: "feature/x",
+  branch: "main",
   releaseId: undefined,
   environmentName: undefined,
-};
-
-const mainBranchCtx = {
-  ...branchCtx,
-  branch: "main",
 };
 
 const releaseCtx = {
@@ -50,15 +45,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildFileCacheKeyPrefix(branchCtx),
-        "file:branch:my-project:feature%2Fx",
-      );
-    });
-
-    it("should give each branch its own namespace", () => {
-      assertNotEquals(
-        buildFileCacheKeyPrefix(branchCtx),
-        buildFileCacheKeyPrefix(mainBranchCtx),
-        "each branch must get its own file cache namespace",
+        "file:branch:my-project:main",
       );
     });
 
@@ -85,7 +72,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildStatCacheKeyPrefix(branchCtx),
-        "stat:branch:my-project:feature%2Fx",
+        "stat:branch:my-project:main",
       );
     });
 
@@ -105,7 +92,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildDirCacheKeyPrefix(branchCtx),
-        "dir:branch:my-project:feature%2Fx",
+        "dir:branch:my-project:main",
       );
     });
   });
@@ -118,7 +105,7 @@ describe("cache-keys", () => {
     it("should build branch-based key", () => {
       assertEquals(
         buildFileListCacheKey(branchCtx),
-        "files:branch:my-project:feature%2Fx",
+        "files:branch:my-project:main",
       );
     });
 

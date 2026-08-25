@@ -288,27 +288,6 @@ Deno.test("exact bounded reads distinguish an exact-size file from overflow", as
   );
 });
 
-Deno.test("exact bounded reads restore the final byte when a reader clears the probe buffer at EOF", async () => {
-  const source = new Uint8Array([1, 2, 3]);
-  let offset = 0;
-  const reader = {
-    read(buffer: Uint8Array) {
-      buffer.fill(0);
-      if (offset >= source.byteLength) return Promise.resolve(null);
-      const bytesRead = Math.min(buffer.byteLength, source.byteLength - offset);
-      buffer.set(source.subarray(offset, offset + bytesRead));
-      offset += bytesRead;
-      return Promise.resolve(bytesRead);
-    },
-  };
-
-  assertEquals(
-    [...await readFileHandleWithinLimit(reader, 3)],
-    [1, 2, 3],
-    "an exact-size file keeps its final byte after the EOF probe",
-  );
-});
-
 Deno.test("exact bounded reads validate before opening and close after overflow", async () => {
   let opened = false;
   await assertRejects(

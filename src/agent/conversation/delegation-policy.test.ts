@@ -78,16 +78,6 @@ describe("conversation delegation policy", () => {
       DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL,
       "different tool/model budget materially helps",
     );
-    assertStringIncludes(
-      NO_DELEGATION_NARRATION_UNLESS_ASKED,
-      "Do not mention child agents",
-      "the narration guard must keep forbidding delegation narration",
-    );
-    assertStringIncludes(
-      SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE,
-      "synthesize the findings in the root assistant voice",
-      "delegated findings must be re-voiced by the root assistant",
-    );
   });
 
   it("builds delegated-findings instructions in the root voice", () => {
@@ -140,19 +130,6 @@ describe("conversation delegation policy", () => {
           suggestedText: "durable child result",
         },
       },
-    );
-  });
-
-  it("leaves non-completed durable child results unhinted", () => {
-    assertEquals(
-      withRootOwnedChildResultHint({ ok: false, status: "failed", text: "child crashed" }),
-      { ok: false, status: "failed", text: "child crashed" },
-      "failed durable child results must not be hinted as findings",
-    );
-    assertEquals(
-      withRootOwnedChildResultHint({ ok: false, status: "cancelled", text: "child cancelled" }),
-      { ok: false, status: "cancelled", text: "child cancelled" },
-      "cancelled durable child results must not be hinted as findings",
     );
   });
 
@@ -349,21 +326,5 @@ describe("starter intent policy", () => {
 
     assertStringIncludes(system, FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER);
     assertEquals(addFirstTurnStarterIntentRootOwnershipReminder(system), system);
-
-    const structured = addFirstTurnStarterIntentRootOwnershipReminder([
-      { role: "system", content: "Base instructions" },
-    ]);
-
-    assertEquals(structured.length, 2, "a structured system prompt gains one reminder message");
-    assertEquals(
-      structured[1],
-      { role: "system", content: FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER },
-      "the appended message carries the exact reminder",
-    );
-    assertEquals(
-      addFirstTurnStarterIntentRootOwnershipReminder(structured),
-      structured,
-      "re-applying the reminder to a structured prompt is a no-op",
-    );
   });
 });

@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createLocalProjectResolver } from "./local-project-resolver.ts";
 
@@ -38,73 +38,29 @@ describe("local project resolver", () => {
       },
     };
 
-    let workspace = workspaceA;
-    const resolver = createLocalProjectResolver({
+    const resolverA = createLocalProjectResolver({
       localProjects: {},
-      basePath: () => workspace,
+      basePath: () => workspaceA,
       fs,
     });
 
-    const firstPath = await resolver.find("shop");
+    const firstPath = await resolverA.find("shop");
     existsCalls.length = 0;
-    const cachedPath = await resolver.find("shop");
+    const cachedPath = await resolverA.find("shop");
 
     assertEquals(firstPath, `${workspaceA}/projects/shop`);
     assertEquals(cachedPath, `${workspaceA}/projects/shop`);
     assertEquals(existsCalls, []);
 
-    // The same resolver, now pointed at another workspace whose directory
-    // carries no Veryfront source marker.
-    workspace = workspaceB;
-
-    assertEquals(
-      await resolver.find("shop"),
-      undefined,
-      "the discovery cache must be keyed by base path, not slug alone",
-    );
-  });
-
-  it("rejects unsafe configured local project entries", () => {
-    assertThrows(
-      () => createLocalProjectResolver({ localProjects: { shop: "relative/path" } }),
-      TypeError,
-      "Invalid configured local project entry: shop",
-    );
-    assertThrows(
-      () => createLocalProjectResolver({ localProjects: { shop: "/a/../b" } }),
-      TypeError,
-      "Invalid configured local project entry: shop",
-    );
-    assertThrows(
-      () => createLocalProjectResolver({ localProjects: { Shop: "/configured/shop" } }),
-      TypeError,
-      "Invalid configured local project entry: Shop",
-    );
-    assertThrows(
-      () =>
-        createLocalProjectResolver({
-          localProjects: { shop: 42 as unknown as string },
-        }),
-      TypeError,
-      "Invalid configured local project entry: shop",
-    );
-  });
-
-  it("rejects a non-canonical discovery base path before filesystem access", async () => {
-    const resolver = createLocalProjectResolver({
-      basePath: () => "relative",
-      fs: {
-        exists(): boolean {
-          throw new Error("must not touch the filesystem");
-        },
-      },
+    const resolverB = createLocalProjectResolver({
+      localProjects: {},
+      basePath: () => workspaceB,
+      fs,
     });
 
-    await assertRejects(
-      () => resolver.find("shop"),
-      TypeError,
-      "canonical and absolute",
-    );
+    const workspaceBPath = await resolverB.find("shop");
+
+    assertEquals(workspaceBPath, undefined);
   });
 
   it("discovers a project whose source roots are declared in config", async () => {

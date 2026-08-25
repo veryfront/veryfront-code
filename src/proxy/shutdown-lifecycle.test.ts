@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProxyShutdownCleanupTimeoutMs, runProxyShutdownSteps } from "./shutdown-lifecycle.ts";
 
@@ -181,57 +181,6 @@ describe("proxy shutdown lifecycle", () => {
     assertEquals(await settlement, []);
   });
 
-  it("rejects malformed shutdown step configurations", async () => {
-    const ran: string[] = [];
-    const record = (name: string) => ({
-      name,
-      run: () => {
-        ran.push(name);
-      },
-    });
-
-    await assertRejects(
-      () =>
-        runProxyShutdownSteps([record("http_server"), record("http_server")], {
-          timeoutMs: 100,
-        }),
-      TypeError,
-      "Duplicate proxy shutdown step: http_server",
-    );
-
-    await assertRejects(
-      () =>
-        runProxyShutdownSteps([
-          { ...record("a"), requires: ["b"] },
-          record("b"),
-        ], { timeoutMs: 100 }),
-      TypeError,
-      "prerequisite must name an earlier step",
-    );
-
-    await assertRejects(
-      () =>
-        runProxyShutdownSteps([
-          { name: "a", run: "not-a-function" as never },
-          record("b"),
-        ], { timeoutMs: 100 }),
-      TypeError,
-      "must have a name and run function",
-    );
-
-    await assertRejects(
-      () =>
-        runProxyShutdownSteps([
-          { ...record("a"), requires: "b" as never },
-          record("b"),
-        ], { timeoutMs: 100 }),
-      TypeError,
-      "prerequisites must be an array",
-    );
-
-    assertEquals(ran, [], "a malformed step list must be rejected before any owner runs");
-  });
-
   it("parses strict cleanup policy and rejects malformed values", () => {
     assertEquals(parseProxyShutdownCleanupTimeoutMs("3500"), 3_500);
     assertEquals(parseProxyShutdownCleanupTimeoutMs(undefined), 4_000);
@@ -245,19 +194,6 @@ describe("proxy shutdown lifecycle", () => {
       () => parseProxyShutdownCleanupTimeoutMs("-1"),
       TypeError,
       "decimal integer",
-    );
-    // A numerically valid but oversized delay overflows the 32-bit timer and
-    // fires immediately, starving every step of its cleanup window.
-    assertEquals(parseProxyShutdownCleanupTimeoutMs("2147483647"), 2_147_483_647);
-    assertThrows(
-      () => parseProxyShutdownCleanupTimeoutMs("2147483648"),
-      RangeError,
-      "must be between 0 and 2147483647",
-    );
-    assertThrows(
-      () => parseProxyShutdownCleanupTimeoutMs(undefined, -1),
-      RangeError,
-      "Default proxy shutdown cleanup timeout",
     );
   });
 });

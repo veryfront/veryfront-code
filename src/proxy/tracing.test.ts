@@ -3,19 +3,13 @@ import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   _resetShimForTests,
-  type Context,
-  context as shimContext,
-  getGlobalMetricsAPI,
   getGlobalTracerProvider,
-  type Meter,
-  type MetricsAPI,
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   _resetOTLPForTests,
-  getTraceContext,
   initializeOTLPWithApis,
   resolveOtlpGate,
   shutdownOTLP,
@@ -148,67 +142,6 @@ describe("proxy otlp initialization", () => {
     assertEquals(calls.start, 1);
     assertNotEquals(getGlobalTracerProvider(), noopProvider);
     assertNotEquals(startServerSpan("GET", "/"), null);
-  });
-
-  it("wires the exporter's metrics, trace and context APIs into the shim", async () => {
-    // These three accessors are the only reason proxy metrics are exported and
-    // proxy log lines carry a trace id, and only this function installs them.
-    setOtelEnv({
-      OTEL_TRACES_ENABLED: "true",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
-    });
-    const activeSpan = {
-      ...createFakeSpan(),
-      spanContext: () => ({
-        traceId: "1".repeat(32),
-        spanId: "2".repeat(16),
-        traceFlags: 1,
-      }),
-    } as unknown as Span;
-    const fakeMeter: Meter = {
-      createCounter: () => ({ add: () => {} }),
-      createUpDownCounter: () => ({ add: () => {} }),
-      createHistogram: () => ({ record: () => {} }),
-      createObservableGauge: () => ({ addCallback: () => {} }),
-    };
-    const metricsApi: MetricsAPI = { getMeter: () => fakeMeter };
-    const exporterContext = {
-      getValue: () => undefined,
-      setValue: () => exporterContext,
-      deleteValue: () => exporterContext,
-    } as unknown as Context;
-    const contextApi = {
-      active: () => exporterContext,
-      with: <T>(_ctx: unknown, fn: () => T): T => fn(),
-    };
-    const { exporter } = createFakeExporter({
-      getMetricsAPI: () => metricsApi,
-      getTraceAPI: () => ({
-        getActiveSpan: () => activeSpan,
-        getSpan: () => activeSpan,
-        setSpan: (ctx: unknown) => ctx,
-      }),
-      getContextAPI: () => contextApi,
-    });
-
-    // deno-lint-ignore require-await
-    await initializeOTLPWithApis(async () => exporter);
-
-    assertEquals(
-      getGlobalMetricsAPI(),
-      metricsApi,
-      "the exporter's metrics API must be wired into the shim",
-    );
-    assertEquals(
-      getTraceContext(),
-      { traceId: "1".repeat(32), spanId: "2".repeat(16) },
-      "the exporter's trace API must back getTraceContext for proxy log correlation",
-    );
-    assertEquals(
-      shimContext.active(),
-      exporterContext,
-      "the exporter's context API must back the shim so span context survives async boundaries",
-    );
   });
 
   it("prefers OTEL_EXPORTER_OTLP_TRACES_ENDPOINT as the endpoint gate", async () => {

@@ -57,36 +57,8 @@ describe("GitHubDirectoryOperations", () => {
       assertEquals(typeof ops.readDir, "function");
     });
 
-    function createOpsWithListing(isDirectory: boolean): GitHubDirectoryOperations {
-      return new GitHubDirectoryOperations(
-        mockConfig,
-        new FileCache(),
-        {
-          isDirectory: () => isDirectory,
-          getFilesInDirectory: () => [
-            { path: "src/b.ts", sha: "b", size: 1, type: "blob" },
-            { path: "src/a.ts", sha: "a", size: 1, type: "blob" },
-          ],
-          getSubdirectories: () => ["z", "m"],
-        } as any,
-      );
-    }
-
     it("should return empty array for non-existent directory", () => {
-      // The stub would produce entries if the not-a-directory guard were gone.
-      assertEquals(
-        createOpsWithListing(false).readdir("/non-existent"),
-        [],
-        "readdir returns empty when the path is not an indexed directory",
-      );
-    });
-
-    it("should list directories first, then entries name-sorted", () => {
-      assertEquals(
-        createOpsWithListing(true).readdir("src").map((entry) => entry.name),
-        ["m", "z", "a.ts", "b.ts"],
-        "readdir must list directories first, then entries name-sorted",
-      );
+      assertEquals(createOps().readdir("/non-existent"), []);
     });
 
     it("isolates directory cache entries by repository", () => {

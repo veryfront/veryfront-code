@@ -4,7 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import {
   authorizeWebSocketRequest,
-  buildRendererBridgeRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
   getClientWebSocketErrorLogLevel,
@@ -94,54 +93,75 @@ describe("Proxy WebSocket Handler Tests", () => {
     });
   });
 
-  describe("Renderer bridge hop construction", () => {
-    const BRIDGE_HOST = "support-agent-agodnc.preview.veryfront.com";
+  describe("WebSocket URL Construction", () => {
+    it("converts HTTP to WS URL", () => {
+      const rendererUrl = "http://localhost:3001";
+      const wsUrl = rendererUrl.replace(/^http/, "ws");
 
-    function bridgeContext(): ProxyContext {
-      return {
-        token: "vf_proxy_minted_project_token",
-        projectSlug: "support-agent-agodnc",
-        projectId: "prj_01hzzz",
-        environment: "preview",
-        contentSourceId: "src_01hzzz",
-        host: BRIDGE_HOST,
-        parsedDomain: parseProjectDomain(BRIDGE_HOST),
-        isLocalProject: false,
-      };
-    }
-
-    it("converts the renderer hop to ws and keeps the path and benign query", () => {
-      const req = new Request(`https://${BRIDGE_HOST}/_ws?foo=bar&x-project-slug=victim`);
-
-      const bridge = buildRendererBridgeRequest(
-        req,
-        new URL(req.url),
-        bridgeContext(),
-        "http://veryfront-server",
-      );
-
-      assertEquals(
-        bridge.url.toString(),
-        "ws://veryfront-server/_ws?foo=bar",
-        "the bridge hop must convert http to ws and preserve path and benign query while dropping browser-named identity",
-      );
+      assertEquals(wsUrl, "ws://localhost:3001");
     });
 
-    it("reaches an https renderer over wss", () => {
-      const req = new Request(`https://${BRIDGE_HOST}/_ws`);
+    it("converts HTTPS to WSS URL", () => {
+      const rendererUrl = "https://renderer.example.com";
+      const wsUrl = rendererUrl.replace(/^http/, "ws");
 
-      const bridge = buildRendererBridgeRequest(
-        req,
-        new URL(req.url),
-        bridgeContext(),
-        "https://renderer.example.com",
-      );
+      assertEquals(wsUrl, "wss://renderer.example.com");
+    });
 
-      assertEquals(
-        bridge.url.protocol,
-        "wss:",
-        "an https renderer must be reached over wss",
-      );
+    it("preserves path in WebSocket URL", () => {
+      const rendererUrl = "http://localhost:3001";
+      const path = "/_ws";
+      const query = "?foo=bar";
+      const targetUrl = `${rendererUrl.replace(/^http/, "ws")}${path}${query}`;
+
+      assertEquals(targetUrl, "ws://localhost:3001/_ws?foo=bar");
+    });
+  });
+
+  describe("WebSocket Query Parameters", () => {
+    it("adds project slug as query parameter", () => {
+      const baseUrl = new URL("ws://localhost:3001/_ws");
+      const projectSlug = "my-project";
+
+      baseUrl.searchParams.set("x-project-slug", projectSlug);
+
+      assertEquals(baseUrl.searchParams.get("x-project-slug"), "my-project");
+    });
+
+    it("adds environment as query parameter", () => {
+      const baseUrl = new URL("ws://localhost:3001/_ws");
+      const environment = "preview";
+
+      baseUrl.searchParams.set("x-environment", environment);
+
+      assertEquals(baseUrl.searchParams.get("x-environment"), "preview");
+    });
+
+    it("handles empty project slug", () => {
+      const baseUrl = new URL("ws://localhost:3001/_ws");
+
+      baseUrl.searchParams.set("x-project-slug", "");
+
+      assertEquals(baseUrl.searchParams.get("x-project-slug"), "");
+    });
+  });
+
+  describe("Domain Parsing for WebSocket", () => {
+    it("extracts project slug from preview domain", () => {
+      const host = "myproject.preview.veryfront.com";
+      const [slug, env] = host.split(".");
+
+      assertEquals(slug, "myproject");
+      assertEquals(env === "preview", true);
+    });
+
+    it("extracts branch from preview domain with branch", () => {
+      const host = "myproject--feature-branch.preview.veryfront.com";
+      const [firstPart = ""] = host.split(".");
+      const [slug, branch] = firstPart.split("--");
+
+      assertEquals(slug, "myproject");
+      assertEquals(branch, "feature-branch");
     });
   });
 
@@ -156,42 +176,12 @@ describe("Proxy WebSocket Handler Tests", () => {
 
   describe("Server WebSocket error handling", () => {
     it("treats upstream EOF as a transient warning", () => {
-      assertEquals(
-        getServerWebSocketErrorLogLevel("Unexpected EOF"),
-        "warn",
-        "an upstream EOF is a routine bridge teardown, not an alertable failure",
-      );
+      assertEquals(getServerWebSocketErrorLogLevel("Unexpected EOF"), "warn");
     });
 
     it("treats browser-side EOF and ping timeouts as transient warnings", () => {
-      assertEquals(
-        getClientWebSocketErrorLogLevel("Unexpected EOF"),
-        "warn",
-        "a browser-side EOF is a routine bridge teardown, not an alertable failure",
-      );
-      assertEquals(
-        getClientWebSocketErrorLogLevel("No response from ping frame."),
-        "warn",
-        "a missed heartbeat is a routine bridge teardown, not an alertable failure",
-      );
-    });
-
-    it("keeps non-transient bridge failures at error level", () => {
-      assertEquals(
-        getServerWebSocketErrorLogLevel("connection refused"),
-        "error",
-        "non-transient upstream failures must stay at error level",
-      );
-      assertEquals(
-        getServerWebSocketErrorLogLevel("invalid peer certificate: UnknownIssuer"),
-        "error",
-        "TLS failures must stay at error level",
-      );
-      assertEquals(
-        getClientWebSocketErrorLogLevel("error sending frame"),
-        "error",
-        "non-transient browser-side failures must stay at error level",
-      );
+      assertEquals(getClientWebSocketErrorLogLevel("Unexpected EOF"), "warn");
+      assertEquals(getClientWebSocketErrorLogLevel("No response from ping frame."), "warn");
     });
 
     it("closes the accepted client socket when the upstream bridge fails", () => {

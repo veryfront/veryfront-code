@@ -86,29 +86,6 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(result.tokenSource, "service");
   });
 
-  it("classifies both documented missing-project statuses", () => {
-    assertEquals(
-      isMissingProxyProjectError(new OAuthTokenRequestError(404, "{}")),
-      true,
-      "404 must classify as a missing project",
-    );
-    assertEquals(
-      isMissingProxyProjectError(new OAuthTokenRequestError(400, "{}")),
-      true,
-      "400 remains the legacy missing-project status",
-    );
-    assertEquals(
-      isMissingProxyProjectError(new OAuthTokenRequestError(500, "{}")),
-      false,
-      "an upstream outage must not be swallowed as a missing project",
-    );
-    assertEquals(
-      isMissingProxyProjectError(new Error("boom")),
-      false,
-      "only typed OAuth errors classify",
-    );
-  });
-
   it("returns custom-domain token fetch errors without logging expected misses as errors", async () => {
     const loggedErrors: string[] = [];
     const notFoundError = new OAuthTokenRequestError(

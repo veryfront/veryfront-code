@@ -401,57 +401,6 @@ describe("ResilientCache", () => {
     await cache.close();
   });
 
-  it("deletes rather than replays a journaled write that expired while the circuit was open", async () => {
-    let now = 0;
-    let expiryNow = 1_800_000_000_000;
-    const primary = new FakeCache("extension");
-    const fallback = new FakeCache("memory");
-    primary.failures.add("set");
-    const cache = new ResilientCache(primary, fallback, {
-      openDurationMs: 10,
-      now: () => now,
-      wallNow: () => expiryNow,
-    });
-
-    try {
-      const expiresAt = expiryNow + 25;
-
-      await cache.set("key", {
-        token: "stale",
-        expiresAt,
-        scope: "production",
-      });
-      assertEquals(
-        cache.getStatus().state,
-        "open",
-        "the failed primary write must open the circuit",
-      );
-
-      primary.failures.delete("set");
-      expiryNow = expiresAt;
-      now = 10;
-      await cache.get("key");
-
-      assertEquals(
-        primary.entries.has("key"),
-        false,
-        "an entry that expired while the circuit was open must be deleted, not replayed, on recovery",
-      );
-      assertEquals(
-        primary.calls.get("delete"),
-        1,
-        "recovery must issue exactly one delete for the expired journal entry",
-      );
-      assertEquals(
-        cache.getStatus().pendingMutations,
-        0,
-        "the journal must be drained once the replay completes",
-      );
-    } finally {
-      await cache.close();
-    }
-  });
-
   it("replays a failed clear before trusting recovered primary data", async () => {
     let now = 0;
     const primary = new FakeCache("extension");
@@ -554,14 +503,6 @@ describe("ResilientCache", () => {
         }),
       TypeError,
       "invalid time",
-    );
-    assertThrows(
-      () =>
-        new ResilientCache(primary, new FakeCache("memory"), {
-          wallNow: () => Number.NaN,
-        }),
-      TypeError,
-      "wall clock",
     );
 
     let accessorReads = 0;

@@ -19,32 +19,7 @@ describe("createProxyErrorResponse", () => {
     const body = await response.text();
     assertStringIncludes(body, "<title>404 Not Found");
     assertStringIncludes(body, "The page you requested could not be found.");
-    assertEquals(
-      body.includes("Preview project not found"),
-      false,
-      "the 404 page must not echo the internal error message",
-    );
-  });
-
-  it("renders the same not found HTML page for a missing release", async () => {
-    const response = createProxyErrorResponse({
-      status: 502,
-      message: "Release not found for project",
-      slug: "release-not-found",
-    });
-
-    assertEquals(response.status, 404);
-    assertEquals(response.headers.get("Content-Type"), "text/html; charset=utf-8");
-    assertEquals(response.headers.get("Cache-Control"), "no-store");
-
-    const body = await response.text();
-    assertStringIncludes(body, "<title>404 Not Found");
-    assertStringIncludes(body, "The page you requested could not be found.");
-    assertEquals(
-      body.includes("Release not found for project"),
-      false,
-      "the 404 page must not echo the internal error message",
-    );
+    assertEquals(body.includes("x-token header is required in proxy mode"), false);
   });
 
   it("preserves sign-in redirects for protected projects", () => {

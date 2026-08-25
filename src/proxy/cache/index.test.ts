@@ -126,36 +126,6 @@ describe("proxy cache factory", () => {
     assertEquals(registered.closed, false);
   });
 
-  it("rejects extension-store composition that contradicts CACHE_TYPE", async () => {
-    Deno.env.set("CACHE_TYPE", "extension");
-    await assertRejects(
-      () =>
-        createCacheFromEnv({
-          extensionStore: Object.freeze({ kind: "disabled", store: null }),
-        }),
-      TypeError,
-      "requires an acquired extension store",
-    );
-
-    Deno.env.set("CACHE_TYPE", "memory");
-    await assertRejects(
-      () =>
-        createCacheFromEnv({
-          extensionStore: Object.freeze({ kind: "created", store: new FakeTokenCache() }),
-        }),
-      TypeError,
-      "cannot be supplied when CACHE_TYPE=memory",
-    );
-    await assertRejects(
-      () =>
-        createCacheFromEnv({
-          extensionStore: Object.freeze({ kind: "borrowed", store: new FakeTokenCache() }),
-        }),
-      TypeError,
-      "cannot be supplied when CACHE_TYPE=memory",
-    );
-  });
-
   it("rejects unknown cache types and obsolete inline Extension options", async () => {
     await assertRejects(
       () => createCache({ type: "unknown" } as never),

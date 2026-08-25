@@ -186,11 +186,8 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = normalizeGitHubPath(basePath, this.projectDir);
-    // The pages-prefix fallback changes the answer for the same path, so the
-    // opt-out needs its own cache scope; otherwise one variant serves the other.
-    const cacheRef = buildGitHubCacheRef(this.config);
     const cacheKey = buildGitHubResolveCacheKey(
-      options?.allowPagesPrefix === false ? `${cacheRef}:no-pages-prefix` : cacheRef,
+      buildGitHubCacheRef(this.config),
       normalizedPath,
     );
     const cached = this.cache.get<string | null>(cacheKey);

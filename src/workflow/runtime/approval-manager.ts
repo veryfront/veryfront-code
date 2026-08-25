@@ -8,15 +8,10 @@ import type {
 } from "../types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
-import {
-  type PersistedPendingApproval,
-  updateRunIfStatus,
-  type WorkflowBackend,
-} from "../backends/types.ts";
+import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
-import { projectPendingApproval, projectRunPendingApprovals } from "./pending-approval-metadata.ts";
 import {
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
@@ -45,15 +40,6 @@ export type ApprovalResponseSchemaResolver = (
   input: ApprovalResponseSchemaResolverInput,
 ) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
 
-export interface InternalApprovalResponseSchemaResolverInput {
-  run: WorkflowRun;
-  approval: PersistedPendingApproval;
-}
-
-export type InternalApprovalResponseSchemaResolver = (
-  input: InternalApprovalResponseSchemaResolverInput,
-) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
-
 export interface ApprovalManagerConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
@@ -63,8 +49,6 @@ export interface ApprovalManagerConfig {
   notifier?: ApprovalNotifier;
   /** Resolve a wait node response schema for persisted approvals. */
   responseSchemaResolver?: ApprovalResponseSchemaResolver;
-  /** Resolve a response schema from backend-only approval metadata. */
-  internalResponseSchemaResolver?: InternalApprovalResponseSchemaResolver;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
   /** Enable debug logging */
@@ -118,7 +102,6 @@ export class ApprovalManager {
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
-    options: { responseSchemaId?: string } = {},
   ): Promise<ApprovalRequest> {
     const runId = run.id;
     const workerId = run.workerId;
@@ -129,7 +112,7 @@ export class ApprovalManager {
 
     const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
 
-    const approval: PersistedPendingApproval = {
+    const approval: PendingApproval = {
       id: generateId("apr"),
       nodeId,
       message: waitConfig.message || "Approval required",
@@ -138,9 +121,6 @@ export class ApprovalManager {
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
-      ...(options.responseSchemaId === undefined
-        ? {}
-        : { responseSchemaId: options.responseSchemaId }),
     };
 
     logger.debug("Creating approval", {
@@ -190,8 +170,8 @@ export class ApprovalManager {
 
     try {
       await this.config.notifier?.(
-        structuredClone(projectPendingApproval(approval)),
-        structuredClone(projectRunPendingApprovals(run)),
+        structuredClone(approval),
+        structuredClone(run),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -247,14 +227,6 @@ export class ApprovalManager {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
-    const approval = await this.getPersistedApproval(runId, approvalId);
-    return approval ? projectPendingApproval(approval) : null;
-  }
-
-  private async getPersistedApproval(
-    runId: string,
-    approvalId: string,
-  ): Promise<PersistedPendingApproval | null> {
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }
@@ -264,9 +236,8 @@ export class ApprovalManager {
   }
 
   /** Get all pending approvals for a run */
-  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
-    const approvals = await this.config.backend.getPendingApprovals(runId);
-    return approvals.map(projectPendingApproval);
+  getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    return this.config.backend.getPendingApprovals(runId);
   }
 
   private responseSchemaKey(runId: string, approvalId: string): string {
@@ -275,28 +246,22 @@ export class ApprovalManager {
 
   private async resolveResponseSchema(
     runId: string,
-    approval: PersistedPendingApproval,
+    approval: PendingApproval,
   ): Promise<Schema<unknown> | undefined> {
     const localSchema = this.responseSchemas.get(this.responseSchemaKey(runId, approval.id));
     if (localSchema) return localSchema;
 
+    if (!this.config.responseSchemaResolver) return undefined;
+
     const run = await this.config.backend.getRun(runId);
     if (!run) return undefined;
 
-    if (this.config.responseSchemaResolver) {
-      const publicSchema = await this.config.responseSchemaResolver({
-        run: projectRunPendingApprovals(run),
-        approval: projectPendingApproval(approval),
-      });
-      if (publicSchema) return publicSchema;
-    }
-
-    return await this.config.internalResponseSchemaResolver?.({ run, approval });
+    return await this.config.responseSchemaResolver({ run, approval });
   }
 
   private async validateDecisionData(
     runId: string,
-    approval: PersistedPendingApproval,
+    approval: PendingApproval,
     decision: ApprovalDecision,
   ): Promise<void> {
     const schema = await this.resolveResponseSchema(runId, approval);
@@ -329,7 +294,7 @@ export class ApprovalManager {
     // only an early-out for the common already-decided case. It is NOT the
     // authoritative gate, because a concurrent decision could slip in between
     // this read and the write below.
-    const approval = await this.getPersistedApproval(runId, approvalId);
+    const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
@@ -441,12 +406,7 @@ export class ApprovalManager {
       return Promise.resolve([]);
     }
 
-    return list({ ...filter, status: "pending" }).then((entries) =>
-      entries.map(({ runId, approval }) => ({
-        runId,
-        approval: projectPendingApproval(approval),
-      }))
-    );
+    return list({ ...filter, status: "pending" });
   }
 
   /** Check and expire stale approvals */

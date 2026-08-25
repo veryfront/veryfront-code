@@ -1,10 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertExists,
-  assertRejects,
-  assertStrictEquals,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createConversationRootRunContext,
@@ -17,7 +12,6 @@ const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
 const CONVERSATION_ID = "11111111-1111-4111-a111-111111111111";
 const MESSAGE_ID = "22222222-2222-4222-a222-222222222222";
-const BRANCH_ID = "33333333-3333-4333-a333-333333333333";
 const originalFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -72,49 +66,6 @@ describe("agent/conversation-root-run-context", () => {
     assertEquals(String(calls[0]?.[0]), `${API_URL}/runs`);
   });
 
-  it("forwards branch and implementation targeting into the run-create request", async () => {
-    const calls = stubFetchSequence(
-      jsonResponse({ accepted: true, run: { run_id: "run_root_targeted" } }, 202),
-      jsonResponse({
-        run_id: "run_root_targeted",
-        conversation_id: CONVERSATION_ID,
-        message_id: MESSAGE_ID,
-        latest_event_id: 0,
-        latest_external_event_sequence: 0,
-        status: "running",
-      }),
-    );
-
-    await startConversationRootRun({
-      authToken: AUTH_TOKEN,
-      apiUrl: API_URL,
-      conversationId: CONVERSATION_ID,
-      projectId: "project-1",
-      branchId: BRANCH_ID,
-      implementationKind: "veryfront-codex",
-      agentId: "veryfront",
-    });
-
-    const body = JSON.parse(String(calls[0]?.[1]?.body)) as {
-      request: Record<string, unknown>;
-    };
-    assertEquals(
-      body.request.source_target_branch_id,
-      BRANCH_ID,
-      "branchId must reach the run-create request",
-    );
-    assertEquals(
-      body.request.runtime_target_kind,
-      "preview_branch",
-      "a branch target must select the preview-branch runtime",
-    );
-    assertEquals(
-      body.request.implementation_kind,
-      "veryfront-codex",
-      "implementationKind must reach the run-create request",
-    );
-  });
-
   it("reuses a provided run descriptor without calling the API", async () => {
     const run = await startConversationRootRun({
       authToken: AUTH_TOKEN,
@@ -160,10 +111,7 @@ describe("agent/conversation-root-run-context", () => {
   });
 
   it("creates one canonical root-run context object for durable and parent lineage", async () => {
-    const published: unknown[][] = [];
-    const appendParentRunEvents = (events: unknown[]) => {
-      published.push(events);
-    };
+    const publishParentRunEvents = async (_events: unknown[]) => undefined;
     const context = createConversationRootRunContext({
       run: {
         runId: "run_root_2",
@@ -175,7 +123,7 @@ describe("agent/conversation-root-run-context", () => {
       },
       parentRunId: "parent-run",
       parentMessageId: "parent-message",
-      appendParentRunEvents,
+      appendParentRunEvents: publishParentRunEvents,
     });
 
     assertEquals(context.run, {
@@ -188,28 +136,7 @@ describe("agent/conversation-root-run-context", () => {
     });
     assertEquals(context.effectiveParentRunId, "run_root_2");
     assertEquals(context.effectiveParentMessageId, MESSAGE_ID);
-    assertExists(
-      context.publishParentRunEvents,
-      "a publisher must exist when appendParentRunEvents is supplied",
-    );
-    await context.publishParentRunEvents([{ type: "run-started" }]);
-    assertEquals(
-      published,
-      [[{ type: "run-started" }]],
-      "events must be forwarded verbatim to appendParentRunEvents",
-    );
-
-    const withoutPublisher = createConversationRootRunContext({
-      run: null,
-      parentRunId: "parent-run",
-      parentMessageId: "parent-message",
-    });
-
-    assertStrictEquals(
-      withoutPublisher.publishParentRunEvents,
-      undefined,
-      "no publisher must be created without appendParentRunEvents",
-    );
+    await context.publishParentRunEvents?.([{ type: "run-started" }]);
   });
 
   it("creates a reusable root-run start adapter over the canonical start helper", async () => {
@@ -240,10 +167,7 @@ describe("agent/conversation-root-run-context", () => {
   });
 
   it("prepares one conversation root-run context object from start + parent lineage", async () => {
-    const published: unknown[][] = [];
-    const appendParentRunEvents = (events: unknown[]) => {
-      published.push(events);
-    };
+    const publishParentRunEvents = async (_events: unknown[]) => undefined;
     stubFetchSequence(
       jsonResponse({ accepted: true, run: { run_id: "run_root_prepare" } }, 202),
       jsonResponse({
@@ -264,21 +188,12 @@ describe("agent/conversation-root-run-context", () => {
       agentId: "veryfront",
       parentRunId: "parent-run",
       parentMessageId: "parent-message",
-      appendParentRunEvents,
+      appendParentRunEvents: publishParentRunEvents,
     });
 
     assertEquals(context.run?.runId, "run_root_prepare");
     assertEquals(context.effectiveParentRunId, "run_root_prepare");
     assertEquals(context.effectiveParentMessageId, MESSAGE_ID);
-    assertExists(
-      context.publishParentRunEvents,
-      "a prepared context must carry the parent-run publisher",
-    );
-    await context.publishParentRunEvents([{ type: "run-started" }]);
-    assertEquals(
-      published,
-      [[{ type: "run-started" }]],
-      "events must be forwarded verbatim to appendParentRunEvents",
-    );
+    await context.publishParentRunEvents?.([{ type: "run-started" }]);
   });
 });

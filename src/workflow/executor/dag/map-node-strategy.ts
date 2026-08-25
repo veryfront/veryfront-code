@@ -4,6 +4,7 @@ import type {
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
+  WorkflowNodeConfig,
 } from "../../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { NodeExecutionResult } from "./types.ts";
@@ -46,21 +47,12 @@ function createMapChildNodes(
       };
     }
 
-    const processorConfig = (config.processor as WorkflowNode).config;
+    const processorConfig: WorkflowNodeConfig = { ...(config.processor as WorkflowNode).config };
 
     if (processorConfig.type === "step") {
-      return {
-        id: childId,
-        config: {
-          ...processorConfig,
-          input: item as Record<string, unknown>,
-        },
-      };
+      processorConfig.input = item as Record<string, unknown>;
     }
 
-    // Non-step processors do not receive item input through their config. Keep
-    // their registered config identity so wait nodes retain their durable
-    // definition-path association during execution.
     return { id: childId, config: processorConfig };
   });
 }
@@ -135,6 +127,5 @@ export async function executeMapNodeStrategy(
     contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
     waiting: result.waiting,
     waitingNode: result.waitingNode,
-    waitingConfig: result.waitingConfig,
   };
 }

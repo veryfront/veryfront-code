@@ -30,7 +30,6 @@ import type {
   WorkflowContext,
   WorkflowRun,
 } from "../types.ts";
-import { projectPendingApproval } from "../runtime/pending-approval-metadata.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
@@ -181,7 +180,7 @@ function projectRun(
   return {
     ...publicRun,
     context: projectContext(context),
-    pendingApprovals: pendingApprovals.map(projectPendingApproval),
+    pendingApprovals,
     ...(error ? { error: { message: error.message, nodeId: error.nodeId } } : {}),
   };
 }

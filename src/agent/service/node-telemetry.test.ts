@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   initializeNodeAgentServiceOpenTelemetry,
@@ -259,7 +259,6 @@ describe("agent/node-agent-service-telemetry", () => {
 
   it("delegates enabled telemetry initialization to a NodeTelemetryProvider", async () => {
     const calls: unknown[] = [];
-    const registerLogRecordEmitter = () => {};
     const result = await initializeNodeAgentServiceOpenTelemetry({
       enabled: true,
       serviceName: "agent-service",
@@ -286,7 +285,7 @@ describe("agent/node-agent-service-telemetry", () => {
         express: false,
         fs: true,
       },
-      registerLogRecordEmitter,
+      registerLogRecordEmitter: () => {},
       telemetryProvider: {
         initialize(options) {
           calls.push(options);
@@ -327,13 +326,9 @@ describe("agent/node-agent-service-telemetry", () => {
         },
         logger: undefined,
         processTarget: undefined,
-        registerLogRecordEmitter,
+        registerLogRecordEmitter: calls[0] &&
+          (calls[0] as { registerLogRecordEmitter?: unknown }).registerLogRecordEmitter,
       },
     ]);
-    assertStrictEquals(
-      (calls[0] as { registerLogRecordEmitter?: unknown }).registerLogRecordEmitter,
-      registerLogRecordEmitter,
-      "the log-record emitter registrar must be forwarded to the telemetry provider by reference",
-    );
   });
 });

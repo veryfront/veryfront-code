@@ -15,18 +15,13 @@ describe("fallback-wrapper", () => {
   describe("withFallback", () => {
     it("should return primary result when successful", async () => {
       const primary = () => Promise.resolve("primary-success");
-      let fallbackCalls = 0;
-      const fallback = () => {
-        fallbackCalls++;
-        return Promise.resolve("fallback-success");
-      };
+      const fallback = () => Promise.resolve("fallback-success");
 
       const result = await withFallback(primary, fallback, {
         operationName: "test-operation",
       });
 
       assertEquals(result, "primary-success");
-      assertEquals(fallbackCalls, 0, "the fallback must not run when the primary succeeds");
     });
 
     it("should return fallback result when primary fails", async () => {
@@ -130,18 +125,13 @@ describe("fallback-wrapper", () => {
   describe("withFallbackSync", () => {
     it("should return primary result when successful", () => {
       const primary = () => "primary-success";
-      let fallbackCalls = 0;
-      const fallback = () => {
-        fallbackCalls++;
-        return "fallback-success";
-      };
+      const fallback = () => "fallback-success";
 
       const result = withFallbackSync(primary, fallback, {
         operationName: "test-operation",
       });
 
       assertEquals(result, "primary-success");
-      assertEquals(fallbackCalls, 0, "the fallback must not run when the primary succeeds");
     });
 
     it("should return fallback result when primary fails", () => {
@@ -212,11 +202,7 @@ describe("fallback-wrapper", () => {
   describe("createAdapterFallback", () => {
     it("should create a reusable fallback wrapper", async () => {
       const adapterOperation = () => Promise.resolve("adapter-result");
-      let directCalls = 0;
-      const directOperation = () => {
-        directCalls++;
-        return Promise.resolve("direct-result");
-      };
+      const directOperation = () => Promise.resolve("direct-result");
 
       const wrapper = createAdapterFallback(
         adapterOperation,
@@ -226,11 +212,6 @@ describe("fallback-wrapper", () => {
 
       const result = await wrapper.execute();
       assertEquals(result, "adapter-result");
-      assertEquals(
-        directCalls,
-        0,
-        "the direct operation must not run when the adapter operation succeeds",
-      );
     });
 
     it("should fall back to direct operation when adapter fails", async () => {

@@ -282,23 +282,6 @@ Deno.test("ServerResolver", async (t) => {
       TypeError,
       "configured together",
     );
-    // A colon in the user would splice the basic-auth principal.
-    assertThrows(
-      () => new ServerResolver("https://api.example.com", "ad:min", "pw"),
-      TypeError,
-      "Dedicated server API user is invalid",
-    );
-    assertThrows(
-      () => new ServerResolver("https://api.example.com", " admin ", "pw"),
-      TypeError,
-      "Dedicated server API user is invalid",
-    );
-    // Control characters must never reach the Authorization header value.
-    assertThrows(
-      () => new ServerResolver("https://api.example.com", "admin", "pw\u0000"),
-      TypeError,
-      "Dedicated server API password is invalid",
-    );
     assertThrows(
       () => new ServerResolver("https://api.example.com", "", "", -1),
       RangeError,

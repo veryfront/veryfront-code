@@ -61,14 +61,12 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project-a",
         "/project-a",
         adapterA,
-        { projectId: "project-a", contentSourceId: "snapshot-a" },
       );
       await discoverNestedLayouts(
         "/project-b/pages/index.mdx",
         "/project-b",
         "/project-b",
         adapterB,
-        { projectId: "project-b", contentSourceId: "snapshot-b" },
       );
       assertEquals(
         getLayoutDiscoveryCacheStats().size,
@@ -91,7 +89,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project-a",
         "/project-a",
         adapterA,
-        { projectId: "project-a", contentSourceId: "snapshot-a" },
       );
       assertEquals(
         counterA.statCalls > statCallsA,
@@ -104,7 +101,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project-b",
         "/project-b",
         adapterB,
-        { projectId: "project-b", contentSourceId: "snapshot-b" },
       );
       assertEquals(
         counterB.statCalls,
@@ -132,7 +128,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-empty" },
       );
       assertEquals(layouts.length, 0);
     });
@@ -146,7 +141,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-mdx" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].kind, "mdx");
@@ -162,7 +156,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-tsx" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].kind, "tsx");
@@ -187,7 +180,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-root" },
       );
       assertEquals(layouts.length, 1);
       assertEquals(layouts[0].path, "/project/layout.mdx");
@@ -205,7 +197,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-ancestors" },
       );
       assertEquals(
         layouts.map((l) => l.path),
@@ -230,7 +221,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-cache" },
       );
       const statCallsAfterFirst = counter.statCalls;
       const layouts2 = await discoverNestedLayouts(
@@ -238,7 +228,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-cache" },
       );
       assertEquals(layouts1.length, layouts2.length);
       assertEquals(
@@ -263,7 +252,6 @@ describe("rendering/layouts/utils/discovery", () => {
         "/project",
         "/project",
         adapter,
-        { projectId: "project", contentSourceId: "snapshot-nested" },
       );
       assertEquals(Array.isArray(layouts), true);
     });

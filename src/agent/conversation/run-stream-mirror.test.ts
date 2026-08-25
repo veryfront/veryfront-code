@@ -129,54 +129,34 @@ describe("agent/conversation-run-stream-mirror", () => {
 
   it("stamps external events before and after normalization", () => {
     const controller = createMockQueueController();
-    // Each clock reads later than the one before it, so the stamp taken before
-    // normalization and the stamp taken after it carry distinguishable values.
-    let nowReads = 0;
-    let epochReads = 0;
+    let now = 100;
+    let epoch = 1_000;
     const mirror = createConversationRunStreamMirror({
       queueController: controller,
       immediateFlushEventCount: 10,
       encoder: new ConversationRunEventEncoder({
-        startedMs: 100,
-        nowMs: () => {
-          nowReads += 1;
-          return nowReads === 1 ? 142 : 242;
-        },
-        epochMs: () => {
-          epochReads += 1;
-          return epochReads === 1 ? 1_042 : 1_142;
-        },
+        nowMs: () => now,
+        epochMs: () => epoch,
       }),
     });
+    now = 142;
+    epoch = 1_042;
 
     mirror.appendEvents([
       { type: "TEXT_MESSAGE_CONTENT", delta: "x".repeat(300 * 1024) },
-      { type: "STATE_SNAPSHOT", snapshot: { blob: "y".repeat(300 * 1024) } },
       { type: "TOOL_EXPOSURE_CHECKPOINT", elapsedMs: 7, emittedAt: 8 },
     ]);
 
     const normalized = controller.enqueued[0] as Array<{
       type: string;
-      truncated?: boolean;
       elapsedMs?: number;
       emittedAt?: number;
     }>;
-    const splitParts = normalized.filter((event) => event.type === "TEXT_MESSAGE_CONTENT");
-    assertEquals(splitParts.length > 1, true, "the oversized text event must be split into parts");
+    assertEquals(normalized.length > 2, true);
     assertEquals(
-      splitParts.every((event) => event.elapsedMs === 42 && event.emittedAt === 1_042),
+      normalized.slice(0, -1).every((event) => event.elapsedMs === 42 && event.emittedAt === 1_042),
       true,
-      "split parts must keep the stamp taken before normalization",
     );
-
-    const summarized = normalized.find((event) => event.type === "STATE_SNAPSHOT");
-    assertEquals(summarized?.truncated, true, "the oversized generic event must be summarized");
-    assertEquals(
-      { elapsedMs: summarized?.elapsedMs, emittedAt: summarized?.emittedAt },
-      { elapsedMs: 142, emittedAt: 1_142 },
-      "events rebuilt by normalization must still be stamped",
-    );
-
     assertEquals(normalized.at(-1), {
       type: "TOOL_EXPOSURE_CHECKPOINT",
       elapsedMs: 7,

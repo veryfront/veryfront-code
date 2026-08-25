@@ -8,13 +8,7 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
-import type {
-  ApprovalDecision,
-  NodeState,
-  WaitNodeConfig,
-  WorkflowContext,
-  WorkflowRun,
-} from "../types.ts";
+import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import {
   requireWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -27,7 +21,6 @@ export interface WorkflowRunControlExecuteResult {
   completed?: boolean;
   waiting?: boolean;
   waitingNode?: string;
-  waitingConfig?: WaitNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -58,11 +51,7 @@ export interface WorkflowRunControlExecuteInput {
     error: Error,
     context: WorkflowContext,
   ): void | Promise<void>;
-  onWaiting?(
-    run: WorkflowRun,
-    nodeId: string,
-    waitConfig?: WaitNodeConfig,
-  ): void | Promise<void>;
+  onWaiting?(run: WorkflowRun, nodeId: string): void | Promise<void>;
 }
 
 export interface WorkflowRunControlExecuteOutcome {
@@ -701,7 +690,7 @@ export async function executeWorkflowRunControl(
           run: pausedRun ?? undefined,
         };
       }
-      await input.onWaiting?.(pausedRun, result.waitingNode!, result.waitingConfig);
+      await input.onWaiting?.(pausedRun, result.waitingNode!);
       return { status: "waiting", run: pausedRun };
     }
 

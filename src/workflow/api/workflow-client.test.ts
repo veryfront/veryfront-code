@@ -1,6 +1,6 @@
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -10,22 +10,15 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { PersistedPendingApproval } from "../backends/types.ts";
 import { branch } from "../dsl/branch.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { loop } from "../dsl/loop.ts";
-import { map } from "../dsl/map.ts";
 import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
-import {
-  getPendingApprovalResponseSchemaId,
-  projectPendingApproval,
-} from "../runtime/pending-approval-metadata.ts";
-import type { PendingApproval, WaitNodeConfig, WorkflowRun } from "../types.ts";
+import type { PendingApproval, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -46,28 +39,6 @@ class CountingApprovalReadsBackend extends MemoryBackend {
   override getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     this.approvalReads++;
     return super.getPendingApprovals(runId);
-  }
-}
-
-class NormalizingApprovalBackend extends MemoryBackend {
-  override savePendingApprovalIfStatusAndWorker(
-    runId: string,
-    expectedStatuses: WorkflowRun["status"][],
-    expectedWorkerId: string,
-    approval: PersistedPendingApproval,
-  ): Promise<boolean> {
-    const normalized: PersistedPendingApproval = {
-      ...projectPendingApproval(approval),
-      ...(approval.responseSchemaId === undefined
-        ? {}
-        : { responseSchemaId: approval.responseSchemaId }),
-    };
-    return super.savePendingApprovalIfStatusAndWorker(
-      runId,
-      expectedStatuses,
-      expectedWorkerId,
-      normalized,
-    );
   }
 }
 
@@ -325,7 +296,7 @@ describe("WorkflowClient", () => {
       assertEquals(stillPending[0]?.status, "pending");
     });
 
-    it("cannot recover a function-generated response schema after a process restart", async () => {
+    it("leaves dynamically declared loop approval steps unvalidated", async () => {
       const dynamicLoopWorkflow = workflow({
         id: "dynamic-loop-approval-workflow",
         steps: [
@@ -370,53 +341,6 @@ describe("WorkflowClient", () => {
       });
 
       assertEquals(await backend.getPendingApprovals(runId), []);
-    });
-
-    it("falls back to the configured internal response schema resolver", async () => {
-      const workflowId = "custom-internal-schema-workflow";
-      const responseSchemaId = "custom-backend-schema";
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({
-        backend,
-        approval: {
-          internalResponseSchemaResolver: ({ approval }) => {
-            assertEquals(getPendingApprovalResponseSchemaId(approval), responseSchemaId);
-            return defineSchema((v) => v.object({ confirmed: v.boolean() }))();
-          },
-        },
-      });
-      const runId = "run-custom-internal-schema";
-      await backend.createRun({
-        id: runId,
-        workflowId,
-        status: "waiting",
-        input: {},
-        nodeStates: {},
-        currentNodes: ["review"],
-        context: { input: {}, runId, workflowId },
-        checkpoints: [],
-        pendingApprovals: [],
-        createdAt: new Date(),
-        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
-      });
-      await backend.savePendingApproval(runId, {
-        id: "apr-custom-internal-schema",
-        nodeId: "review",
-        message: "Review item",
-        payload: undefined,
-        requestedAt: new Date(),
-        status: "pending",
-        responseSchemaId,
-      });
-
-      await assertRejects(() =>
-        client.approve(runId, "apr-custom-internal-schema", "reviewer", undefined, {
-          confirmed: "yes",
-        })
-      );
-
-      const [approval] = await backend.getPendingApprovals(runId);
-      assertEquals(approval?.status, "pending");
     });
 
     it("drops stale approval schemas when a workflow id is re-registered", async () => {
@@ -481,496 +405,6 @@ describe("WorkflowClient", () => {
 
       await client.approve(handle.runId, approval.id, "reviewer", "looks good");
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
-    });
-
-    it("recovers a parent schema when a sub-workflow reuses its node id", async () => {
-      await client.destroy();
-      backend = new NormalizingApprovalBackend();
-      client = createWorkflowClient({ backend });
-      const collidingSchemaWorkflow = workflow({
-        id: "colliding-persisted-schema-workflow",
-        steps: [
-          waitForApproval("shared-review", {
-            message: "Parent review",
-            responseSchema: defineSchema((v) => v.object({ parent: v.string() }))(),
-          }),
-          dependsOn(
-            subWorkflow("child-workflow", {
-              workflow: workflow({
-                id: "colliding-persisted-schema-child",
-                steps: [
-                  waitForApproval("shared-review", {
-                    message: "Child review",
-                    responseSchema: defineSchema((v) => v.object({ child: v.boolean() }))(),
-                  }),
-                ],
-              }).definition,
-            }),
-            "shared-review",
-          ),
-        ],
-      });
-      client.register(collidingSchemaWorkflow);
-
-      const handle = await client.start(collidingSchemaWorkflow.id, {});
-      await handle.settled();
-      const [parentApproval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(parentApproval);
-      assertEquals(parentApproval.message, "Parent review");
-      assertExists(getPendingApprovalResponseSchemaId(parentApproval));
-
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({ backend });
-      client.register(collidingSchemaWorkflow);
-
-      await assertRejects(() =>
-        client.approve(
-          handle.runId,
-          parentApproval.id,
-          "reviewer",
-          undefined,
-          { child: true },
-        )
-      );
-
-      await client.approve(
-        handle.runId,
-        parentApproval.id,
-        "reviewer",
-        undefined,
-        { parent: "approved" },
-      );
-      assertEquals(await backend.getPendingApprovals(handle.runId), []);
-    });
-
-    it("persists the active wait path when two waits share one schema object", async () => {
-      const workflowId = "shared-schema-path-workflow";
-      const sharedSchema = defineSchema((v) => v.object({ first: v.string() }))();
-      client.register(workflow({
-        id: workflowId,
-        steps: [
-          waitForApproval("first-review", {
-            message: "First review",
-            responseSchema: sharedSchema,
-          }),
-          dependsOn(
-            waitForApproval("second-review", {
-              message: "Second review",
-              responseSchema: sharedSchema,
-            }),
-            "first-review",
-          ),
-        ],
-      }));
-
-      const handle = await client.start(workflowId, {});
-      await handle.settled();
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertEquals(approval.nodeId, "first-review");
-
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({ backend });
-      client.register(workflow({
-        id: workflowId,
-        steps: [
-          waitForApproval("first-review", {
-            message: "First review",
-            responseSchema: defineSchema((v) => v.object({ first: v.string() }))(),
-          }),
-          dependsOn(
-            waitForApproval("second-review", {
-              message: "Second review",
-              responseSchema: defineSchema((v) => v.object({ second: v.boolean() }))(),
-            }),
-            "first-review",
-          ),
-        ],
-      }));
-
-      await assertRejects(() =>
-        client.approve(handle.runId, approval.id, "reviewer", undefined, {
-          second: true,
-        })
-      );
-      await client.approve(handle.runId, approval.id, "reviewer", undefined, {
-        first: "approved",
-      });
-    });
-
-    it("persists the active composite wait path when one wait config is reused", async () => {
-      const workflowId = "reused-composite-wait-path-workflow";
-      const reusedReview = waitForApproval("review", {
-        message: "Review the selected branch",
-        responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
-      });
-      client.register(workflow({
-        id: workflowId,
-        steps: [
-          branch("route", {
-            condition: () => true,
-            then: [reusedReview],
-            else: [reusedReview],
-          }),
-        ],
-      }));
-
-      const handle = await client.start(workflowId, {});
-      await handle.settled();
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertEquals(approval.nodeId, "route/then/review");
-      assertExists(getPendingApprovalResponseSchemaId(approval));
-
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({ backend });
-      client.register(workflow({
-        id: workflowId,
-        steps: [
-          branch("route", {
-            condition: () => true,
-            then: [
-              waitForApproval("review", {
-                message: "Review the selected branch",
-                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
-              }),
-            ],
-          }),
-        ],
-      }));
-
-      await assertRejects(() =>
-        client.approve(handle.runId, approval.id, "reviewer", undefined, {
-          confirmed: "yes",
-        })
-      );
-      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
-    });
-
-    it("recovers a response schema from a static map node processor", async () => {
-      const mappedApprovalWorkflow = workflow({
-        id: "mapped-node-persisted-schema-workflow",
-        steps: [
-          map("reviews", {
-            items: [{ change: "one" }],
-            processor: waitForApproval("review", {
-              message: "Review the mapped change",
-              responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
-            }),
-          }),
-        ],
-      });
-      client.register(mappedApprovalWorkflow);
-
-      const handle = await client.start(mappedApprovalWorkflow.id, {});
-      await handle.settled();
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({ backend });
-      client.register(mappedApprovalWorkflow);
-
-      await assertRejects(() =>
-        client.approve(
-          handle.runId,
-          approval.id,
-          "reviewer",
-          undefined,
-          { confirmed: "yes" },
-        )
-      );
-      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
-    });
-
-    it("recovers a response schema from a static map workflow processor", async () => {
-      const processor = workflow({
-        id: "mapped-persisted-schema-processor",
-        steps: [
-          waitForApproval("review", {
-            message: "Review the mapped workflow",
-            responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
-          }),
-        ],
-      }).definition;
-      const mappedApprovalWorkflow = workflow({
-        id: "mapped-workflow-persisted-schema-workflow",
-        steps: [map("reviews", { items: [{ change: "one" }], processor })],
-      });
-      client.register(mappedApprovalWorkflow);
-
-      const handle = await client.start(mappedApprovalWorkflow.id, {});
-      await handle.settled();
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-
-      client.getApprovalManager().stop();
-      client = createWorkflowClient({ backend });
-      client.register(mappedApprovalWorkflow);
-
-      await assertRejects(() =>
-        client.approve(
-          handle.runId,
-          approval.id,
-          "reviewer",
-          undefined,
-          { confirmed: "yes" },
-        )
-      );
-      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
-    });
-  });
-
-  describe("definition-resolved wait config", () => {
-    it("sets expiresAt on an approval created for a wait node with a timeout", async () => {
-      client.register(workflow({
-        id: "timeout-approval-workflow",
-        steps: [
-          waitForApproval("review", { message: "Confirm within the hour", timeout: "1h" }),
-        ],
-      }));
-
-      const before = Date.now();
-      const handle = await client.start("timeout-approval-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertExists(
-        approval.expiresAt,
-        "a wait node timeout must produce an approval expiry",
-      );
-
-      const hourMs = 60 * 60 * 1000;
-      const expiresAtMs = new Date(approval.expiresAt).getTime();
-      assert(
-        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
-        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
-      );
-    });
-
-    it("rejects a decision from an approver outside the allow-list", async () => {
-      client.register(workflow({
-        id: "allow-list-approval-workflow",
-        steps: [
-          waitForApproval("review", { message: "Restricted review", approvers: ["alice"] }),
-        ],
-      }));
-
-      const handle = await client.start("allow-list-approval-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-
-      await assertRejects(
-        () => client.approve(handle.runId, approval.id, "bob"),
-        VeryfrontError,
-        "Not authorized to approve this request",
-      );
-
-      const stillPending = await backend.getPendingApprovals(handle.runId);
-      assertEquals(stillPending.length, 1);
-      assertEquals(
-        stillPending[0]!.status,
-        "pending",
-        "an unauthorized decision must not consume the approval",
-      );
-    });
-
-    it("accepts a decision from an allow-listed approver and resumes the run", async () => {
-      client.register(workflow({
-        id: "allow-list-resume-workflow",
-        steps: [
-          waitForApproval("review", { message: "Restricted review", approvers: ["alice"] }),
-        ],
-      }));
-
-      const handle = await client.start("allow-list-resume-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-
-      await client.approve(handle.runId, approval.id, "alice", "approved");
-
-      assertEquals(await backend.getPendingApprovals(handle.runId), []);
-      const run = await backend.getRun(handle.runId);
-      assertEquals(run?.status, "completed");
-    });
-
-    it("resolves timeout and approvers for a wait nested in a static sub-workflow", async () => {
-      client.register(workflow({
-        id: "sub-workflow-guarded-approval-workflow",
-        steps: [
-          subWorkflow("child-workflow", {
-            workflow: workflow({
-              id: "guarded-child-approval-workflow",
-              steps: [
-                waitForApproval("child-review", {
-                  message: "Restricted child review",
-                  timeout: "1h",
-                  approvers: ["alice"],
-                }),
-              ],
-            }).definition,
-          }),
-        ],
-      }));
-
-      const before = Date.now();
-      const handle = await client.start("sub-workflow-guarded-approval-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertEquals(approval.nodeId, "child-review");
-
-      assertExists(
-        approval.expiresAt,
-        "a sub-workflow wait node timeout must produce an approval expiry",
-      );
-      const hourMs = 60 * 60 * 1000;
-      const expiresAtMs = new Date(approval.expiresAt).getTime();
-      assert(
-        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
-        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
-      );
-
-      await assertRejects(
-        () => client.approve(handle.runId, approval.id, "bob"),
-        VeryfrontError,
-        "Not authorized to approve this request",
-      );
-      const stillPending = await backend.getPendingApprovals(handle.runId);
-      assertEquals(stillPending.length, 1);
-      assertEquals(stillPending[0]!.status, "pending");
-
-      await client.approve(handle.runId, approval.id, "alice");
-      assertEquals(await backend.getPendingApprovals(handle.runId), []);
-      const run = await backend.getRun(handle.runId);
-      assertEquals(run?.status, "completed");
-    });
-
-    it("uses the active wait config when nested node ids collide", async () => {
-      client.register(workflow({
-        id: "colliding-wait-config-workflow",
-        steps: [
-          waitForApproval("shared-review", {
-            message: "Parent review",
-            approvers: ["alice"],
-          }),
-          dependsOn(
-            subWorkflow("child-workflow", {
-              workflow: workflow({
-                id: "colliding-child-workflow",
-                steps: [
-                  waitForApproval("shared-review", {
-                    message: "Child review",
-                    approvers: ["bob"],
-                  }),
-                ],
-              }).definition,
-            }),
-            "shared-review",
-          ),
-        ],
-      }));
-
-      const handle = await client.start("colliding-wait-config-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertEquals(approval.message, "Parent review");
-
-      await assertRejects(
-        () => client.approve(handle.runId, approval.id, "bob"),
-        VeryfrontError,
-        "Not authorized to approve this request",
-      );
-      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
-    });
-
-    it("uses timeout, approvers, and response schema from a function-generated wait", async () => {
-      client.register(workflow({
-        id: "dynamic-wait-config-workflow",
-        steps: [
-          loop("review-loop", {
-            while: (_context, loopContext) => loopContext.isFirstIteration,
-            maxIterations: 1,
-            steps: () => [
-              waitForApproval("dynamic-review", {
-                message: "Dynamic review",
-                timeout: "1h",
-                approvers: ["alice"],
-                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
-              }),
-            ],
-          }),
-        ],
-      }));
-
-      const before = Date.now();
-      const handle = await client.start("dynamic-wait-config-workflow", {});
-      await handle.settled();
-
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertEquals(approval.message, "Dynamic review");
-      assertExists(approval.expiresAt);
-      const hourMs = 60 * 60 * 1000;
-      const expiresAtMs = new Date(approval.expiresAt).getTime();
-      assert(
-        expiresAtMs >= before + hourMs && expiresAtMs <= Date.now() + hourMs,
-        `expiresAt must be roughly one hour out, got ${approval.expiresAt}`,
-      );
-
-      await assertRejects(
-        () => client.approve(handle.runId, approval.id, "bob"),
-        VeryfrontError,
-        "Not authorized to approve this request",
-      );
-      await assertRejects(() =>
-        client.approve(handle.runId, approval.id, "alice", undefined, {
-          confirmed: "yes",
-        })
-      );
-      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
-    });
-
-    it("forwards the active wait config to the user callback", async () => {
-      const callbackBackend = new MemoryBackend();
-      let observedConfig: WaitNodeConfig | undefined;
-      const callbackClient = createWorkflowClient({
-        backend: callbackBackend,
-        executor: {
-          onWaiting: (_run, _nodeId, waitConfig) => {
-            observedConfig = waitConfig;
-          },
-        },
-      });
-
-      try {
-        callbackClient.register(workflow({
-          id: "wait-config-callback-workflow",
-          steps: [
-            waitForApproval("review", {
-              message: "Inspect this policy",
-              timeout: "1h",
-              approvers: ["alice"],
-            }),
-          ],
-        }));
-
-        const handle = await callbackClient.start("wait-config-callback-workflow", {});
-        await handle.settled();
-
-        assertEquals(observedConfig?.timeout, "1h");
-        assertEquals(observedConfig?.approvers, ["alice"]);
-      } finally {
-        await callbackClient.destroy();
-      }
     });
   });
 
@@ -1103,37 +537,6 @@ describe("WorkflowClient", () => {
     it("should register workflow definition directly", async () => {
       await withNewClient((client) => client.register(testWorkflow.definition));
     });
-
-    it("registers a captured workflow without mutating its frozen wait config", async () => {
-      const definition = captureWorkflowDefinition(
-        workflow({
-          id: "captured-response-schema-workflow",
-          steps: [
-            waitForApproval("review", {
-              message: "Review the captured workflow",
-              responseSchema: defineSchema((v) => v.object({ approved: v.boolean() }))(),
-            }),
-          ],
-        }).definition,
-      );
-      if (!Array.isArray(definition.steps)) {
-        throw new Error("Expected captured static workflow steps");
-      }
-      const [waitNode] = definition.steps;
-      assertExists(waitNode);
-      assert(Object.isFrozen(waitNode));
-      assert(Object.isFrozen(waitNode.config));
-
-      const capturedConfig = waitNode.config;
-      client.register(definition);
-
-      assertEquals(waitNode.config, capturedConfig);
-      const handle = await client.start(definition.id, {});
-      await handle.settled();
-      const [approval] = await backend.getPendingApprovals(handle.runId);
-      assertExists(approval);
-      assertExists(getPendingApprovalResponseSchemaId(approval));
-    });
   });
 
   describe("observeRunEvents()", () => {
@@ -1152,26 +555,10 @@ describe("WorkflowClient", () => {
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
       } satisfies WorkflowRun;
       await backend.createRun(run);
-      await backend.savePendingApproval(
-        run.id,
-        {
-          id: "approval-with-internal-schema-identity",
-          nodeId: "review",
-          message: "Review",
-          payload: undefined,
-          requestedAt: new Date(),
-          status: "pending",
-          responseSchemaId: '["steps","review"]',
-        } satisfies PersistedPendingApproval,
-      );
       const observation = await client.observeRunEvents(run.id);
       assertExists(observation);
       assertEquals(observation.supported, true);
       if (!observation.supported) throw new Error("expected observation support");
-      assertEquals(
-        Object.hasOwn(observation.initial.pendingApprovals[0]!, "responseSchemaId"),
-        false,
-      );
       const iterator = observation.events[Symbol.asyncIterator]();
       const writer = createWorkflowClient({ backend });
 
@@ -1692,29 +1079,6 @@ describe("WorkflowClient", () => {
 
       assertExists(status);
       assertEquals(status.id, handle.runId);
-    });
-
-    it("does not expose backend-only approval metadata from status", async () => {
-      const handle = await client.start("test-workflow", {});
-      await backend.savePendingApproval(
-        handle.runId,
-        {
-          id: "approval-with-internal-schema-identity",
-          nodeId: "review",
-          message: "Review",
-          payload: undefined,
-          requestedAt: new Date(),
-          status: "pending",
-          responseSchemaId: '["steps","review"]',
-        } satisfies PersistedPendingApproval,
-      );
-
-      const status = await handle.status();
-
-      assertEquals(
-        Object.hasOwn(status.pendingApprovals[0]!, "responseSchemaId"),
-        false,
-      );
     });
 
     it("should provide cancel method", async () => {

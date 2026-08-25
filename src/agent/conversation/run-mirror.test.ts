@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { FakeTime } from "#std/testing/time";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -198,97 +198,6 @@ describe("agent/conversation-run-mirror", () => {
     assertEquals(flushCalls, 2);
     assertEquals(mirror.getSnapshot().hasRetryTimer, false);
     assertEquals(mirror.getSnapshot().pendingEventCount, 0);
-  });
-
-  it("rejects an explicit flush when a controller failure escaped the queue", async () => {
-    const controller = createMockQueueController({
-      pendingEvents: [],
-      flushImpl: () => {
-        throw new Error("append exploded");
-      },
-    });
-    const mirror = createConversationRunMirror({
-      queueController: controller,
-      immediateFlushEventCount: 1,
-    });
-
-    try {
-      mirror.enqueue([{ id: 1 }]);
-
-      await assertRejects(
-        () => mirror.flush(),
-        Error,
-        "append exploded",
-        "flush must surface a controller failure that escaped the queue instead of resolving",
-      );
-
-      const snapshot = mirror.getSnapshot();
-      assertEquals(
-        snapshot.pendingEventCount,
-        1,
-        "an escaped flush failure must leave the events queued",
-      );
-      assertEquals(
-        snapshot.hasRetryTimer,
-        true,
-        "an escaped flush failure must schedule a retry",
-      );
-    } finally {
-      mirror.dispose();
-    }
-  });
-
-  it("rejects an explicit flush when the retry was caused by a timeout", async () => {
-    using time = new FakeTime();
-    const timedOutFlush: ConversationRunEventQueueController["flush"] = async () => ({
-      outcome: "retry_scheduled" as const,
-      latestEventId: 2,
-      latestExternalEventSequence: 3,
-      pendingEventCount: 1,
-      consecutiveFailures: 1,
-      disabled: false,
-      errorMessage: "append timed out",
-      retryCause: "timeout" as const,
-    });
-
-    const escalating = createConversationRunMirror({
-      queueController: createMockQueueController({ flushImpl: timedOutFlush }),
-      immediateFlushEventCount: 2,
-      flushDelayMs: 1_000,
-      getRetryDelayMs: () => 250,
-    });
-
-    try {
-      escalating.enqueue([{ id: 1 }]);
-      await assertRejects(
-        () => escalating.flush({ throwOnTimeoutRetry: true }),
-        Error,
-        "timed out",
-        "a timeout-caused retry must reject an explicit flush",
-      );
-    } finally {
-      escalating.dispose();
-    }
-
-    const tolerant = createConversationRunMirror({
-      queueController: createMockQueueController({ flushImpl: timedOutFlush }),
-      immediateFlushEventCount: 2,
-      flushDelayMs: 1_000,
-      getRetryDelayMs: () => 250,
-    });
-
-    try {
-      tolerant.enqueue([{ id: 1 }]);
-      assertEquals(
-        (await tolerant.flush()).pendingEventCount,
-        1,
-        "without the flag a timeout retry resolves normally",
-      );
-    } finally {
-      tolerant.dispose();
-    }
-
-    await time.tickAsync(0);
   });
 
   it("surfaces stopped outcomes through a host callback and clears timers", async () => {

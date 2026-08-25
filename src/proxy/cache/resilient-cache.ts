@@ -19,7 +19,6 @@ const MAX_PENDING_MUTATIONS = 10_000;
 const MAX_QUEUED_MUTATIONS = 10_000;
 const RECOVERY_PROBE_KEY = "__veryfront_cache_recovery_probe__";
 const monotonicNow = () => performance.now();
-const wallNow = () => Date.now();
 
 const logger = proxyLogger.child({ module: "cache" });
 
@@ -31,7 +30,6 @@ type PendingMutation =
 export interface ResilientCacheOptions {
   failureThreshold?: number;
   openDurationMs?: number;
-  wallNow?: () => number;
   now?: () => number;
 }
 
@@ -83,7 +81,6 @@ export class ResilientCache implements TokenCache {
   private readonly failureThreshold: number;
   private readonly openDurationMs: number;
   private readonly now: () => number;
-  private readonly wallNow: () => number;
   private state: ResilientCacheCircuitState = "closed";
   private failureCount = 0;
   private circuitOpenedAt: number | null = null;
@@ -107,7 +104,7 @@ export class ResilientCache implements TokenCache {
     assertCacheOptionsObject(
       options,
       "Resilient cache options",
-      ["failureThreshold", "openDurationMs", "wallNow", "now"],
+      ["failureThreshold", "openDurationMs", "now"],
     );
     this.primary = snapshotTokenCacheOperations(
       primary,
@@ -136,13 +133,7 @@ export class ResilientCache implements TokenCache {
       throw new TypeError("Resilient cache now must be a function");
     }
     this.now = (now as (() => number) | undefined) ?? monotonicNow;
-    const expiryNow = readOwnOption(options, "wallNow");
-    if (expiryNow !== undefined && typeof expiryNow !== "function") {
-      throw new TypeError("Resilient cache wallNow must be a function");
-    }
-    this.wallNow = (expiryNow as (() => number) | undefined) ?? wallNow;
     this.readClock();
-    this.readWallClock();
   }
 
   async get(key: string): Promise<TokenCacheEntry | null> {
@@ -175,7 +166,7 @@ export class ResilientCache implements TokenCache {
         const cacheKey = requireTokenCacheKey(key);
         const cachedEntry = snapshotTokenCacheEntry(entry);
         await this.enqueueMutation(async () => {
-          if (this.readWallClock() >= cachedEntry.expiresAt) {
+          if (Date.now() >= cachedEntry.expiresAt) {
             await this.deleteFromBackends(cacheKey);
             return;
           }
@@ -388,7 +379,7 @@ export class ResilientCache implements TokenCache {
     }
     for (const [key, mutation] of this.pendingMutations) {
       if (mutation.kind === "set") {
-        if (this.readWallClock() >= mutation.entry.expiresAt) {
+        if (Date.now() >= mutation.entry.expiresAt) {
           await this.primary.delete(key);
         } else {
           await this.primary.set(key, mutation.entry);
@@ -477,18 +468,6 @@ export class ResilientCache implements TokenCache {
       value < 0
     ) {
       throw new TypeError("Resilient cache clock returned an invalid time");
-    }
-    return value;
-  }
-
-  private readWallClock(): number {
-    const value = this.wallNow();
-    if (
-      typeof value !== "number" ||
-      !Number.isFinite(value) ||
-      value < 0
-    ) {
-      throw new TypeError("Resilient cache wall clock returned an invalid time");
     }
     return value;
   }

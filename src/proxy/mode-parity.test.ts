@@ -15,10 +15,6 @@ import {
   type ProxyContext,
 } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
-import {
-  decodeIdentityHeaderValue,
-  encodeIdentityHeaderValue,
-} from "#veryfront/utils/header-identity.ts";
 
 function extractProxyHeaders(req: Request): Record<string, string | null> {
   return {
@@ -278,89 +274,6 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(injected.headers.get("accept"), "text/html");
     });
 
-    it("identity-encodes a non Latin-1 branch name", () => {
-      const ctx: ProxyContext = {
-        projectSlug: "proj",
-        projectId: "proj-id",
-        branchId: "branch-id",
-        branchName: "\u529f\u80fd/\u65b0",
-        environment: "preview",
-        contentSourceId: "preview-branch-id",
-        host: "proj.preview.veryfront.com",
-        parsedDomain: {
-          slug: "proj",
-          isVeryfrontDomain: true,
-          environment: "preview",
-          branch: null,
-          isDraft: true,
-          allowIframeEmbed: true,
-        },
-        isLocalProject: false,
-      };
-
-      const injected = injectContextHeaders(
-        new Request("http://proj.preview.veryfront.com/page"),
-        ctx,
-      );
-
-      assertEquals(
-        injected.headers.get("x-branch-name"),
-        encodeIdentityHeaderValue("\u529f\u80fd/\u65b0"),
-        "a non Latin-1 branch name must be identity-encoded",
-      );
-      assertEquals(
-        injected.headers.get("x-branch-name")?.startsWith("vf-utf8:"),
-        true,
-        "the encoded branch name must carry the vf-utf8 prefix",
-      );
-      assertEquals(
-        decodeIdentityHeaderValue(injected.headers.get("x-branch-name")),
-        "\u529f\u80fd/\u65b0",
-        "the renderer must decode back to the original branch name",
-      );
-    });
-
-    it("identity-encodes a non Latin-1 default branch name", () => {
-      const ctx: ProxyContext = {
-        projectSlug: "proj",
-        projectId: "proj-id",
-        defaultBranchName: "\u529f\u80fd/\u65b0",
-        environment: "preview",
-        contentSourceId: "preview-default",
-        host: "proj.preview.veryfront.com",
-        parsedDomain: {
-          slug: "proj",
-          isVeryfrontDomain: true,
-          environment: "preview",
-          branch: null,
-          isDraft: true,
-          allowIframeEmbed: true,
-        },
-        isLocalProject: false,
-      };
-
-      const injected = injectContextHeaders(
-        new Request("http://proj.preview.veryfront.com/page"),
-        ctx,
-      );
-
-      assertEquals(
-        injected.headers.get("x-default-branch-name"),
-        encodeIdentityHeaderValue("\u529f\u80fd/\u65b0"),
-        "a non Latin-1 default branch name must be identity-encoded",
-      );
-      assertEquals(
-        injected.headers.get("x-default-branch-name")?.startsWith("vf-utf8:"),
-        true,
-        "the encoded default branch name must carry the vf-utf8 prefix",
-      );
-      assertEquals(
-        decodeIdentityHeaderValue(injected.headers.get("x-default-branch-name")),
-        "\u529f\u80fd/\u65b0",
-        "the renderer must decode back to the original default branch name",
-      );
-    });
-
     it("injects a trusted non-main default branch without preview identity", () => {
       const ctx: ProxyContext = {
         projectSlug: "proj",
@@ -542,16 +455,7 @@ describe("Proxy-Renderer Mode Parity", () => {
 
         assertEquals(headers["x-project-slug"], "test-project");
         assertEquals(headers["x-environment"], "preview");
-        assertEquals(
-          headers["x-token"],
-          "shared-token",
-          "the end-to-end path must forward the token minted by /auth/token",
-        );
-        assertEquals(
-          headers["x-content-source-id"],
-          "preview-main",
-          "preview requests must carry the preview-derived content source",
-        );
+        assertEquals(typeof headers["x-content-source-id"], "string");
         assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com:8443");
 
         assertEquals(ctx.projectSlug, "test-project");

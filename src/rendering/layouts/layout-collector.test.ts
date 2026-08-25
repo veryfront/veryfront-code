@@ -8,7 +8,6 @@ import {
   LayoutCollector,
   resolveLayoutRouterRootDir,
 } from "./layout-collector.ts";
-import { clearLayoutDiscoveryCache } from "./utils/discovery.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle } from "#veryfront/types";
@@ -23,7 +22,6 @@ const LAYOUT_BUNDLE = { compiledCode: "LAYOUT_CODE" } as unknown as MdxBundle;
 function createCollectorAdapter(
   files: Record<string, string>,
   statPaths: string[] = [],
-  snapshotVersion?: { value: number },
 ): RuntimeAdapter {
   return {
     fs: {
@@ -42,9 +40,6 @@ function createCollectorAdapter(
       writeFile: () => Promise.resolve(),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
-      getSourceSnapshotVersion: snapshotVersion
-        ? () => Promise.resolve(snapshotVersion.value)
-        : undefined,
     },
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
@@ -64,97 +59,6 @@ function createPageInfo(path: string, frontmatter: Record<string, unknown> = {})
 }
 
 describe("LayoutCollector", () => {
-  it("does not reuse layout discovery across projects that share virtual paths", async () => {
-    clearLayoutDiscoveryCache();
-    const sharedOptions = {
-      projectDir: "/",
-      contentSourceId: "preview-main",
-      config: {} as VeryfrontConfig,
-      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
-    };
-    const projectA = new LayoutCollector({
-      ...sharedOptions,
-      projectId: "project-a",
-      adapter: createCollectorAdapter({
-        "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
-      }),
-    });
-    const projectB = new LayoutCollector({
-      ...sharedOptions,
-      projectId: "project-b",
-      adapter: createCollectorAdapter({}),
-    });
-
-    const projectAResult = await projectA.collectLayouts(createPageInfo("/app/page.tsx"));
-    const projectBResult = await projectB.collectLayouts(createPageInfo("/app/page.tsx"));
-
-    assertEquals(projectAResult.nestedLayouts.map((layout) => layout.path), ["/app/layout.tsx"]);
-    assertEquals(
-      projectBResult.nestedLayouts,
-      [],
-      "a project without app/layout.tsx must not receive another project's cached layout",
-    );
-  });
-
-  it("does not reuse layout discovery across content source snapshots", async () => {
-    clearLayoutDiscoveryCache();
-    const sharedOptions = {
-      projectDir: "/",
-      projectId: "project-a",
-      config: {} as VeryfrontConfig,
-      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
-    };
-    const releaseA = new LayoutCollector({
-      ...sharedOptions,
-      contentSourceId: "release-a",
-      adapter: createCollectorAdapter({
-        "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
-      }),
-    });
-    const releaseB = new LayoutCollector({
-      ...sharedOptions,
-      contentSourceId: "release-b",
-      adapter: createCollectorAdapter({}),
-    });
-
-    await releaseA.collectLayouts(createPageInfo("/app/page.tsx"));
-    const releaseBResult = await releaseB.collectLayouts(createPageInfo("/app/page.tsx"));
-
-    assertEquals(
-      releaseBResult.nestedLayouts,
-      [],
-      "a source snapshot without app/layout.tsx must not receive a cached layout from another release",
-    );
-  });
-
-  it("invalidates mutable preview discovery when the source snapshot changes", async () => {
-    clearLayoutDiscoveryCache();
-    const files: Record<string, string> = {
-      "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
-    };
-    const snapshot = { value: 1 };
-    const collector = new LayoutCollector({
-      projectDir: "/",
-      projectId: "project-a",
-      contentSourceId: "preview-main",
-      adapter: createCollectorAdapter(files, [], snapshot),
-      config: {} as VeryfrontConfig,
-      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
-    });
-
-    const initial = await collector.collectLayouts(createPageInfo("/app/page.tsx"));
-    delete files["/app/layout.tsx"];
-    snapshot.value = 2;
-    const afterEdit = await collector.collectLayouts(createPageInfo("/app/page.tsx"));
-
-    assertEquals(initial.nestedLayouts.map((layout) => layout.path), ["/app/layout.tsx"]);
-    assertEquals(
-      afterEdit.nestedLayouts,
-      [],
-      "a new mutable source snapshot must not reuse the previous layout discovery",
-    );
-  });
-
   it("resolves configured App Router and Pages Router roots", () => {
     const config = {
       directories: { app: "src/site", pages: "src/content" },

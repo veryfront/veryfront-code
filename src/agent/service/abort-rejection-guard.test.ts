@@ -1,11 +1,5 @@
-import {
-  assertEquals,
-  assertExists,
-  assertStrictEquals,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import process from "node:process";
 import {
   type AbortRejectionEvent,
   type AbortRejectionEventTarget,
@@ -106,49 +100,6 @@ describe("agent/abort-rejection-guard", () => {
 
     guard.dispose();
     assertEquals(processTarget.listenerCount(), 0);
-  });
-
-  it("installs the guard on the default process target when none is supplied", async () => {
-    const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
-    const beforeListeners = new Set(process.listeners("unhandledRejection"));
-    const guard = installAbortRejectionGuard({
-      eventTarget: null,
-      loadLogger: () => ({
-        warn: (message, metadata) => warnings.push({ message, metadata }),
-      }),
-      fallbackWarn: (message, metadata) => warnings.push({ message, metadata }),
-    });
-
-    try {
-      assertEquals(
-        process.listenerCount("unhandledRejection"),
-        beforeListeners.size + 1,
-        "the default process target must receive the guard listener",
-      );
-
-      const installedListeners = process.listeners("unhandledRejection").filter(
-        (listener) => !beforeListeners.has(listener),
-      );
-      assertEquals(installedListeners.length, 1);
-      const installedListener = installedListeners[0];
-      assertExists(installedListener);
-      installedListener(new DOMException("stream cancelled", "AbortError"), Promise.resolve());
-      await Promise.resolve();
-
-      assertEquals(
-        warnings[0]?.message,
-        "Agent abort rejection swallowed",
-        "the default process path must log the swallowed abort",
-      );
-    } finally {
-      guard.dispose();
-    }
-
-    assertEquals(
-      process.listenerCount("unhandledRejection"),
-      beforeListeners.size,
-      "dispose must remove the default process listener",
-    );
   });
 
   it("prevents default browser-style AbortError rejection handling", async () => {

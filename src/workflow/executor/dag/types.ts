@@ -83,8 +83,6 @@ export interface DAGExecutionResult {
   completed: boolean;
   waiting: boolean;
   waitingNode?: string;
-  /** Exact config of the node that suspended this execution. */
-  waitingConfig?: WaitNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -106,6 +104,4 @@ export interface NodeExecutionResult {
    * instead of its inner wait means no approval is ever created.
    */
   waitingNode?: string;
-  /** Exact config of the node that suspended this execution. */
-  waitingConfig?: WaitNodeConfig;
 }

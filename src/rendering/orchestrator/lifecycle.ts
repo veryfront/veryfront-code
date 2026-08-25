@@ -171,7 +171,6 @@ export class RendererLifecycle {
     const layoutCollector = new LayoutCollector({
       projectDir,
       projectId: this.projectId,
-      contentSourceId: this.contentSourceId,
       adapter: this.adapter,
       config,
       compileMDX: compileMDXProxy,

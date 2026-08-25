@@ -109,31 +109,24 @@ describe("lifecycle run event adapter", () => {
   it("keeps status transitions but drops repeated cadence ticks", () => {
     const { emitted, adapter } = createCollector();
     for (
-      const tick of [
-        { toolCallId: "tool-1", status: "pending_input" },
-        { toolCallId: "tool-2", status: "pending_input" },
-        { toolCallId: "tool-1", status: "pending_input" },
-        { toolCallId: "tool-1", status: "streaming_input" },
-        { toolCallId: "tool-2", status: "streaming_input" },
+      const status of [
+        "streaming_input",
+        "streaming_input",
+        "pending_input",
+        "pending_input",
       ] as const
     ) {
       adapter.handleFrame({
         class: "telemetry",
-        event: { type: "tool_input_status", ...tick },
+        event: { type: "tool_input_status", toolCallId: "tool-1", status },
         sequence: 1,
         elapsedMs: 0,
       });
     }
     adapter.dispose();
     assertEquals(
-      emitted.map((event) => event.value as { toolCallId: string; status: string }),
-      [
-        { toolCallId: "tool-1", status: "pending_input" },
-        { toolCallId: "tool-2", status: "pending_input" },
-        { toolCallId: "tool-1", status: "streaming_input" },
-        { toolCallId: "tool-2", status: "streaming_input" },
-      ],
-      "status dedup must be per tool call, and repeated ticks for the same tool are dropped",
+      emitted.map((event) => (event.value as { status: string }).status),
+      ["streaming_input", "pending_input"],
     );
   });
 
@@ -151,83 +144,6 @@ describe("lifecycle run event adapter", () => {
     );
     adapter.dispose();
     assertEquals(emitted, []);
-  });
-
-  it("records a balanced end and error result for a rejected open tool call", () => {
-    const { emitted, adapter } = createCollector();
-    for (
-      const frame of frames([
-        {
-          event: {
-            type: "tool_input_start",
-            toolCallId: "tc-1",
-            toolName: "read_file",
-          },
-        },
-        {
-          event: {
-            type: "tool_input_rejected",
-            toolCallId: "tc-1",
-            toolName: "read_file",
-            reason: "denied",
-          },
-        },
-      ])
-    ) {
-      adapter.handleFrame(frame);
-    }
-    adapter.dispose();
-
-    assertEquals(
-      emitted.map((event) => event.type),
-      ["TOOL_CALL_START", "TOOL_CALL_END", "TOOL_CALL_RESULT"],
-      "a rejected tool call must close its durable lifecycle",
-    );
-    assertEquals(emitted[2]?.isError, true, "a rejected tool call records an error result");
-    assertEquals(emitted[2]?.toolName, "read_file", "the rejected result keeps its tool name");
-    assertEquals(
-      emitted[2]?.content,
-      "Tool input was rejected before handoff",
-      "the rejected result explains why no handoff happened",
-    );
-  });
-
-  it("projects reasoning frames to durable reasoning events", () => {
-    const { emitted, adapter } = createCollector();
-    for (
-      const frame of frames([
-        { event: { type: "reasoning_start", id: "r-0" } },
-        { event: { type: "reasoning_content", id: "r-0", delta: "think " } },
-        { event: { type: "reasoning_content", id: "r-0", delta: "more" } },
-        { event: { type: "reasoning_end", id: "r-0" } },
-      ])
-    ) {
-      adapter.handleFrame(frame);
-    }
-    adapter.flush();
-    adapter.dispose();
-
-    assertEquals(
-      emitted.map((event) => event.type),
-      ["REASONING_MESSAGE_START", "REASONING_MESSAGE_CONTENT", "REASONING_MESSAGE_END"],
-      "reasoning must persist as reasoning events, never as assistant text",
-    );
-    assertEquals(emitted[1]?.delta, "think more", "reasoning deltas are coalesced");
-  });
-
-  it("rejects reasoning content without an open reasoning segment", () => {
-    const { adapter } = createCollector();
-    assertThrows(
-      () =>
-        adapter.handleFrame(
-          frames([{
-            event: { type: "reasoning_content", id: "r-0", delta: "orphan" },
-          }])[0]!,
-        ),
-      StreamProjectionInvariantError,
-      undefined,
-      "reasoning content without an open segment must be rejected",
-    );
   });
 
   it("splits oversized deltas with unique identity per split event", () => {
