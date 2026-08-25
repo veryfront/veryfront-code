@@ -248,7 +248,7 @@
       {
         "step": 2,
         "title": "Copy your credentials",
-        "description": "In Settings \u2192 API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes \u2014 avoid the Admin API key."
+        "description": "In Settings \u2192 API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes. Avoid the Admin API key."
       },
       {
         "step": 3,
@@ -262,7 +262,7 @@
       }
     ],
     "notes": [
-      "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id \u2014 both env vars are required",
+      "Algolia authenticates with two required headers: X-Algolia-API-Key and X-Algolia-Application-Id",
       "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
       "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side"
     ],

@@ -1266,7 +1266,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Copy your credentials",
         "description":
-          "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes — avoid the Admin API key.",
+          "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes. Avoid the Admin API key.",
       }, {
         "step": 3,
         "title": "Note your host",
@@ -1279,7 +1279,7 @@ export const connectors: IntegrationConfig[] = [
           "Run the List Indices tool. A 403 usually means the API key lacks the required ACL or the host does not match your application ID.",
       }],
       "notes": [
-        "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id — both env vars are required",
+        "Algolia authenticates with two required headers: X-Algolia-API-Key and X-Algolia-Application-Id",
         "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
         "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side",
       ],
@@ -48271,7 +48271,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Create a Public API token",
         "description":
-          "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once.",
+          "Open Workspace Settings > Access Management > Tokens and select Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token because it is shown only once.",
       }, {
         "step": 3,
         "title": "Set the environment variable",

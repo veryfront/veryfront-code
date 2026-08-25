@@ -343,7 +343,7 @@
       {
         "step": 2,
         "title": "Create a Public API token",
-        "description": "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token \u2014 it is shown only once."
+        "description": "Open Workspace Settings > Access Management > Tokens and select Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token because it is shown only once."
       },
       {
         "step": 3,
