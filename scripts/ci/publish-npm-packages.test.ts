@@ -992,4 +992,138 @@ describe("npm package publishing", () => {
       assertEquals(publishes.length, 3);
     });
   });
+
+  // The conflicting write can surface while the retry delay elapses. npm
+  // refuses to reuse a published name/version, so a blind republish would turn
+  // a recoverable conflict into a fatal already-published error.
+  for (
+    const [publishFunction, gitHeadVisibleAfter] of [
+      ["rc_publish_package_dir", "1"],
+      ["release_publish_package_dir", "2"],
+    ]
+  ) {
+    it(`rechecks gitHead after the conflict delay in ${publishFunction}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/package`;
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.mkdir(packageDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+        );
+        await Deno.writeTextFile(npmLog, "");
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "npm() {",
+            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+            '  if [ "$1" = "publish" ]; then',
+            '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+            "    return 1",
+            "  fi",
+            // gitHead stays invisible until the conflict delay has elapsed
+            '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+            '    if [ "$(grep -c gitHead "$NPM_LOG")" -le "$GIT_HEAD_VISIBLE_AFTER" ]; then',
+            "      return 1",
+            "    fi",
+            '    printf "%s\\n" "$GITHUB_SHA"',
+            "    return 0",
+            "  fi",
+            "  return 1",
+            "}",
+            `${publishFunction} "$PACKAGE_DIR"`,
+          ].join("\n"),
+          {
+            CONFLICT_OUTPUT,
+            GITHUB_SHA: "0".repeat(40),
+            GIT_HEAD_VISIBLE_AFTER: gitHeadVisibleAfter,
+            NPM_LOG: npmLog,
+            NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+            PACKAGE_DIR: packageDir,
+            VERSION: "0.1.0",
+          },
+        );
+
+        assertEquals(
+          output.code,
+          0,
+          `${publishFunction} must accept the conflicted publish once gitHead converges: ${
+            decoder.decode(output.stderr)
+          }`,
+        );
+        assertStringIncludes(
+          decoder.decode(output.stdout),
+          "landed despite an npm registry conflict",
+        );
+        const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+          .filter((line) => line.startsWith("publish"));
+        assertEquals(
+          publishes.length,
+          1,
+          `${publishFunction} must not republish an immutable name@version after the conflict delay, but issued: ${
+            publishes.join(", ")
+          }`,
+        );
+      });
+    });
+  }
+
+  it("keeps the caller's errexit state so the release rerun recovery still runs", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "npm error code E403"',
+          '    printf "%s\\n" "npm error 403 You cannot publish over the previously published versions: 0.1.0"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 1 ]; then return 1; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          'release_publish_package_dir "$PACKAGE_DIR"',
+          'echo "RECOVERY_REACHED"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stdout = decoder.decode(output.stdout);
+      assertEquals(
+        output.code,
+        0,
+        `the publish retry helper must not enable errexit under a caller that disabled it: ${
+          decoder.decode(output.stderr)
+        }`,
+      );
+      assertStringIncludes(
+        stdout,
+        "already exists, and gitHead matches this commit; continuing.",
+      );
+      assertStringIncludes(stdout, "RECOVERY_REACHED");
+    });
+  });
 });

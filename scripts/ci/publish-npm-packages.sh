@@ -119,9 +119,6 @@ verify_npm_compatibility_artifact() {
   fi
 }
 
-# Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
-# only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
-# the global PUBLISHED_GIT_HEAD for callers' error messages.
 # npm answers a burst of publishes with `409 Conflict - Failed to save
 # packument` when it cannot serialise the writes fast enough. The conflicting
 # write sometimes still lands, so recheck the registry before retrying and give
@@ -134,17 +131,48 @@ is_transient_publish_conflict() {
     | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
 }
 
+# Report what the registry holds for PACKAGE_NAME@VERSION after a conflict.
+# Exit status: 0 when the version landed for GITHUB_SHA, 1 when it exists for a
+# different commit, 2 when it is still absent. Leaves the observed value in the
+# global PUBLISHED_GIT_HEAD.
+inspect_publish_conflict_result() {
+  PUBLISHED_GIT_HEAD="$(npm view "$1@${VERSION}" gitHead 2>/dev/null || true)"
+  if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+    echo "::notice::$1@${VERSION} landed despite an npm registry conflict; continuing."
+    return 0
+  fi
+  if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+    echo "::error::$1@${VERSION} exists with a different commit after a registry conflict." >&2
+    return 1
+  fi
+  return 2
+}
+
 # Publish one spec, absorbing transient registry conflicts. Prints sanitized npm
 # output. Returns 0 when the version is published for GITHUB_SHA.
+#
+# Never toggles errexit: `set -e` is process-global rather than function-scoped,
+# so flipping it here would clobber a caller that disabled it to capture this
+# helper's exit status. Statuses are captured with `&& ... || ...` instead,
+# which suppresses errexit without changing the shell option.
 publish_npm_package_with_retry() {
   PUBLISH_PACKAGE_NAME="$1"
   PUBLISH_SPEC="$2"
   shift 2
   for PUBLISH_ATTEMPT in $(seq 1 "${NPM_PUBLISH_CONFLICT_ATTEMPTS}"); do
-    set +e
-    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" "$@" 2>&1)"
-    PUBLISH_STATUS=$?
-    set -e
+    if [[ "${PUBLISH_ATTEMPT}" -gt 1 ]]; then
+      # The conflicting write can surface while the delay elapses. npm refuses
+      # to reuse a published name/version, so republishing without this recheck
+      # would turn a recoverable conflict into a fatal already-published error.
+      inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}" \
+        && PUBLISH_CONFLICT_STATE=0 || PUBLISH_CONFLICT_STATE=$?
+      if [[ "${PUBLISH_CONFLICT_STATE}" -ne 2 ]]; then
+        return "${PUBLISH_CONFLICT_STATE}"
+      fi
+    fi
+
+    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" "$@" 2>&1)" \
+      && PUBLISH_STATUS=0 || PUBLISH_STATUS=$?
     SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
     if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
       printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
@@ -156,14 +184,10 @@ publish_npm_package_with_retry() {
       return "${PUBLISH_STATUS}"
     fi
 
-    PUBLISHED_GIT_HEAD="$(npm view "${PUBLISH_PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
-    if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
-      echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed despite an npm registry conflict; continuing."
-      return 0
-    fi
-    if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
-      echo "::error::${PUBLISH_PACKAGE_NAME}@${VERSION} exists with a different commit after a registry conflict." >&2
-      return 1
+    inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}" \
+      && PUBLISH_CONFLICT_STATE=0 || PUBLISH_CONFLICT_STATE=$?
+    if [[ "${PUBLISH_CONFLICT_STATE}" -ne 2 ]]; then
+      return "${PUBLISH_CONFLICT_STATE}"
     fi
     if [[ "${PUBLISH_ATTEMPT}" -lt "${NPM_PUBLISH_CONFLICT_ATTEMPTS}" ]]; then
       echo "npm registry conflict publishing ${PUBLISH_PACKAGE_NAME}@${VERSION}; retrying in ${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}s (attempt ${PUBLISH_ATTEMPT}/${NPM_PUBLISH_CONFLICT_ATTEMPTS})."
@@ -174,6 +198,9 @@ publish_npm_package_with_retry() {
   return 1
 }
 
+# Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
+# only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
+# the global PUBLISHED_GIT_HEAD for callers' error messages.
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
   # npm can expose a published version before its gitHead metadata converges.
@@ -234,11 +261,9 @@ release_publish_package_dir() {
     echo "${PACKAGE_NAME}@${VERSION} is already published for this commit; skipping npm publish."
   else
     echo "Publishing ${PACKAGE_NAME}@${VERSION}"
-    set +e
     publish_npm_package_with_retry "${PACKAGE_NAME}" "${PUBLISH_SPEC}" \
-      --provenance --access public
-    PUBLISH_STATUS=$?
-    set -e
+      --provenance --access public \
+      && PUBLISH_STATUS=0 || PUBLISH_STATUS=$?
 
     if [ "${PUBLISH_STATUS}" -ne 0 ]; then
       if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \
