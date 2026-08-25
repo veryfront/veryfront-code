@@ -71,6 +71,7 @@ async function toChunk(
 export class UpstreamWebSocket {
   #stream: UpstreamWebSocketStream;
   #writer: WritableStreamDefaultWriter<string | Uint8Array> | null = null;
+  #reader: ReadableStreamDefaultReader<string | Uint8Array> | null = null;
   #readyState: number = WebSocket.CONNECTING;
   #writes: Promise<void> = Promise.resolve();
   #settled = false;
@@ -110,6 +111,10 @@ export class UpstreamWebSocket {
   close(code?: number, reason?: string): void {
     if (this.#readyState === WebSocket.CLOSING || this.#readyState === WebSocket.CLOSED) return;
     this.#readyState = WebSocket.CLOSING;
+    // Cancel the in-flight read first. Closing the stream alone leaves the
+    // pending receive op outstanding until the close propagates, which can
+    // outlive the caller and trips Deno's leak detector under --trace-leaks.
+    this.#reader?.cancel().catch(() => {});
     try {
       this.#stream.close(code === undefined ? undefined : { closeCode: code, reason });
     } catch {
@@ -137,6 +142,7 @@ export class UpstreamWebSocket {
 
   async #pump(readable: ReadableStream<string | Uint8Array>): Promise<void> {
     const reader = readable.getReader();
+    this.#reader = reader;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -146,6 +152,7 @@ export class UpstreamWebSocket {
     } catch (error) {
       this.#fail(error);
     } finally {
+      this.#reader = null;
       reader.releaseLock();
     }
   }

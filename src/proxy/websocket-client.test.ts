@@ -343,6 +343,41 @@ describe("upstream WebSocket client", () => {
     assertEquals(socket.readyState, WebSocket.CLOSING);
   });
 
+  it("cancels the in-flight upstream read when an open socket is closed", async () => {
+    let admit: (connection: UpstreamWebSocketConnection) => void = () => {};
+    const opened = new Promise<UpstreamWebSocketConnection>((resolve) => {
+      admit = resolve;
+    });
+    const stream: UpstreamWebSocketStream = {
+      opened,
+      closed: new Promise(() => {}),
+      close() {},
+    };
+    let cancels = 0;
+
+    const socket = new UpstreamWebSocket("ws://renderer/_ws", new Headers(), () => stream);
+    admit({
+      readable: new ReadableStream<string | Uint8Array>({
+        cancel() {
+          cancels++;
+        },
+      }),
+      writable: new WritableStream<string | Uint8Array>(),
+    });
+    await opened;
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+    assertEquals(socket.readyState, WebSocket.OPEN, "the socket must be open before closing");
+
+    socket.close(1000, "done");
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+
+    assertEquals(
+      cancels,
+      1,
+      "close() must cancel the in-flight read so no receive op outlives the socket",
+    );
+  });
+
   it("discards an upstream connection that arrives after close", async () => {
     let admit: (connection: UpstreamWebSocketConnection) => void = () => {};
     const opened = new Promise<UpstreamWebSocketConnection>((resolve) => {
