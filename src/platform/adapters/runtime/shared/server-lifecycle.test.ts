@@ -68,10 +68,15 @@ describe("platform/adapters/runtime/shared/server-lifecycle", () => {
       const first = await serve(() => new Response("first"));
       await serve(() => new Response("second"));
       await first.stop();
+      await first.stop();
       await registry.shutdown();
       await registry.shutdown();
 
-      assertEquals(stopCalls, [1, 1]);
+      assertEquals(
+        stopCalls,
+        [1, 1],
+        "a directly stopped server must delegate stop() exactly once, even across repeat stop and shutdown calls",
+      );
     });
 
     it("shares concurrent shutdown and retries only servers that failed to stop", async () => {

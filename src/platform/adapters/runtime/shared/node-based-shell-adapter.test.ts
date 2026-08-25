@@ -64,8 +64,13 @@ describe("NodeBasedShellAdapter", () => {
 
     it("should read existing file", () => {
       const content = createAdapter().readFileSync("./deno.json");
-      assertEquals(typeof content, "string");
-      assertEquals(content.length > 0, true);
+
+      assertEquals(typeof content, "string", "readFileSync must return decoded text");
+      assertEquals(
+        JSON.parse(content).name,
+        "veryfront",
+        "readFileSync must decode the file as UTF-8 JSON text, not bytes",
+      );
     });
 
     it("should throw for non-existent file", () => {

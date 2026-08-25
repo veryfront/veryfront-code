@@ -11,6 +11,17 @@ import { getBunRuntime } from "./types.ts";
 
 describe("BunFileSystemAdapter native integration", () => {
   it("reads, writes, and watches through the real Bun runtime", async () => {
+    // Only the real Bun runtime sets process.versions.bun, and it is independent
+    // of the global getBunRuntime() reads, so a detection regression fails here
+    // instead of silently turning this file into a no-op.
+    const bunVersion = (globalThis as { process?: { versions?: { bun?: string } } })
+      .process?.versions?.bun;
+    if (bunVersion !== undefined) {
+      assertExists(
+        getBunRuntime(),
+        "getBunRuntime() must detect the Bun namespace when the process reports a Bun version",
+      );
+    }
     if (!getBunRuntime()) return;
     const root = await mkdtemp(join(tmpdir(), "veryfront-bun-fs-"));
     const adapter = new BunFileSystemAdapter();

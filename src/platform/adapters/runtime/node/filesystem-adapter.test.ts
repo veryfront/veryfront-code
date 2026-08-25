@@ -61,30 +61,67 @@ describe("NodeFileSystemAdapter", () => {
       await Deno.symlink(exact, link);
       const adapter = new NodeFileSystemAdapter();
 
-      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
-      const readSnapshot = adapter.readFileSnapshotWithinLimit;
-      if (readSnapshot === undefined) return;
-      assertExists(readSnapshot);
-      assertEquals([...await readSnapshot(empty, root, 1)], []);
-      assertEquals([...await readSnapshot(exact, root, 3)], [1, 2, 3]);
-      await assertRejects(
-        () => readSnapshot(oversized, root, 3),
-        RangeError,
+      assertEquals(
+        Object.hasOwn(adapter, "createFileBytesExclusive"),
+        true,
+        "the exclusive-create capability must be constructed on every platform",
       );
-      for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+      if (Deno.build.os === "windows") {
+        assertEquals(
+          Object.hasOwn(adapter, "readFileSnapshotWithinLimit"),
+          false,
+          "Deno-hosted Windows has no usable Node snapshot identity",
+        );
+        assertEquals(
+          adapter.readFileSnapshotWithinLimit,
+          undefined,
+          "the absent capability must not be inherited",
+        );
+      } else {
+        assertEquals(
+          Object.hasOwn(adapter, "readFileSnapshotWithinLimit"),
+          true,
+          "POSIX Node adapters must construct a bounded snapshot reader",
+        );
+        assertExists(adapter.readFileSnapshotWithinLimit);
+        const readSnapshot = adapter.readFileSnapshotWithinLimit;
+        assertEquals(
+          [...await readSnapshot(empty, root, 1)],
+          [],
+          "an empty file must snapshot to zero bytes",
+        );
+        assertEquals(
+          [...await readSnapshot(exact, root, 3)],
+          [1, 2, 3],
+          "a file at the byte limit must snapshot exactly",
+        );
         await assertRejects(
-          () => readSnapshot(exact, root, limit),
+          () => readSnapshot(oversized, root, 3),
           RangeError,
+          undefined,
+          "a file over the byte limit must be refused",
+        );
+        for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+          await assertRejects(
+            () => readSnapshot(exact, root, limit),
+            RangeError,
+            undefined,
+            `an out-of-range byte limit (${limit}) must be refused`,
+          );
+        }
+        await assertRejects(
+          () => readSnapshot(directory, root, 3),
+          TypeError,
+          undefined,
+          "a directory must not be snapshot as a file",
+        );
+        await assertRejects(
+          () => readSnapshot(link, root, 3),
+          TypeError,
+          undefined,
+          "a symlink must be refused instead of followed",
         );
       }
-      await assertRejects(
-        () => readSnapshot(directory, root, 3),
-        TypeError,
-      );
-      await assertRejects(
-        () => readSnapshot(link, root, 3),
-        TypeError,
-      );
     } finally {
       await Deno.remove(root, { recursive: true });
     }

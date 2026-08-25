@@ -261,5 +261,70 @@ describe("platform/adapters/token/veryfront/api-client", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("retries rate-limited reads instead of failing the caller", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return Promise.resolve(new Response("slow down", { status: 429 }));
+        }
+        return Promise.resolve(Response.json({ value: "secret" }));
+      }) as typeof fetch;
+
+      try {
+        const client = new TokenStorageApiClient(createConfig({
+          retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+        }));
+        assertEquals(
+          await client.get("key"),
+          "secret",
+          "a 429 must be retried, not surfaced as a failed token read",
+        );
+        assertEquals(fetchCalls, 2, "the rate-limited attempt must be retried exactly once");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("cancels the unread body of a retried server error", async () => {
+      const originalFetch = globalThis.fetch;
+      let cancelled = false;
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(16));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          });
+          return Promise.resolve(new Response(body, { status: 500 }));
+        }
+        return Promise.resolve(Response.json({ value: "ok" }));
+      }) as typeof fetch;
+
+      try {
+        const client = new TokenStorageApiClient(createConfig({
+          retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+        }));
+        assertEquals(
+          await client.get("key"),
+          "ok",
+          "the retried attempt must serve the caller",
+        );
+        assertEquals(
+          cancelled,
+          true,
+          "a retried 5xx body must be cancelled so the connection is not held open",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });

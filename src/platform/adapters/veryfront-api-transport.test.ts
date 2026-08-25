@@ -5,6 +5,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import {
   createCanonicalVeryfrontApiTransport,
@@ -165,6 +166,46 @@ describe("Veryfront API transport retry boundaries", () => {
       assertEquals(error.name, "AbortError");
       assertEquals(tokenReads, 0);
       assertEquals(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("captures the request token once so retries cannot observe a mid-flight token change", async () => {
+    const originalFetch = globalThis.fetch;
+    let tokenReads = 0;
+    const authorizations: Array<string | null> = [];
+
+    try {
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        authorizations.push(new Headers(init?.headers).get("authorization"));
+        return Promise.resolve(
+          authorizations.length === 1
+            ? new Response(null, { status: 500, statusText: "Upstream failure" })
+            : Response.json({ ok: true }),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        baseUrl: baseConfig.baseUrl,
+        getToken: () => `token-${++tokenReads}`,
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      assertEquals(
+        await transport.request("/files"),
+        { ok: true },
+        "the retried request must resolve with the successful attempt",
+      );
+      assertEquals(
+        tokenReads,
+        1,
+        "the token provider must be read exactly once per request, not once per attempt",
+      );
+      assertEquals(
+        authorizations,
+        ["Bearer token-1", "Bearer token-1"],
+        "every retry attempt must reuse the token captured for the request",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -578,5 +619,166 @@ describe("Veryfront API transport authority and response boundaries", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("omits the upstream error body when diagnostics opt out", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(16 * 1024)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(body, {
+            status: 500,
+            statusText: "Upstream failure",
+          }),
+        )) as typeof fetch;
+      const transport = createVeryfrontApiTransport({
+        ...baseConfig,
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        shouldRetry: () => false,
+        wrapFinalError: (error) => error,
+      });
+
+      const error = await assertRejects(() =>
+        transport.request(
+          "https://api.example.com/files?access_token=secret&cursor=public",
+          { includeErrorBodyInDiagnostics: false },
+        )
+      );
+      assertInstanceOf(error, Error);
+      const context = (error as {
+        context?: {
+          details?: {
+            url?: string;
+            responseText?: string;
+            responseTruncated?: boolean;
+          };
+        };
+      }).context;
+      assertEquals(
+        context?.details?.responseText,
+        undefined,
+        "opting out must keep the upstream body out of the error context",
+      );
+      assertEquals(
+        context?.details?.url,
+        "https://api.example.com/files?access_token=[REDACTED]&cursor=public",
+        "the redacted URL must still be reported",
+      );
+      assertEquals(
+        context?.details?.responseTruncated,
+        true,
+        "truncation must still be reported when the body is withheld",
+      );
+      assertEquals(cancelled, true, "the upstream body stream must still be cancelled");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("authorizes every egress hop when an outbound policy is configured", async () => {
+    const authorizedOrigin = "https://93.184.216.34";
+    const retry = { maxRetries: 0, initialDelay: 0, maxDelay: 0 };
+    const outboundPolicy = {
+      authorizeUrl(url: URL) {
+        if (url.origin !== authorizedOrigin) {
+          throw new Error(`blocked: ${url.origin}`);
+        }
+      },
+    };
+
+    const authorized: Request[] = [];
+    await withMockFetch(
+      (input: URL | Request | string, init?: RequestInit) => {
+        authorized.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: authorizedOrigin,
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        assertEquals(
+          await transport.request("/files"),
+          { ok: true },
+          "an authorized origin must complete through the guarded transport",
+        );
+      },
+    );
+    assertEquals(
+      authorized.length,
+      1,
+      "the authorized request must reach the outbound transport exactly once",
+    );
+    assertEquals(
+      authorized[0]?.headers.get("authorization"),
+      "Bearer secret",
+      "the guarded path must forward the bearer credential",
+    );
+
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: `${authorizedOrigin}/elsewhere` },
+          }),
+        ),
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: authorizedOrigin,
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        await assertRejects(
+          () => transport.request("/files"),
+          Error,
+          "redirect",
+          "the guarded path must refuse redirects for credentialed requests",
+        );
+      },
+    );
+
+    const blocked: Request[] = [];
+    await withMockFetch(
+      (input: URL | Request | string, init?: RequestInit) => {
+        blocked.push(new Request(input, init));
+        return Promise.resolve(Response.json({ ok: true }));
+      },
+      async () => {
+        const transport = createVeryfrontApiTransport({
+          baseUrl: "https://93.184.216.35",
+          getToken: () => "secret",
+          retry,
+          outboundPolicy,
+          wrapFinalError: (error) => error,
+        });
+        await assertRejects(
+          () => transport.request("/files"),
+          Error,
+          "blocked",
+          "an unauthorized origin must be refused by the outbound policy",
+        );
+      },
+    );
+    assertEquals(
+      blocked.length,
+      0,
+      "the bearer credential must never leave the process for an unauthorized origin",
+    );
   });
 });

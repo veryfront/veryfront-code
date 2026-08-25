@@ -299,33 +299,46 @@ describe("platform/adapters/redis/node", () => {
     });
 
     it("should proxy lrange (lRange)", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
-      assertEquals(await adapter.lrange("list", 0, -1), ["a", "b"]);
+      assertEquals(await adapter.lrange("list", 2, 5), ["a", "b"]);
+      assertEquals(calls[0].args, ["list", 2, 5], "lrange must forward start/stop to lRange");
     });
 
     it("should proxy lindex (lIndex)", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
-      assertEquals(await adapter.lindex("list", 0), "item");
+      assertEquals(await adapter.lindex("list", 3), "item");
+      assertEquals(calls[0].args, ["list", 3], "lindex must forward the index to lIndex");
     });
 
     it("should proxy lset (lSet)", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
-      assertEquals(await adapter.lset("list", 0, "v"), "OK");
+      assertEquals(await adapter.lset("list", 4, "v"), "OK");
+      assertEquals(
+        calls[0].args,
+        ["list", 4, "v"],
+        "lset must forward the index and value to lSet",
+      );
     });
 
     it("should proxy llen (lLen)", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       assertEquals(await adapter.llen("list"), 5);
+      assertEquals(calls[0].args, ["list"], "llen must forward the key to lLen");
     });
 
     it("should proxy xadd (xAdd)", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       assertEquals(await adapter.xadd("stream", "*", { k: "v" }), "1-0");
+      assertEquals(
+        calls[0].args,
+        ["stream", "*", { k: "v" }],
+        "xadd must forward the entry id and fields to xAdd",
+      );
     });
 
     it("should forward xack ids as an array (xAck)", async () => {
@@ -351,9 +364,10 @@ describe("platform/adapters/redis/node", () => {
     });
 
     it("should proxy expire", async () => {
-      const { client } = createMockClient();
+      const { client, calls } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       assertEquals(await adapter.expire("key", 60), 1);
+      assertEquals(calls[0].args, ["key", 60], "expire must forward the ttl in seconds");
     });
 
     it("should proxy get", async () => {

@@ -101,34 +101,42 @@ if (isDeno) {
       const failure = new Error("injected Deno write failure");
       let writes = 0;
       let closes = 0;
-      let removes = 0;
+      const root = await Deno.makeTempDir({ prefix: "vf-deno-reserved-" });
+      const reserved = join(root, "reserved.bin");
       const TestableAdapter = DenoFileSystemAdapter as unknown as new (
         options: Record<string, unknown>,
       ) => DenoFileSystemAdapter;
       const adapter = new TestableAdapter({
         denoCreateRuntime: {
-          open: () =>
-            Promise.resolve({
+          open: async (path: string, options: { write: true; createNew: true }) => {
+            const file = await Deno.open(path, options);
+            return {
               write: () => writes++ === 0 ? Promise.resolve(1) : Promise.reject(failure),
               close: () => {
                 closes++;
+                file.close();
               },
-            }),
-          remove: () => {
-            removes++;
-            return Promise.resolve();
+            };
           },
         },
       });
 
-      const error = await assertRejects(
-        () => adapter.createFileBytesExclusive!("/reserved.bin", new Uint8Array([1, 2])),
-        Error,
-      );
-      assertEquals(error, failure);
-      assertEquals(writes, 2);
-      assertEquals(closes, 1);
-      assertEquals(removes, 0);
+      try {
+        const error = await assertRejects(
+          () => adapter.createFileBytesExclusive!(reserved, new Uint8Array([1, 2])),
+          Error,
+        );
+        assertEquals(error, failure);
+        assertEquals(writes, 2);
+        assertEquals(closes, 1);
+        assertEquals(
+          (await Deno.lstat(reserved)).isFile,
+          true,
+          "a partial write failure must leave the createNew reservation on disk",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
     });
 
     it("preserves createNew write and handle cleanup failures", async () => {

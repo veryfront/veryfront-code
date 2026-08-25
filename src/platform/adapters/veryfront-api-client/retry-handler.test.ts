@@ -3,6 +3,26 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import {
+  type Context,
+  installGlobalTelemetryAPI,
+  type TextMapPropagator,
+  type TextMapSetter,
+} from "#veryfront/observability/tracing/api-shim.ts";
+
+const TEST_TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+
+const traceparentPropagator: TextMapPropagator = {
+  inject(_ctx: Context, carrier: unknown, setter?: TextMapSetter<unknown>): void {
+    setter?.set(carrier, "traceparent", TEST_TRACEPARENT);
+  },
+  extract(ctx: Context): Context {
+    return ctx;
+  },
+  fields(): string[] {
+    return ["traceparent"];
+  },
+};
 
 const originalFetch = globalThis.fetch;
 
@@ -63,6 +83,27 @@ describe("retry-handler", () => {
         assertExists(capturedHeaders, "Headers should be passed to fetch");
         assertEquals(capturedHeaders.get("Authorization"), "Bearer test-token");
         assertEquals(capturedHeaders.get("Content-Type"), "application/json");
+      });
+
+      it("injects the active trace context into outbound request headers", async () => {
+        const installation = installGlobalTelemetryAPI({ propagator: traceparentPropagator });
+
+        try {
+          await requestWithRetry(
+            "https://api.test.com/endpoint",
+            "test-token",
+            { maxRetries: 0, initialDelay: 100, maxDelay: 1000 },
+          );
+        } finally {
+          installation.dispose();
+        }
+
+        assertExists(capturedHeaders, "Headers should be passed to fetch");
+        assertEquals(
+          capturedHeaders.get("traceparent"),
+          TEST_TRACEPARENT,
+          "requestWithRetry must inject the active trace context into the outbound headers",
+        );
       });
 
       it("should forward custom method, body, and headers", async () => {

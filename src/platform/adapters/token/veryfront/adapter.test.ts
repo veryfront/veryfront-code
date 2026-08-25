@@ -132,5 +132,32 @@ describe("platform/adapters/token/veryfront/adapter", () => {
       // Should attempt to re-init (will fail since API is unreachable)
       await assertRejects(() => adapter.initialize(), VeryfrontError);
     });
+
+    it("clears the initialized flag so a disposed adapter re-pings the API", async () => {
+      const originalFetch = globalThis.fetch;
+      let requests = 0;
+      globalThis.fetch = () => {
+        requests++;
+        return Promise.resolve(Response.json({ keys: [] }));
+      };
+
+      try {
+        const adapter = new VeryfrontTokenAdapter(createConfig({
+          apiBaseUrl: "https://api.example.com",
+        }));
+        await adapter.initialize();
+        assertEquals(requests, 1, "the first initialize must ping the API");
+
+        adapter.dispose();
+        await adapter.initialize();
+        assertEquals(
+          requests,
+          2,
+          "dispose must clear the initialized flag so the next initialize re-pings the API",
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });

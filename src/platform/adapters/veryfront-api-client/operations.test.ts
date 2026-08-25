@@ -248,9 +248,80 @@ describe("VeryfrontAPIOperations", () => {
         };
       });
 
-      await createOps().getBranchFile("project-slug", "main", "app/api/ag-ui/route.ts");
+      const detail = await createOps().getBranchFile(
+        "project-slug",
+        "main",
+        "app/api/ag-ui/route.ts",
+      );
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+      assertEquals(detail, {
+        path: "app/api/ag-ui/route.ts",
+        content: "export const POST = () => new Response();",
+        id: "file-id",
+        type: "function",
+        size: 40,
+      }, "branch file detail must map every payload field");
+    });
+
+    it("maps every environment file detail field returned by the API", async () => {
+      stubJsonFetch(() => ({
+        id: "file-id",
+        version_id: "version-id",
+        path: "app/api/agents/route.ts",
+        content: "export const GET = () => new Response();",
+        size: 39,
+        type: "function",
+        updated_at: "2026-04-23T00:00:00.000Z",
+        environment_id: "environment-id",
+        environment_name: "production",
+        release_id: "release-id",
+        release_version: "v1",
+      }));
+
+      const detail = await createOps().getEnvironmentFile(
+        "project-slug",
+        "production",
+        "app/api/agents/route.ts",
+      );
+
+      assertEquals(detail, {
+        path: "app/api/agents/route.ts",
+        content: "export const GET = () => new Response();",
+        id: "file-id",
+        version_id: "version-id",
+        release_id: "release-id",
+        release_version: "v1",
+      }, "environment file detail must map every payload field");
+    });
+
+    it("maps every release file detail field returned by the API", async () => {
+      stubJsonFetch(() => ({
+        id: "file-id",
+        version_id: "version-id",
+        path: "pages/api/articles-2.ts",
+        content: "export default () => {}",
+        size: 23,
+        type: "function",
+        updated_at: "2026-04-23T00:00:00.000Z",
+        release_id: "release-id",
+        release_version: "v1",
+      }));
+
+      const detail = await createOps().getReleaseFile(
+        "project-slug",
+        "release-id",
+        "pages/api/articles-2.ts",
+      );
+
+      assertEquals(detail, {
+        path: "pages/api/articles-2.ts",
+        content: "export default () => {}",
+        id: "file-id",
+        version_id: "version-id",
+        release_id: "release-id",
+        release_version: "v1",
+      }, "release file detail must map every payload field");
     });
 
     it("warn-logs normal 404s for branch file content reads", async () => {
@@ -469,6 +540,96 @@ describe("VeryfrontAPIOperations", () => {
       await createOps().getReleaseFile("project-slug", "release-id", "pages/api/articles-2.ts");
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+  });
+
+  describe("lookupProjectByDomain", () => {
+    it("strips the port and matches environment domains case-insensitively", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "P",
+          slug: "p",
+          environments: [{
+            id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            name: "production",
+            domains: ["APP.EXAMPLE.COM"],
+            active_release_id: "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+          }],
+        };
+      });
+
+      const result = await createOps().lookupProjectByDomain("app.example.com:8443");
+
+      assertEquals(
+        new URL(requestedUrl).pathname,
+        "/projects/app.example.com",
+        "the lookup path must drop the :port suffix",
+      );
+      assertEquals(
+        result?.environment?.name,
+        "production",
+        "domain matching must be case-insensitive",
+      );
+      assertEquals(
+        result?.release_id,
+        "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+        "the matching environment's active release must be returned",
+      );
+    });
+
+    it("resolves to null when the domain has no project", async () => {
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("{}", {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        assertEquals(
+          await createOps().lookupProjectByDomain("missing.example.com"),
+          null,
+          "a 404 lookup must resolve to null, not throw",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+
+    it("rethrows non-404 upstream failures", async () => {
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response("{}", {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com",
+        "token",
+        { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      );
+
+      try {
+        await assertRejects(
+          () => ops.lookupProjectByDomain("app.example.com"),
+          VeryfrontError,
+          undefined,
+          "a 500 must surface as an error instead of a null lookup",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
     });
   });
 

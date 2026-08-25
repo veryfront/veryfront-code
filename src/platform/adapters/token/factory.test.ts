@@ -42,6 +42,38 @@ describe("createTokenStorageAdapter", () => {
     );
   });
 
+  it("validates the retry config captured at call time, not a later mutation", async () => {
+    const options = {
+      apiToken: "original-token",
+      projectSlug: "test-project",
+      retry: { maxRetries: 10 },
+    };
+
+    const pending = createTokenStorageAdapter({ type: "veryfront-api", veryfront: options });
+    options.retry = { maxRetries: 0 };
+
+    await assertRejects(
+      () => pending,
+      RangeError,
+      "maxRetries",
+      "the factory must reject the retry config it captured before its async body ran",
+    );
+  });
+
+  it("reads credentials from the call-time options, not a later mutation", async () => {
+    const options = { apiToken: "   ", projectSlug: "test-project" };
+
+    const pending = createTokenStorageAdapter({ type: "veryfront-api", veryfront: options });
+    options.apiToken = "repaired-token";
+
+    await assertRejects(
+      () => pending,
+      Error,
+      "requires apiToken",
+      "a blank call-time apiToken must not be repaired by mutating the caller's object",
+    );
+  });
+
   it("should default to memory type when type not specified", async () => {
     const adapter = await createTokenStorageAdapter({} as TokenStorageAdapterConfig);
     assertExists(adapter);

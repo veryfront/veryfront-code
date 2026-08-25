@@ -380,11 +380,40 @@ if (isDeno) {
 
   describe("denoAdapter singleton", () => {
     it("should be an instance of DenoAdapter", () => {
-      assertEquals(denoAdapter instanceof DenoAdapter, true);
+      assertEquals(
+        denoAdapter instanceof DenoAdapter,
+        true,
+        "the exported singleton must be a DenoAdapter",
+      );
     });
 
-    it("should return consistent instance", () => {
-      assertEquals(denoAdapter, denoAdapter);
+    it("shuts down the servers started through the same singleton", async () => {
+      const server = await denoAdapter.serve(
+        () => new Response("singleton"),
+        { hostname: "127.0.0.1", port: 0 },
+      );
+      const url = `http://127.0.0.1:${server.addr.port}/`;
+
+      try {
+        const response = await fetch(url);
+        assertEquals(
+          await response.text(),
+          "singleton",
+          "the singleton must serve the registered handler",
+        );
+
+        await denoAdapter.shutdown();
+
+        await assertRejects(
+          () => fetch(url),
+          TypeError,
+          undefined,
+          "denoAdapter.shutdown() must stop servers started through the same singleton",
+        );
+      } finally {
+        await server.stop();
+        await denoAdapter.shutdown();
+      }
     });
   });
 

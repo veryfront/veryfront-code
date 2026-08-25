@@ -15,6 +15,8 @@ import { createWebSocketUpgradeResponse } from "../../base.ts";
 import { createNodeServer, createNodeServerWithStartupOwner, NodeServer } from "./http-server.ts";
 import type { NodeHttpServer } from "./types.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
+import { getRequestPeerProvenance } from "../shared/request-peer.ts";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 import { WsNodeWebSocketServerProvider } from "../../../../../extensions/ext-node-websocket-ws/src/index.ts";
 import { NODE_WEBSOCKET_SERVER_PROVIDER_PACKAGE } from "#veryfront/extensions/websocket";
 
@@ -1298,6 +1300,91 @@ describe("NodeServer lifecycle", () => {
       await bodyCancelled.promise;
     } finally {
       client.destroy();
+      await server.stop();
+    }
+  });
+
+  it("records the native TCP peer of a request instead of a caller-supplied header", async () => {
+    if (!isNode) return;
+    const observed: Array<{
+      path: string;
+      provenance: ReturnType<typeof getRequestPeerProvenance>;
+      trusted: boolean;
+    }> = [];
+    const server = await createNodeServer((request) => {
+      observed.push({
+        path: new URL(request.url).pathname,
+        provenance: getRequestPeerProvenance(request),
+        trusted: isTrustedLocalControlRequest(request, { proxyTopologyTrusted: false }),
+      });
+      return new Response(null, { status: 204 });
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+
+    try {
+      const forwarded = await fetch(`http://127.0.0.1:${server.addr.port}/_dev-forwarded`, {
+        headers: { "x-forwarded-for": "10.0.0.9" },
+      });
+      assertEquals(forwarded.status, 204, "the listener must serve the forwarded-header request");
+      const direct = await fetch(`http://127.0.0.1:${server.addr.port}/_dev-direct`);
+      assertEquals(direct.status, 204, "the listener must serve the direct loopback request");
+
+      assertEquals(
+        observed,
+        [
+          {
+            path: "/_dev-forwarded",
+            provenance: { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+            trusted: false,
+          },
+          {
+            path: "/_dev-direct",
+            provenance: { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+            trusted: true,
+          },
+        ],
+        "the Node listener must record the native TCP peer, not a caller-supplied header",
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("records the native TCP peer on the synthesized WebSocket upgrade request", async () => {
+    if (!isNode) return;
+    const adapter = new NodeServerAdapter();
+    let observed: ReturnType<typeof getRequestPeerProvenance>;
+    let observedCalls = 0;
+    const server = await createNodeServer((request) => {
+      observedCalls++;
+      observed = getRequestPeerProvenance(request);
+      return adapter.upgradeWebSocket(request).response;
+    }, {
+      hostname: "127.0.0.1",
+      port: 0,
+      nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
+    });
+    const { WebSocket } = await import("ws");
+    const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}/_ws`, {
+      headers: { "x-forwarded-for": "10.0.0.9" },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        client.once("open", resolve);
+        client.once("error", reject);
+      });
+
+      assertEquals(observedCalls, 1, "the upgrade must run through the request handler once");
+      assertEquals(
+        observed,
+        { runtime: "node", transport: "tcp", hostname: "127.0.0.1" },
+        "the Node upgrade path must record the native TCP peer, not a caller-supplied header",
+      );
+    } finally {
+      if (client.readyState !== WebSocket.CLOSED) client.terminate();
       await server.stop();
     }
   });
