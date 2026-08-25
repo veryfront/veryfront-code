@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleAgUiStreamingResponse, handleStreamingResponse } from "./handler.ts";
 import type { StreamingCallbacks } from "./types.ts";
@@ -141,7 +141,14 @@ describe("use-chat streaming handler", () => {
     // The built parts include the tool call (output-available) in the final message.
     const msg = rec.messages[0]!;
     const toolPart = msg.parts.find((p) => p.type.startsWith("tool-") || p.type === "dynamic-tool");
-    assertExists(toolPart);
+    assertEquals(toolPart, {
+      type: "tool-search",
+      toolCallId: "c1",
+      toolName: "search",
+      state: "output-available",
+      input: { q: "hi" },
+      output: { hits: 2 },
+    }, "the streamed tool output must reach the final message part");
   });
 
   it("emits dynamic-tool calls through onToolCall with the dynamic flag", async () => {
@@ -161,6 +168,18 @@ describe("use-chat streaming handler", () => {
     );
     assertEquals(rec.toolCalls.length, 1);
     assertEquals(rec.toolCalls[0]!.toolCall.dynamic, true);
+
+    const message = rec.messages[0];
+    assertExists(message);
+    assertEquals(message.parts, [
+      {
+        type: "dynamic-tool",
+        toolCallId: "d1",
+        toolName: "mcp_tool",
+        state: "input-available",
+        input: { x: 1 },
+      },
+    ], "dynamic tool calls render as dynamic-tool parts");
   });
 
   it("preserves providerExecuted on provider-owned input-only tool parts", async () => {
@@ -353,6 +372,60 @@ describe("use-chat streaming handler", () => {
       rec.callbacks,
     );
     assertEquals(rec.messages.length, 0);
+  });
+
+  it("flushes a final frame that arrives without a trailing newline", async () => {
+    const rec = recorder();
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        for (
+          const event of [
+            { type: "text-start", id: "t1" },
+            { type: "text-delta", id: "t1", delta: "tail" },
+            { type: "text-end", id: "t1" },
+          ]
+        ) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n`));
+        }
+        // Deliberately no trailing newline: the final frame only reaches the
+        // handler through the leftover-buffer flush after the read loop.
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "message-finish" })}`));
+        controller.close();
+      },
+    });
+
+    await handleStreamingResponse(stream, rec.callbacks);
+
+    assertEquals(
+      rec.messages.length,
+      1,
+      "a stream whose final frame lacks a trailing newline still emits its message",
+    );
+    assertEquals(
+      (rec.messages[0]!.parts.find((p) => p.type === "text") as { text: string }).text,
+      "tail",
+      "the assembled text survives the leftover-buffer flush",
+    );
+  });
+
+  it("rejects and unlocks the body when the AG-UI run reports an error", async () => {
+    const body = agUiSseStream([
+      { event: "RunStarted", data: { runId: "run-1" } },
+      { event: "RunError", data: { message: "Runtime failed" } },
+    ]);
+
+    await assertRejects(
+      () => handleAgUiStreamingResponse(body, recorder().callbacks),
+      Error,
+      "Runtime failed",
+      "an AG-UI run error must surface to the caller instead of being swallowed",
+    );
+    assertEquals(
+      body.locked,
+      false,
+      "the finally block must release the reader lock when an event handler throws",
+    );
   });
 
   it("maps AG-UI tool-call args and results through the default stream handler", async () => {

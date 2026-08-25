@@ -223,3 +223,60 @@ Deno.test("slash-command artifact policy drops persisted exact-path state after 
     },
   );
 });
+
+Deno.test("slash-command artifact policy reports no exact artifact path for pathless submissions", () => {
+  assertEquals(
+    containsExactArtifactPathValue({
+      submitted: true,
+      values: { idea: "Create a concrete implementation plan for this idea." },
+    }),
+    false,
+    "a submission naming no file must not count as an exact artifact path",
+  );
+});
+
+Deno.test("slash-command artifact policy drops the reminder when nothing names a file", () => {
+  assertEquals(
+    evaluateSlashCommandArtifactPolicy({
+      messages: [
+        userMessage(FORM_INPUT_PLAN_COMMAND),
+        assistantMessage([loadSkillCall(), formInputCall()]),
+        toolMessage([
+          loadSkillResult(),
+          toolResult("tool-call-2", "form_input", {
+            submitted: true,
+            values: { idea: "Create a concrete implementation plan for this idea." },
+          }),
+        ]),
+      ],
+    }),
+    {
+      hasSlashCommand: true,
+      hasExactArtifactPath: false,
+      hasLoadSkill: true,
+      hasInvokeAgent: false,
+      shouldKeepReminder: false,
+    },
+    "a slash command that never names a file must not pin the artifact reminder",
+  );
+});
+
+Deno.test("slash-command artifact policy drops the reminder for plain chat turns that mention an artifact path", () => {
+  assertEquals(
+    evaluateSlashCommandArtifactPolicy({
+      messages: [
+        userMessage("Please update /plans/budget-planning.md"),
+        assistantMessage([loadSkillCall()]),
+        toolMessage([loadSkillResult()]),
+      ],
+    }),
+    {
+      hasSlashCommand: false,
+      hasExactArtifactPath: true,
+      hasLoadSkill: true,
+      hasInvokeAgent: false,
+      shouldKeepReminder: false,
+    },
+    "an ordinary chat turn without a slash command must not keep the artifact reminder",
+  );
+});

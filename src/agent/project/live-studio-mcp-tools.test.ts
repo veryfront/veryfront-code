@@ -485,6 +485,57 @@ Deno.test("createLiveStudioMcpTools singleflights by tuple and preserves latest 
   assertEquals(fixtures.executedCalls.at(-1)?.sourceIndex, 3);
 });
 
+Deno.test("createLiveStudioMcpTools fails closed when a studio tool disappears after the project changes", async () => {
+  let sourceCount = 0;
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    const sourceIndex = sourceCount++;
+
+    return {
+      id: config.id ?? "studio-mcp-live-tools",
+      // Only the first project exposes studio_suggestions; the reconnected
+      // project no longer advertises it.
+      listTools: () =>
+        Promise.resolve(
+          sourceIndex === 0
+            ? [
+              {
+                name: "studio_suggestions",
+                description: "studio_suggestions",
+                parameters: { type: "object", properties: {} },
+              },
+            ]
+            : [],
+        ),
+      executeTool: () => Promise.resolve({ project: `project-${sourceIndex + 1}` }),
+    };
+  };
+
+  let projectId = "project-1";
+  const studioTools = await createLiveStudioMcpTools({
+    authToken: "auth-token",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => projectId,
+    studioMcpUrl: "https://studio.example.com/mcp",
+    conversationId: "conversation-1",
+    createRemoteToolSource,
+  });
+
+  assertEquals(
+    await studioTools.tools.studio_suggestions?.execute?.({ field: "first" }, undefined),
+    { project: "project-1" },
+    "the tool still resolves while the active project advertises it",
+  );
+
+  projectId = "project-2";
+  await assertRejects(
+    async () =>
+      await studioTools.tools.studio_suggestions?.execute?.({ field: "second" }, undefined),
+    Error,
+    "Studio MCP tool unavailable for current project: studio_suggestions",
+    "a tool missing after reconnection must fail closed instead of resolving undefined",
+  );
+});
+
 Deno.test("createLiveStudioMcpTools returns no tools without a trusted Studio-capable client", async () => {
   const fixtures = createDeferredRemoteToolFixtures();
 

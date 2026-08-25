@@ -96,9 +96,48 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     resolveSingleProjectAgentRuntimeAgentId({ candidates, source: "auto" }),
     null,
   );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: ["coder"], markdownAgentIds: [] },
+      source: "auto",
+    }),
+    "coder",
+    "a project with one code agent resolves it as the default",
+  );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: [], markdownAgentIds: ["writer"] },
+      source: "auto",
+    }),
+    "writer",
+    "a project with one markdown agent resolves it as the default",
+  );
+  assertEquals(
+    resolveSingleProjectAgentRuntimeAgentId({
+      candidates: { codeAgentIds: ["coder"], markdownAgentIds: ["coder"] },
+      source: "auto",
+    }),
+    "coder",
+    "an id present in both candidate lists still counts as a single agent",
+  );
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(codeAgent, "code"), true);
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(codeAgent, "markdown"), false);
   assertEquals(doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "markdown"), true);
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "code"),
+    false,
+    "a markdown agent does not match the code source",
+  );
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(codeAgent, "auto"),
+    true,
+    "the default auto source matches a code-defined agent",
+  );
+  assertEquals(
+    doesProjectAgentRuntimeAgentMatchSource(markdownAgent, "auto"),
+    true,
+    "the default auto source matches a markdown-defined agent",
+  );
 
   assertEquals(await createRuntimeAgentDefinitionFromAgent(codeAgent), {
     id: "coder",

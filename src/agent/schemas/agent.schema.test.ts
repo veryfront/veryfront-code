@@ -270,6 +270,20 @@ describe("agent/schema", () => {
         assertEquals(result.success, true);
       }
     });
+
+    it("rejects a non tool-result discriminant", () => {
+      const result = getToolResultPartSchema().safeParse({
+        type: "tool-call",
+        toolCallId: "c",
+        toolName: "t",
+        result: 1,
+      });
+      assertEquals(
+        result.success,
+        false,
+        "only the tool-result literal may parse as a result part",
+      );
+    });
   });
 
   describe("MessageSchema - nested structure", () => {
@@ -635,6 +649,28 @@ describe("agent/schema", () => {
         });
         assertEquals(result.success, true);
       }
+    });
+
+    it("should reject contexts whose input is neither a string nor a message array", () => {
+      assertEquals(
+        getAgentContextSchema().safeParse({ agentId: "agent-1", input: 42, platform: {} }).success,
+        false,
+        "numeric input must not satisfy the string-or-message-array union",
+      );
+      assertEquals(
+        getAgentContextSchema().safeParse({
+          agentId: "agent-1",
+          input: [{ id: "m", role: "moderator", parts: [] }],
+          platform: {},
+        }).success,
+        false,
+        "message array entries must satisfy the message role enum",
+      );
+      assertEquals(
+        getAgentContextSchema().safeParse({ input: "test", platform: {} }).success,
+        false,
+        "agentId is required on an agent context",
+      );
     });
   });
 });

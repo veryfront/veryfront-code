@@ -15,19 +15,46 @@ Deno.test("PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES contains canonical file mut
   ]);
 });
 
+// Driven off the exported constant so the single-path dispatch and the constant
+// cannot drift apart. `move_file` reads two paths and is covered separately.
+const SINGLE_PATH_MUTATION_TOOL_NAMES = PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES.filter(
+  (toolName) => toolName !== "move_file",
+);
+
 Deno.test("getProjectSteeringMutation detects instruction file writes for the active project", () => {
-  assertEquals(
-    getProjectSteeringMutation({
-      toolName: "update_file",
-      toolInput: {
-        project_reference: "project-1",
-        path: "AGENTS.md",
-      },
-      activeProjectId: "project-1",
-      activeBranchId: null,
-    }),
-    { instructionsChanged: true, skillsChanged: false },
-  );
+  for (const toolName of SINGLE_PATH_MUTATION_TOOL_NAMES) {
+    assertEquals(
+      getProjectSteeringMutation({
+        toolName,
+        toolInput: {
+          project_reference: "project-1",
+          path: "AGENTS.md",
+        },
+        activeProjectId: "project-1",
+        activeBranchId: null,
+      }),
+      { instructionsChanged: true, skillsChanged: false },
+      `${toolName} on AGENTS.md flags an instruction change`,
+    );
+  }
+});
+
+Deno.test("getProjectSteeringMutation detects skill file writes for the active project", () => {
+  for (const toolName of SINGLE_PATH_MUTATION_TOOL_NAMES) {
+    assertEquals(
+      getProjectSteeringMutation({
+        toolName,
+        toolInput: {
+          project_reference: "project-1",
+          path: "skills/react/SKILL.md",
+        },
+        activeProjectId: "project-1",
+        activeBranchId: null,
+      }),
+      { instructionsChanged: false, skillsChanged: true },
+      `${toolName} on a skill file flags a skills change`,
+    );
+  }
 });
 
 Deno.test("getProjectSteeringMutation detects skill directory moves", () => {
@@ -129,6 +156,71 @@ Deno.test("getProjectSteeringMutation ignores mutations for other projects", () 
       activeBranchId: null,
     }),
     { instructionsChanged: false, skillsChanged: false },
+  );
+});
+
+Deno.test("getProjectSteeringMutation ignores mutations targeting another branch", () => {
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "update_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-2",
+        path: "AGENTS.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: false },
+    "a write on another branch must not invalidate steering for the active branch",
+  );
+
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "update_file",
+      toolInput: {
+        project_reference: "project-1",
+        path: "AGENTS.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: false },
+    "a branchless write must not match a branch-pinned run",
+  );
+});
+
+Deno.test("getProjectSteeringMutation detects skill and instruction files moved out of steering locations", () => {
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "move_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-1",
+        source_path: "skills/react/SKILL.md",
+        destination_path: "archive/old.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: true },
+    "moving a skill file out of the skills directory must still report a skills change",
+  );
+
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "move_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-1",
+        source_path: "AGENTS.md",
+        destination_path: "archive/old.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: true, skillsChanged: false },
+    "moving AGENTS.md out of the project root must still report an instruction change",
   );
 });
 

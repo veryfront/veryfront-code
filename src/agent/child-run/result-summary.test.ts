@@ -199,6 +199,14 @@ describe("child-run-result-summary", () => {
       );
     });
 
+    it("preserves a result that is entirely process narration", () => {
+      assertEquals(
+        buildRootOwnedChildRunResultText("Let me check that for you."),
+        "Let me check that for you.",
+        "a result that is only narration is preserved rather than emptied",
+      );
+    });
+
     it("preserves substantive text when there is no process preamble", () => {
       assertEquals(
         buildRootOwnedChildRunResultText("Final report delivered."),
@@ -218,6 +226,17 @@ describe("child-run-result-summary", () => {
           instruction: "Root owns final response.",
           suggestedText: "Final report delivered.",
         },
+      );
+    });
+
+    it("never degrades a narration-only child result to an empty final answer", () => {
+      assertEquals(
+        buildRootOwnedChildRunResultHint({
+          text: "I'll investigate this.",
+          instruction: "Root owns final response.",
+        }).suggestedText,
+        "I'll investigate this.",
+        "a narration-only child result never degrades to an empty final answer",
       );
     });
   });
@@ -282,6 +301,44 @@ describe("child-run-result-summary", () => {
         files: [{ path: "/a.ts" }],
         chunks: [{ id: "c1" }],
       });
+
+      // assertObjectMatch subset-matches array entries, so absence must be asserted directly.
+      const files = result.files as Record<string, unknown>[];
+      assertEquals("content" in files[0]!, false, "file entry content is stripped");
+      assertEquals(files[0]!.path, "/a.ts", "the sibling path key survives stripping");
+      const chunks = result.chunks as Record<string, unknown>[];
+      assertEquals("content" in chunks[0]!, false, "chunk entry content is stripped");
+      assertEquals(chunks[0]!.id, "c1", "the sibling id key survives stripping");
+    });
+
+    it("strips content from files and chunks entries even when it is short", () => {
+      const fileResult = summarizeChildRunResultValue({
+        files: [{ path: "/a.ts", content: "short" }],
+      });
+      if (!isPlainTestRecord(fileResult)) {
+        throw new Error("expected object result");
+      }
+      const files = fileResult.files as Record<string, unknown>[];
+      assertEquals(
+        "content" in files[0]!,
+        false,
+        "file entry content is stripped regardless of length",
+      );
+      assertEquals(files[0]!.path, "/a.ts", "the sibling path key survives stripping");
+
+      const chunkResult = summarizeChildRunResultValue({
+        chunks: [{ id: "c1", content: "short" }],
+      });
+      if (!isPlainTestRecord(chunkResult)) {
+        throw new Error("expected object result");
+      }
+      const chunks = chunkResult.chunks as Record<string, unknown>[];
+      assertEquals(
+        "content" in chunks[0]!,
+        false,
+        "chunk entry content is stripped regardless of length",
+      );
+      assertEquals(chunks[0]!.id, "c1", "the sibling id key survives stripping");
     });
 
     it("truncates at max depth", () => {

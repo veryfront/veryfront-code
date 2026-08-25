@@ -4,9 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RunCancelledError, RunResumeSessionManager } from "../index.ts";
 import {
   executeDurableHumanInputFlow,
-  getHumanInputPendingRequestSchema,
   getHumanInputResultSchema,
   HumanInputResumeError,
+  type HumanInputResumeValue,
   InvalidHumanInputResultError,
   waitForDurableHumanInputResolution,
   waitForHumanInput,
@@ -59,8 +59,10 @@ describe("agent/human-input", () => {
 
     assertEquals(submitOutcome, { accepted: true });
     // Cast through `unknown` so assertEquals doesn't enforce the contract DSL's
-    // strict key-present optional shape on the expected literal.
-    assertEquals(getHumanInputPendingRequestSchema().parse(published) as unknown, {
+    // strict key-present optional shape on the expected literal. The published
+    // value is asserted raw: re-parsing it here would re-apply the very
+    // defaults the publish step is supposed to have applied.
+    assertEquals(published as unknown, {
       runId: "run_1",
       toolCallId: "tool_1",
       request: {
@@ -76,13 +78,40 @@ describe("agent/human-input", () => {
         ],
         submitLabel: "Submit",
       },
-    });
+    }, "pending request must be published in canonical schema form with defaults applied");
     assertEquals(getHumanInputResultSchema().parse(await pending) as unknown, {
       submitted: true,
       values: {
         repo: "veryfront",
       },
     });
+  });
+
+  it("rejects an invalid human input request before publishing", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    let onRequestFired = false;
+
+    await assertRejects(() =>
+      waitForHumanInput({
+        sessionManager,
+        runId: "run_1",
+        toolCallId: "tool_1",
+        // deno-lint-ignore no-explicit-any -- deliberately invalid request literal
+        request: { title: "", fields: [] } as any,
+        onRequest: () => {
+          onRequestFired = true;
+        },
+      })
+    );
+
+    assertEquals(onRequestFired, false, "an invalid request must never reach the host");
+
+    sessionManager.cancelRun("run_1");
   });
 
   it("rejects malformed resumed values with a stable public error", async () => {
@@ -181,9 +210,11 @@ describe("agent/human-input", () => {
       request: { request: { title: string } };
     };
     type Snapshot = { id: string; status: string; values: Record<string, unknown> };
+    const sessionManager = new RunResumeSessionManager<HumanInputResumeValue>();
     // deno-lint-ignore no-explicit-any -- field literal omits optional keys
     // (see contract DSL InferShape limitation; cast to satisfy boundary).
     const result = await executeDurableHumanInputFlow<CreatedReq, Snapshot>({
+      sessionManager,
       runId: "run_1",
       threadId: crypto.randomUUID(),
       toolCallId: "tool_1",
@@ -222,14 +253,21 @@ describe("agent/human-input", () => {
         repo: "Repository details",
       },
     });
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      null,
+      "a completed durable flow finalizes its run session instead of leaking it against the concurrency cap",
+    );
   });
 
   it("surfaces durable request timeout as a human input resume error", async () => {
     type CreatedReq = { id: string };
     type Snapshot = { id: string; status: string };
+    const sessionManager = new RunResumeSessionManager<HumanInputResumeValue>();
     await assertRejects(
       () =>
         executeDurableHumanInputFlow<CreatedReq, Snapshot>({
+          sessionManager,
           runId: "run_1",
           threadId: crypto.randomUUID(),
           toolCallId: "tool_1",
@@ -251,6 +289,11 @@ describe("agent/human-input", () => {
         }),
       HumanInputResumeError,
       "Timed out while waiting for durable human input resolution",
+    );
+    assertEquals(
+      sessionManager.getRunStatus("run_1"),
+      null,
+      "a failed durable flow finalizes its run session too",
     );
   });
 
