@@ -16,7 +16,7 @@ describe("rendering/cache/stores/kv-store", () => {
         "the default constructor must not need a KV implementation",
       );
       assertEquals(
-        new KVCacheStore({ path: "/tmp/test.db" }) instanceof KVCacheStore,
+        new KVCacheStore({ path: "test.db" }) instanceof KVCacheStore,
         true,
         "a custom path must not need a KV implementation at construction time",
       );
