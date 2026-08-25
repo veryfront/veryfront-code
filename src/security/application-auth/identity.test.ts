@@ -16,6 +16,28 @@ function restoreIdentityPrimordials(): void {
   Array.prototype.push = nativeArrayPush;
 }
 
+function createCountingArrayProxy(values: readonly unknown[]): {
+  proxy: unknown[];
+  counts: { get: number; ownKeys: number; getOwnPropertyDescriptor: number };
+} {
+  const counts = { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0 };
+  const proxy = new Proxy([...values], {
+    get(target, property, receiver) {
+      counts.get += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    ownKeys(target) {
+      counts.ownKeys += 1;
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      counts.getOwnPropertyDescriptor += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+  return { proxy, counts };
+}
+
 describe("security/application-auth/identity", () => {
   it("requires the exact configured issuer and a non-empty subject", () => {
     assertThrows(
@@ -192,6 +214,45 @@ describe("security/application-auth/identity", () => {
     assertEquals(nativeObjectIsFrozen(identity.roles), true);
     assertEquals(Object.getPrototypeOf(identity.claims), null);
     assertEquals(nativeObjectIsFrozen(identity.claims), true);
+  });
+
+  it("rejects proxy-wrapped identity arrays before invoking proxy traps", () => {
+    const baseIdentity = {
+      issuer: "https://issuer.example.com",
+      subject: "user-123",
+      groups: ["admin"],
+      roles: ["operator"],
+      groupsComplete: true,
+      claims: { sub: "user-123" },
+    };
+
+    for (
+      const { label, value } of [
+        {
+          label: "groups",
+          value: (proxy: unknown[]) => ({ ...baseIdentity, groups: proxy }),
+        },
+        {
+          label: "roles",
+          value: (proxy: unknown[]) => ({ ...baseIdentity, roles: proxy }),
+        },
+        {
+          label: "claims.nested",
+          value: (proxy: unknown[]) => ({
+            ...baseIdentity,
+            claims: { nested: proxy },
+          }),
+        },
+      ]
+    ) {
+      const { proxy, counts } = createCountingArrayProxy(["admin"]);
+      assertThrows(
+        () => snapshotApplicationIdentity(value(proxy)),
+        TypeError,
+        label,
+      );
+      assertEquals(counts, { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0 });
+    }
   });
 
   it("deep-freezes identity data after Object.freeze and collection prototype tampering", () => {

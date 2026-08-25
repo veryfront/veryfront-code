@@ -55,6 +55,28 @@ const TEST_APPLICATION_IDENTITY = Object.freeze({
   })(),
 });
 
+function createCountingArrayProxy(values: readonly unknown[]): {
+  proxy: unknown[];
+  counts: { get: number; ownKeys: number; getOwnPropertyDescriptor: number };
+} {
+  const counts = { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0 };
+  const proxy = new Proxy([...values], {
+    get(target, property, receiver) {
+      counts.get += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    ownKeys(target) {
+      counts.ownKeys += 1;
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      counts.getOwnPropertyDescriptor += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+  });
+  return { proxy, counts };
+}
+
 async function prepareWorkerModule(
   source: string,
 ): Promise<PreparedWorkerModule> {
@@ -611,6 +633,71 @@ describe("worker-script request snapshots", () => {
         "Invalid worker request applicationIdentity",
       );
       assertEquals(issuerAccessorCalls, 0);
+    }
+  });
+
+  it("rejects proxy identity arrays at the worker boundary before invoking traps", () => {
+    const baseRequests = [
+      {
+        type: "execute-app-route",
+        id: "proxy-array-identity",
+        module: {
+          source: "export function GET() {}",
+          sha256: "a".repeat(64),
+        },
+        modulePath: "/project/app/api/route.ts",
+        method: "GET",
+        request: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir: "/project",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      },
+      {
+        type: "execute-pages-route",
+        id: "proxy-array-pages-identity",
+        module: {
+          source: "export function GET() {}",
+          sha256: "a".repeat(64),
+        },
+        modulePath: "/project/pages/api/test.ts",
+        method: "GET",
+        context: {
+          url: "http://localhost/api/test",
+          method: "GET",
+          headers: [],
+          body: null,
+          params: {},
+          cookies: {},
+        },
+        projectDir: "/project",
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      },
+    ];
+
+    for (const request of baseRequests) {
+      for (
+        const identity of [
+          (proxy: unknown[]) => ({ ...TEST_APPLICATION_IDENTITY, groups: proxy }),
+          (proxy: unknown[]) => ({ ...TEST_APPLICATION_IDENTITY, roles: proxy }),
+          (proxy: unknown[]) => ({
+            ...TEST_APPLICATION_IDENTITY,
+            claims: { nested: proxy },
+          }),
+        ]
+      ) {
+        const { proxy, counts } = createCountingArrayProxy(["admin"]);
+        assertThrows(
+          () => snapshotWorkerRequest({ ...request, applicationIdentity: identity(proxy) }),
+          TypeError,
+          "Invalid worker request applicationIdentity",
+        );
+        assertEquals(counts, { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0 });
+      }
     }
   });
 

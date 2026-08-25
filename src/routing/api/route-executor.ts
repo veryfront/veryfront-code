@@ -465,10 +465,7 @@ function snapshotExecuteRouteOptions(
   defineExecuteRouteOption(
     snapshot,
     "applicationIdentity",
-    rawApplicationIdentity === null ||
-      (typeof rawApplicationIdentity === "object" && rawApplicationIdentity !== null)
-      ? rawApplicationIdentity
-      : null,
+    snapshotExecuteRouteApplicationIdentity(rawApplicationIdentity),
   );
   defineExecuteRouteOption(
     snapshot,
@@ -486,6 +483,13 @@ function snapshotExecuteRouteOptions(
   );
 
   return apply(objectFreeze, undefined, [snapshot]) as ExecuteRouteOptionsSnapshot;
+}
+
+function snapshotExecuteRouteApplicationIdentity(
+  value: unknown,
+): ApplicationIdentity | null {
+  if (value === undefined || value === null) return null;
+  return snapshotApplicationIdentity(value);
 }
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {

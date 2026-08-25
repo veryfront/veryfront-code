@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __serializeRequestForTests,
@@ -339,7 +344,14 @@ describe("routing/api/route-executor", () => {
         GET: (_req: Request, ctx: { identity: ApplicationIdentity | null }) =>
           Response.json({
             sameIdentity: ctx.identity === identity,
-            identity: ctx.identity,
+            subject: ctx.identity?.subject ?? null,
+            rootFrozen: ctx.identity === null ? null : Object.isFrozen(ctx.identity),
+            rootProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity) === null,
+            claimsProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity.claims) === null,
           }),
       };
 
@@ -354,9 +366,74 @@ describe("routing/api/route-executor", () => {
       );
 
       assertEquals(await response.json(), {
-        sameIdentity: true,
-        identity,
+        sameIdentity: false,
+        subject: "user-123",
+        rootFrozen: true,
+        rootProtoNull: true,
+        claimsProtoNull: true,
       });
+    });
+
+    it("keeps explicit null anonymous and rejects malformed host app route identity options", async () => {
+      let calls = 0;
+      const handler = {
+        GET: (_req: Request, ctx: { identity: ApplicationIdentity | null }) => {
+          calls += 1;
+          return Response.json({ identityIsNull: ctx.identity === null });
+        },
+      };
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const anonymous = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { ...LOCAL_EXECUTION, applicationIdentity: null },
+      );
+      assertEquals(await anonymous.json(), { identityIsNull: true });
+
+      assertThrows(
+        () =>
+          executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            {
+              ...LOCAL_EXECUTION,
+              applicationIdentity: "malformed" as unknown as ApplicationIdentity,
+            },
+          ),
+        TypeError,
+        "Application identity must be a plain object",
+      );
+
+      let accessorCalls = 0;
+      const accessorIdentity = { ...createIdentity() };
+      Object.defineProperty(accessorIdentity, "email", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return "user@example.test";
+        },
+      });
+      assertThrows(
+        () =>
+          executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            { ...LOCAL_EXECUTION, applicationIdentity: accessorIdentity },
+          ),
+        TypeError,
+        "accessor property",
+      );
+      assertEquals(accessorCalls, 0);
+      assertEquals(calls, 1);
     });
 
     it("should reject forged Response-like objects", async () => {
@@ -633,7 +710,14 @@ describe("routing/api/route-executor", () => {
         GET: (ctx: { identity: ApplicationIdentity | null }) =>
           Response.json({
             sameIdentity: ctx.identity === identity,
-            identity: ctx.identity,
+            subject: ctx.identity?.subject ?? null,
+            rootFrozen: ctx.identity === null ? null : Object.isFrozen(ctx.identity),
+            rootProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity) === null,
+            claimsProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity.claims) === null,
           }),
       };
 
@@ -649,9 +733,74 @@ describe("routing/api/route-executor", () => {
       );
 
       assertEquals(await response.json(), {
-        sameIdentity: true,
-        identity,
+        sameIdentity: false,
+        subject: "user-123",
+        rootFrozen: true,
+        rootProtoNull: true,
+        claimsProtoNull: true,
       });
+    });
+
+    it("keeps explicit null anonymous and rejects malformed host pages route identity options", async () => {
+      let calls = 0;
+      const handler = {
+        GET: (ctx: { identity: ApplicationIdentity | null }) => {
+          calls += 1;
+          return Response.json({ identityIsNull: ctx.identity === null });
+        },
+      };
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const anonymous = await executePagesRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        "/test/project",
+        { ...LOCAL_EXECUTION, applicationIdentity: null },
+      );
+      assertEquals(await anonymous.json(), { identityIsNull: true });
+
+      assertThrows(
+        () =>
+          executePagesRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            "/test/project",
+            { ...LOCAL_EXECUTION, applicationIdentity: 7 as unknown as ApplicationIdentity },
+          ),
+        TypeError,
+        "Application identity must be a plain object",
+      );
+
+      let accessorCalls = 0;
+      const accessorIdentity = { ...createIdentity() };
+      Object.defineProperty(accessorIdentity, "email", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return "user@example.test";
+        },
+      });
+      assertThrows(
+        () =>
+          executePagesRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            "/test/project",
+            { ...LOCAL_EXECUTION, applicationIdentity: accessorIdentity },
+          ),
+        TypeError,
+        "accessor property",
+      );
+      assertEquals(accessorCalls, 0);
+      assertEquals(calls, 1);
     });
 
     it("should fall back to default handler", async () => {

@@ -325,7 +325,7 @@ function parseSerializedStringList(
   value: unknown,
   fieldName: "groups" | "roles",
 ): readonly string[] {
-  if (!arrayIsArray(value)) {
+  if (!arrayIsArray(value) || isProxy(value)) {
     throw new TypeError(`Application identity ${fieldName} must be an array of strings`);
   }
   if (value.length > MAX_ARRAY_ENTRIES) {
@@ -458,6 +458,9 @@ function parseClaimArray(
   depth: number,
   path: string,
 ): MutableAuthClaimArray {
+  if (isProxy(value)) {
+    throw new TypeError(`${path} must be a plain array`);
+  }
   if (weakSetContains(state.seen, value)) {
     throw new TypeError(`${path} contains a cycle`);
   }
