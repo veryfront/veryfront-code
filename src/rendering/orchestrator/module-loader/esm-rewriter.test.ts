@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
+import { register, resolve } from "#veryfront/extensions/contracts.ts";
 import { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
@@ -260,6 +262,44 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const rootContent = files.get(result) ?? "";
       assertMatch(rootContent, /file:\/\//);
       assertEquals(/esm\.sh\/a/.test(rootContent), false);
+    });
+
+    it("keeps the regex fallback when final specifier substitution cannot lex", async () => {
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode = `/* reject-configured-lexer */ import { a } from "https://esm.sh/a";`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
+        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse("export const a = 1;"));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      try {
+        const result = await fetchEsmModule(
+          "https://esm.sh/root",
+          tmpDir,
+          localAdapter,
+          esmCache,
+        );
+
+        assertEquals(
+          files.get(result),
+          rootCode,
+          "a final lexer failure must retain the fetched source and its remote specifier",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
     });
 
     it("prefetches successful template-literal dynamic imports", async () => {
@@ -523,6 +563,69 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         esmCache.size,
         0,
         "the lazy failure still keeps provisional graph artifacts out of the shared cache",
+      );
+    });
+
+    it("waits for a cycle owner before a concurrent sibling reuses its descendant", async () => {
+      const esmCache = new Map<string, string>();
+      const dWritten = Promise.withResolvers<void>();
+      const gatedAdapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            files.set(path, content);
+            if (content.includes("export const d = a")) dWritten.resolve();
+            return Promise.resolve();
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return jsonResponse(
+            `import { a } from "https://esm.sh/a";\n` +
+              `import { x } from "https://esm.sh/x";\n` +
+              `export const root = a + x;`,
+          );
+        }
+        if (url === "https://esm.sh/a") {
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\n` +
+              `import { slow } from "https://esm.sh/slow";\n` +
+              `export const a = d + slow;`,
+          );
+        }
+        if (url === "https://esm.sh/d") {
+          return jsonResponse(
+            `import { a } from "https://esm.sh/a";\nexport const d = a;`,
+          );
+        }
+        if (url === "https://esm.sh/x") {
+          await dWritten.promise;
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+          );
+        }
+        if (url === "https://esm.sh/slow") {
+          await dWritten.promise;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return jsonResponse("export const slow = 1;");
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule(
+        "https://esm.sh/root",
+        tmpDir,
+        gatedAdapter,
+        esmCache,
+      );
+
+      assertEquals(files.has(result), true);
+      assertEquals(
+        esmCache.has("https://esm.sh/x"),
+        true,
+        "the sibling must finish after the cycle owner materializes its predicted path",
       );
     });
 

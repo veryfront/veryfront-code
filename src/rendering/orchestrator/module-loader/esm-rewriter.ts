@@ -80,6 +80,8 @@ type GraphState = {
   provisional: Set<string>;
   /** Artifacts written by this graph, published only after the root succeeds. */
   artifacts: Map<string, string>;
+  /** Module materializations still running within this graph. */
+  inFlight: Map<string, Promise<string>>;
   /** Any rejected nested fetch makes the graph unsafe to publish as a cache hit. */
   hadFailure: boolean;
   /** Artifacts that depend on a failed subtree or provisional cycle member. */
@@ -116,6 +118,7 @@ export async function fetchEsmModule(
     unwritten: new Map(),
     provisional: new Set(),
     artifacts: new Map(),
+    inFlight: new Map(),
     hadFailure: false,
     poisoned: new Set(),
   };
@@ -168,15 +171,57 @@ async function fetchEsmModuleWithin(
   if (cached) return cached;
   const graphCached = graph.artifacts.get(url);
   if (graphCached) {
-    const unwritten = unresolvedGraphDependencies(url, graph, esmCache);
+    let unwritten = unresolvedGraphDependencies(url, graph, esmCache);
     if (unwritten.length) {
-      throw MODULE_NOT_FOUND.create({
-        detail: `Refusing incomplete graph-local artifact for ${url}`,
-      });
+      const owners = [
+        ...new Set(unwritten.flatMap((dependency) => {
+          const owner = graph.inFlight.get(dependency);
+          return owner === undefined ? [] : [owner];
+        })),
+      ];
+      if (owners.length) {
+        await Promise.all(owners);
+        unwritten = unresolvedGraphDependencies(url, graph, esmCache);
+      }
+      if (unwritten.length) {
+        throw MODULE_NOT_FOUND.create({
+          detail: `Refusing incomplete graph-local artifact for ${url}`,
+        });
+      }
     }
     return graphCached;
   }
 
+  const inFlight = graph.inFlight.get(url);
+  if (inFlight) {
+    await inFlight;
+    return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, pending, graph);
+  }
+
+  const materialization = materializeEsmModuleWithin(
+    url,
+    tmpDir,
+    localAdapter,
+    esmCache,
+    pending,
+    graph,
+  );
+  graph.inFlight.set(url, materialization);
+  try {
+    return await materialization;
+  } finally {
+    if (graph.inFlight.get(url) === materialization) graph.inFlight.delete(url);
+  }
+}
+
+async function materializeEsmModuleWithin(
+  url: string,
+  tmpDir: string,
+  localAdapter: RuntimeAdapter,
+  esmCache: Map<string, string>,
+  pending: ReadonlySet<string>,
+  graph: GraphState,
+): Promise<string> {
   logger.debug("Fetching esm.sh module:", url);
 
   const response = await fetch(url);
@@ -264,9 +309,15 @@ async function fetchEsmModuleWithin(
       // longest-first ordering alone cannot help when the longer URL failed to
       // fetch and so never entered the map, yet it must stay verbatim for the
       // runtime to resolve.
-      code = await replaceSpecifiers(code, (specifier) => {
-        return replacementMap.get(specifier) ?? null;
-      });
+      try {
+        code = await replaceSpecifiers(code, (specifier) => {
+          return replacementMap.get(specifier) ?? null;
+        });
+      } catch (error) {
+        logger.debug("Could not lex a fetched module during local substitution", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
