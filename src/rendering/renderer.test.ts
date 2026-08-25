@@ -339,7 +339,7 @@ describe("Renderer response metadata", () => {
     assertEquals(store.data.size, 0);
   });
 
-  it("preserves response headers through render cache hits", async () => {
+  it("does not persist response headers through render cache hits", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -374,7 +374,67 @@ describe("Renderer response metadata", () => {
 
     assertEquals(first.headers, { "x-page-state": "cacheable" });
     assertEquals(second.headers, { "x-page-state": "cacheable" });
-    assertEquals(renderCalls, 1);
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when the leader returns headers", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          return {
+            html: `<html>${user}</html>`,
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": user },
+          };
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const leader = renderer.renderPage("/concurrent-header", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-header", {
+        headers: { "x-test-user": "leader" },
+      }),
+    });
+    await firstStarted.promise;
+    const follower = renderer.renderPage("/concurrent-header", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-header", {
+        headers: { "x-test-user": "follower" },
+      }),
+    });
+    releaseFirst.resolve();
+
+    const [leaderResult, followerResult] = await Promise.all([leader, follower]);
+    assertEquals(leaderResult.headers, { "x-page-state": "leader" });
+    assertEquals(followerResult.headers, { "x-page-state": "follower" });
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
   });
 
   it("rerenders singleflight followers when the leader returns cookies", async () => {

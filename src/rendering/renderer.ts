@@ -882,8 +882,11 @@ export class Renderer {
       throw error;
     }
 
-    if (isFollower && cachedData.cookies?.length) {
-      logger.debug("Rerendering follower after cookie-bearing render", {
+    if (
+      isFollower &&
+      (cachedData.cookies?.length || Object.keys(cachedData.headers ?? {}).length > 0)
+    ) {
+      logger.debug("Rerendering follower after response-metadata-bearing render", {
         slug,
         projectId: ctx.projectId,
       });
@@ -1021,7 +1024,11 @@ export class Renderer {
         },
       );
 
-      if (cacheKey !== null && !result.cookies?.length) {
+      if (
+        cacheKey !== null &&
+        !result.cookies?.length &&
+        Object.keys(result.headers ?? {}).length === 0
+      ) {
         await this.cache.persistResult(
           result,
           slug,
