@@ -64,7 +64,10 @@ describe("npm smoke Node support contract", () => {
       jobs["tests-npm-install-smoke"],
       "npm install smoke job",
     );
-    assertEquals(smokeJob.needs, "npm-smoke-node-versions");
+    assertEquals(smokeJob.needs, [
+      "npm-smoke-node-versions",
+      "npm-compatibility-artifact",
+    ]);
     assertEquals(
       record(
         record(smokeJob.strategy, "npm smoke strategy").matrix,
@@ -113,5 +116,79 @@ describe("npm smoke Node support contract", () => {
     assertEquals(MINIMUM_NODE_RELEASE_LINE, "22");
     assertEquals(MINIMUM_NODE_VERSION, "22.3.0");
     assertEquals(CURRENT_NPM_SMOKE_NODE_RELEASE_LINE, "24");
+  });
+
+  it("publishes the same numbered RC npm artifact that compatibility jobs test", async () => {
+    const workflow = record(
+      parse(await Deno.readTextFile(WORKFLOW_PATH)),
+      "CI workflow",
+    );
+    const jobs = record(workflow.jobs, "CI workflow jobs");
+
+    const artifactJob = record(
+      jobs["npm-compatibility-artifact"],
+      "npm compatibility artifact job",
+    );
+    const artifactBuild = steps(
+      artifactJob,
+      "npm compatibility artifact job",
+    ).find((step) => step.id === "build");
+    assert(artifactBuild, "The npm artifact job must build the test artifact");
+    const artifactBuildScript = String(artifactBuild.run);
+    assert(
+      artifactBuildScript.includes("scripts/ci/prepare-rc-build.ts"),
+      "The tested npm artifact must inject the numbered RC version on main before packing",
+    );
+    assert(
+      artifactBuildScript.includes(
+        'VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"',
+      ),
+      "The tested npm artifact must use the same numbered RC version as prerelease publish",
+    );
+    assert(
+      artifactBuildScript.indexOf("scripts/ci/prepare-rc-build.ts") <
+        artifactBuildScript.indexOf("deno task build:npm"),
+      "The numbered RC version must be prepared before the npm artifact is built",
+    );
+
+    const prereleaseJob = record(jobs.prerelease, "prerelease job");
+    assert(
+      Array.isArray(prereleaseJob.needs) &&
+        prereleaseJob.needs.includes("npm-compatibility-artifact"),
+      "Prerelease publish must depend on the tested npm compatibility artifact",
+    );
+    const prereleaseSteps = steps(prereleaseJob, "prerelease job");
+    assert(
+      prereleaseSteps.some((step) =>
+        step.uses ===
+          "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" &&
+        record(step.with, "prerelease artifact download inputs").name ===
+          "npm-compatibility-${{ github.sha }}" &&
+        record(step.with, "prerelease artifact download inputs").path ===
+          "dist/npm-compatibility"
+      ),
+      "Prerelease publish must download the npm artifact already tested by compatibility jobs",
+    );
+    const publishStep = prereleaseSteps.find((step) =>
+      step.name === "Publish tested RC npm artifact"
+    );
+    assert(publishStep, "Prerelease publish must publish the tested artifact");
+    const publishScript = String(publishStep.run);
+    assert(
+      publishScript.includes(
+        "scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm",
+      ),
+      "Prerelease publish must materialize the tested artifact before publishing",
+    );
+    assertEquals(
+      publishScript.includes("deno task build:npm"),
+      false,
+      "Prerelease publish must not rebuild npm packages after compatibility testing",
+    );
+    assertEquals(
+      publishScript.includes("scripts/ci/prepare-rc-build.ts"),
+      false,
+      "Prerelease publish must not mutate the RC version after compatibility testing",
+    );
   });
 });

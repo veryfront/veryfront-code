@@ -48,35 +48,94 @@ cleanup() {
 
 trap cleanup EXIT
 
+SMOKE_FAILURE_STATUS=1
+
 fail() {
   echo "SMOKE FAIL: $1" >&2
-  exit 1
+  exit "$SMOKE_FAILURE_STATUS"
 }
 
-[ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
-[ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" ] || fail "ext-node-websocket-ws package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
-[ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
+fail_registry_install() {
+  echo "SMOKE FAIL: exact-version registry install failed" >&2
+  exit 20
+}
 
-(cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
-(cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+REGISTRY_INSTALL_SPECS=()
+REGISTRY_AUTH_SPEC=""
+REGISTRY_URL=""
+
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  SMOKE_FAILURE_STATUS=22
+  [ -n "${VF_NPM_REGISTRY_PACKAGES:-}" ] || fail "registry package list is required in registry mode"
+  REGISTRY_URL="${VF_NPM_REGISTRY_URL:-https://registry.npmjs.org}"
+  case "$REGISTRY_URL" in
+    *"?"* | *"#"*) fail "registry URL must not include a query or fragment" ;;
+    http://* | https://*) ;;
+    *) fail "registry URL must use HTTP or HTTPS" ;;
+  esac
+  REGISTRY_AUTHORITY="${REGISTRY_URL#*://}"
+  REGISTRY_AUTHORITY="${REGISTRY_AUTHORITY%%/*}"
+  case "$REGISTRY_AUTHORITY" in
+    "" | *"@"*) fail "registry URL authority is invalid" ;;
+  esac
+
+  while IFS= read -r PACKAGE_NAME; do
+    [ -n "$PACKAGE_NAME" ] || continue
+    [[ "${#PACKAGE_NAME}" -le 214 && "$PACKAGE_NAME" =~ ^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$ ]] ||
+      fail "registry package list contains an invalid package name"
+    PACKAGE_SPEC="${PACKAGE_NAME}@${VF_NPM_REGISTRY_VERSION}"
+    if [ "$PACKAGE_NAME" = "@veryfront/ext-auth-jwt" ]; then
+      REGISTRY_AUTH_SPEC="$PACKAGE_SPEC"
+    else
+      REGISTRY_INSTALL_SPECS+=("$PACKAGE_SPEC")
+    fi
+  done <<<"$VF_NPM_REGISTRY_PACKAGES"
+
+  [ "${#REGISTRY_INSTALL_SPECS[@]}" -gt 0 ] || fail "registry package list has no root install packages"
+  [ -n "$REGISTRY_AUTH_SPEC" ] || fail "registry package list is missing @veryfront/ext-auth-jwt"
+else
+  if [ -n "${VF_NPM_PACK_DIR:-}" ]; then
+    [ -d "$VF_NPM_PACK_DIR" ] || fail "canonical npm artifact directory missing"
+    deno run --config="$ROOT_DIR/scripts/test.deno.json" --allow-read --allow-run=tar \
+      "$ROOT_DIR/scripts/ci/npm-compatibility-artifact.ts" verify "$VF_NPM_PACK_DIR" ||
+      fail "canonical npm artifact verification failed"
+    cp "$VF_NPM_PACK_DIR"/*.tgz "$WORKDIR"/
+  else
+    [ -d "$ROOT_DIR/npm" ] || fail "npm build output missing; run 'deno task build:npm' first"
+    [ -d "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" ] || fail "ext-bundler-esbuild package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-content-mdx" ] || fail "ext-content-mdx package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-css-tailwind" ] || fail "ext-css-tailwind package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-dev-ui-react" ] || fail "ext-dev-ui-react package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" ] || fail "ext-node-websocket-ws package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-parser-babel" ] || fail "ext-parser-babel package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-yaml" ] || fail "ext-yaml package output missing"
+    [ -d "$ROOT_DIR/npm/extensions/ext-auth-jwt" ] || fail "ext-auth-jwt package output missing"
+
+    (cd "$ROOT_DIR/npm" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-bundler-esbuild" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-content-mdx" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-css-tailwind" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-dev-ui-react" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-node-websocket-ws" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-parser-babel" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-yaml" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+    (cd "$ROOT_DIR/npm/extensions/ext-auth-jwt" && npm pack --silent --pack-destination "$WORKDIR" >/dev/null)
+  fi
+fi
+
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  SMOKE_FAILURE_STATUS=21
+fi
 
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
 npm pkg set type=module >/dev/null
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "${REGISTRY_INSTALL_SPECS[@]}" ||
+    fail_registry_install
+else
+  npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
+fi
 
 echo "== 1. root install: CLI and deferred parser extension run under Node"
 node node_modules/veryfront/bin/veryfront.js --version | grep -q "Veryfront CLI" ||
@@ -147,7 +206,12 @@ echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside very
   fail "missing-extension error lacks the install hint: $MISSING_OUTPUT"
 
 echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
-npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "$REGISTRY_AUTH_SPEC" ||
+    fail_registry_install
+else
+  npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
+fi
 node -e "
 import('./node_modules/veryfront/esm/src/extensions/first-party-import.js').then(async (m) => {
   const mod = await m.importFirstPartyExtensionModule('ext-auth-jwt', '@veryfront/ext-auth-jwt');
@@ -182,12 +246,14 @@ echo "== 6. scaffold resolves through the published exports map"
 # path. Without the entry it fails with ERR_PACKAGE_PATH_NOT_EXPORTED.
 node --input-type=module -e "
 const { materializeScaffold, listScaffoldTemplates } = await import('veryfront/scaffold');
+const { mkdir, writeFile } = await import('node:fs/promises');
+const { dirname, resolve, sep } = await import('node:path');
 const names = listScaffoldTemplates();
 for (const name of ['minimal', 'ai-agent', 'agentic-workflow']) {
   if (!names.includes(name)) throw new Error('scaffold cannot create ' + name);
 }
 const { files } = await materializeScaffold({
-  template: 'minimal',
+  template: 'ai-agent',
   projectName: 'smoke-app',
 });
 const paths = files.map((file) => file.path);
@@ -200,10 +266,18 @@ const pkg = JSON.parse(files.find((file) => file.path === 'package.json').conten
 if (pkg.name !== 'smoke-app') {
   throw new Error('materialized package.json has the wrong name: ' + pkg.name);
 }
+const projectRoot = resolve('.');
+for (const file of files) {
+  const target = resolve(projectRoot, file.path);
+  if (!target.startsWith(projectRoot + sep)) {
+    throw new Error('materialized project contains an invalid path: ' + file.path);
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, file.content);
+}
 " || fail "veryfront/scaffold did not resolve from an installed package"
 
-echo "== 7. packed ai-agent starter: page and API route render over HTTP"
-cp -R "$ROOT_DIR/templates/files/ai-agent/." "$WORKDIR/"
+echo "== 7. published ai-agent starter: page and API route render over HTTP"
 mkdir -p "$WORKDIR/app/api/npm-smoke"
 cat >"$WORKDIR/app/api/npm-smoke/route.ts" <<'EOF'
 export function GET(): Response {

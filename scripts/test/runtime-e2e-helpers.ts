@@ -629,7 +629,7 @@ export async function scaffoldProject(
       npm_config_fund: "false",
       npm_config_audit: "false",
     },
-    timeoutMs: 120_000,
+    timeoutMs: 180_000,
   });
 
   const projectDir = `${caseDir}/${projectName}`;

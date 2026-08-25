@@ -59,13 +59,15 @@ if (!exists(TSC)) {
   Deno.exit(1);
 }
 
-console.log(
-  "Rebuilding npm/ from the current source with deno task build:npm.",
-);
-const buildCode = await run("deno", ["task", "build:npm"]);
-if (buildCode !== 0) {
-  console.error("✖ consumer typecheck: build:npm failed");
-  Deno.exit(buildCode);
+if (!Deno.args.includes("--skip-build")) {
+  console.log(
+    "Rebuilding npm/ from the current source with deno task build:npm.",
+  );
+  const buildCode = await run("deno", ["task", "build:npm"]);
+  if (buildCode !== 0) {
+    console.error("✖ consumer typecheck: build:npm failed");
+    Deno.exit(buildCode);
+  }
 }
 
 for (const config of TSCONFIGS) {

@@ -6,19 +6,18 @@
 #   scripts/ci/publish-npm-packages.sh <mode>
 #
 # Modes:
-#   rc-publish       Version-bump the `deno task build:npm` output to $VERSION
-#                    and publish every package with `--tag rc`, skipping
-#                    packages already published at $VERSION.
-#                    Requires: VERSION.
+#   rc-publish       Publish every verified tarball from $NPM_PACK_DIR with
+#                    `--tag rc`, skipping packages already published at
+#                    $VERSION. Requires: VERSION, GITHUB_SHA, NPM_PACK_DIR.
 #   preflight        Runs BEFORE the build: enumerate package names from the
 #                    deno.json workspace and fail if any name@$VERSION already
 #                    exists on npm for a different commit than $GITHUB_SHA.
 #                    Requires: VERSION, GITHUB_SHA.
-#   release-publish  Version-bump the `deno task build:npm` output to $VERSION,
-#                    publish every package to the latest tag with provenance
-#                    (skipping packages already published for this commit), and
-#                    verify each published package's gitHead matches
-#                    $GITHUB_SHA. Requires: VERSION, GITHUB_SHA.
+#   release-publish  Publish every verified tarball from $NPM_PACK_DIR to the
+#                    latest tag with provenance (skipping packages already
+#                    published for this commit), and verify each published
+#                    package's gitHead matches $GITHUB_SHA. Requires: VERSION,
+#                    GITHUB_SHA, NPM_PACK_DIR.
 set -euo pipefail
 
 usage() {
@@ -88,6 +87,38 @@ update_package_version() {
   mv "${PACKAGE_DIR}/package.json.tmp" "${PACKAGE_DIR}/package.json"
 }
 
+canonical_tarball_for_package_dir() {
+  PACKAGE_DIR="$1"
+  PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+  PACKAGE_FILE="$(
+    jq -er --arg name "${PACKAGE_NAME}" --arg version "${VERSION}" '
+      [.packages[] | select(.name == $name and .version == $version) | .file]
+      | if length == 1 then .[0] else error("canonical package entry must be unique") end
+    ' "${NPM_PACK_DIR}/manifest.json" 2>/dev/null
+  )"
+  case "${PACKAGE_FILE}" in
+    ""|*/*|*\\*)
+      echo "::error::Canonical artifact file for ${PACKAGE_NAME} is invalid." >&2
+      return 1
+      ;;
+    *)
+      ;;
+  esac
+  printf '%s/%s\n' "${NPM_PACK_DIR}" "${PACKAGE_FILE}"
+}
+
+verify_npm_compatibility_artifact() {
+  if ! VERIFY_OUTPUT="$(deno run --config=scripts/test.deno.json --no-lock --allow-read --allow-run=tar \
+    scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" "${GITHUB_SHA}" \
+    2>&1)"; then
+    if [[ -n "${VERIFY_OUTPUT}" ]]; then
+      printf '%s\n' "${VERIFY_OUTPUT}" >&2
+    fi
+    echo "::error::Canonical npm compatibility artifact verification failed." >&2
+    return 1
+  fi
+}
+
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
 # only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
@@ -114,18 +145,44 @@ wait_for_npm_git_head() {
 
 rc_publish_package_dir() {
   PACKAGE_DIR="$1"
+  PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
   if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
-    echo "::notice::${PACKAGE_NAME}@${VERSION} already published to npm; skipping publish"
-    return 0
+    set +e
+    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>&1)"
+    PUBLISHED_GIT_HEAD_STATUS=$?
+    set -e
+    if [[ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]]; then
+      echo "::error::npm registry gitHead lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${PUBLISHED_GIT_HEAD_STATUS})." >&2
+      SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISHED_GIT_HEAD}")"
+      if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+        printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+      fi
+      return "${PUBLISHED_GIT_HEAD_STATUS}"
+    fi
+    if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+      echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
+      return 0
+    fi
+    echo "::error::${PACKAGE_NAME}@${VERSION} already exists, but its gitHead does not match this commit." >&2
+    return 1
   fi
 
   echo "Publishing ${PACKAGE_NAME}@${VERSION} with rc tag"
-  (cd "${PACKAGE_DIR}" && npm publish --provenance --access public --tag rc)
+  set +e
+  PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc 2>&1)"
+  PUBLISH_STATUS=$?
+  set -e
+  SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
+  if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
+    printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
+  fi
+  return "${PUBLISH_STATUS}"
 }
 
 release_publish_package_dir() {
   PACKAGE_DIR="$1"
+  PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
   PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
   if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
@@ -133,10 +190,13 @@ release_publish_package_dir() {
   else
     echo "Publishing ${PACKAGE_NAME}@${VERSION}"
     set +e
-    PUBLISH_OUTPUT="$(cd "${PACKAGE_DIR}" && npm publish --provenance --access public 2>&1)"
+    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1)"
     PUBLISH_STATUS=$?
     set -e
-    printf '%s\n' "${PUBLISH_OUTPUT}"
+    SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
+    if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
+    fi
 
     if [ "${PUBLISH_STATUS}" -ne 0 ]; then
       if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \
@@ -155,14 +215,17 @@ release_publish_package_dir() {
 }
 
 run_rc_publish() {
-  require_env VERSION
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
-    update_package_version "${PACKAGE_DIR}"
-  done
-
-  for PACKAGE_DIR in $(package_dirs); do
-    rc_publish_package_dir "${PACKAGE_DIR}"
+    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+    if [[ -z "${PUBLISH_SPEC}" ]]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+      return 1
+    fi
+    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
   done
 }
 
@@ -244,14 +307,17 @@ run_preflight() {
 }
 
 run_release_publish() {
-  require_env VERSION GITHUB_SHA
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
-    update_package_version "${PACKAGE_DIR}"
-  done
-
-  for PACKAGE_DIR in $(package_dirs); do
-    release_publish_package_dir "${PACKAGE_DIR}"
+    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+    if [[ -z "${PUBLISH_SPEC}" ]]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+      return 1
+    fi
+    release_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
   done
 }
 

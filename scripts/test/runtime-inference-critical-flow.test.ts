@@ -6,13 +6,16 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fromFileUrl } from "#std/path/from-file-url";
 import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
   assertListedRunFailure,
   parseAgUiTextDeltas,
+  parsePackedArtifactDirectory,
   parseRuntimeSelection,
   parseScopedResponseJson,
+  sanitizeRuntimeCriticalFlowFailureText,
   validateAnthropicRequest,
   waitForProviderCancellation,
   waitForProviderReceipt,
@@ -99,6 +102,23 @@ function unresolvedCancellationFields(): {
 }
 
 describe("runtime inference critical-flow pure contract", () => {
+  it("accepts the canonical packed artifact directory as an inline or separate flag", () => {
+    assertEquals(
+      parsePackedArtifactDirectory(["--packed-dir=dist/npm-compatibility"]),
+      "dist/npm-compatibility",
+    );
+    assertEquals(
+      parsePackedArtifactDirectory(["--packed-dir", "/tmp/npm-artifact"]),
+      "/tmp/npm-artifact",
+    );
+    assertEquals(parsePackedArtifactDirectory([]), undefined);
+    assertThrows(
+      () => parsePackedArtifactDirectory(["--packed-dir"]),
+      Error,
+      "--packed-dir requires a directory",
+    );
+  });
+
   it("maps only selected packed extensions to local file dependencies", () => {
     const packed = {
       root: "/packs/veryfront.tgz",
@@ -131,6 +151,36 @@ describe("runtime inference critical-flow pure contract", () => {
       () => packedFileDependencies(packed, ["@veryfront/ext-missing"]),
       Error,
       "Packed extension is unavailable: @veryfront/ext-missing",
+    );
+  });
+
+  it("redacts local paths from critical-flow command failures", () => {
+    const checkoutPath = fromFileUrl(REPO_ROOT);
+    const message = sanitizeRuntimeCriticalFlowFailureText(
+      [
+        "deno task build:npm --packed-dir=/private/tmp/vf/artifact failed",
+        "stderr: cannot read file:///private/tmp/vf/cache/mod.ts",
+        `stack: at main (${checkoutPath}/scripts/test/runtime-inference-critical-flow.ts:1:1)`,
+      ].join("\n"),
+      [checkoutPath],
+    );
+
+    assertStringIncludes(
+      message,
+      "<REDACTED>",
+      "Redacted critical-flow failures should preserve placeholder evidence",
+    );
+    assert(
+      !message.includes("/private/tmp/vf"),
+      "Redacted critical-flow failures must not include temp artifact paths",
+    );
+    assert(
+      !message.includes("file:///private/tmp"),
+      "Redacted critical-flow failures must not include file URL paths",
+    );
+    assert(
+      !message.includes(checkoutPath),
+      "Redacted critical-flow failures must not include the checkout path",
     );
   });
 
@@ -829,9 +879,9 @@ describe("runtime inference critical-flow CI contract", () => {
       steps.some((step) =>
         step.name === "Run runtime critical flow" &&
         step.run ===
-          "deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}"
+          "deno run -A scripts/test/runtime-inference-critical-flow.ts --runtime=${{ matrix.runtime }} --packed-dir=dist/npm-compatibility"
       ),
-      "Runtime critical-flow job should invoke the shared task with the matrix runtime",
+      "Runtime critical-flow job should consume the canonical artifact for the matrix runtime",
     );
   });
 });

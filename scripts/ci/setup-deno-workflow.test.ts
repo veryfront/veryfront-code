@@ -907,6 +907,21 @@ jobs:
     );
     assertStringIncludes(
       String(tasks["lint:ci"]),
+      "--allow-run=bash,/bin/bash,node,npm,tar,deno",
+      "required lint shard must allow the artifact test to launch pinned Deno from PATH",
+    );
+    assertStringIncludes(
+      String(tasks["lint:ci"]),
+      "scripts/ci/publish-npm-packages.test.ts",
+      "the lint shard must execute the npm publish script regression tests",
+    );
+    assertStringIncludes(
+      String(tasks["test:ci:npm-compatibility-artifact"]),
+      "--allow-run=npm,tar,bash,deno",
+      "the dedicated artifact task must allow the artifact test to launch pinned Deno from PATH",
+    );
+    assertStringIncludes(
+      String(tasks["lint:ci"]),
       "deno task docs:api-reference:check",
       "the lint shard owns the generated API reference staleness check",
     );

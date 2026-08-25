@@ -13,6 +13,7 @@ import {
   stopDevServer,
   waitForRoute,
 } from "./runtime-e2e-helpers.ts";
+import { loadNpmCompatibilityArtifact } from "../ci/npm-compatibility-artifact.ts";
 
 export type { RuntimeName } from "./runtime-e2e-helpers.ts";
 
@@ -42,6 +43,61 @@ const TERMINAL_STATUSES = new Set(["failed", "completed", "cancelled"]);
 class UnexpectedTerminalRunError extends Error {}
 class RunTerminatedBeforeProviderReceiptError extends Error {}
 
+const REDACTED_LOCAL_PATH = "<REDACTED>";
+const LOCAL_PATH_PATTERN =
+  /(?:file:\/\/)?\/(?:private\/)?(?:tmp|var\/folders|Users|home|root)\/[^\s"'`<>)]*/g;
+const FILE_URL_PATTERN = /file:\/\/\/[^\s"'`<>)]*/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+function fileUrlForPath(path: string): string {
+  return new URL(`file://${path.startsWith("/") ? "" : "/"}${path}`).href;
+}
+
+export function sanitizeRuntimeCriticalFlowFailureText(
+  text: string,
+  roots: readonly string[] = [],
+): string {
+  let sanitized = text;
+  const knownPaths = [...new Set(roots.filter((root) => root.length > 0))]
+    .sort((left, right) => right.length - left.length);
+  for (const path of knownPaths) {
+    sanitized = sanitized
+      .replace(new RegExp(escapeRegExp(path), "g"), REDACTED_LOCAL_PATH)
+      .replace(
+        new RegExp(escapeRegExp(fileUrlForPath(path)), "g"),
+        REDACTED_LOCAL_PATH,
+      );
+  }
+  return sanitized
+    .replace(FILE_URL_PATTERN, REDACTED_LOCAL_PATH)
+    .replace(LOCAL_PATH_PATTERN, REDACTED_LOCAL_PATH);
+}
+
+function sanitizeRuntimeCriticalFlowError(
+  error: unknown,
+  roots: readonly string[],
+): Error {
+  if (!(error instanceof Error)) {
+    return new Error(
+      sanitizeRuntimeCriticalFlowFailureText(String(error), roots),
+    );
+  }
+  const sanitized = new Error(
+    sanitizeRuntimeCriticalFlowFailureText(error.message, roots),
+  );
+  sanitized.name = error.name;
+  if (typeof error.stack === "string") {
+    sanitized.stack = sanitizeRuntimeCriticalFlowFailureText(
+      error.stack,
+      roots,
+    );
+  }
+  return sanitized;
+}
+
 export function parseRuntimeSelection(args: string[]): RuntimeName[] {
   const requested = parseCommaSeparatedFlag(args, ["runtime", "runtimes"]);
   if (!requested) {
@@ -64,6 +120,24 @@ export function parseRuntimeSelection(args: string[]): RuntimeName[] {
   return runtimes;
 }
 
+export function parsePackedArtifactDirectory(
+  args: string[],
+): string | undefined {
+  const inline = args.find((arg) => arg.startsWith("--packed-dir="));
+  if (inline) {
+    const directory = inline.slice("--packed-dir=".length);
+    if (!directory) throw new Error("--packed-dir requires a directory");
+    return directory;
+  }
+  const index = args.indexOf("--packed-dir");
+  if (index < 0) return undefined;
+  const directory = args[index + 1];
+  if (!directory || directory.startsWith("--")) {
+    throw new Error("--packed-dir requires a directory");
+  }
+  return directory;
+}
+
 export function artifactClaim(runtime: RuntimeName): string {
   switch (runtime) {
     case "node":
@@ -73,6 +147,20 @@ export function artifactClaim(runtime: RuntimeName): string {
     case "deno":
       return "packed CLI";
   }
+}
+
+export async function loadPackedArtifactDirectory(
+  directory: string,
+): Promise<PackedWorkspace & { readonly manifestSha256: string }> {
+  const packed = await loadNpmCompatibilityArtifact(directory);
+  return {
+    ...packed,
+    root: await Deno.realPath(packed.root),
+    extensions: await Promise.all(packed.extensions.map(async (extension) => ({
+      ...extension,
+      tarball: await Deno.realPath(extension.tarball),
+    }))),
+  };
 }
 
 function bodyContainsMarker(value: unknown, marker: string): boolean {
@@ -934,6 +1022,7 @@ export async function runRuntimeInferenceCriticalFlow(
   const providerMode = parseProviderMode(args);
   const keepWorkDir = hasFlag(args, "keep");
   const skipBuild = hasFlag(args, "skip-build");
+  const packedDirectory = parsePackedArtifactDirectory(args);
   const workDir = await Deno.makeTempDir({
     prefix: "veryfront-runtime-critical-flow-",
   });
@@ -942,30 +1031,54 @@ export async function runRuntimeInferenceCriticalFlow(
   console.log(`provider mode: ${providerMode}`);
 
   try {
-    await ensureCommand("npm");
-    await ensureCommand("node");
-    if (runtimes.includes("bun")) await ensureCommand("bun");
-    if (runtimes.includes("deno")) await ensureCommand("deno");
+    try {
+      await ensureCommand("npm");
+      await ensureCommand("node");
+      if (runtimes.includes("bun")) await ensureCommand("bun");
+      if (runtimes.includes("deno")) await ensureCommand("deno");
 
-    if (!skipBuild) {
-      console.log("build npm package");
-      await runChecked("deno", ["task", "build:npm"], {
-        cwd: rootDir,
-        timeoutMs: 300_000,
-      });
-    }
+      if (!packedDirectory && !skipBuild) {
+        console.log("build npm package");
+        await runChecked("deno", ["task", "build:npm"], {
+          cwd: rootDir,
+          timeoutMs: 300_000,
+        });
+      }
 
-    console.log("pack npm package");
-    const packed = await packNpmPackage(rootDir, workDir);
+      const packed = packedDirectory
+        ? await loadPackedArtifactDirectory(packedDirectory)
+        : await packNpmPackage(rootDir, workDir);
+      const displayRoots = [rootDir, workDir, packed.root];
+      for (const extension of packed.extensions) {
+        displayRoots.push(extension.tarball);
+      }
+      if ("manifestSha256" in packed) {
+        console.log(
+          `npm compatibility manifest SHA-256: ${packed.manifestSha256}`,
+        );
+      } else {
+        console.log("pack npm package");
+      }
 
-    for (const runtime of runtimes) {
-      await assertRuntimeJourney(
+      try {
+        for (const runtime of runtimes) {
+          await assertRuntimeJourney(
+            workDir,
+            packed,
+            runtime,
+            providerMode,
+          );
+          console.log(`${runtime}/${artifactClaim(runtime)}: passed`);
+        }
+      } catch (error) {
+        throw sanitizeRuntimeCriticalFlowError(error, displayRoots);
+      }
+    } catch (error) {
+      throw sanitizeRuntimeCriticalFlowError(error, [
+        rootDir,
         workDir,
-        packed,
-        runtime,
-        providerMode,
-      );
-      console.log(`${runtime}/${artifactClaim(runtime)}: passed`);
+        ...(packedDirectory ? [packedDirectory] : []),
+      ]);
     }
   } finally {
     if (keepWorkDir) {

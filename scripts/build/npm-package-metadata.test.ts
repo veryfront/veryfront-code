@@ -715,6 +715,7 @@ describe("npm supply-chain policy", () => {
 
   it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
     const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
+    assertStringIncludes(source, "--allow-run=tar");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
@@ -742,7 +743,9 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, "app/page.tsx");
-    assertStringIncludes(source, "templates/files/ai-agent");
+    assertStringIncludes(source, "materializeScaffold");
+    assertStringIncludes(source, "template: 'ai-agent'");
+    assertStringIncludes(source, "published ai-agent starter");
     assertStringIncludes(source, "dev --port");
     assertStringIncludes(source, ">Assistant</title>");
   });
