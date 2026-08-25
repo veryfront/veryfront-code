@@ -45,21 +45,11 @@ const MAX_CACHED_ASSET_BYTES = 32 * 1024 * 1024;
  * load buffers a whole asset in memory, so peak bytes is this count times
  * RELEASE_ASSET_MAX_SIZE_BYTES.
  *
- * Excess demand queues rather than failing. A page's module graph is a fan-out
- * this proxy itself produced by serving the HTML, so shedding it would reject
- * the predictable consequence of our own response — and browser `import()`
- * never retries, which turns one shed asset into a dead page. Callers are
- * already bounded by their own deadline (`timeoutMs`) and the producer ceiling
- * (`MAX_UPSTREAM_TIMEOUT_MS`); a saturated proxy therefore shows up as latency
- * and finally an honest 504.
- *
- * A 503 is still reachable, but only from the semaphore's own
- * `DEFAULT_PERMIT_SEMAPHORE_MAX_QUEUE_SIZE` backstop. That threshold is two
- * orders of magnitude above one page's module graph, so reaching it means a
- * genuine flood rather than a project being shed for the size of the document
- * this proxy just served.
+ * Normal page demand queues rather than failing. A process-wide caller limit
+ * prevents unauthenticated requests from growing the queue without bound.
  */
 const MAX_CONCURRENT_COLD_LOADS = 4;
+const MAX_COLD_LOAD_WAITERS = 256;
 
 interface CachedAsset {
   bytes: Uint8Array<ArrayBuffer>;
@@ -115,8 +105,11 @@ const assetCache = new LRUCache<string, CachedAsset>({
   maxSizeBytes: MAX_CACHED_ASSET_BYTES,
   estimateSizeOf: (asset) => asset.bytes.byteLength + asset.contentType.length * 2 + 64,
 });
-const coldLoadAdmission = new PermitSemaphore(MAX_CONCURRENT_COLD_LOADS);
+const coldLoadAdmission = new PermitSemaphore(MAX_CONCURRENT_COLD_LOADS, {
+  maxQueueSize: MAX_COLD_LOAD_WAITERS,
+});
 const inflightAssetLoads = new Map<string, InflightAssetLoad>();
+let coldLoadWaiters = 0;
 
 /** True when the path is owned by the release asset prefix. */
 export function isReleaseAssetPath(pathname: string): boolean {
@@ -428,6 +421,8 @@ export async function handleReleaseAssetRequest(
   }
 
   if (req.signal.aborted) return clientClosedRequest();
+  if (coldLoadWaiters >= MAX_COLD_LOAD_WAITERS) return serviceUnavailable();
+  coldLoadWaiters++;
   try {
     const task = getOrCreateInflightAssetLoad(
       hash,
@@ -444,6 +439,8 @@ export async function handleReleaseAssetRequest(
     if (error instanceof ReleaseAssetTimeoutError) return gatewayTimeout();
     if (error instanceof ReleaseAssetOverloadedError) return serviceUnavailable();
     return badGateway();
+  } finally {
+    coldLoadWaiters--;
   }
 }
 
