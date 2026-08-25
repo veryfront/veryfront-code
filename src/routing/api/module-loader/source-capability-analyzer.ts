@@ -405,17 +405,23 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
           scope,
           nodeScopes,
         );
+        const reflectSetMutatesPrototype = property === "set" &&
+          resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes) &&
+          // A key this analysis cannot read may spell __proto__.
+          (staticString(args[1]) === "__proto__" || staticString(args[1]) === null);
         const mutatesPrototype = property === "setPrototypeOf" &&
             (resolvesToObject ||
               resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes)) ||
-          property === "set" &&
-            resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes) &&
-            // A key this analysis cannot read may spell __proto__.
-            (staticString(args[1]) === "__proto__" || staticString(args[1]) === null) ||
+          reflectSetMutatesPrototype ||
           // Object.assign invokes the target's inherited __proto__ setter when
           // a source carries an own enumerable property under that name.
           property === "assign" && resolvesToObject && args.length > 1;
-        if (mutatesPrototype && args[0]) markPrototypeMutation(args[0], scope);
+        if (mutatesPrototype) {
+          // Reflect.set applies an inherited setter to its explicit receiver,
+          // when supplied, rather than necessarily mutating the target.
+          const mutationTarget = reflectSetMutatesPrototype ? args[3] ?? args[0] : args[0];
+          if (mutationTarget) markPrototypeMutation(mutationTarget, scope);
+        }
       }
     }
     forEachChild(node, visit);
@@ -861,6 +867,10 @@ function isCallableValue(
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
     if (binding === null || seen.has(binding)) return false;
+    // Imports, parameters, and destructured values have no initializer in this
+    // syntax tree. They may still be callable, so an unresolved property name
+    // on them must fail closed just like one on a local function.
+    if (binding.initializers.length === 0) return true;
     seen.add(binding);
     return binding.initializers.some((initializer) =>
       isCallableValue(initializer, nodeScopes.get(initializer) ?? binding.scope, nodeScopes, seen)
