@@ -110,6 +110,16 @@ describe("ERROR_SOLUTIONS", () => {
     });
   });
 
+  describe("missing-deps", () => {
+    it("should include a shell-safe concrete install example", () => {
+      const sol = ERROR_SOLUTIONS["missing-deps"];
+      assertExists(sol);
+
+      assertEquals(sol.example, "deno add npm:example-package");
+      assertEquals(JSON.stringify(sol).includes("<PACKAGE_SPECIFIER>"), false);
+    });
+  });
+
   it("should expose immutable solution definitions", () => {
     const missingConfig = ERROR_SOLUTIONS["missing-config"];
     assertExists(missingConfig);

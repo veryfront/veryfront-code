@@ -50,8 +50,9 @@ describe("errors/catalog/module-errors", () => {
     it("dependency-missing should give package-neutral recovery guidance", () => {
       const solution = MODULE_ERROR_CATALOG["dependency-missing"];
       assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example, "deno add <PACKAGE_SPECIFIER>");
+      assertEquals(solution?.example, "deno add npm:example-package");
       assertEquals(JSON.stringify(solution).toLowerCase().includes("react"), false);
+      assertEquals(JSON.stringify(solution).includes("<PACKAGE_SPECIFIER>"), false);
     });
 
     it("lockfile recovery guidance should use the supported clear command", () => {
