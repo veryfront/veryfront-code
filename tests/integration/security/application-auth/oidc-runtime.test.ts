@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV } from "#veryfront/security/http/outbound-fetch.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -370,6 +371,8 @@ describe("security/application-auth OIDC runtime", () => {
         `state=${state}&code=ok&error=access_denied`,
         `state=${state}&error=access_denied`,
         `state=${state}&code=ok&iss=https%3A%2F%2Fother.example.test`,
+        `state=${state}&code=ok&scope=openid&scope=email`,
+        `state=${state}&code=ok&scope=${encodeURIComponent("openid\nemail")}`,
       ]
     ) {
       const response = await runtime.handleAuthRoute(
@@ -1295,6 +1298,87 @@ describe("security/application-auth OIDC runtime", () => {
       false,
     );
 
+    const priorAllowedOrigins = Deno.env.get(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+    Deno.env.set(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV, trustedHttpsOrigin);
+    try {
+      const allowedRuntime = createRuntimeWith({
+        OIDC_ISSUER: trustedHttpsOrigin,
+        OIDC_CLIENT_ID: "client-id",
+        OIDC_CLIENT_SECRET: CLIENT_SECRET,
+        OIDC_SESSION_SECRET: SESSION_SECRET,
+      });
+      const allowedLogin = await withMockFetch(
+        () =>
+          Promise.resolve(
+            oidcMetadata({
+              issuer: trustedHttpsOrigin,
+              authorization_endpoint: `${trustedHttpsOrigin}/authorize`,
+              token_endpoint: `${trustedHttpsOrigin}/token`,
+              jwks_uri: `${trustedHttpsOrigin}/jwks`,
+            }),
+          ),
+        () => allowedRuntime.handleAuthRoute(loopbackRequest("/_veryfront/auth/login")),
+      );
+      assert(allowedLogin);
+      assertEquals(allowedLogin.status, 302);
+      const allowedRedirect = new URL(allowedLogin.headers.get("Location") ?? "");
+      const allowedState = allowedRedirect.searchParams.get("state");
+      const allowedNonce = allowedRedirect.searchParams.get("nonce");
+      assert(allowedState);
+      assert(allowedNonce);
+      const allowedToken = await createSignedIdToken({
+        iss: trustedHttpsOrigin,
+        sub: "internal-subject",
+        aud: "client-id",
+        nonce: allowedNonce,
+        iat: NOW,
+        exp: NOW + 300,
+      });
+      let allowedTokenCalls = 0;
+      let allowedJwksCalls = 0;
+      const allowedCallback = await withMockFetch(
+        (input) => {
+          const url = String(input);
+          if (url === `${trustedHttpsOrigin}/.well-known/openid-configuration`) {
+            return Promise.resolve(
+              oidcMetadata({
+                issuer: trustedHttpsOrigin,
+                authorization_endpoint: `${trustedHttpsOrigin}/authorize`,
+                token_endpoint: `${trustedHttpsOrigin}/token`,
+                jwks_uri: `${trustedHttpsOrigin}/jwks`,
+              }),
+            );
+          }
+          if (url === `${trustedHttpsOrigin}/token`) {
+            allowedTokenCalls += 1;
+            return Promise.resolve(Response.json({ id_token: allowedToken.token }));
+          }
+          if (url === `${trustedHttpsOrigin}/jwks`) {
+            allowedJwksCalls += 1;
+            return Promise.resolve(Response.json({ keys: [allowedToken.jwk] }));
+          }
+          return Promise.reject(new Error("unexpected allowed internal-provider fetch"));
+        },
+        () =>
+          allowedRuntime.handleAuthRoute(
+            loopbackRequest(
+              `/_veryfront/auth/callback?state=${allowedState}&code=ok&scope=openid`,
+              { headers: { cookie: transactionCookie(allowedLogin, allowedState) } },
+            ),
+          ),
+      );
+      assert(allowedCallback);
+      assertEquals(allowedCallback.status, 303);
+      assertEquals(allowedTokenCalls, 1);
+      assertEquals(allowedJwksCalls, 1);
+    } finally {
+      if (priorAllowedOrigins === undefined) {
+        Deno.env.delete(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+      } else {
+        Deno.env.set(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV, priorAllowedOrigins);
+      }
+    }
+
     for (const returnTo of ["https://attacker.example.test/", "//attacker.example.test/"]) {
       const unsafe = await createRuntime().handleAuthRoute(
         new Request(`${APP_ORIGIN}/_veryfront/auth/login?returnTo=${encodeURIComponent(returnTo)}`),
@@ -1403,7 +1487,7 @@ describe("security/application-auth OIDC runtime", () => {
     assertEquals(firstAdmission.subject, "first-subject");
   });
 
-  it("completes login on another runtime instance and admits the session without sticky routing", async () => {
+  it("accepts an Authelia scope response on another instance without sticky routing", async () => {
     const runtimeA = createRuntime();
     const runtimeB = createRuntime();
     let observedVerifier = "";
@@ -1468,7 +1552,7 @@ describe("security/application-auth OIDC runtime", () => {
           new Request(
             `${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=ok&iss=${
               encodeURIComponent(ISSUER)
-            }`,
+            }&scope=openid+profile+email+groups`,
             {
               headers: { cookie },
             },

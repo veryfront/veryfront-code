@@ -5,8 +5,8 @@ import {
 } from "#veryfront/platform/compat/primordials/array.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import {
+  createOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
-  guardedOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import {
   hasProxyForwardingHeaders,
@@ -405,6 +405,7 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   const error = readSingleParam(url, "error", false);
   const iss = readSingleParam(url, "iss", false);
   readSingleParam(url, "error_description", false);
+  validateCallbackScope(readSingleParam(url, "scope", false));
   if ((code === undefined) === (error === undefined)) {
     throw new TypeError("OIDC callback must contain exactly one result");
   }
@@ -416,7 +417,14 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
 
 function isAllowedCallbackParameter(value: string): boolean {
   return value === "state" || value === "code" || value === "error" ||
-    value === "error_description" || value === "iss";
+    value === "error_description" || value === "iss" || value === "scope";
+}
+
+function validateCallbackScope(value: string | undefined): void {
+  if (value === undefined) return;
+  if (!/^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/u.test(value)) {
+    throw new TypeError("OIDC callback scope is invalid");
+  }
 }
 
 function readSingleParam(url: URL, name: string, required: true): string;
@@ -455,31 +463,31 @@ async function exchangeCode(options: {
     body.set("redirect_uri", options.redirectUri);
     body.set("code_verifier", options.verifier);
     const tokenEndpoint = new URL(options.tokenEndpoint);
-    const fetcher = options.allowInsecureLoopback && isLoopbackHttpUrl(tokenEndpoint)
-      ? guardedExactHttpLoopbackOutboundFetch
-      : guardedOutboundFetch;
-    const response = await fetcher(
-      tokenEndpoint,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          authorization: `Basic ${
-            btoa(`${formComponent(options.clientId)}:${formComponent(options.clientSecret)}`)
-          }`,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body,
-        redirect: "error",
-        credentials: "omit",
-        signal: controller.signal,
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Basic ${
+          btoa(`${formComponent(options.clientId)}:${formComponent(options.clientSecret)}`)
+        }`,
+        "content-type": "application/x-www-form-urlencoded",
       },
-      {
+      body,
+      redirect: "error",
+      credentials: "omit",
+      signal: controller.signal,
+    };
+    let response: Response;
+    if (options.allowInsecureLoopback && isLoopbackHttpUrl(tokenEndpoint)) {
+      response = await guardedExactHttpLoopbackOutboundFetch(tokenEndpoint, init, {
         authorizeUrl(url) {
           authorizeProviderEndpoint(url, options);
         },
-      },
-    );
+      });
+    } else {
+      authorizeProviderEndpoint(tokenEndpoint, options);
+      response = await createOriginBoundOutboundFetch(tokenEndpoint.origin)(tokenEndpoint, init);
+    }
     if (!response.ok) {
       await response.body?.cancel();
       throw new TypeError("OIDC token request failed");

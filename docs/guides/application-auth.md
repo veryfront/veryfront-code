@@ -116,6 +116,18 @@ export default defineConfig({
 });
 ```
 
+Self-hosted runtimes block outbound requests to private and loopback addresses
+by default. If the identity provider is on an internal network, allow only its
+exact origin in the host process:
+
+```bash
+VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="https://auth.internal.example.com"
+```
+
+This is an operator-owned host setting, not application configuration. List
+comma-separated exact origins when the provider uses more than one internal
+origin. Do not use the broad internal-egress override for application auth.
+
 Changing `clientId`, claim mappings, scopes, signing algorithms, issuer,
 callback origin, or `trustedEndpointOrigins` invalidates existing sessions.
 
@@ -203,6 +215,7 @@ provenance, not `Forwarded`, `X-Forwarded-For`, or any caller-controlled header.
 - Use HTTPS provider endpoints. Allow insecure loopback only for local
   development.
 - Register the exact callback URI with the provider.
+- Allow only the provider's exact internal origins in self-hosted runtimes.
 - Store `OIDC_CLIENT_SECRET` and `VERYFRONT_AUTH_SESSION_SECRET` as secrets.
 - Share one session secret across horizontally scaled instances in the same
   environment.

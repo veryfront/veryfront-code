@@ -1,6 +1,6 @@
 import {
+  createOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
-  guardedOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import { primordialArraySort } from "#veryfront/platform/compat/primordials/array.ts";
 
@@ -529,22 +529,18 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
-    const fetcher = options.allowExactHttpLoopbackEgress === true &&
+    const init: RequestInit = {
+      headers: { accept: "application/json" },
+      redirect: "error",
+      credentials: "omit",
+      signal: controller.signal,
+    };
+    const response = options.allowExactHttpLoopbackEgress === true &&
         isLoopbackHttpUrl(options.url)
-      ? guardedExactHttpLoopbackOutboundFetch
-      : guardedOutboundFetch;
-    const response = await fetcher(
-      options.url,
-      {
-        headers: { accept: "application/json" },
-        redirect: "error",
-        credentials: "omit",
-        signal: controller.signal,
-      },
-      {
+      ? await guardedExactHttpLoopbackOutboundFetch(options.url, init, {
         authorizeUrl: options.authorizeUrl,
-      },
-    );
+      })
+      : await fetchProviderJson(options.url, init, options.authorizeUrl);
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
       throw new TypeError(`${options.kind} request refused a redirect response`);
@@ -576,6 +572,15 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchProviderJson(
+  url: URL,
+  init: RequestInit,
+  authorizeUrl: (url: URL) => void,
+): Promise<Response> {
+  authorizeUrl(url);
+  return await createOriginBoundOutboundFetch(url.origin)(url, init);
 }
 
 function isJsonContentType(value: string | null): boolean {

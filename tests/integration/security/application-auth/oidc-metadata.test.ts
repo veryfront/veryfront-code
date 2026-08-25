@@ -1,5 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -282,6 +285,23 @@ describe("security/application-auth OIDC metadata", () => {
       "request failed",
     );
     assertEquals(internalHttpsCalls, 0);
+
+    const internalHttpsIssuer = "https://127.0.0.1:8787";
+    const priorAllowedOrigins = Deno.env.get(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+    Deno.env.set(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV, internalHttpsIssuer);
+    try {
+      const allowed = await withMockFetch(
+        () => Promise.resolve(jsonResponse(metadataFor(internalHttpsIssuer))),
+        () => fetchOidcMetadata({ issuer: internalHttpsIssuer }),
+      );
+      assertEquals(allowed.issuer, internalHttpsIssuer);
+    } finally {
+      if (priorAllowedOrigins === undefined) {
+        Deno.env.delete(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+      } else {
+        Deno.env.set(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV, priorAllowedOrigins);
+      }
+    }
 
     await assertRejects(
       () =>
