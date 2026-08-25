@@ -853,6 +853,8 @@ class CommentQuoteMasker {
   private pendingArrowBody = false;
   private pendingImportSpecifiers = false;
   private pendingModuleSource = false;
+  private pendingNamedExportSpecifiers = false;
+  private pendingLocalExportSource = false;
   private pendingModuleAttributes = false;
   private afterModuleSource = false;
   private nextStringIsModuleSource = false;
@@ -1109,6 +1111,7 @@ class CommentQuoteMasker {
   private scanCodeToken(): void {
     const char = this.currentChar();
     const context = this.takeTokenContext();
+    this.finishLocalExportBeforeToken(context);
     if (this.scanQuoteStart(char)) return;
     if (this.scanNestedTemplateBrace(char, context)) return;
     if (this.scanSpread(char)) return;
@@ -1121,6 +1124,28 @@ class CommentQuoteMasker {
     if (this.scanParenthesis(char, context)) return;
     if (this.scanClosingOperand(char)) return;
     this.scanPunctuator(char, context);
+  }
+
+  private finishLocalExportBeforeToken(context: TokenContext): void {
+    if (!this.pendingLocalExportSource) return;
+    if (context.isIdentifierStart) {
+      const end = findIdentifierEndIndex(this.code, this.index);
+      const token = decodeUnicodeEscapes(this.code.slice(this.index, end));
+      const nextCodeIndex = skipTriviaIndex(this.code, end);
+      const nextCodeChar = nextCodeIndex === -1 ? undefined : this.code[nextCodeIndex];
+      if (
+        token === "from" && this.isTopLevel() &&
+        (nextCodeChar === "'" || nextCodeChar === '"')
+      ) {
+        return;
+      }
+    }
+
+    // A named export may be followed by `from "source"`; any other next token
+    // proves the closed list was local. Do not let a later ordinary identifier
+    // named `from` turn an unrelated string into a module source.
+    this.pendingLocalExportSource = false;
+    this.pendingModuleSource = false;
   }
 
   private takeTokenContext(): TokenContext {
@@ -1288,6 +1313,7 @@ class CommentQuoteMasker {
       (nextCodeChar === "{" || nextCodeChar === "*")
     ) {
       this.pendingModuleSource = true;
+      this.pendingNamedExportSpecifiers = nextCodeChar === "{";
     } else if (
       token === "from" && this.pendingModuleSource && this.isTopLevel() &&
       (nextCodeChar === "'" || nextCodeChar === '"')
@@ -1297,6 +1323,7 @@ class CommentQuoteMasker {
       // re-export, so the string that follows is a module source whose closing
       // quote ends the declaration and restores statement context.
       this.nextStringIsModuleSource = true;
+      this.pendingLocalExportSource = false;
     }
   }
 
@@ -1485,6 +1512,10 @@ class CommentQuoteMasker {
 
   private recordClosedBrace(): void {
     const closedBraceKind = this.braceKinds.pop() ?? "operand";
+    if (closedBraceKind === "module-specifiers" && this.pendingNamedExportSpecifiers) {
+      this.pendingNamedExportSpecifiers = false;
+      this.pendingLocalExportSource = true;
+    }
     this.canStartRegex = closedBraceKind === "statement-block" ||
       closedBraceKind === "switch-block" || closedBraceKind === "module-attributes" ||
       closedBraceKind === "module-specifiers";
@@ -1539,7 +1570,11 @@ class CommentQuoteMasker {
     this.append(char);
     this.updatePunctuatorDeclarationState(char, context, optionalChainQuestion);
     if (char === ";" || char === ".") this.pendingImportSpecifiers = false;
-    if (char === ";") this.pendingModuleSource = false;
+    if (char === ";") {
+      this.pendingModuleSource = false;
+      this.pendingNamedExportSpecifiers = false;
+      this.pendingLocalExportSource = false;
+    }
     this.canStartRegex = char !== ".";
     this.afterPropertyAccess = char === ".";
   }

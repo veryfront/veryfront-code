@@ -1032,6 +1032,25 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("clears the source possibility after a semicolonless local named export", async () => {
+    const ctx = createContext(
+      `const x = 1
+export { x }
+const from = 1
+from
+"foo" / 2
+import styles /* from "./decoy.module.css" */ from "./Button.module.css"
+export const cls = styles.container`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(namespace.x, 1);
+    assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("reopens statement context after import attribute objects", async () => {
     for (
       const declaration of [
