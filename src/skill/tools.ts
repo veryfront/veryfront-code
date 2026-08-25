@@ -232,21 +232,21 @@ async function createScriptSnapshot(
   validatedEntryPath: string,
   entryContent: string,
   budget: SkillOperationBudget,
+  authoritativePaths?: readonly string[],
 ): Promise<SkillScriptSnapshot> {
   const entryPath = reflectApply(
     stringReplaceAll,
     relative(skill.rootPath, validatedEntryPath),
     ["\\", "/"],
   ) as string;
-  const listedPaths = await listStrictSkillTree(
+  const listedPaths = authoritativePaths ?? await listStrictSkillTree(
     skill.rootPath,
     SKILL_SCRIPTS_DIR,
     skill.fsAdapter,
     { budget },
   );
-  let paths = listedPaths;
+  const paths = reflectApply(arraySlice, listedPaths, []) as string[];
   if (!(reflectApply(arrayIncludes, paths, [entryPath]) as boolean)) {
-    paths = reflectApply(arraySlice, listedPaths, []) as string[];
     appendOwnArrayElement(paths, entryPath);
     reflectApply(arraySort, paths, [
       (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
@@ -431,7 +431,7 @@ function hasRuntimeSkillBoundary(
     context.activeSkillToolAvailability !== undefined;
 }
 
-function assertActiveSkillFileAvailable(
+async function assertActiveSkillFileAvailable(
   input: {
     toolName: string;
     skillId: string;
@@ -440,8 +440,10 @@ function assertActiveSkillFileAvailable(
     kind: SkillFileKind;
   },
   context: ToolExecutionContext | undefined,
-): void {
-  if (!hasRuntimeSkillBoundary(context)) return;
+  skill: Skill,
+  budget: SkillOperationBudget,
+): Promise<readonly string[] | undefined> {
+  if (!hasRuntimeSkillBoundary(context)) return undefined;
 
   const activeSkillId = context.activeSkillId;
   const availability = context.activeSkillToolAvailability;
@@ -475,6 +477,34 @@ function assertActiveSkillFileAvailable(
       }),
     );
   }
+
+  const referenceDirectory = input.path.split("/", 1)[0];
+  const authoritative = input.kind === "reference"
+    ? referenceDirectory === SKILL_REFERENCES_DIR ||
+        referenceDirectory === SKILL_RESOURCES_DIR ||
+        referenceDirectory === SKILL_ASSETS_DIR
+      ? await listStrictSkillSubdir(
+        skill.rootPath,
+        referenceDirectory,
+        skill.fsAdapter,
+        { budget },
+      )
+      : []
+    : await listStrictSkillTree(
+      skill.rootPath,
+      SKILL_SCRIPTS_DIR,
+      skill.fsAdapter,
+      { budget },
+    );
+  if (!authoritative.includes(input.path)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+      }),
+    );
+  }
+  return authoritative;
 }
 
 /**
@@ -560,7 +590,7 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
     execute: async (input, context): Promise<{ content: string; path: string }> => {
       const budget = createFileBudget(context);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
-      assertActiveSkillFileAvailable(
+      await assertActiveSkillFileAvailable(
         {
           toolName: "load_skill_reference",
           skillId: skill.id,
@@ -569,6 +599,8 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
           kind: "reference",
         },
         context,
+        skill,
+        budget,
       );
 
       // Validate path safety before reading skill-provided context.
@@ -607,7 +639,7 @@ export function createExecuteSkillScriptTool(
       const budget = createFileBudget(context, input.timeoutMs);
       assertScriptInputs(input.args, input.env);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
-      assertActiveSkillFileAvailable(
+      const authoritativeScripts = await assertActiveSkillFileAvailable(
         {
           toolName: "execute_skill_script",
           skillId: skill.id,
@@ -616,6 +648,8 @@ export function createExecuteSkillScriptTool(
           kind: "script",
         },
         context,
+        skill,
+        budget,
       );
 
       // Validate path safety (only scripts/ allowed)
@@ -638,6 +672,7 @@ export function createExecuteSkillScriptTool(
         validatedPath,
         scriptContent,
         budget,
+        authoritativeScripts,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
       const result = await budget.run(async (abortSignal) =>

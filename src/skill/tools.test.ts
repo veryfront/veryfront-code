@@ -529,6 +529,71 @@ Do work.`,
     );
   });
 
+  it(
+    "load_skill_reference should reject forged availability for an unlisted nested file",
+    async () => {
+      const fsAdapter = createSkillTestAdapter({
+        "/project/skills/my-skill/references/guide.md": "Guide",
+        "/project/skills/my-skill/references/private/secret.md": "Secret",
+      });
+      registerSkill("my-skill", createNamedTestSkill("my-skill", fsAdapter));
+
+      const tool = createLoadSkillReferenceTool();
+
+      await assertRejects(
+        () =>
+          tool.execute({
+            skillId: "my-skill",
+            reference: "references/private/secret.md",
+          }, {
+            activeSkillId: "my-skill",
+            activeSkillToolAvailability: {
+              hasActiveSkill: true,
+              references: ["references/private/secret.md"],
+              scripts: [],
+            },
+          }),
+        Error,
+        "advertised by load_skill",
+      );
+    },
+  );
+
+  it("load_skill_reference revalidates only the requested content directory", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/references/guide.md": "Guide",
+      "/project/skills/my-skill/resources/unrelated.md": "Unrelated",
+    });
+    const checkedDirectories: string[] = [];
+    const scopedAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async *readDir(path) {
+        checkedDirectories.push(path);
+        if (path.endsWith("/resources")) throw new Error("unrelated directory unavailable");
+        yield* fsAdapter.readDir(path);
+      },
+    };
+    registerSkill("my-skill", createNamedTestSkill("my-skill", scopedAdapter));
+
+    const result = await createLoadSkillReferenceTool().execute({
+      skillId: "my-skill",
+      reference: "references/guide.md",
+    }, {
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: [],
+      },
+    });
+
+    assertEquals(result.content, "Guide");
+    assertEquals(
+      checkedDirectories.some((path) => path.endsWith("/resources") || path.endsWith("/assets")),
+      false,
+    );
+  });
+
   it("load_skill_reference should reject stale active skill state outside the selector", async () => {
     let readCount = 0;
     const fsAdapter = createSkillTestAdapter({
@@ -692,6 +757,45 @@ Do work.`,
     assertEquals(result.exitCode, 0);
     assertEquals(result.stderr, "");
     assertEquals(result.stdout.trim(), "adapter-sibling");
+  });
+
+  it("execute_skill_script reuses its authoritative script listing", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/lib/helper.ts": 'export const message = "listed-once";',
+      "/project/skills/my-skill/scripts/run.ts":
+        'import { message } from "./lib/helper.ts";\nconsole.log(message);',
+    });
+    let nestedScriptDirectoryReads = 0;
+    const countingAdapter: FileSystemAdapter = {
+      ...fsAdapter,
+      async *readDir(path) {
+        if (path.endsWith("/scripts/lib")) {
+          nestedScriptDirectoryReads += 1;
+          if (nestedScriptDirectoryReads > 2) {
+            throw new Error("script tree was enumerated twice");
+          }
+        }
+        yield* fsAdapter.readDir(path);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+
+    const result = await createExecuteSkillScriptTool({
+      executor: new LocalScriptExecutor(),
+    }).execute({
+      skillId: "my-skill",
+      script: "scripts/run.ts",
+    }, {
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/lib/helper.ts", "scripts/run.ts"],
+      },
+    });
+
+    assertEquals(result.stdout.trim(), "listed-once");
+    assertEquals(nestedScriptDirectoryReads, 2);
   });
 
   it("execute_skill_script snapshots native sibling modules", async () => {
