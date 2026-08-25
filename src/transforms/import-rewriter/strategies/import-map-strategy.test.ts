@@ -550,6 +550,16 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("keeps a numeric-leading remote file extension as a single module", () => {
+      const map: ImportMapConfig = {
+        imports: { "@scope/pkg": "https://cdn.example/archive.7z" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/archive.7z",
+      );
+    });
+
     it("keeps a remote wasm mapping as a single module", () => {
       const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/module.wasm" } };
       assertEquals(

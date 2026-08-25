@@ -206,12 +206,13 @@ const PACKAGE_ROOT_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A file extension, which must begin with a letter.
+ * A file extension, which must contain a letter.
  *
- * That rules out the last component of a version: `lodash@4.17.21` ends in
- * `.21`, which is not an extension, while `pkg@2.0.0.js` ends in one.
+ * That admits numeric-leading formats such as `.7z` while ruling out the last
+ * component of a version: `lodash@4.17.21` ends in `.21`, which has no letter,
+ * while `pkg@2.0.0.js` ends in an extension.
  */
-const FILE_EXTENSION = /\.[A-Za-z][A-Za-z0-9]*$/;
+const FILE_EXTENSION = /\.[0-9]*[A-Za-z][A-Za-z0-9]*$/;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;

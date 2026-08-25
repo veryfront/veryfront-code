@@ -291,6 +291,16 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("keeps a numeric-leading remote file extension exact", () => {
+    assertEquals(
+      resolve("https://esm.sh/@scope/pkg@1/sub", {
+        "@scope/pkg": "https://cdn.example/archive.7z",
+      }),
+      "https://cdn.example/archive.7z",
+      "numeric-leading extensions are files while purely numeric SemVer components are not",
+    );
+  });
+
   it("decodes the remote filename only when classifying its extension", () => {
     for (const filename of ["pkg%2Ejs", "pkg.j%73"]) {
       const mapping = `https://cdn.example/${filename}`;

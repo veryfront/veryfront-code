@@ -64,6 +64,14 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should not append the esm.sh subpath to a numeric-leading remote file mapping", () => {
+      const map = { imports: { "@scope/pkg": "https://cdn.example/archive.7z" } };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/archive.7z",
+      );
+    });
+
     it("should append the esm.sh subpath to an http mapping", () => {
       const map = { imports: { react: "https://esm.sh/react@19" } };
       assertEquals(
