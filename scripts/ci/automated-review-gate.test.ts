@@ -1001,8 +1001,6 @@ describe("automated review workflow", () => {
     assertEquals(permissions["pull-requests"], "write");
     assertEquals(permissions.statuses, "write");
 
-    assertEquals(workflow.concurrency, undefined);
-
     const triggers = record(workflow.on, "triggers");
     assertEquals(
       record(triggers.pull_request_target, "pull request trigger").types,
@@ -1021,13 +1019,17 @@ describe("automated review workflow", () => {
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
     const job = record(jobs.review, "review job");
-    const publisherConcurrency = {
+    // `queue` is only valid in workflow-level concurrency; placing this block
+    // on the jobs made them fail before any step ran and took the gate down.
+    assertEquals(record(workflow.concurrency, "workflow concurrency"), {
       group: "automated-review-status-publishers",
       queue: "max",
-    };
-    assertEquals(record(job.concurrency, "review concurrency"), {
-      ...publisherConcurrency,
     });
+    assertEquals(
+      job.concurrency,
+      undefined,
+      "review job must not redeclare concurrency",
+    );
     assert(
       String(job.if).includes("github.event_name != 'status'"),
       "raw status events must never enter general PR reconciliation",
@@ -1119,9 +1121,11 @@ describe("automated review workflow", () => {
       !statusIf.includes("github.event.creator"),
       "the status payload has no creator field, so that condition never matches",
     );
-    assertEquals(record(statusJob.concurrency, "status concurrency"), {
-      ...publisherConcurrency,
-    });
+    assertEquals(
+      statusJob.concurrency,
+      undefined,
+      "status job must not redeclare concurrency",
+    );
     const statusSteps = statusJob.steps;
     assert(Array.isArray(statusSteps));
     const statusScript = String(
