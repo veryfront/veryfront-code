@@ -417,6 +417,25 @@ describe("lookupImportMapEntry", () => {
     );
   });
 
+  it("resolves relative specifiers against remote referrers before import-map lookup", () => {
+    assertEquals(
+      lookupImportMapEntry(
+        {
+          imports: {},
+          scopes: {
+            "https://cdn.example/": {
+              "https://cdn.example/helper.js": "https://mapped.example/helper.js",
+            },
+          },
+        },
+        "./helper.js",
+        "https://cdn.example/entry.js",
+      ),
+      "https://mapped.example/helper.js",
+      "a remote referrer must retain URL semantics when resolving its relative dependency",
+    );
+  });
+
   it("leaves a specifier the map does not name alone", () => {
     assertEquals(
       lookupImportMapEntry({ imports: { "@lib/": "./lib/" }, scopes: {} }, "zod"),
@@ -3133,6 +3152,33 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "bundling must not relocate a validated Worker URL away from its project module",
     );
   });
+
+  denoIt(
+    "keeps parser-validated slash syntax direct when import.meta.url is observed",
+    async () => {
+      const tmpDir = await makeTempDir();
+      const modulePath = join(tmpDir, "division-import-meta-route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `const result = 8 / 2;`,
+          `export const GET = () => new Response(String(result) + " " + import.meta.url);`,
+        ].join("\n"),
+      );
+
+      const route = await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+      assertMatch(
+        await getText(route) ?? "",
+        /4 .*division-import-meta-route\.ts/,
+        "successful parser analysis must not relocate an ordinary slash expression into a bundle",
+      );
+    },
+  );
 
   it("uses the longest Deno import-map prefix when a route must bundle", async () => {
     const tmpDir = await makeTempDir();

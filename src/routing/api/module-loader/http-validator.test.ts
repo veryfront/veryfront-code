@@ -317,6 +317,24 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should reject Function exposed through a constructor property descriptor", async () => {
+      for (const descriptorOwner of ["Object", "Reflect"]) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const descriptor = ${descriptorOwner}.getOwnPropertyDescriptor(` +
+                `Object.getPrototypeOf(() => {}), "constructor");` +
+                ` const Make = descriptor.value;` +
+                ` Make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${descriptorOwner}.getOwnPropertyDescriptor can expose the Function constructor`,
+        );
+      }
+    });
+
     it("should reject a generator name hidden in a single escaped string literal", async () => {
       await assertRejects(
         async () =>
@@ -569,6 +587,20 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "Reflect.set can invoke the inherited prototype setter too",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const source = Object.defineProperty({}, "__proto__", {` +
+              ` value: () => {}, enumerable: true });` +
+              ` const holder = {}; Object.assign(holder, source);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Object.assign can copy an own __proto__ property through the inherited setter",
       );
     });
 

@@ -560,11 +560,12 @@ async function canDirectImportModuleGraph(args: {
     // Reuse the parser-aware public validator so direct and bundled routes
     // enforce the same remote-import, Worker, and generated-code contract.
     const scan = await validateHTTPImports(source, allowedHosts);
-    const preservesLocalWorkerLocation = scan.parserBacked &&
-      scan.localWorkerSpecifiers.length > 0;
     if (
       scan.hasUnconstrainedDynamicImport ||
-      (scan.requiresBundling && !preservesLocalWorkerLocation)
+      // Slash syntax is ambiguous only to the conservative text scanner. Once
+      // parser-backed capability and edge analysis succeeds, relocating the
+      // module into a bundle is unnecessary and changes import.meta.url.
+      (scan.requiresBundling && !scan.parserBacked)
     ) {
       canDirectImport = false;
     }
@@ -964,8 +965,12 @@ function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string)
     return specifier;
   }
   const modulePath = modulePathOfSpecifier(specifier);
+  const referrerModule = modulePathOfSpecifier(referrer);
+  if (REMOTE_URL_SPECIFIER.test(referrerModule)) {
+    return new URL(modulePath, referrerModule).href + moduleSuffixOfSpecifier(specifier);
+  }
   const resolved = pathHelper.fromFileUrl(
-    new URL(modulePath, pathHelper.toFileUrl(modulePathOfSpecifier(referrer))),
+    new URL(modulePath, pathHelper.toFileUrl(referrerModule)),
   );
   return resolved + moduleSuffixOfSpecifier(specifier);
 }
