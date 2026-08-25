@@ -71,8 +71,8 @@ describe("token storage cloud wiring", () => {
 
       assertEquals(captured.urls.length, 1, "initialization must issue exactly one ping request");
       assertEquals(
-        captured.urls[0]?.startsWith("https://original.example.com") ?? false,
-        true,
+        captured.urls[0],
+        "https://original.example.com/v1/projects/test-project/tokens",
         "the adapter must use the base URL captured at call time",
       );
       assertEquals(

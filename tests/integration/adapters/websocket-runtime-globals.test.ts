@@ -50,10 +50,27 @@ describe("CloudflareServerAdapter with a host-provided WebSocketPair", () => {
       },
     } as unknown as CloudflareWebSocket;
     const globalRecord = globalThis as Record<string, unknown>;
-    const previous = Object.getOwnPropertyDescriptor(globalThis, "WebSocketPair");
+    const previousPair = Object.getOwnPropertyDescriptor(globalThis, "WebSocketPair");
+    const previousResponse = Object.getOwnPropertyDescriptor(globalThis, "Response");
     globalRecord.WebSocketPair = class {
       0 = clientHalf;
       1 = serverHalf;
+    };
+    globalRecord.Response = class {
+      readonly status: number;
+      readonly statusText: string;
+      readonly headers: Headers;
+      readonly webSocket: CloudflareWebSocket | undefined;
+
+      constructor(
+        _body: BodyInit | null,
+        init: ResponseInit & { webSocket?: CloudflareWebSocket },
+      ) {
+        this.status = init.status ?? 200;
+        this.statusText = init.statusText ?? "";
+        this.headers = new Headers(init.headers);
+        this.webSocket = init.webSocket;
+      }
     };
 
     try {
@@ -78,9 +95,16 @@ describe("CloudflareServerAdapter with a host-provided WebSocketPair", () => {
         "chat",
         "the negotiated subprotocol must travel on the handshake response",
       );
+      assertStrictEquals(
+        (upgrade.response as Response & { webSocket: CloudflareWebSocket }).webSocket,
+        clientHalf,
+        "the Cloudflare response extension must receive the client half of the pair",
+      );
     } finally {
-      if (previous) Object.defineProperty(globalThis, "WebSocketPair", previous);
+      if (previousPair) Object.defineProperty(globalThis, "WebSocketPair", previousPair);
       else delete globalRecord.WebSocketPair;
+      if (previousResponse) Object.defineProperty(globalThis, "Response", previousResponse);
+      else delete globalRecord.Response;
     }
   });
 });
