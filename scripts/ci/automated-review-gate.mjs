@@ -804,14 +804,27 @@ export async function invalidateReviewProof({
 /** Extract the pull request represented by a merge queue head ref. */
 export function parseMergeQueuePullNumber(headRef) {
   if (typeof headRef !== "string") return undefined;
-  const match = headRef.match(
-    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i,
-  );
+  const match =
+    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(
+      headRef,
+    );
   if (!match) return undefined;
   const pullNumber = Number(match[1]);
   return Number.isSafeInteger(pullNumber)
     ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
     : undefined;
+}
+
+function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Merge queue pull request number is invalid");
+  }
+  if (!FULL_SHA.test(mergeGroupSha)) {
+    throw new Error("Merge group commit is malformed");
+  }
+  if (!FULL_SHA.test(sourceHeadSha)) {
+    throw new Error("Merge queue source commit is malformed");
+  }
 }
 
 function trustedReviewGateReviewer(status, pullNumber, baseBinding) {
@@ -851,15 +864,7 @@ export async function publishMergeGroupReviewStatus({
   let failure;
   let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
   try {
-    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
-      throw new Error("Merge queue pull request number is invalid");
-    }
-    if (!FULL_SHA.test(mergeGroupSha)) {
-      throw new Error("Merge group commit is malformed");
-    }
-    if (!FULL_SHA.test(sourceHeadSha)) {
-      throw new Error("Merge queue source commit is malformed");
-    }
+    assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha });
     const pull = await github.rest.pulls.get({
       owner,
       repo,
