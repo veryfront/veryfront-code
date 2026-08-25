@@ -9,21 +9,70 @@ on:
     types: [created, edited, deleted]
   status:
 
-permissions:
-  contents: read
-  issues: read
-  # pull-requests: write lets the gate post the "@codex review" comment when a
-  # push leaves the head commit without a review. This workflow runs with
-  # pull_request_target authority, so the write scope stays safe only because
-  # the workflow checks out the trusted default branch, never executes files
-  # from the pull request head, and the posted comment body is a fixed string
-  # plus the verified head commit SHA with no pull request controlled content.
-  pull-requests: write
-  statuses: write
+permissions: {}
 
 jobs:
+  target:
+    name: resolve automated review target
+    # Apply publisher eligibility before allocating a resolver runner. The
+    # resolver exists only to feed the two publisher jobs below.
+    if: >-
+      (github.event_name != 'status' &&
+       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+       (github.event_name != 'pull_request_review' ||
+        github.event.pull_request.head.repo.full_name == github.repository)) ||
+      (github.event_name == 'status' &&
+       github.event.context == 'CodeRabbit' &&
+       github.event.state == 'success' &&
+       github.event.description == 'Review completed')
+    permissions:
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      key: ${{ steps.resolve.outputs.result }}
+    steps:
+      - name: Resolve the current head commit
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          result-encoding: string
+          script: |
+            let headSha = context.payload.sha;
+            const pullNumber = context.payload.pull_request?.number ??
+              (context.payload.issue?.pull_request
+                ? context.payload.issue.number
+                : undefined);
+            if (!headSha && pullNumber) {
+              const response = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+              headSha = response.data.head.sha;
+            }
+            // Non-PR issue comments never reach a publisher job, but still
+            // need a harmless key so this resolver succeeds for the trigger.
+            if (!headSha && context.eventName === "issue_comment") {
+              return `issue-${context.payload.issue.number}`;
+            }
+            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+              core.setFailed("Could not resolve a valid review target commit");
+              return `run-${context.runId}`;
+            }
+            return headSha;
+
   review:
     name: publish automated review status
+    # pull-requests and issues write let this job post the fixed "@codex
+    # review" request after verifying the current head. This job checks out
+    # only the trusted default branch and never executes pull request files.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
     # pull_request_review hands fork pull requests a read-only token that cannot
     # write a commit status, so skip it there and let the trusted
@@ -33,8 +82,11 @@ jobs:
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
+    needs: target
     concurrency:
-      group: automated-review-status-publishers
+      # Every event for one head, including issue comments and status events,
+      # must serialize on the same key so an older pending write cannot win.
+      group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -50,6 +102,8 @@ jobs:
       - name: Require an automated review for the current commit
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           result-encoding: string
@@ -68,7 +122,15 @@ jobs:
             const pullRequest = response.data;
             const sameRepository =
               `${context.repo.owner}/${context.repo.repo}`;
-            const headSha = pullRequest.head.sha;
+            const headSha = process.env.TARGET_SHA;
+            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+              core.setFailed("The resolved review target commit is invalid");
+              return "failure";
+            }
+            if (pullRequest.head.sha !== headSha) {
+              core.notice("Skipped automated review publication after the pull request head changed.");
+              return "stale";
+            }
             let publishAutomatedReviewStatus;
             try {
               ({ publishAutomatedReviewStatus } = await import(gateUrl));
@@ -127,6 +189,8 @@ jobs:
           github.event.action == 'synchronize' &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           script: |
@@ -141,11 +205,11 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               pullNumber: pullRequest.number,
-              headSha: pullRequest.head.sha,
+              headSha: process.env.TARGET_SHA,
             });
             core.notice(
               result.requested
-                ? `Requested an automated review of ${pullRequest.head.sha.slice(0, 12)}.`
+                ? `Requested an automated review of ${process.env.TARGET_SHA.slice(0, 12)}.`
                 : result.reason === "stale-head"
                 ? "Skipped an automated review request from a stale synchronize event."
                 : "An automated review request for this head commit already exists.",
@@ -153,22 +217,23 @@ jobs:
 
   status_review:
     name: publish completed CodeRabbit review status
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
     # This SHA-scoped path publishes only durable completion success. It shares
     # the status publisher queue so it cannot race general PR reconciliation.
-    # The status payload carries no creator field, so pin the sender instead:
-    # for a bot-created commit status the sender is the bot itself. The gate
-    # helper then re-verifies the creator over the REST status history, where
-    # creator does exist, before treating the wakeup as completion proof.
+    # The webhook payload carries no creator field. Treat it only as a wakeup;
+    # the helper re-reads status history and requires the pinned CodeRabbit
+    # creator before publishing completion.
     if: >-
       github.event_name == 'status' &&
       github.event.context == 'CodeRabbit' &&
       github.event.state == 'success' &&
-      github.event.description == 'Review completed' &&
-      github.event.sender.login == 'coderabbitai[bot]' &&
-      github.event.sender.id == 136622811 &&
-      github.event.sender.type == 'Bot'
+      github.event.description == 'Review completed'
+    needs: target
     concurrency:
-      group: automated-review-status-publishers
+      group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -179,6 +244,8 @@ jobs:
           persist-credentials: false
       - name: Publish authenticated CodeRabbit completion
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET_SHA: ${{ needs.target.outputs.key }}
         with:
           retries: 3
           script: |
@@ -197,7 +264,7 @@ jobs:
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              headSha: context.payload.sha,
+              headSha: process.env.TARGET_SHA,
               // The payload claim carries no creator; the helper authenticates
               // the completion against the REST status history for the head.
               status: {
@@ -208,7 +275,7 @@ jobs:
             });
             if (result.state === "success") {
               core.notice(
-                `Authenticated CodeRabbit completion for ${context.payload.sha.slice(0, 12)}.`,
+                `Authenticated CodeRabbit completion for ${process.env.TARGET_SHA.slice(0, 12)}.`,
               );
             } else if (result.failure) {
               core.warning(result.failure.message);
