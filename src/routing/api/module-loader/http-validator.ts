@@ -781,12 +781,17 @@ function containsIdentifierName(source: string, names: readonly string[]): boole
 }
 
 function hasIdentifierName(source: string, name: string): boolean {
+  return countIdentifierName(source, name) > 0;
+}
+
+function countIdentifierName(source: string, name: string): number {
+  let count = 0;
   let index = source.indexOf(name);
   while (index !== -1) {
-    if (isIdentifierNameBoundary(source, index, name)) return true;
+    if (isIdentifierNameBoundary(source, index, name)) count++;
     index = source.indexOf(name, index + name.length);
   }
-  return false;
+  return count;
 }
 
 function isIdentifierNameBoundary(source: string, index: number, name: string): boolean {
@@ -1310,7 +1315,8 @@ function containsFallbackCapabilityName(source: string, names: readonly string[]
 
 function fallbackWorkerUrlClassifications(source: string): WorkerUrlClassification[] {
   const workers = [...textualWorkerUrlClassifications(source)];
-  if (workers.length === 0 && containsFallbackCapabilityName(source, ["Worker"])) {
+  const decoded = decodeIdentifierEscapes(source);
+  if (countIdentifierName(decoded, "Worker") > workers.length) {
     workers.push(DYNAMIC_WORKER);
   }
   return workers;
