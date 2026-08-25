@@ -571,7 +571,7 @@ describe("agent/ag-ui-runtime-handler", () => {
     );
 
     assertEquals(response.status, 500);
-    assertEquals(await response.json(), { error: "clearMemory exploded" });
+    assertEquals(await response.json(), { error: "Internal server error" });
     assertEquals(seenRunId, "run_runtime_hooks_4");
     assertEquals(seenError, "clearMemory exploded");
   });
@@ -811,6 +811,7 @@ describe("agent/ag-ui-runtime-handler", () => {
       isError: boolean;
     }>();
     const originalStream = AgentRuntime.prototype.stream;
+    let seenError: string | undefined;
 
     AgentRuntime.prototype.stream = (): Promise<ReadableStream<Uint8Array>> =>
       Promise.reject(new Error("runtime stream setup exploded"));
@@ -819,6 +820,9 @@ describe("agent/ag-ui-runtime-handler", () => {
       const handler = createAgUiRuntimeHandler({
         agent: createTestAgent().agent,
         sessionManager,
+        onError: ({ error }) => {
+          seenError = error instanceof Error ? error.message : String(error);
+        },
       });
 
       const response = await handler(
@@ -841,8 +845,13 @@ describe("agent/ag-ui-runtime-handler", () => {
       );
       assertEquals(
         await response.json(),
-        { error: "runtime stream setup exploded" },
-        "the setup failure detail must reach the caller",
+        { error: "Internal server error" },
+        "runtime internals must not leak through the public error response",
+      );
+      assertEquals(
+        seenError,
+        "runtime stream setup exploded",
+        "the host lifecycle callback must still receive the original startup error",
       );
       assertEquals(
         sessionManager.getRunStatus("run_runtime_setup_fail"),
