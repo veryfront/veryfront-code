@@ -69,9 +69,11 @@ export async function rewriteEsmPaths(code: string, urlBase: string): Promise<st
     });
     // Only reachable once the lexer has already refused the source, so the scan
     // is deliberately coarse: a string that merely reads like an import costs a
-    // failed load here, never a silently unloadable artifact. Declared inside
-    // the handler so its `lastIndex` cannot leak between calls.
-    const importLikeSpecifier = /(?:\bfrom|\bimport)\s*\(?\s*(["'])([^"'\n]+)\1/g;
+    // failed load here, never a silently unloadable artifact. Backticks count
+    // because esm.sh emits template-literal dynamic imports, which would
+    // otherwise slip through with a relative path intact. Declared inside the
+    // handler so its `lastIndex` cannot leak between calls.
+    const importLikeSpecifier = /(?:\bfrom|\bimport)\s*\(?\s*(["'`])([^"'`\n]+)\1/g;
     for (
       let match = importLikeSpecifier.exec(code);
       match;

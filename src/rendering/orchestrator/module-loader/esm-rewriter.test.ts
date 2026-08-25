@@ -347,6 +347,46 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       }
     });
 
+    it("fails the load when an unlexable module keeps a template-literal path", async () => {
+      // esm.sh emits template-literal dynamic imports, so a fallback that only
+      // looked for single and double quotes would let `./chunk.js` through and
+      // write the same unloadable artifact the quoted case is rejected for.
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode = `/* reject-configured-lexer */ const load = () => import(\`./chunk.js\`);`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
+          Error,
+          "./chunk.js",
+          "a backtick-quoted relative specifier must fail the load like a quoted one",
+        );
+        assertEquals(
+          files.size,
+          0,
+          "no artifact may be written for a module whose template-literal path stayed unrewritten",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
+    });
+
     it("still accepts an unlexable module whose specifiers are all absolute", async () => {
       // The companion to the case above: a lexer failure is not fatal by
       // itself, only a lexer failure that leaves a specifier resolving against
