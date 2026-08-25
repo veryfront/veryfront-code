@@ -123,6 +123,35 @@ function splitNamedImportBindings(namedClause: string): string[] {
   return bindings;
 }
 
+function extractNamedImportClause(clause: string): string | undefined {
+  const trimmed = clause.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (let index = 1; index < trimmed.length; index++) {
+    const char = trimmed[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "}") {
+      return trimmed.slice(index + 1).trim().length === 0 ? trimmed.slice(1, index) : undefined;
+    }
+  }
+
+  return undefined;
+}
+
 function parseQuotedExportName(token: string | undefined): string | undefined {
   if (!token || token.length < 2) return undefined;
   const quote = token[0];
@@ -417,9 +446,9 @@ function generateCSSStub(
   // `default` is a legal named import, and esbuild lowers every CSS re-export
   // to this form, so it must resolve to the class-map proxy rather than to the
   // literal class name `"default"`.
-  const namedMatch = importClause.match(/^\{([^}]+)\}$/);
-  if (namedMatch?.[1]) {
-    const bindings = parseNamedImportBindings(namedMatch[1]);
+  const namedClause = extractNamedImportClause(importClause);
+  if (namedClause) {
+    const bindings = parseNamedImportBindings(namedClause);
     if (bindings.length > 0) {
       const stubs = bindings
         .map((binding) => `${binding.local} = ${cssBindingValue(binding.imported, cssModuleKey)}`)
@@ -429,10 +458,13 @@ function generateCSSStub(
   }
 
   // Mixed: import styles, { container } from "./X.module.css"
-  const mixedMatch = importClause.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\s*,\s*\{([^}]+)\}$/);
-  if (mixedMatch?.[1] && mixedMatch[2]) {
+  const mixedMatch = importClause.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\s*,\s*/);
+  const mixedNamedClause = mixedMatch
+    ? extractNamedImportClause(importClause.slice(mixedMatch[0].length))
+    : undefined;
+  if (mixedMatch?.[1] && mixedNamedClause) {
     const defaultName = mixedMatch[1];
-    const bindings = parseNamedImportBindings(mixedMatch[2]);
+    const bindings = parseNamedImportBindings(mixedNamedClause);
     const namedStubs = bindings
       .map((binding) => `${binding.local} = ${cssBindingValue(binding.imported, cssModuleKey)}`)
       .join(", ");

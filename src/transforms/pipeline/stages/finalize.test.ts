@@ -2,8 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { finalizePlugin } from "./finalize.ts";
-import { TransformStage } from "../types.ts";
-import type { TransformContext, TransformTarget } from "../types.ts";
+import {
+  type TransformContext,
+  TransformStage,
+  type TransformTarget,
+} from "#veryfront/transforms/pipeline/types.ts";
 
 function createContext(code: string, target: TransformTarget): TransformContext {
   return {

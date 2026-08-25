@@ -345,6 +345,22 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves closing braces inside quoted css import names", async () => {
+    const ctx = createContext(
+      `import { "foo}bar" as className } from "./Button.module.css"; export { className };`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.className,
+      toScopedCssModuleClass(MODULE_KEY, "foo}bar"),
+      "a quoted closing brace must remain data instead of ending the import clause",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("preserves single-quoted css export names and escaped quotes", async () => {
     const ctx = createContext(
       String
@@ -572,7 +588,7 @@ describe("css-strip plugin", () => {
 /**
  * The production ordering: `compilePlugin` runs with `minify: !ctx.dev`
  * immediately before this stage, so the statements the stub generator sees in a
- * production build are whatever esbuild emits — not the spaced source form.
+ * production build are whatever esbuild emits, not the spaced source form.
  */
 describe("css-strip after a production compile", () => {
   afterAll(async () => {

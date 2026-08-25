@@ -15,7 +15,7 @@ import {
 import type { ImportSpecifierInfo, RewriteContext } from "../types.ts";
 import { rewriteSSRImportsCompatAsync } from "../ssr-adapter.ts";
 import { rewriteImports } from "../unified-rewriter.ts";
-import { TAILWIND_VERSION } from "../url-builder.ts";
+import { TAILWIND_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { bareStrategy } from "./bare-strategy.ts";
 
 const TAILWIND_PINNED_URL =

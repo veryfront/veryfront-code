@@ -14,7 +14,7 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import * as esbuild from "veryfront/extensions/bundler";
-import { runPipeline } from "../index.ts";
+import { runPipeline } from "#veryfront/transforms/pipeline/index.ts";
 import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
@@ -165,6 +165,12 @@ describe("transform pipeline fixtures", () => {
         options,
       );
       const third = await runPipeline(input, filePath, "/project", options);
+      const fourth = await runPipeline(
+        input,
+        "/project/components/RenamedCounter.tsx",
+        "/project",
+        options,
+      );
 
       assertNotEquals(
         second.contentHash,
@@ -175,6 +181,11 @@ describe("transform pipeline fixtures", () => {
         third.contentHash,
         first.contentHash,
         "content hash must be stable for identical source",
+      );
+      assertEquals(
+        fourth.contentHash,
+        first.contentHash,
+        "content hash must not include the in-project file path",
       );
     });
   });
