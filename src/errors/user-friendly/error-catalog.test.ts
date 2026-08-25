@@ -4,12 +4,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 
 // The examples are TS/TSX source, so directive placement can only be judged on
-// statements, not raw lines: comments never end a statement, and a directive
-// may carry one (`'use client'; // Client Component`). This is a minimal
-// scanner, not a parser — it removes `//` and `/* */` comments while staying
-// string-aware (so `'https://x'` survives) and preserving newlines, which is
-// exactly enough to recover the statement lines of the flat catalog examples.
-function stripComments(source: string): string {
+// statements, not raw lines: comments never end a statement, a directive may
+// carry one (`'use client'; // Client Component`), and one line may hold
+// several statements (`import './setup'; 'use client';`). This is a minimal
+// scanner, not a parser — it removes `//` and `/* */` comments and breaks at
+// code-level semicolons while staying string-aware (so `'https://x'` and a
+// quoted `;` survive) and preserving newlines, which is exactly enough to
+// recover the statements of the flat catalog examples.
+function toStatementSource(source: string): string {
   let out = "";
   let state: "code" | "line-comment" | "block-comment" | "string" = "code";
   let quote = "";
@@ -25,6 +27,11 @@ function stripComments(source: string): string {
       } else if (char === "/" && next === "*") {
         state = "block-comment";
         i++;
+      } else if (char === ";") {
+        // A code-level semicolon ends a statement just as a newline does, so
+        // several statements sharing one line still split. Semicolons inside
+        // strings take the branch below and survive.
+        out += "\n";
       } else {
         if (char === "'" || char === '"' || char === "`") {
           state = "string";
@@ -68,11 +75,12 @@ function stripComments(source: string): string {
 // project templates use.
 const directive = /^['"]use client['"];?$/;
 
-// The statement lines of a file block, comments stripped first: a trailing
-// comment cannot disguise a directive, and a commented-out directive is not
-// mistaken for a real one.
+// The statements of a file block, comments stripped and semicolons resolved
+// first: a trailing comment cannot disguise a directive, a commented-out
+// directive is not mistaken for a real one, and a directive sharing a line
+// with an earlier statement is still seen in its true position.
 function statementsOf(block: string): string[] {
-  return stripComments(block)
+  return toStatementSource(block)
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
@@ -271,6 +279,32 @@ describe("ERROR_SOLUTIONS", () => {
           useClientIndexes(block),
           [1],
           "a directive after an import is inert and must be reported",
+        );
+      });
+
+      it("sees a directive that shares a line with an earlier statement", () => {
+        const block = [
+          "// ✅ Correct: app/x.tsx (Client Component)",
+          "import './setup'; 'use client';",
+        ].join("\n");
+
+        assertEquals(
+          useClientIndexes(block),
+          [1],
+          "statements split at semicolons, not only at newlines",
+        );
+      });
+
+      it("does not split a statement at a semicolon inside a string", () => {
+        const block = [
+          "'use client';",
+          "const sql = 'SELECT 1; SELECT 2';",
+        ].join("\n");
+
+        assertEquals(
+          useClientIndexes(block),
+          [0],
+          "a quoted semicolon is data, not a statement boundary",
         );
       });
 

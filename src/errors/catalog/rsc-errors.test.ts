@@ -51,9 +51,19 @@ describe("errors/catalog/rsc-errors", () => {
         "the client directive should be shown in the client module",
       );
       assertEquals(
-        example.indexOf("'use client'") < example.indexOf("import type"),
+        example.indexOf("'use client'") < example.indexOf("export function ClientComponent"),
         true,
-        "the client directive should precede client-module imports",
+        "the client directive should precede the client module's code",
+      );
+      assertEquals(
+        example.includes("const { rows } = await db.query<{ id: number; name: string }>"),
+        true,
+        "the server module destructures rows from the query result",
+      );
+      assertEquals(
+        example.includes("data={rows}"),
+        true,
+        "the boundary receives the rows array, not the whole query result",
       );
     });
 
