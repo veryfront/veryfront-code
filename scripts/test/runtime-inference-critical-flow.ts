@@ -1074,7 +1074,11 @@ export async function runRuntimeInferenceCriticalFlow(
         throw sanitizeRuntimeCriticalFlowError(error, displayRoots);
       }
     } catch (error) {
-      throw sanitizeRuntimeCriticalFlowError(error, [rootDir, workDir]);
+      throw sanitizeRuntimeCriticalFlowError(error, [
+        rootDir,
+        workDir,
+        ...(packedDirectory ? [packedDirectory] : []),
+      ]);
     }
   } finally {
     if (keepWorkDir) {

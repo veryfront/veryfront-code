@@ -17,6 +17,66 @@ async function runBash(
 }
 
 describe("npm package publishing", () => {
+  it("publishes the canonical tarball without repacking the materialized package", async () => {
+    const stateDir = await Deno.makeTempDir();
+    const packageDir = `${stateDir}/npm`;
+    const artifactDir = `${stateDir}/artifact`;
+    const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
+    const npmLog = `${stateDir}/npm.log`;
+    await Deno.mkdir(packageDir);
+    await Deno.mkdir(artifactDir);
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({ name: "veryfront", version: "0.1.0" }),
+    );
+    await Deno.writeTextFile(tarball, "canonical tarball bytes");
+    await Deno.writeTextFile(
+      `${artifactDir}/manifest.json`,
+      JSON.stringify({
+        packages: [{
+          name: "veryfront",
+          version: "0.1.0",
+          file: "veryfront-0.1.0.tgz",
+          sha256: "0".repeat(64),
+        }],
+      }),
+    );
+    await Deno.writeTextFile(npmLog, "");
+
+    try {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
+          "update_package_version() { return 97; }",
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "view" ]; then return 1; fi',
+          "}",
+          "run_rc_publish",
+        ].join("\n"),
+        {
+          NPM_LOG: npmLog,
+          NPM_PACK_DIR: artifactDir,
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        (await Deno.readTextFile(npmLog)).trim().split("\n"),
+        [
+          "view veryfront@0.1.0 version",
+          `publish ${tarball} --provenance --access public --tag rc`,
+        ],
+      );
+    } finally {
+      await Deno.remove(stateDir, { recursive: true });
+    }
+  });
+
   it("tolerates npm gitHead metadata appearing after 120 seconds", async () => {
     const stateDir = await Deno.makeTempDir();
     const countFile = `${stateDir}/npm-view-count`;

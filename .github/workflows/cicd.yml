@@ -1147,6 +1147,7 @@ jobs:
       - name: Publish tested RC npm artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
@@ -1297,6 +1298,7 @@ jobs:
       - name: Publish tested stable npm artifact
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm

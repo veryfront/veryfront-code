@@ -46,9 +46,7 @@ function workflowStepBlock(workflow: string, stepName: string): string {
   assert(start >= 0, `expected ${stepName} step to exist`);
 
   const nextStep = workflow.indexOf("\n      - ", start + marker.length);
-  return nextStep === -1
-    ? workflow.slice(start)
-    : workflow.slice(start, nextStep);
+  return nextStep === -1 ? workflow.slice(start) : workflow.slice(start, nextStep);
 }
 
 describe("repository hardening", () => {
@@ -146,11 +144,13 @@ describe("repository hardening", () => {
     assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
     assert(
       publishScript.includes(
-        "npm publish --provenance --access public --tag rc",
+        'npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc',
       ),
     );
     assert(
-      publishScript.includes("npm publish --provenance --access public 2>&1"),
+      publishScript.includes(
+        'npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1',
+      ),
     );
   });
 

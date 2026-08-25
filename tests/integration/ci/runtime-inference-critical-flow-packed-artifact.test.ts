@@ -53,6 +53,26 @@ async function writePackedArtifactFixture(
 }
 
 describe("runtime inference critical-flow packed artifact integration", () => {
+  it("redacts the requested packed directory when artifact loading fails", async () => {
+    const privateDirectory = "../vf-private-packed-artifact";
+    const error = await assertRejects(
+      () =>
+        runRuntimeInferenceCriticalFlow([
+          "--runtime=node",
+          "--skip-build",
+          "--packed-dir",
+          privateDirectory,
+        ]),
+      Error,
+    );
+    const message = `${(error as Error).message}\n${(error as Error).stack ?? ""}`;
+
+    assert(
+      !message.includes(privateDirectory),
+      "Packed-artifact load failures must not expose the requested directory",
+    );
+  });
+
   it("loads packed artifact tarballs as absolute paths before scaffold cwd changes", async () => {
     const artifactDir = await makeTempDirWithOptions({
       dir: Deno.cwd(),

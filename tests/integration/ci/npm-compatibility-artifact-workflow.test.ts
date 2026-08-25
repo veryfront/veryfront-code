@@ -202,6 +202,11 @@ describe("canonical npm artifact workflow", () => {
         "npm-compatibility-artifact.ts materialize dist/npm-compatibility npm",
       );
       assertEquals(
+        asRecord(publish.env, `${jobName} publish environment`).NPM_PACK_DIR,
+        "${{ github.workspace }}/dist/npm-compatibility",
+        `${jobName} must publish the verified canonical tarballs`,
+      );
+      assertEquals(
         jobSteps(job, `${jobName} job`).filter((step) =>
           String(step.run).includes("deno task build:npm")
         ).length,
