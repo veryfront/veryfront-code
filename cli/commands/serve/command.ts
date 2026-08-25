@@ -182,7 +182,18 @@ function createDeferredProductionStartupErrorReporter(): {
 }
 
 function loadProductionSentryModule(): Promise<ProductionSentryModule> {
-  return import("veryfront/observability/sentry");
+  // Process-wide Sentry mutators are internal, so the CLI composes its
+  // startup reporter from allowed public contracts: `veryfront/server` owns
+  // env-configured initialization and `veryfront/observability` owns
+  // capture and flush.
+  return Promise.all([
+    import("veryfront/server"),
+    import("veryfront/observability"),
+  ]).then(([serverModule, observabilityModule]) => ({
+    captureApplicationError: observabilityModule.captureApplicationError,
+    flushApplicationErrors: observabilityModule.flushApplicationErrors,
+    initializeSentryFromEnv: serverModule.initializeProductionErrorReportingFromEnv,
+  }));
 }
 
 const WILDCARD_BIND_ADDRESSES = new Set(["", "0.0.0.0", "::", "[::]"]);
