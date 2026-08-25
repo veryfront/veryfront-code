@@ -180,9 +180,7 @@ adds the login boundary and identity normalization.
 ## Deploy on Cloud or self-hosted infrastructure
 
 OIDC works in Veryfront Cloud and self-hosted apps because login transaction
-state and application sessions are encrypted cookies. There is no in-memory
-session store, sticky-session requirement, database, or distributed cache in
-the request admission path.
+state and application sessions are encrypted cookies. There is no sticky-session requirement, in-memory session store, database, or distributed cache in the request admission path.
 
 Each instance keeps its own bounded OIDC discovery and JWKS caches. These caches
 improve performance only. A cold instance can fetch provider metadata and keys
@@ -233,7 +231,7 @@ provenance, not `Forwarded`, `X-Forwarded-For`, or any caller-controlled header.
 - Keep app authorization in middleware or routes after the Veryfront login boundary.
 - Rotate session secrets intentionally and expect existing sessions to be cleared.
 
-## Verify the integration
+## Verify it worked
 
 Start the app and open a protected route in a new browser session. An HTML route
 redirects to `/_veryfront/auth/login`, then returns to the original path after

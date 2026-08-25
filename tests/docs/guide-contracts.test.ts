@@ -140,7 +140,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "authorization, token, or JWKS endpoints",
       "veryfront generate auth authelia",
       "groupsComplete: false",
-      "session store. There is no",
+      "encrypted cookies. There is no",
       "trustedProxy",
       "Veryfront Cloud",
     ],

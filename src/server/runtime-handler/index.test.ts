@@ -42,6 +42,16 @@ function createMockAdapter(
   } as unknown as RuntimeAdapter;
 }
 
+function requireHeader(response: Response, name: string): string {
+  const value = response.headers.get(name);
+  if (value === null) throw new Error(`Missing ${name} header`);
+  return value;
+}
+
+function cookiePair(response: Response): string {
+  return requireHeader(response, "set-cookie").split(";")[0] ?? "";
+}
+
 function createHostedOidcAdapter(): RuntimeAdapter {
   const base = new DenoAdapter();
   const fs = Object.create(base.fs) as RuntimeAdapter["fs"];
@@ -614,6 +624,75 @@ describe("server/runtime-handler/index", () => {
         else Deno.env.set(name, original);
       }
     }
+  });
+
+  it("completes OIDC callbacks with session_state, mixed JWKS, and large group claims", async () => {
+    const provider = await createMockOidcProvider({
+      issuer: "https://keycloak-idp.example.test",
+      clientId: "keycloak-client",
+      clientSecret: "keycloak-client-secret",
+      now: Math.floor(Date.now() / 1_000),
+    });
+    provider.addPublishedJwksKeyForTesting({
+      kty: "oct",
+      kid: "encryption-key",
+      use: "enc",
+      k: "dW5yZWxhdGVk",
+    });
+    const handler = createVeryfrontHandler(
+      "/tmp/test-project",
+      createMockAdapter({
+        APP_URL: "https://app.example.test",
+        OIDC_ISSUER: provider.urls.issuer,
+        OIDC_CLIENT_ID: "keycloak-client",
+        OIDC_CLIENT_SECRET: "keycloak-client-secret",
+        OIDC_SESSION_SECRET: "k".repeat(32),
+      }),
+      {
+        projectDir: "/tmp/test-project",
+        config: {
+          security: {
+            auth: {
+              oidc: {
+                issuerEnvVar: "OIDC_ISSUER",
+                clientIdEnvVar: "OIDC_CLIENT_ID",
+                clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+                sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+                scopes: ["openid", "profile", "email", "groups"],
+              },
+            },
+          },
+        } as any,
+        allowHostProjectCodeExecution: true,
+      },
+    );
+
+    const login = await provider.run(() =>
+      handler(new Request("https://app.example.test/_veryfront/auth/login"))
+    );
+    const callbackUrl = provider.authorize(requireHeader(login, "location"), {
+      callbackParams: { session_state: "keycloak-session-state.123" },
+      claims: {
+        email: "user@example.test",
+        name: "Keycloak User",
+        groups: Array.from(
+          { length: 80 },
+          (_, index) => `entra-group-${String(index).padStart(3, "0")}-00000000`,
+        ),
+      },
+    });
+
+    const callback = await provider.run(() =>
+      handler(
+        new Request(callbackUrl, {
+          headers: { cookie: cookiePair(login) },
+        }),
+      )
+    );
+
+    assertEquals(login.status, 302);
+    assertEquals(callback.status, 303);
+    assertEquals(requireHeader(callback, "set-cookie").includes("__Host-vf_session="), true);
   });
 
   it("keeps monitoring bypass ahead of application auth admission", async () => {

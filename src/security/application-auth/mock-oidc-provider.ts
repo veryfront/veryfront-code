@@ -70,6 +70,7 @@ export interface CreateMockOidcProviderOptions {
 export interface MintAuthorizationCodeOptions {
   readonly claims?: Readonly<Record<string, unknown>>;
   readonly key?: MockOidcKeyName;
+  readonly callbackParams?: Readonly<Record<string, string>>;
 }
 
 export interface IssueIdTokenOptions {
@@ -96,6 +97,7 @@ export interface MockOidcProvider {
   issueIdToken(options: IssueIdTokenOptions): Promise<string>;
   publishKeys(keys: readonly MockOidcKeyName[]): void;
   setKeyId(key: MockOidcKeyName, kid: string): void;
+  addPublishedJwksKeyForTesting(key: Readonly<Record<string, unknown>>): void;
   setFixture(route: MockOidcRoute, fixture: MockOidcResponseFixture): void;
   getCallCounts(): MockOidcCallCounts;
   getRequestSnapshots(): readonly MockOidcRequestSnapshot[];
@@ -165,6 +167,7 @@ export async function createMockOidcProvider(
   const codes = new Map<string, AuthorizationCodeRecord>();
   const fixtures = new Map<MockOidcRoute, MockOidcResponseFixture>();
   let publishedKeys: readonly MockOidcKeyName[] = Object.freeze(["key-a"]);
+  let extraPublishedJwksKeys: readonly Readonly<Record<string, unknown>>[] = Object.freeze([]);
 
   const mockFetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -195,7 +198,12 @@ export async function createMockOidcProvider(
         jwks_uri: urls.jwks,
       });
     }
-    return jsonResponse({ keys: publishedKeys.map((name) => publicJwk(requireKey(keys, name))) });
+    return jsonResponse({
+      keys: [
+        ...extraPublishedJwksKeys,
+        ...publishedKeys.map((name) => publicJwk(requireKey(keys, name))),
+      ],
+    });
   };
 
   async function handleTokenRequest(request: Request): Promise<Response> {
@@ -293,6 +301,11 @@ export async function createMockOidcProvider(
       const callback = new URL(authorization.redirectUri);
       callback.searchParams.set("state", authorization.state);
       callback.searchParams.set("code", code);
+      if (mintOptions.callbackParams !== undefined) {
+        for (const [key, value] of Object.entries(mintOptions.callbackParams)) {
+          callback.searchParams.set(key, boundedString(value));
+        }
+      }
       return callback.href;
     },
     authorize(url: string, mintOptions: MintAuthorizationCodeOptions = {}): string {
@@ -318,6 +331,12 @@ export async function createMockOidcProvider(
     },
     setKeyId(name: MockOidcKeyName, kid: string): void {
       requireKey(keys, name).kid = boundedString(kid);
+    },
+    addPublishedJwksKeyForTesting(key: Readonly<Record<string, unknown>>): void {
+      extraPublishedJwksKeys = Object.freeze([
+        ...extraPublishedJwksKeys,
+        Object.freeze({ ...key }),
+      ]);
     },
     setFixture(route: MockOidcRoute, fixture: MockOidcResponseFixture): void {
       validateFixture(fixture);
@@ -347,6 +366,7 @@ export async function createMockOidcProvider(
       codes.clear();
       fixtures.clear();
       publishedKeys = Object.freeze(["key-a"]);
+      extraPublishedJwksKeys = Object.freeze([]);
       for (const name of ["key-a", "key-b", "key-c"] as const) {
         requireKey(keys, name).kid = name;
       }
