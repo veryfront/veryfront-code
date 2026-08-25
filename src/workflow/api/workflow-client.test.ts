@@ -495,6 +495,61 @@ describe("WorkflowClient", () => {
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
     });
 
+    it("persists the active wait path when two waits share one schema object", async () => {
+      const workflowId = "shared-schema-path-workflow";
+      const sharedSchema = defineSchema((v) => v.object({ first: v.string() }))();
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("first-review", {
+            message: "First review",
+            responseSchema: sharedSchema,
+          }),
+          dependsOn(
+            waitForApproval("second-review", {
+              message: "Second review",
+              responseSchema: sharedSchema,
+            }),
+            "first-review",
+          ),
+        ],
+      }));
+
+      const handle = await client.start(workflowId, {});
+      await handle.settled();
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "first-review");
+
+      client.getApprovalManager().stop();
+      client = createWorkflowClient({ backend });
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("first-review", {
+            message: "First review",
+            responseSchema: defineSchema((v) => v.object({ first: v.string() }))(),
+          }),
+          dependsOn(
+            waitForApproval("second-review", {
+              message: "Second review",
+              responseSchema: defineSchema((v) => v.object({ second: v.boolean() }))(),
+            }),
+            "first-review",
+          ),
+        ],
+      }));
+
+      await assertRejects(() =>
+        client.approve(handle.runId, approval.id, "reviewer", undefined, {
+          second: true,
+        })
+      );
+      await client.approve(handle.runId, approval.id, "reviewer", undefined, {
+        first: "approved",
+      });
+    });
+
     it("recovers a response schema from a static map node processor", async () => {
       const mappedApprovalWorkflow = workflow({
         id: "mapped-node-persisted-schema-workflow",

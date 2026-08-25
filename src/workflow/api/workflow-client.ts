@@ -60,8 +60,8 @@ export class WorkflowClient {
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
   /** Registered response schemas keyed by a durable definition-path identity. */
   private responseSchemas = new Map<string, Schema<unknown>>();
-  /** Definition-path identities for schemas used by the active executor config. */
-  private responseSchemaIds = new WeakMap<Schema<unknown>, Map<string, string>>();
+  /** Definition-path identities for the exact wait configs used by the executor. */
+  private responseSchemaIds = new WeakMap<WaitNodeConfig, Map<string, string>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
@@ -111,7 +111,7 @@ export class WorkflowClient {
 
         try {
           const responseSchemaId = configured?.responseSchema
-            ? this.responseSchemaIds.get(configured.responseSchema)?.get(run.workflowId)
+            ? this.responseSchemaIds.get(configured)?.get(run.workflowId)
             : undefined;
           await this.approvalManager.createApproval(
             run,
@@ -223,9 +223,9 @@ export class WorkflowClient {
               `${definition.id}::${responseSchemaId}`,
               waitConfig.responseSchema,
             );
-            const workflowIds = this.responseSchemaIds.get(waitConfig.responseSchema) ?? new Map();
+            const workflowIds = this.responseSchemaIds.get(waitConfig) ?? new Map();
             workflowIds.set(definition.id, responseSchemaId);
-            this.responseSchemaIds.set(waitConfig.responseSchema, workflowIds);
+            this.responseSchemaIds.set(waitConfig, workflowIds);
           }
         }
         if (Array.isArray(config.nodes)) visit(config.nodes, [...nodePath, "nodes"]);
