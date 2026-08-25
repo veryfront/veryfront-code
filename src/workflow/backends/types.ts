@@ -59,6 +59,13 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
 export interface BackendConfig {
   url?: string;
   prefix?: string;
+  /**
+   * Deprecated no-op retained for source compatibility.
+   *
+   * Backends ignore this field. Use backend-specific TTL options, such as
+   * `RedisBackendConfig.runTtl`, when retention behavior is required.
+   */
+  defaultTtl?: number;
   debug?: boolean;
 }
 
