@@ -32,6 +32,18 @@ export interface StartProjectSelection {
   projectSlug: string | undefined;
 }
 
+export function createGlobalErrorLogContext(
+  error: Error,
+  type: string,
+  fatal: boolean,
+): { message: string; type: string; fatal: boolean; stack?: string } {
+  return {
+    message: error.message,
+    type,
+    fatal,
+  };
+}
+
 function getProjectSlug(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? "";
 }
@@ -199,12 +211,10 @@ export async function startCommand(options: StartOptions): Promise<void> {
       error.message.includes("out of memory") ||
       error.message.includes("allocation failed");
 
-    logger.error(`${type}: Application error caught`, {
-      message: error.message,
-      stack: error.stack,
-      type,
-      fatal: isFatal,
-    });
+    logger.error(
+      `${type}: Application error caught`,
+      createGlobalErrorLogContext(error, type, isFatal),
+    );
 
     if (isFatal) {
       logger.error("Fatal error detected, allowing process exit");

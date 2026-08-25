@@ -3,6 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import {
+  createGlobalErrorLogContext,
   hasProxyCredentials,
   hydrateStartRuntimeAuth,
   selectStartProject,
@@ -48,6 +49,22 @@ describe("commands/start/command", () => {
 
     it("accepts a single StartOptions parameter", () => {
       assertEquals(startCommand.length, 1);
+    });
+  });
+
+  describe("global error logging", () => {
+    it("withholds stacks from user-facing start output", () => {
+      const error = new Error("render failed");
+      error.stack = "Error: render failed\n    at <PROJECT_ROOT>/app.ts:1:1";
+
+      assertEquals(
+        createGlobalErrorLogContext(error, "unhandledRejection", false),
+        {
+          message: "render failed",
+          type: "unhandledRejection",
+          fatal: false,
+        },
+      );
     });
   });
 
