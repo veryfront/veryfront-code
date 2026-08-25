@@ -92,7 +92,6 @@ describe("GitHubStatOperations", () => {
           }),
         repoId: "test-owner/test-repo",
       } as any;
-      // A fresh cache per instance keeps one lookup's resolve entry out of the next.
       return new GitHubStatOperations(mockConfig, client, new FileCache());
     }
 
@@ -123,6 +122,37 @@ describe("GitHubStatOperations", () => {
         await ops.resolveFile("lib/utils", { allowPagesPrefix: false }),
         "lib/utils.ts",
         "the opt-out still resolves a direct hit",
+      );
+    });
+
+    it("should not serve a cached pages-prefix hit to a later opt-out", async () => {
+      // One instance, one cache: the resolve cache must key on the option too.
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "the default lookup resolves through the pages prefix and caches it",
+      );
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "a cached pages-prefix resolution must not survive the opt-out on the same cache",
+      );
+    });
+
+    it("should not serve a cached opt-out miss to a later default lookup", async () => {
+      const ops = createOpsWithTree();
+      await ops.buildIndex();
+      assertEquals(
+        await ops.resolveFile("about", { allowPagesPrefix: false }),
+        null,
+        "the opt-out lookup misses and caches the miss",
+      );
+      assertEquals(
+        await ops.resolveFile("about"),
+        "pages/about.tsx",
+        "a cached opt-out miss must not suppress the default pages fallback",
       );
     });
   });

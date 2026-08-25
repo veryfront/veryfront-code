@@ -502,6 +502,13 @@ describe("Distributed cache functions", () => {
       const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
       assertExists(descriptor);
       const patterns: string[] = [];
+      const pendingDeletions: Array<() => void> = [];
+      // While gated, the backend deletion only settles when the test releases it,
+      // so an *Async method that stopped awaiting it would resolve early.
+      let gateDeletions = false;
+      const flushMicrotasks = async (): Promise<void> => {
+        for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+      };
       Object.defineProperty(CacheBackends, "file", {
         ...descriptor,
         value: () =>
@@ -514,7 +521,10 @@ describe("Distributed cache functions", () => {
             clear: () => Promise.resolve(),
             delByPattern: (pattern: string) => {
               patterns.push(pattern);
-              return Promise.resolve(0);
+              if (!gateDeletions) return Promise.resolve(0);
+              return new Promise<number>((resolve) => {
+                pendingDeletions.push(() => resolve(0));
+              });
             },
           } as never),
       });
@@ -536,13 +546,33 @@ describe("Distributed cache functions", () => {
         "deleteByPrefix must forward a wildcard pattern to the distributed backend",
       );
 
-      await distributedCache.deleteByPrefixAsync("file:release:p:r2:");
+      gateDeletions = true;
+      let prefixAsyncSettled = false;
+      const prefixAsync = distributedCache
+        .deleteByPrefixAsync("file:release:p:r2:")
+        .then((count) => {
+          prefixAsyncSettled = true;
+          return count;
+        });
+      await flushMicrotasks();
       assertEquals(
         patterns,
         ["file:release:p:r1:*", "file:release:p:r2:*"],
-        "deleteByPrefixAsync must await the same wildcard pattern on the backend",
+        "deleteByPrefixAsync must forward the same wildcard pattern to the backend",
+      );
+      assertEquals(
+        prefixAsyncSettled,
+        false,
+        "deleteByPrefixAsync must stay pending until the backend deletion settles",
+      );
+      pendingDeletions.shift()?.();
+      assertEquals(
+        await prefixAsync,
+        0,
+        "deleteByPrefixAsync must resolve once the backend deletion settles",
       );
 
+      gateDeletions = false;
       distributedCache.deleteByPrefixAndSuffix("file:release:p:r3:", "s");
       await Promise.resolve();
       assertEquals(
@@ -551,11 +581,35 @@ describe("Distributed cache functions", () => {
         "deleteByPrefixAndSuffix must forward a suffix-qualified pattern",
       );
 
-      await distributedCache.deleteByPrefixAndSuffixAsync("file:release:p:r4:", "s");
+      gateDeletions = true;
+      let suffixAsyncSettled = false;
+      const suffixAsync = distributedCache
+        .deleteByPrefixAndSuffixAsync("file:release:p:r4:", "s")
+        .then((count) => {
+          suffixAsyncSettled = true;
+          return count;
+        });
+      await flushMicrotasks();
       assertEquals(
         patterns[3],
         "file:release:p:r4:*:s",
-        "deleteByPrefixAndSuffixAsync must await a suffix-qualified pattern",
+        "deleteByPrefixAndSuffixAsync must forward a suffix-qualified pattern",
+      );
+      assertEquals(
+        suffixAsyncSettled,
+        false,
+        "deleteByPrefixAndSuffixAsync must stay pending until the backend deletion settles",
+      );
+      pendingDeletions.shift()?.();
+      assertEquals(
+        await suffixAsync,
+        0,
+        "deleteByPrefixAndSuffixAsync must resolve once the backend deletion settles",
+      );
+      assertEquals(
+        pendingDeletions.length,
+        0,
+        "every gated backend deletion must have been released",
       );
     });
 

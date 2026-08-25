@@ -29,7 +29,7 @@ describe("createFSAdapter adapter routing", () => {
           type: "veryfront-api",
           veryfront: {
             apiBaseUrl: "https://api.example.com",
-            apiToken: "test-token",
+            apiToken: "<TOKEN>",
             projectSlug: "test-project",
             proxyMode: true,
           },
@@ -78,7 +78,7 @@ describe("createFSAdapter adapter routing", () => {
           type: "veryfront-api",
           veryfront: {
             apiBaseUrl: "https://api.example.com",
-            apiToken: "test-token",
+            apiToken: "<TOKEN>",
             projectSlug: "test-project",
             contentSource: { type: "release", releaseId: "release-1" },
           },
