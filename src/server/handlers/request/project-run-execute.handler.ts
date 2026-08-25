@@ -59,6 +59,12 @@ const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
 const DEFAULT_LOCAL_AG_UI_PORT = 3001;
 const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
   "Workflow paused but runtime workflow persistence is not configured";
+const KNOWLEDGE_LOG_MAX_EVENTS = 1_000;
+const KNOWLEDGE_LOG_MAX_BYTES = 256 * 1_024;
+const KNOWLEDGE_LOG_TRUNCATED_LINE = JSON.stringify({
+  level: "warn",
+  message: "Knowledge ingest logs were truncated",
+});
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -758,9 +764,41 @@ async function resolveUploadIdsToPaths(
   return paths;
 }
 
-function createKnowledgeEventLogger(lines: string[]): Logger {
+export function createKnowledgeEventLogger(lines: string[]): Logger {
+  const encoder = new TextEncoder();
+  const truncatedLineBytes = encoder.encode(KNOWLEDGE_LOG_TRUNCATED_LINE).byteLength;
+  let eventCount = 0;
+  let byteCount = 0;
+  let truncated = false;
+
+  const truncate = () => {
+    if (truncated) return;
+    truncated = true;
+    const separatorBytes = lines.length > 0 ? 1 : 0;
+    if (byteCount + separatorBytes + truncatedLineBytes <= KNOWLEDGE_LOG_MAX_BYTES) {
+      lines.push(KNOWLEDGE_LOG_TRUNCATED_LINE);
+    }
+  };
   const append = (level: string, message: string, metadata?: Record<string, unknown>) => {
-    lines.push(JSON.stringify({ level, message, ...(metadata ?? {}) }));
+    if (truncated || eventCount >= KNOWLEDGE_LOG_MAX_EVENTS) {
+      truncate();
+      return;
+    }
+
+    const line = JSON.stringify({ level, message, ...(metadata ?? {}) });
+    const lineBytes = encoder.encode(line).byteLength;
+    const separatorBytes = lines.length > 0 ? 1 : 0;
+    if (
+      byteCount + separatorBytes + lineBytes + truncatedLineBytes + 1 >
+        KNOWLEDGE_LOG_MAX_BYTES
+    ) {
+      truncate();
+      return;
+    }
+
+    lines.push(line);
+    eventCount += 1;
+    byteCount += separatorBytes + lineBytes;
   };
   const logger: Logger = {
     info: (message: string, metadata?: Record<string, unknown>) =>
