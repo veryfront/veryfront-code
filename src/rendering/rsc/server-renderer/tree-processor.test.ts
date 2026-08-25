@@ -236,6 +236,35 @@ describe("rendering/rsc/server-renderer/tree-processor", () => {
       );
       assertEquals(html.includes('<design-label for="field">'), false);
     });
+
+    it("preserves htmlFor on customized built-ins with nested client boundaries", async () => {
+      function ClientComp() {
+        return React.createElement("input", { id: "field" });
+      }
+      (ClientComp as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientComp", {
+        id: "ClientComp",
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        "label",
+        { is: "design-label", htmlFor: "field" },
+        React.createElement(ClientComp),
+      );
+
+      const result = await renderTree(element as any, {}, clientManifest, clientRefs);
+      assertEquals(result.type, "html");
+
+      const html = (result as { html: string }).html;
+      assertEquals(html.includes('is="design-label"'), true);
+      assertEquals(html.includes('htmlFor="field"'), true);
+      assertEquals(html.includes('for="field"'), false);
+    });
   });
 
   describe("renderChildren", () => {
