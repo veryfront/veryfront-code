@@ -752,7 +752,9 @@ describe("proxy release asset handler", () => {
   it("bounds callers waiting for cold asset loads", async () => {
     const source = "export const boundedWaiters = true;";
     const gate = Promise.withResolvers<void>();
+    let calls = 0;
     const fetchImpl = makeFetch(async () => {
+      calls++;
       await gate.promise;
       return new Response(source, {
         headers: { "Content-Type": "text/javascript" },
@@ -776,6 +778,14 @@ describe("proxy release asset handler", () => {
         .length,
       256,
     );
+    assertEquals(calls, 1);
+
+    clearReleaseAssetProxyCache();
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 2);
   });
 
   it("allows only GET and HEAD on the immutable asset endpoint", async () => {

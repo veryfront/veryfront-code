@@ -357,12 +357,14 @@ async function waitForInflightAssetLoad(
     timeoutMs,
   );
 
+  coldLoadWaiters++;
   task.consumers++;
   try {
     return await waitForSharedPromise(task.promise, waiterController.signal);
   } finally {
     clearTimeout(timeoutId);
     requestSignal.removeEventListener("abort", abortFromRequest);
+    coldLoadWaiters--;
     task.consumers--;
     if (task.consumers === 0 && !task.settled) {
       if (inflightAssetLoads.get(task.hash) === task) {
@@ -422,7 +424,6 @@ export async function handleReleaseAssetRequest(
 
   if (req.signal.aborted) return clientClosedRequest();
   if (coldLoadWaiters >= MAX_COLD_LOAD_WAITERS) return serviceUnavailable();
-  coldLoadWaiters++;
   try {
     const task = getOrCreateInflightAssetLoad(
       hash,
@@ -439,8 +440,6 @@ export async function handleReleaseAssetRequest(
     if (error instanceof ReleaseAssetTimeoutError) return gatewayTimeout();
     if (error instanceof ReleaseAssetOverloadedError) return serviceUnavailable();
     return badGateway();
-  } finally {
-    coldLoadWaiters--;
   }
 }
 
