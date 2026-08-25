@@ -171,6 +171,18 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("skips a bare react-is node marker re-exported before the component", () => {
+    // react-is exposes `Element` and `Portal` as the same bare symbols that
+    // appear on a node's $$typeof. React rejects them as element types.
+    const Element = Symbol.for("react.element");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Element, Page }, "react-is-reexport.tsx"),
+      Page,
+      "a node marker is not renderable standing alone any more than it is as a tag",
+    );
+  });
+
   it("skips a symbol that is not a React type", () => {
     const marker = Symbol.for("app.marker");
     const Page = () => null;

@@ -41,10 +41,14 @@ function isReactComponentObject(value: unknown): boolean {
  *
  * `Fragment`, `Suspense`, `StrictMode` and `Profiler` are registered symbols
  * rather than functions or tagged objects, and a layout is allowed to be one.
- * A bare symbol is never a rendered node, so no exclusion is needed.
+ *
+ * The node tags are excluded here too. A module can re-export the bare markers
+ * `react-is` exposes as `Element` and `Portal`, and those are the same symbols
+ * that appear on a node's `$$typeof`. React rejects them as element types, so
+ * they are no more renderable standing alone than they are as a tag.
  */
 function isReactBuiltinType(value: unknown): boolean {
-  return isReactTag(value);
+  return isReactTag(value) && !REACT_NODE_TAGS.has(value);
 }
 
 /**
