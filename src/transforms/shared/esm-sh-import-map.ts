@@ -13,12 +13,15 @@
 import { isEsmShUrl, parseEsmShUrl } from "#veryfront/transforms/shared/esm-sh-specifier.ts";
 
 /**
- * esm.sh also serves legacy build-prefixed URLs such as
- * `https://esm.sh/v135/react@18`. `parseEsmShUrl` rejects those, so the prefix
- * is stripped first to keep them resolvable through the import map, which is
- * what the previous hand-rolled parse here did.
+ * esm.sh serves build-channel URLs such as `https://esm.sh/v135/react@18` and
+ * `https://esm.sh/stable/react@18`. `parseEsmShUrl` rejects both, so the
+ * channel segment is removed before parsing, leaving the package coordinate
+ * that follows it.
+ *
+ * The trailing separator is required, so a bare `https://esm.sh/stable` is left
+ * alone for `reservedNamePackage` to read as the package named `stable`.
  */
-const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)v\d+\//;
+const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\//;
 
 /** Removes a trailing separator from the path component, if there is one. */
 function stripTrailingSlash(url: string): string {
@@ -123,10 +126,30 @@ const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json)$/;
  * package root. Such a mapping cannot take a subpath: appending one produces a
  * path below a file, as in `https://cdn.example/pkg.js/sub`.
  */
+/**
+ * Reports whether a package coordinate already names an export, as
+ * `@std/cli@1.0.28/parse-args` and `foo@1/sub` do and `@std/path@1.1.4` does
+ * not. A scoped name spends its first separator on the scope.
+ */
+function coordinateSelectsExport(coordinate: string): boolean {
+  const firstSeparator = coordinate.indexOf("/");
+  if (firstSeparator === -1) return false;
+  if (!coordinate.startsWith("@")) return true;
+
+  return coordinate.indexOf("/", firstSeparator + 1) !== -1;
+}
+
 function isSingleModuleMapping(mapping: string): boolean {
-  // npm: and jsr: name a package, not a module, so both take a subpath.
+  // npm: and jsr: name a package, so they take a subpath unless the mapping
+  // already selected an export, in which case there is nothing to add it to.
+  for (const scheme of ["npm:", "jsr:"]) {
+    if (mapping.startsWith(scheme)) {
+      return coordinateSelectsExport(mapping.slice(scheme.length));
+    }
+  }
+
   const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
-  if (!isRemote) return !mapping.startsWith("npm:") && !mapping.startsWith("jsr:");
+  if (!isRemote) return true;
 
   // An esm.sh target is a package coordinate rather than a path to a file, and
   // npm names such as "chart.js" end in a module suffix, so the suffix test

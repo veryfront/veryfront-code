@@ -355,6 +355,51 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("treats a stable-channel esm.sh target as a package root", () => {
+      const map: ImportMapConfig = { imports: { charts: "https://esm.sh/stable/chart.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/charts@1/auto", map),
+        "https://esm.sh/stable/chart.js/auto",
+        "stable is a build channel like v135, so what follows it is the package",
+      );
+    });
+
+    it("resolves a specifier served from the stable build channel", () => {
+      const map: ImportMapConfig = { imports: { react: "/local/react.js", stable: "/local/s.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/stable/react@18", map),
+        "/local/react.js",
+        "the channel segment is not the package name",
+      );
+    });
+
+    it("still reads a bare stable segment as the package named stable", () => {
+      const map: ImportMapConfig = { imports: { stable: "/local/s.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/stable", map),
+        "/local/s.js",
+        "a channel prefix needs something after it, so a lone segment is a package",
+      );
+    });
+
+    it("keeps a jsr mapping that already selects an export", () => {
+      const map: ImportMapConfig = { imports: { cli: "jsr:@std/cli@1.0.28/parse-args" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/cli@1/other", map),
+        "jsr:@std/cli@1.0.28/parse-args",
+        "a mapping that already names an export has nothing to append a subpath to",
+      );
+    });
+
+    it("keeps an npm mapping that already selects an export", () => {
+      const map: ImportMapConfig = { imports: { foo: "npm:foo@1/sub" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/foo@1/other", map),
+        "npm:foo@1/sub",
+        "the same holds for npm, which previously produced npm:foo@1/sub/other",
+      );
+    });
+
     it("resolves a package whose name is a reserved esm.sh segment", () => {
       const map: ImportMapConfig = { imports: { gh: "/local/gh.js" } };
       assertEquals(
