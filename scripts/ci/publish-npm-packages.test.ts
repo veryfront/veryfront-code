@@ -128,6 +128,52 @@ describe("npm package publishing", () => {
     });
   });
 
+  for (
+    const publishFunction of [
+      "rc_publish_package_dir",
+      "release_publish_package_dir",
+    ]
+  ) {
+    it(`sanitizes failed npm publish output from ${publishFunction}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/package`;
+        await Deno.mkdir(packageDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+        );
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "npm() {",
+            '  if [ "$1" = "view" ]; then return 1; fi',
+            '  printf "%s\\n" "npm error auth Bearer fixture-publish-token" >&2',
+            '  printf "%s\\n" "npm error cache=/tmp/npm-private/publish.log" >&2',
+            "  return 42",
+            "}",
+            `${publishFunction} "$PACKAGE_DIR"`,
+          ].join("\n"),
+          {
+            GITHUB_SHA: "expected-commit",
+            PACKAGE_DIR: packageDir,
+            VERSION: "0.1.1069",
+          },
+        );
+
+        const combinedOutput = decoder.decode(
+          new Uint8Array([...output.stdout, ...output.stderr]),
+        );
+        assertEquals(output.code, 42, combinedOutput);
+        assertStringIncludes(combinedOutput, "Bearer <REDACTED>");
+        assertStringIncludes(combinedOutput, "cache=<path>");
+        assertEquals(combinedOutput.includes("fixture-publish-token"), false);
+        assertEquals(combinedOutput.includes("/tmp/npm-private"), false);
+      });
+    });
+  }
+
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
     it(`blocks ${publishFunction} before publish when canonical artifact verification fails`, async () => {
       await withTempDir(async (stateDir) => {

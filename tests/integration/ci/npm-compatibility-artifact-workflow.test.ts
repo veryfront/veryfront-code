@@ -91,6 +91,11 @@ describe("canonical npm artifact workflow", () => {
       "dist/npm-compatibility",
     );
     assertEquals(
+      asRecord(upload.with, "artifact upload inputs").overwrite,
+      true,
+      "Reruns must replace the SHA-addressed canonical artifact",
+    );
+    assertEquals(
       asRecord(upload.with, "artifact upload inputs")["retention-days"],
       30,
       "The tested npm artifact must remain available through production approval",

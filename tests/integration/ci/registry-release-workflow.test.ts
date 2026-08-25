@@ -46,7 +46,7 @@ async function runReleaseDependencyGate(
     jobs["quality-gate-registry"],
     "registry quality gate job",
   );
-  const step = namedStep(gate, "Require selected release publication");
+  const step = namedStep(gate, "Report selected release result");
   return await new Deno.Command("bash", {
     args: ["-c", String(step.run)],
     env: {
@@ -295,8 +295,8 @@ describe("registry release workflow", () => {
     assertEquals(gate.needs, ["prerelease", "release", "version-check"]);
     assertEquals(
       gateSteps[0]?.name,
-      "Require selected release publication",
-      "selected release dependency must be checked before checkout",
+      "Report selected release result",
+      "selected release result must be reported before checkout",
     );
     assert(
       gateSteps.findIndex((step) => String(step.uses).startsWith("actions/checkout@")) > 0,
@@ -309,7 +309,7 @@ describe("registry release workflow", () => {
     );
     assertEquals(
       asRecord(
-        namedStep(gate, "Require selected release publication").env,
+        namedStep(gate, "Report selected release result").env,
         "selected release dependency environment",
       ),
       {
@@ -358,7 +358,7 @@ describe("registry release workflow", () => {
     );
   });
 
-  it("fails closed for every non-success selected release result", async () => {
+  it("reports every non-success selected release result without skipping registry validation", async () => {
     for (const selectedResult of ["failure", "skipped", "cancelled"]) {
       for (const isStable of [false, true]) {
         const selectedName = isStable ? "STABLE_RELEASE_RESULT" : "PRERELEASE_RESULT";
@@ -371,8 +371,8 @@ describe("registry release workflow", () => {
 
         assertEquals(
           output.code,
-          1,
-          `${selectedName}=${selectedResult} must fail the registry gate`,
+          0,
+          `${selectedName}=${selectedResult} must allow registry validation to continue`,
         );
         assert(
           stderr.includes(`${selectedName} finished with ${selectedResult}`),
@@ -401,7 +401,8 @@ describe("registry release workflow", () => {
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "release dispatch must require both registry validation and the selected release job to succeed",
     );
     assertEquals(
       dispatch["timeout-minutes"],

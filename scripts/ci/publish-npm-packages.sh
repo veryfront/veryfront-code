@@ -156,7 +156,15 @@ rc_publish_package_dir() {
   fi
 
   echo "Publishing ${PACKAGE_NAME}@${VERSION} with rc tag"
-  npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc
+  set +e
+  PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc 2>&1)"
+  PUBLISH_STATUS=$?
+  set -e
+  SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
+  if [ -n "${SANITIZED_PUBLISH_OUTPUT}" ]; then
+    printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
+  fi
+  return "${PUBLISH_STATUS}"
 }
 
 release_publish_package_dir() {
@@ -172,7 +180,10 @@ release_publish_package_dir() {
     PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1)"
     PUBLISH_STATUS=$?
     set -e
-    printf '%s\n' "${PUBLISH_OUTPUT}"
+    SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
+    if [ -n "${SANITIZED_PUBLISH_OUTPUT}" ]; then
+      printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
+    fi
 
     if [ "${PUBLISH_STATUS}" -ne 0 ]; then
       if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \

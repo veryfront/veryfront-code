@@ -743,7 +743,9 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, "app/page.tsx");
-    assertStringIncludes(source, "templates/files/ai-agent");
+    assertStringIncludes(source, "materializeScaffold");
+    assertStringIncludes(source, "template: 'ai-agent'");
+    assertStringIncludes(source, "published ai-agent starter");
     assertStringIncludes(source, "dev --port");
     assertStringIncludes(source, ">Assistant</title>");
   });

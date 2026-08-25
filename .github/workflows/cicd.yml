@@ -204,6 +204,7 @@ jobs:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
           retention-days: 30
+          overwrite: true
 
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -1423,7 +1424,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Require selected release publication
+      - name: Report selected release result
         env:
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
           PRERELEASE_RESULT: ${{ needs.prerelease.result }}
@@ -1436,8 +1437,7 @@ jobs:
           fi
           selected_result="${!selected_result_name}"
           if [ "$selected_result" != "success" ]; then
-            echo "REGISTRY RELEASE FAIL [configuration]: $selected_result_name finished with $selected_result." >&2
-            exit 1
+            echo "::warning::REGISTRY RELEASE NON-SUCCESS [configuration]: $selected_result_name finished with $selected_result. Registry validation will continue, but downstream release dispatch remains blocked." >&2
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1458,7 +1458,7 @@ jobs:
 
   dispatch-release:
     name: dispatch release
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
     needs: [quality-gate-registry, prerelease, release, version-check]
     runs-on: ubuntu-latest
     environment: production
