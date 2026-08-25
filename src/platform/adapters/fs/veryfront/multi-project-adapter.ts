@@ -37,6 +37,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
   readonly symlinkSemantics = "none" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
+  private readonly sourceSnapshotAdapterGenerations = new WeakMap<VeryfrontFSAdapter, number>();
+  private nextSourceSnapshotAdapterGeneration = 1;
 
   constructor(config: FSAdapterConfig) {
     this.manager = new ProxyFSAdapterManager({
@@ -295,9 +297,21 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getSourceSnapshotIdentity(): Promise<string | undefined> {
     const adapter = await this.getAdapter();
-    return typeof adapter.getSourceSnapshotIdentity === "function"
-      ? adapter.getSourceSnapshotIdentity()
-      : undefined;
+    if (typeof adapter.getSourceSnapshotIdentity !== "function") return undefined;
+    const sourceIdentity = await adapter.getSourceSnapshotIdentity();
+    if (sourceIdentity === undefined) return undefined;
+
+    // The manager selects concrete adapters by project, source context, and a
+    // credential-principal digest. The concrete source identity does not name
+    // that selection, so bind it to an opaque instance generation. A different
+    // credential or a recreated adapter must never reuse freshness established
+    // on the previous instance, and no credential material enters the result.
+    let generation = this.sourceSnapshotAdapterGenerations.get(adapter);
+    if (generation === undefined) {
+      generation = this.nextSourceSnapshotAdapterGeneration++;
+      this.sourceSnapshotAdapterGenerations.set(adapter, generation);
+    }
+    return `adapter:${generation}:${sourceIdentity}`;
   }
 
   dispose(): void {

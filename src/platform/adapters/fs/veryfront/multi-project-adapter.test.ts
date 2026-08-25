@@ -448,8 +448,10 @@ describe("MultiProjectFSAdapter", () => {
             "token-a",
             async () => {
               assertEquals(
-                await adapter.getSourceSnapshotIdentity(),
-                "branch:project-a:branch-a",
+                (await adapter.getSourceSnapshotIdentity())?.endsWith(
+                  ":branch:project-a:branch-a",
+                ),
+                true,
                 "the identity must come from the context's selected project adapter",
               );
             },
@@ -469,6 +471,52 @@ describe("MultiProjectFSAdapter", () => {
             "project-id-b",
             { branch: "branch-b" },
           );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("binds snapshot identity to the credential-selected adapter generation", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const tokenAAdapter = {
+          getSourceSnapshotIdentity: () => "branch:shared-project:main",
+        };
+        const tokenBAdapter = {
+          getSourceSnapshotIdentity: () => "branch:shared-project:main",
+        };
+
+        (adapter as any).manager = {
+          getAdapter(_projectSlug: string, token: string) {
+            return Promise.resolve(token === "credential-a" ? tokenAAdapter : tokenBAdapter);
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        const identityFor = (token: string) =>
+          adapter.runWithContext(
+            "shared-project",
+            token,
+            () => adapter.getSourceSnapshotIdentity(),
+            "shared-project-id",
+            { branch: "main" },
+          );
+
+        try {
+          const firstIdentity = await identityFor("credential-a");
+          const reusedIdentity = await identityFor("credential-a");
+          const otherCredentialIdentity = await identityFor("credential-b");
+
+          assertEquals(reusedIdentity, firstIdentity);
+          assertEquals(
+            otherCredentialIdentity === firstIdentity,
+            false,
+            "the same source context on another credential adapter cannot reuse freshness",
+          );
+          assertEquals(firstIdentity?.includes("credential-a"), false);
+          assertEquals(otherCredentialIdentity?.includes("credential-b"), false);
         } finally {
           (adapter as any).manager = originalManager;
         }
