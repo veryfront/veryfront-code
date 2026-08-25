@@ -820,12 +820,16 @@ export async function resolveMergeQueueSource({
   repo,
   pullNumber,
   baseSha,
+  mergeGroupSha,
 }) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Merge queue pull request number is invalid");
   }
   if (!FULL_SHA.test(baseSha)) {
     throw new Error("Merge queue base commit is malformed");
+  }
+  if (!FULL_SHA.test(mergeGroupSha)) {
+    throw new Error("Merge group commit is malformed");
   }
   const response = await github.graphql(
     `query ResolveMergeQueueSource(
@@ -849,15 +853,14 @@ export async function resolveMergeQueueSource({
   );
   const pullRequest = response?.repository?.pullRequest;
   const entry = pullRequest?.mergeQueueEntry;
-  const sourceHeadSha = entry?.headCommit?.oid;
+  const sourceHeadSha = entry?.pullRequest?.headRefOid;
   if (
     pullRequest?.number !== pullNumber ||
     entry?.pullRequest?.number !== pullNumber ||
     entry?.baseCommit?.oid?.toLowerCase() !== baseSha.toLowerCase() ||
+    entry?.headCommit?.oid?.toLowerCase() !== mergeGroupSha.toLowerCase() ||
     !FULL_SHA.test(sourceHeadSha ?? "") ||
-    pullRequest?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase() ||
-    entry?.pullRequest?.headRefOid?.toLowerCase() !==
-      sourceHeadSha.toLowerCase()
+    pullRequest?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase()
   ) {
     throw new Error("Merge queue entry does not match its queued pull request");
   }
@@ -934,6 +937,7 @@ export async function publishMergeGroupReviewStatus({
       repo,
       pullNumber,
       baseSha,
+      mergeGroupSha,
     });
     if (queuedSourceHeadSha !== sourceHeadSha.toLowerCase()) {
       throw new Error("Merge queue source does not match its queued entry");

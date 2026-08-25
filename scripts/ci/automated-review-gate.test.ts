@@ -791,7 +791,7 @@ function githubFixture(options: {
             mergeQueueEntry: options.queueEntry === undefined
               ? {
                 baseCommit: { oid: QUEUE_BASE },
-                headCommit: { oid: HEAD },
+                headCommit: { oid: OTHER_HEAD },
                 pullRequest: { number: 1, headRefOid: HEAD },
               }
               : options.queueEntry,
@@ -1404,7 +1404,7 @@ describe("merge queue review propagation", () => {
     ) assertEquals(parseMergeQueuePullNumber(ref), undefined);
   });
 
-  it("binds a queue base to GitHub's immutable entry source", async () => {
+  it("binds a queue base and synthetic commit to its immutable source", async () => {
     const fixture = githubFixture();
     assertEquals(
       await resolveMergeQueueSource({
@@ -1413,6 +1413,7 @@ describe("merge queue review propagation", () => {
         repo: "veryfront-code",
         pullNumber: 1,
         baseSha: QUEUE_BASE,
+        mergeGroupSha: OTHER_HEAD,
       }),
       HEAD,
     );
@@ -1422,18 +1423,23 @@ describe("merge queue review propagation", () => {
         null,
         {
           baseCommit: { oid: OTHER_HEAD },
-          headCommit: { oid: HEAD },
-          pullRequest: { number: 1, headRefOid: HEAD },
-        },
-        {
-          baseCommit: { oid: QUEUE_BASE },
           headCommit: { oid: OTHER_HEAD },
           pullRequest: { number: 1, headRefOid: HEAD },
         },
         {
           baseCommit: { oid: QUEUE_BASE },
           headCommit: { oid: HEAD },
+          pullRequest: { number: 1, headRefOid: HEAD },
+        },
+        {
+          baseCommit: { oid: QUEUE_BASE },
+          headCommit: { oid: OTHER_HEAD },
           pullRequest: { number: 2, headRefOid: HEAD },
+        },
+        {
+          baseCommit: { oid: QUEUE_BASE },
+          headCommit: { oid: OTHER_HEAD },
+          pullRequest: { number: 1, headRefOid: QUEUE_BASE },
         },
       ]
     ) {
@@ -1446,6 +1452,7 @@ describe("merge queue review propagation", () => {
             repo: "veryfront-code",
             pullNumber: 1,
             baseSha: QUEUE_BASE,
+            mergeGroupSha: OTHER_HEAD,
           }),
         Error,
         "does not match its queued pull request",
