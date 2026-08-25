@@ -329,6 +329,50 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves single-quoted css export names and escaped quotes", async () => {
+    const ctx = createContext(
+      String
+        .raw`import { 'foo"bar' as doubleQuote, 'foo\'bar' as singleQuote } from "./Button.module.css"; export { doubleQuote, singleQuote };`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.doubleQuote,
+      toScopedCssModuleClass(MODULE_KEY, 'foo"bar'),
+      "a single-quoted export name containing a double quote must keep its local alias",
+    );
+    assertEquals(
+      namespace.singleQuote,
+      toScopedCssModuleClass(MODULE_KEY, "foo'bar"),
+      "an escaped quote in a single-quoted export name must be decoded once",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("serializes decoded unscoped css binding names as valid string literals", async () => {
+    const ctx = createContext(
+      String
+        .raw`import { "line\nbreak" as lineBreak, "slash\\name" as slashName } from "./theme.css"; export { lineBreak, slashName };`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.lineBreak,
+      "line\nbreak",
+      "a decoded newline must remain data rather than becoming generated source syntax",
+    );
+    assertEquals(
+      namespace.slashName,
+      "slash\\name",
+      "a decoded backslash must survive generated module serialization exactly once",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./theme.css"]);
+  });
+
   it("does not treat `from` inside a quoted css export name as the keyword", async () => {
     const ctx = createContext(
       `export { "foo-from" as fooFrom } from "./Button.module.css";`,

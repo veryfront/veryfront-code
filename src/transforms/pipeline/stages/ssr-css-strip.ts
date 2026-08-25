@@ -50,7 +50,7 @@ function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
     if (!part) continue;
 
     const aliasMatch = part.match(
-      /^(?:([_$a-zA-Z][\w$-]*)|("(?:[^"\\]|\\.)*"))\s+as\s+([_$a-zA-Z][\w$]*)$/,
+      /^(?:([_$a-zA-Z][\w$-]*)|("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'))\s+as\s+([_$a-zA-Z][\w$]*)$/,
     );
     if (aliasMatch) {
       const imported = aliasMatch[1] ?? parseQuotedExportName(aliasMatch[2]);
@@ -71,24 +71,24 @@ function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
 function splitNamedImportBindings(namedClause: string): string[] {
   const bindings: string[] = [];
   let start = 0;
-  let quoted = false;
+  let quote: '"' | "'" | undefined;
   let escaped = false;
 
   for (let index = 0; index < namedClause.length; index++) {
     const char = namedClause[index];
-    if (quoted) {
+    if (quote) {
       if (escaped) {
         escaped = false;
       } else if (char === "\\") {
         escaped = true;
-      } else if (char === '"') {
-        quoted = false;
+      } else if (char === quote) {
+        quote = undefined;
       }
       continue;
     }
 
-    if (char === '"') {
-      quoted = true;
+    if (char === '"' || char === "'") {
+      quote = char;
     } else if (char === ",") {
       bindings.push(namedClause.slice(start, index));
       start = index + 1;
@@ -100,13 +100,69 @@ function splitNamedImportBindings(namedClause: string): string[] {
 }
 
 function parseQuotedExportName(token: string | undefined): string | undefined {
-  if (!token) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(token);
-    return typeof parsed === "string" ? parsed : undefined;
-  } catch {
-    return undefined;
+  if (!token || token.length < 2) return undefined;
+  const quote = token[0];
+  if ((quote !== '"' && quote !== "'") || token.at(-1) !== quote) return undefined;
+
+  let decoded = "";
+  for (let index = 1; index < token.length - 1; index++) {
+    const char = token[index];
+    if (char !== "\\") {
+      decoded += char;
+      continue;
+    }
+
+    const escaped = token[++index];
+    if (escaped === undefined || index >= token.length - 1) return undefined;
+    const simpleEscapes: Record<string, string> = {
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v",
+      "0": "\0",
+      "\\": "\\",
+      '"': '"',
+      "'": "'",
+    };
+    if (escaped in simpleEscapes) {
+      decoded += simpleEscapes[escaped];
+      continue;
+    }
+
+    if (escaped === "\n" || escaped === "\u2028" || escaped === "\u2029") continue;
+    if (escaped === "\r") {
+      if (token[index + 1] === "\n") index++;
+      continue;
+    }
+
+    if (escaped === "x") {
+      const hex = token.slice(index + 1, index + 3);
+      if (!/^[\da-fA-F]{2}$/.test(hex)) return undefined;
+      decoded += String.fromCodePoint(Number.parseInt(hex, 16));
+      index += 2;
+      continue;
+    }
+
+    if (escaped === "u") {
+      const braced = token[index + 1] === "{";
+      const end = braced ? token.indexOf("}", index + 2) : index + 5;
+      const hex = braced ? token.slice(index + 2, end) : token.slice(index + 1, end);
+      if (end === -1 || !/^[\da-fA-F]+$/.test(hex) || (!braced && hex.length !== 4)) {
+        return undefined;
+      }
+      const codePoint = Number.parseInt(hex, 16);
+      if (codePoint > 0x10ffff) return undefined;
+      decoded += String.fromCodePoint(codePoint);
+      index = braced ? end : end - 1;
+      continue;
+    }
+
+    decoded += escaped;
   }
+
+  return decoded;
 }
 
 function cssBindingValue(imported: string, cssModuleKey: string | undefined): string {
@@ -114,7 +170,7 @@ function cssBindingValue(imported: string, cssModuleKey: string | undefined): st
     return cssModuleKey ? scopedCssModuleProxyExpression(cssModuleKey) : cssModuleProxyExpression();
   }
   const className = cssModuleKey ? toScopedCssModuleClass(cssModuleKey, imported) : imported;
-  return `"${className}"`;
+  return JSON.stringify(className);
 }
 
 /**
