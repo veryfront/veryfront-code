@@ -25,6 +25,7 @@ import {
 } from "../runtime/pending-approval-metadata.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1101,6 +1102,37 @@ describe("WorkflowClient", () => {
 
     it("should register workflow definition directly", async () => {
       await withNewClient((client) => client.register(testWorkflow.definition));
+    });
+
+    it("registers a captured workflow without mutating its frozen wait config", async () => {
+      const definition = captureWorkflowDefinition(
+        workflow({
+          id: "captured-response-schema-workflow",
+          steps: [
+            waitForApproval("review", {
+              message: "Review the captured workflow",
+              responseSchema: defineSchema((v) => v.object({ approved: v.boolean() }))(),
+            }),
+          ],
+        }).definition,
+      );
+      if (!Array.isArray(definition.steps)) {
+        throw new Error("Expected captured static workflow steps");
+      }
+      const [waitNode] = definition.steps;
+      assertExists(waitNode);
+      assert(Object.isFrozen(waitNode));
+      assert(Object.isFrozen(waitNode.config));
+
+      const capturedConfig = waitNode.config;
+      client.register(definition);
+
+      assertEquals(waitNode.config, capturedConfig);
+      const handle = await client.start(definition.id, {});
+      await handle.settled();
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertExists(getPendingApprovalResponseSchemaId(approval));
     });
   });
 

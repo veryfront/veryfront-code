@@ -174,8 +174,8 @@ export class WorkflowClient {
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-    this.indexWaitNodeConfigs(definition);
-    this.executor.register(definition);
+    const indexedDefinition = this.indexWaitNodeConfigs(definition);
+    this.executor.register(indexedDefinition);
     logger.debug("Registered workflow", { workflowId: definition.id });
   }
 
@@ -198,7 +198,7 @@ export class WorkflowClient {
    * from the definition after a process restart. During execution, the exact
    * runtime config supplies expiry, approvers, and response validation.
    */
-  private indexWaitNodeConfigs(definition: WorkflowDefinition): void {
+  private indexWaitNodeConfigs(definition: WorkflowDefinition): WorkflowDefinition {
     const keyPrefix = `${definition.id}::`;
     for (const key of this.waitNodeConfigs.keys()) {
       if (key.startsWith(keyPrefix)) {
@@ -211,63 +211,98 @@ export class WorkflowClient {
       }
     }
 
-    if (!Array.isArray(definition.steps)) return;
+    if (!Array.isArray(definition.steps)) return definition;
 
-    const visit = (nodes: readonly WorkflowNode[], path: readonly string[]): void => {
-      for (const node of nodes) {
-        const nodePath = [...path, node.id];
-        const config = node.config as {
-          type?: string;
-          nodes?: WorkflowNode[];
-          then?: WorkflowNode[];
-          else?: WorkflowNode[];
-          steps?: WorkflowNode[] | ((...args: never[]) => WorkflowNode[]);
-          workflow?: string | WorkflowDefinition;
-          processor?: WorkflowNode | WorkflowDefinition;
-        };
-        if (config.type === "wait") {
-          const waitConfig = node.config as WaitNodeConfig;
-          let indexedWaitConfig = waitConfig;
-          if (waitConfig.responseSchema) {
+    const workflowId = definition.id;
+    const waitNodeConfigs = this.waitNodeConfigs;
+    const responseSchemas = this.responseSchemas;
+
+    function cloneDefinition(
+      nestedDefinition: WorkflowDefinition,
+      path: readonly string[],
+    ): WorkflowDefinition {
+      return Array.isArray(nestedDefinition.steps)
+        ? { ...nestedDefinition, steps: cloneNodes(nestedDefinition.steps, path) }
+        : nestedDefinition;
+    }
+
+    function cloneNodes(
+      nodes: readonly WorkflowNode[],
+      path: readonly string[],
+    ): WorkflowNode[] {
+      return nodes.map((node) => cloneNode(node, [...path, node.id]));
+    }
+
+    function cloneNode(node: WorkflowNode, nodePath: readonly string[]): WorkflowNode {
+      const config = node.config;
+      switch (config.type) {
+        case "wait": {
+          let indexedWaitConfig = config;
+          if (config.responseSchema) {
             const responseSchemaId = JSON.stringify(nodePath);
-            this.responseSchemas.set(
-              `${definition.id}::${responseSchemaId}`,
-              waitConfig.responseSchema,
-            );
-            indexedWaitConfig = withWaitResponseSchemaId(waitConfig, responseSchemaId);
-            node.config = indexedWaitConfig;
+            responseSchemas.set(`${workflowId}::${responseSchemaId}`, config.responseSchema);
+            indexedWaitConfig = withWaitResponseSchemaId(config, responseSchemaId);
           }
-          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, indexedWaitConfig);
+          waitNodeConfigs.set(`${workflowId}::${node.id}`, indexedWaitConfig);
+          return { ...node, config: indexedWaitConfig };
         }
-        if (Array.isArray(config.nodes)) visit(config.nodes, [...nodePath, "nodes"]);
-        if (Array.isArray(config.then)) visit(config.then, [...nodePath, "then"]);
-        if (Array.isArray(config.else)) visit(config.else, [...nodePath, "else"]);
-        if (Array.isArray(config.steps)) visit(config.steps, [...nodePath, "steps"]);
-        if (config.processor && "steps" in config.processor) {
-          if (Array.isArray(config.processor.steps)) {
-            visit(config.processor.steps, [
+        case "parallel":
+          return {
+            ...node,
+            config: {
+              ...config,
+              nodes: cloneNodes(config.nodes, [...nodePath, "nodes"]),
+            },
+          };
+        case "branch":
+          return {
+            ...node,
+            config: {
+              ...config,
+              then: cloneNodes(config.then, [...nodePath, "then"]),
+              ...(config.else === undefined
+                ? {}
+                : { else: cloneNodes(config.else, [...nodePath, "else"]) }),
+            },
+          };
+        case "loop":
+          return Array.isArray(config.steps)
+            ? {
+              ...node,
+              config: {
+                ...config,
+                steps: cloneNodes(config.steps, [...nodePath, "steps"]),
+              },
+            }
+            : { ...node };
+        case "map": {
+          const processor = "steps" in config.processor
+            ? cloneDefinition(config.processor, [
               ...nodePath,
               "processor",
               config.processor.id,
-            ]);
-          }
-        } else if (config.processor) {
-          visit([config.processor], [...nodePath, "processor"]);
+            ])
+            : cloneNode(config.processor, [...nodePath, "processor", config.processor.id]);
+          return { ...node, config: { ...config, processor } };
         }
-        if (
-          typeof config.workflow === "object" &&
-          Array.isArray(config.workflow.steps)
-        ) {
-          visit(config.workflow.steps, [
-            ...nodePath,
-            "workflow",
-            config.workflow.id,
-          ]);
-        }
+        case "subWorkflow":
+          return typeof config.workflow === "string" ? { ...node } : {
+            ...node,
+            config: {
+              ...config,
+              workflow: cloneDefinition(config.workflow, [
+                ...nodePath,
+                "workflow",
+                config.workflow.id,
+              ]),
+            },
+          };
+        case "step":
+          return { ...node };
       }
-    };
+    }
 
-    visit(definition.steps, ["steps"]);
+    return { ...definition, steps: cloneNodes(definition.steps, ["steps"]) };
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
