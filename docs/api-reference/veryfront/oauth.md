@@ -50,21 +50,22 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 
 ### Functions
 
-| Name                            | Description                                                                  | Source                                                                                                      |
-| ------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `createOAuthCallbackDispatcher` | Create one callback handler shared by a fixed allowlist of logical services. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L403) |
-| `createOAuthCallbackHandler`    | Create a callback handler for one logical OAuth service.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L363) |
-| `createOAuthDisconnectHandler`  | Handler for create oauth disconnect.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L338)     |
-| `createOAuthInitHandler`        | Handler for create oauth init.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L136)     |
-| `createOAuthStatusHandler`      | Handler for create oauth status.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L271)     |
+| Name                            | Description                                                                                                                              | Source                                                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `createOAuthCallbackDispatcher` | Create one callback handler shared by a fixed allowlist of logical services.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L403) |
+| `createOAuthCallbackHandler`    | Create a callback handler for one logical OAuth service.                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L363) |
+| `createOAuthDisconnectHandler`  | Handler for create oauth disconnect.                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L338)     |
+| `createOAuthInitHandler`        | Handler for create oauth init.                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L136)     |
+| `createOAuthStatusHandler`      | Handler for create oauth status.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L271)     |
+| `isSupersededOAuthGrant`        | Whether a stored OAuth token carries a default broad grant that a current service narrowed. Explicit caller-requested grants stay valid. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/grant-policy.ts#L20)               |
 
 ### Classes
 
 | Name               | Description                                          | Source                                                                                              |
 | ------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `MemoryTokenStore` | In-memory TokenStore keyed by `(serviceId, userId)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L93) |
-| `OAuthProvider`    | Implement oauth provider.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L445)    |
-| `OAuthService`     | Implement oauth service.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L1059)   |
+| `OAuthProvider`    | Implement oauth provider.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L422)    |
+| `OAuthService`     | Implement oauth service.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L1036)   |
 
 ### Types
 
@@ -78,6 +79,7 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 | `OAuthDisconnectHandlerOptions`  |                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L324)    |
 | `OAuthInitHandlerOptions`        | Options accepted by oauth init handler.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L95)     |
 | `OAuthProviderConfig`            | Configuration used by oauth provider.                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L296)     |
+| `OAuthScopeSource`               | Provenance of the scope set recorded for one OAuth authorization.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L16)                     |
 | `OAuthServiceConfig`             | Configuration used by oauth service.                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L298)     |
 | `OAuthState`                     | State for oauth.                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L302)     |
 | `OAuthStatusHandlerOptions`      |                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L253)    |

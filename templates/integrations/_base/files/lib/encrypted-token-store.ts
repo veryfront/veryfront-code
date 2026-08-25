@@ -49,6 +49,7 @@
 
 import type {
   OAuthTokens,
+  OAuthScopeSource,
   OAuthTokenSnapshot,
   RefreshCapableTokenStore,
   StoredOAuthState,
@@ -517,6 +518,7 @@ function requireTokenRow(value: unknown): OAuthTokens {
   const refreshToken = requireOptionalTokenString(value, "refreshToken", MAX_TOKEN_VALUE_LENGTH);
   const tokenType = requireOptionalTokenString(value, "tokenType", MAX_TOKEN_TYPE_LENGTH);
   const scopeValue = ownDataValue(value, "scope");
+  const scopeSource = ownDataValue(value, "scopeSource");
   let scope: string | undefined;
   if (scopeValue !== undefined) {
     if (
@@ -533,6 +535,11 @@ function requireTokenRow(value: unknown): OAuthTokens {
   const idToken = requireOptionalTokenString(value, "idToken", MAX_TOKEN_VALUE_LENGTH);
   const expiresAt = ownDataValue(value, "expiresAt");
   if (
+    scopeSource !== undefined && scopeSource !== "default" && scopeSource !== "explicit"
+  ) {
+    throw new TypeError("OAuth token row scopeSource must be default or explicit");
+  }
+  if (
     expiresAt !== undefined &&
     (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < 0)
   ) {
@@ -544,6 +551,7 @@ function requireTokenRow(value: unknown): OAuthTokens {
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(tokenType === undefined ? {} : { tokenType }),
     ...(scope === undefined ? {} : { scope }),
+    ...(scopeSource === undefined ? {} : { scopeSource: scopeSource as OAuthScopeSource }),
     ...(idToken === undefined ? {} : { idToken }),
   };
 }
@@ -569,6 +577,7 @@ function requireStateRow(value: unknown): StoredOAuthState {
   const scopes = ownDataValue(value, "scopes");
   const createdAt = ownDataValue(value, "createdAt");
   const codeVerifier = ownDataValue(value, "codeVerifier");
+  const scopeSource = ownDataValue(value, "scopeSource");
   const metadata = requireMetadata(ownDataValue(value, "metadata"));
   if (
     typeof userId !== "string" || userId.length === 0 ||
@@ -627,6 +636,11 @@ function requireStateRow(value: unknown): StoredOAuthState {
     throw new TypeError("Stored OAuth state row must contain a createdAt timestamp");
   }
   if (
+    scopeSource !== undefined && scopeSource !== "default" && scopeSource !== "explicit"
+  ) {
+    throw new TypeError("Stored OAuth state row scopeSource must be default or explicit");
+  }
+  if (
     codeVerifier !== undefined &&
     (typeof codeVerifier !== "string" || !PKCE_VERIFIER_PATTERN.test(codeVerifier))
   ) {
@@ -639,6 +653,7 @@ function requireStateRow(value: unknown): StoredOAuthState {
     scopes: scopeSnapshot,
     createdAt,
     ...(codeVerifier === undefined ? {} : { codeVerifier }),
+    ...(scopeSource === undefined ? {} : { scopeSource: scopeSource as OAuthScopeSource }),
     ...(metadata === undefined ? {} : { metadata }),
   };
 }

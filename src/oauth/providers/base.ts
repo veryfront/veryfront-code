@@ -21,6 +21,7 @@ import {
   normalizeOAuthTokenSnapshot,
   normalizeStoredOAuthTokens,
 } from "../token-utils.ts";
+import { isSupersededOAuthGrant } from "../grant-policy.ts";
 import {
   MAX_OAUTH_API_RESPONSE_BYTES,
   MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
@@ -66,30 +67,6 @@ const TOKEN_REFRESH_BUFFER_MS = 300_000;
 const SECONDS_TO_MS = 1_000;
 const DEFAULT_TOKEN_RESPONSE_MAX_BYTES = 64 * 1_024;
 const DEFAULT_API_RESPONSE_MAX_BYTES = 1_048_576;
-const DRIVE_SERVICE_ID = "drive";
-const SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE = "https://www.googleapis.com/auth/drive";
-
-/**
- * Whether a stored Drive token carries the superseded broad full-Drive grant
- * that the narrower `drive.readonly` + `drive.file` defaults replaced. Only
- * that exact scope entry is flagged: explicitly requested scope sets (for
- * example a read-only connection authorized via `createAuthorizationUrl`)
- * and rows without a recorded scope stay untouched. Scope entries are
- * compared whole, so `drive.readonly` and `drive.file` never match on the
- * shared `auth/drive` prefix.
- */
-function isSupersededFullDriveGrant(serviceId: string, tokens: OAuthTokens): boolean {
-  if (
-    serviceId !== DRIVE_SERVICE_ID || tokens.scopeSource === "explicit" ||
-    typeof tokens.scope !== "string"
-  ) return false;
-  const scopes = tokens.scope.split(/\s+/);
-  for (const scope of scopes) {
-    if (scope === SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE) return true;
-  }
-  return false;
-}
-
 function assertBoundedPositiveInteger(value: number, name: string, maximum: number): void {
   if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     throw INVALID_ARGUMENT.create({
@@ -1133,7 +1110,7 @@ export class OAuthService extends OAuthProvider {
 
   /** Whether a stored token is a superseded default Drive grant. */
   isSupersededGrant(tokens: OAuthTokens): boolean {
-    return isSupersededFullDriveGrant(this.serviceId, tokens);
+    return isSupersededOAuthGrant(this.serviceId, tokens);
   }
 
   /**

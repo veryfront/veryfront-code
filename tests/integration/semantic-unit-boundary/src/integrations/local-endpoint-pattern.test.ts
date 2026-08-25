@@ -10,7 +10,7 @@ import {
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
-const SECRET = "LOCAL_ENDPOINT_SECRET_MUST_NOT_LEAK";
+const SECRET = "<TOKEN>";
 const defineProperty = Object.defineProperty;
 const deleteProperty = Reflect.deleteProperty;
 

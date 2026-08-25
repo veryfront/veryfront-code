@@ -1715,6 +1715,36 @@ it("OAuthService.getAccessToken clears legacy full-Drive tokens before use", asy
   assertEquals(await store.getTokens("drive", "alice"), null);
 });
 
+it("OAuthService.getAccessToken clears legacy Outlook group grants before refresh", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("outlook", "alice", {
+    accessToken: "legacy-outlook-token",
+    refreshToken: "legacy-outlook-refresh",
+    scope: "Mail.Read Group.Read.All Group-Conversation.Read.All offline_access",
+    expiresAt: Date.now() - 1,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "outlook", defaultScopes: ["Mail.Read", "offline_access"] },
+    store,
+    (key) => ENV[key],
+  );
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "unexpected" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(fetchCalls, 0);
+    assertEquals(await store.getTokens("outlook", "alice"), null);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
 it("OAuthService preserves an explicitly authorized full-Drive grant", async () => {
   const store = new MemoryTokenStore();
   const service = new OAuthService(

@@ -13,6 +13,7 @@
 
 import {
   MemoryTokenStore,
+  isSupersededOAuthGrant,
   type OAuthTokens,
   type OAuthTokenSnapshot,
   type RefreshCapableTokenStore,
@@ -21,11 +22,24 @@ import {
 
 export type OAuthToken = OAuthTokens;
 
+interface RevisionClearCapableTokenStore extends RefreshCapableTokenStore {
+  compareAndClearTokens(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+  ): Promise<boolean>;
+}
+
 /**
  * Application-facing store used by both Veryfront OAuth handlers and the
  * generated integration clients.
  */
-export interface TokenStore extends RefreshCapableTokenStore {
+export interface TokenStore extends RevisionClearCapableTokenStore {
+  compareAndClearTokens(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+  ): Promise<boolean>;
   getToken(userId: string, serviceId: string): Promise<OAuthToken | null>;
   setToken(userId: string, serviceId: string, token: OAuthToken): Promise<void>;
   revokeToken(userId: string, serviceId: string): Promise<void>;
@@ -37,6 +51,7 @@ const REQUIRED_STORE_METHODS = [
   "getTokenSnapshot",
   "setTokens",
   "compareAndSetTokens",
+  "compareAndClearTokens",
   "withTokenRefreshLock",
   "clearTokens",
   "setState",
@@ -67,7 +82,7 @@ function allowsProcessLocalStorage(): boolean {
 
 function assertRefreshCapableStore(
   store: RefreshCapableTokenStore,
-): asserts store is RefreshCapableTokenStore {
+): asserts store is RevisionClearCapableTokenStore {
   if (!store || typeof store !== "object") {
     throw new TypeError("OAuth token store must be an object");
   }
@@ -112,6 +127,14 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
       return store.compareAndSetTokens(serviceId, userId, expectedRevision, tokens);
     },
 
+    compareAndClearTokens(
+      serviceId: string,
+      userId: string,
+      expectedRevision: string,
+    ): Promise<boolean> {
+      return store.compareAndClearTokens(serviceId, userId, expectedRevision);
+    },
+
     withTokenRefreshLock<T>(
       serviceId: string,
       userId: string,
@@ -145,8 +168,13 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
     },
 
     async isConnected(userId: string, serviceId: string): Promise<boolean> {
-      const token = await store.getTokens(serviceId, userId);
-      return !!token && (token.expiresAt === undefined || token.expiresAt > Date.now());
+      const snapshot = await store.getTokenSnapshot(serviceId, userId);
+      if (!snapshot) return false;
+      if (isSupersededOAuthGrant(serviceId, snapshot.tokens)) {
+        await store.compareAndClearTokens(serviceId, userId, snapshot.revision);
+        return false;
+      }
+      return snapshot.tokens.expiresAt === undefined || snapshot.tokens.expiresAt > Date.now();
     },
   };
 }
@@ -170,6 +198,10 @@ export async function getRefreshableAccessToken(
   if (!initial) return null;
 
   const initialToken = initial.tokens;
+  if (isSupersededOAuthGrant(serviceId, initialToken)) {
+    await store.compareAndClearTokens(serviceId, userId, initial.revision);
+    return null;
+  }
   const now = Date.now();
   if (
     initialToken.expiresAt === undefined ||
@@ -185,6 +217,10 @@ export async function getRefreshableAccessToken(
     if (!current) return null;
 
     const token = current.tokens;
+    if (isSupersededOAuthGrant(serviceId, token)) {
+      await store.compareAndClearTokens(serviceId, userId, current.revision);
+      return null;
+    }
     const lockedNow = Date.now();
     if (
       token.expiresAt === undefined ||
@@ -288,6 +324,9 @@ export const tokenStore: TokenStore = {
       expectedRevision,
       tokens,
     );
+  },
+  compareAndClearTokens(serviceId, userId, expectedRevision) {
+    return getDefaultTokenStore().compareAndClearTokens(serviceId, userId, expectedRevision);
   },
   withTokenRefreshLock(serviceId, userId, operation) {
     return getDefaultTokenStore().withTokenRefreshLock(serviceId, userId, operation);

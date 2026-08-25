@@ -8,6 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
+import { MemoryTokenStore, type OAuthTokens } from "veryfront/oauth";
 
 import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
@@ -683,6 +684,37 @@ describe("templates", () => {
         offenders.join(", ")
       }`,
     );
+  });
+
+  it("generated OAuth token store invalidates superseded broad grants before use", async () => {
+    const { createTokenStore, getRefreshableAccessToken } = await import(
+      "./integrations/_base/files/lib/token-store.ts"
+    );
+    const backend = new MemoryTokenStore();
+    const store = createTokenStore(backend);
+    await backend.setTokens("drive", "alice", {
+      accessToken: "legacy-drive-token",
+      refreshToken: "legacy-drive-refresh",
+      scope: "https://www.googleapis.com/auth/drive",
+      expiresAt: Date.now() + 60_000,
+    });
+    await backend.setTokens("outlook", "alice", {
+      accessToken: "legacy-outlook-token",
+      refreshToken: "legacy-outlook-refresh",
+      scope: "Mail.Read Group.Read.All Group-Conversation.Read.All offline_access",
+      expiresAt: Date.now() - 1,
+    });
+    let refreshCalls = 0;
+    const refresh = (_refreshToken: string): Promise<OAuthTokens> => {
+      refreshCalls++;
+      return Promise.resolve({ accessToken: "unexpected" });
+    };
+
+    assertEquals(await store.isConnected("alice", "drive"), false);
+    assertEquals(await backend.getTokens("drive", "alice"), null);
+    assertEquals(await getRefreshableAccessToken(store, "outlook", "alice", refresh), null);
+    assertEquals(refreshCalls, 0);
+    assertEquals(await backend.getTokens("outlook", "alice"), null);
   });
 
   it("keeps Gmail on the shared refresh-capable token store", async () => {
