@@ -193,13 +193,13 @@ function evidenceFreshness(
   return evidencePosition > requestPosition ? "newer" : "older";
 }
 
-function reviewResetDescription(baseBinding) {
-  return `Review reset for base ${baseBinding}`;
+function reviewResetDescription(pullNumber, baseBinding) {
+  return `PR#${pullNumber} reset base:${baseBinding}`;
 }
 
-function latestReviewResetTime(statuses, baseBinding) {
+function latestReviewResetTime(statuses, pullNumber, baseBinding) {
   let latest;
-  const description = reviewResetDescription(baseBinding);
+  const description = reviewResetDescription(pullNumber, baseBinding);
   for (const status of statuses) {
     if (
       status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
@@ -463,8 +463,12 @@ export async function publishAutomatedReviewStatus({
               ref,
             });
             return response?.data?.sha;
-          } catch {
-            return undefined;
+          } catch (error) {
+            if (
+              typeof error === "object" && error !== null &&
+              error.status === 404
+            ) return undefined;
+            throw error;
           }
         },
         (login) =>
@@ -473,7 +477,7 @@ export async function publishAutomatedReviewStatus({
             login,
             pullAuthor,
           }),
-        latestReviewResetTime(statuses, baseBinding),
+        latestReviewResetTime(statuses, pullNumber, baseBinding),
       );
     } catch (error) {
       review = undefined;
@@ -512,14 +516,14 @@ export async function publishAutomatedReviewStatus({
   // failures stay failures so they are looked at, not waited out.
   const state = failure ? "failure" : review ? "success" : "pending";
   const description = failure
-    ? "Could not determine the automated review status"
+    ? `PR#${pullNumber} review status unavailable`
     : forcePending
-    ? reviewResetDescription(baseBinding)
+    ? reviewResetDescription(pullNumber, baseBinding)
     : review
-    ? `Reviewed base ${baseBinding} by ${review.reviewer}`
+    ? `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`
     : isDraft
-    ? "Draft pull request waits for ready for review"
-    : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
+    ? `PR#${pullNumber} draft waits for review`
+    : `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -545,20 +549,29 @@ export function parseMergeQueuePullNumber(headRef) {
     : undefined;
 }
 
-function trustedReviewGateReviewer(status, baseBinding) {
+function trustedReviewGateReviewer(status, pullNumber, baseBinding) {
   if (
     status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
     status?.state !== "success" ||
     !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
     typeof status?.description !== "string"
   ) return undefined;
-  const prefix = `Reviewed base ${baseBinding} by `;
+  const prefix = `PR#${pullNumber} base:${baseBinding} by:`;
   if (status.description === `${prefix}${CODEX_LOGIN}`) return CODEX_LOGIN;
   if (!status.description.startsWith(prefix)) return undefined;
   const reviewer = status.description.slice(prefix.length);
   return /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(reviewer)
     ? reviewer
     : undefined;
+}
+
+function latestReviewGateStatusForPull(statuses, pullNumber) {
+  const prefix = `PR#${pullNumber} `;
+  return statuses.find((status) =>
+    status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    typeof status?.description === "string" &&
+    status.description.startsWith(prefix)
+  );
 }
 
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
@@ -601,10 +614,17 @@ export async function publishMergeGroupReviewStatus({
       { owner, repo, ref: sourceHeadSha },
       "source review statuses",
     );
-    let currentReviewStatus = statuses.find((status) =>
-      status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
+    let currentReviewStatus = latestReviewGateStatusForPull(
+      statuses,
+      pullNumber,
     );
-    if (!trustedReviewGateReviewer(currentReviewStatus, baseBinding)) {
+    if (
+      !trustedReviewGateReviewer(
+        currentReviewStatus,
+        pullNumber,
+        baseBinding,
+      )
+    ) {
       throw new Error(
         "Pull request head does not have a current trusted review gate",
       );
@@ -633,11 +653,13 @@ export async function publishMergeGroupReviewStatus({
       { owner, repo, ref: sourceHeadSha },
       "latest source review statuses",
     );
-    const latestReviewStatus = latestStatuses.find((status) =>
-      status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT
+    const latestReviewStatus = latestReviewGateStatusForPull(
+      latestStatuses,
+      pullNumber,
     );
     const latestReviewer = trustedReviewGateReviewer(
       latestReviewStatus,
+      pullNumber,
       baseBinding,
     );
     if (!latestReviewer) {

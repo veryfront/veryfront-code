@@ -50,9 +50,9 @@ function automatedReviewStatus(overrides: Record<string, unknown> = {}) {
   return {
     context: "Automated review",
     state: "success",
-    description: `Reviewed base ${
+    description: `PR#1 base:${
       reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-    } by chatgpt-codex-connector[bot]`,
+    } by:chatgpt-codex-connector[bot]`,
     creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
     target_url: "https://example.test/review-proof",
     ...overrides,
@@ -65,7 +65,7 @@ function automatedReviewResetStatus(
 ) {
   return automatedReviewStatus({
     state: "pending",
-    description: `Review reset for base ${
+    description: `PR#1 reset base:${
       reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
     }`,
     created_at: createdAt,
@@ -642,6 +642,7 @@ function githubFixture(options: {
   headResponses?: string[];
   pullResponses?: Record<string, unknown>[];
   commit?: string | undefined;
+  commitError?: Error;
   failAfterFirstPage?: string;
   pullError?: Error;
   permission?: string;
@@ -705,7 +706,10 @@ function githubFixture(options: {
       git: { listMatchingRefs: endpoints.refs },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
-        getCommit: () => Promise.resolve({ data: { sha: options.commit } }),
+        getCommit: () =>
+          options.commitError
+            ? Promise.reject(options.commitError)
+            : Promise.resolve({ data: { sha: options.commit } }),
         getCollaboratorPermissionLevel: () =>
           Promise.resolve({
             data: {
@@ -745,9 +749,9 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.sha, HEAD);
     assertEquals(
       fixture.published[0]?.description,
-      `Reviewed base ${
+      `PR#1 base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } by chatgpt-codex-connector[bot]`,
+      } by:chatgpt-codex-connector[bot]`,
     );
   });
 
@@ -789,8 +793,48 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
     assertEquals(
       fixture.published[0]?.description,
-      `Waiting for an automated review of ${HEAD.slice(0, 12)}`,
+      `PR#1 waits for review ${HEAD.slice(0, 12)}`,
     );
+  });
+
+  it("fails when exact-ref lookup is operationally unavailable", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment()]] },
+      commitError: Object.assign(new Error("commit lookup unavailable"), {
+        status: 503,
+      }),
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "failure");
+    assert(result.failure instanceof Error);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("treats a missing exact ref as absent review evidence", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment()]] },
+      commitError: Object.assign(new Error("commit not found"), {
+        status: 404,
+      }),
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.failure, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
@@ -932,9 +976,7 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
     assertEquals(
       fixture.published[0]?.description,
-      `Review reset for base ${
-        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      }`,
+      `PR#1 reset base:${reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)}`,
     );
   });
 
@@ -1038,6 +1080,52 @@ describe("merge queue review propagation", () => {
     }]);
   });
 
+  it("does not reuse a source review status from another pull request", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[automatedReviewStatus()]] },
+      pullResponses: [
+        associatedPull({ number: 2 }),
+        associatedPull({ number: 2 }),
+      ],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 2,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("selects the latest source status owned by the queued pull request", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[
+          automatedReviewStatus({
+            state: "pending",
+            description: `PR#2 reset base:${
+              reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+            }`,
+          }),
+          automatedReviewStatus(),
+        ]],
+      },
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
   it("fails closed for stale, superseded, spoofed, or missing source proof", async () => {
     const cases = [
       { statuses: [] },
@@ -1055,16 +1143,16 @@ describe("merge queue review propagation", () => {
       },
       {
         statuses: [automatedReviewStatus({
-          description: `Reviewed base ${
+          description: `PR#1 base:${
             reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-          } by coderabbitai[bot]`,
+          } by:coderabbitai[bot]`,
         })],
       },
       {
         statuses: [automatedReviewStatus({
-          description: `Reviewed base ${
+          description: `PR#1 base:${
             reviewBaseBinding(BASE_REPOSITORY_ID, OTHER_BASE_REF)
-          } by chatgpt-codex-connector[bot]`,
+          } by:chatgpt-codex-connector[bot]`,
         })],
       },
     ];
@@ -1171,9 +1259,9 @@ describe("merge queue review propagation", () => {
   });
 
   it("revalidates a human reviewer's trust before queue reuse", async () => {
-    const description = `Reviewed base ${
+    const description = `PR#1 base:${
       reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-    } by trusted-maintainer`;
+    } by:trusted-maintainer`;
     for (
       const candidate of [
         { permission: "read", pullAuthor: "pull-author", state: "failure" },
