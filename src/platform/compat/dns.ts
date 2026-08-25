@@ -257,7 +257,11 @@ async function resolveHostAddressesUncached(
           throw new DnsPermissionError(
             `net access to the DNS resolver is not permitted while resolving "${hostname}"; ` +
               `this usually means --allow-net is narrowed (Deno checks permission against the nameserver, not the queried host)`,
-            { cause: new Error(`${error.name} raised by the DNS resolver (resolver address redacted)`) },
+            {
+              cause: new Error(
+                `${error.name} raised by the DNS resolver (resolver address redacted)`,
+              ),
+            },
           );
         }
         // A host may legitimately have only one address family.
