@@ -308,7 +308,7 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     default: v.unknown().optional(),
     // Restricts string inputs before endpoint interpolation. Authority path
     // params must use this to prevent credentials from reaching untrusted hosts.
-    pattern: v.string().optional(),
+    pattern: v.string().min(1).optional(),
     // Opts this execution default into the model-facing tool input schema.
     // Use only when the value is safe and useful as model guidance.
     exposeDefault: v.boolean().optional(),
@@ -322,6 +322,14 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
     headerName: v.string().optional(),
+  }).superRefine((parameter, context) => {
+    if (parameter.pattern !== undefined && parameter.type !== "string") {
+      context.addIssue({
+        code: "custom",
+        path: ["pattern"],
+        message: "Integration endpoint pattern is supported only for string parameters",
+      });
+    }
   })
 );
 export const IntegrationEndpointParamSchema = lazySchema(getIntegrationEndpointParamSchema);

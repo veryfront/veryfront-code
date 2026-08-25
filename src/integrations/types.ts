@@ -10,6 +10,7 @@ export interface IntegrationEndpointParam {
   description: string;
   required?: boolean;
   default?: unknown;
+  /** Full-match regular expression applied to string input before endpoint interpolation. */
   pattern?: string;
   /** Expose this safe execution default in the model-facing tool input schema. */
   exposeDefault?: boolean;

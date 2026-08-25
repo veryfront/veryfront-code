@@ -39,12 +39,16 @@ const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectValues = Object.values;
+const RegExpConstructor = RegExp;
+const regExpTest = RegExp.prototype.test;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
+const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 const URLConstructor = URL;
 const urlHash = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
@@ -69,11 +73,17 @@ export interface LocalIntegrationToolSourceOptions {
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
+interface PatternHostBinding {
+  readonly token: string;
+  readonly parameterName: string;
+}
+
 interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: LocalCatalogConnector;
   readonly endpoint: IntegrationEndpoint;
   readonly endpointOrigin?: string;
+  readonly patternedHost?: PatternHostBinding;
   readonly tool: IntegrationToolMeta & { id: string };
   readonly definition: ToolDefinition;
 }
@@ -298,6 +308,71 @@ function assertHttpsCatalogUrl(value: string, label: string): string {
   return urlValue(urlOrigin, parsed);
 }
 
+function compileCatalogPattern(pattern: string, label: string): RegExp {
+  try {
+    return new RegExpConstructor(`^(?:${pattern})$`, "u");
+  } catch {
+    configurationError(`${label} must use a valid full-match pattern`);
+  }
+}
+
+function patternHostBinding(
+  endpoint: IntegrationEndpoint,
+  toolId: string,
+): PatternHostBinding | undefined {
+  const schemePrefix = "https://";
+  if (!stringBoolean(stringStartsWith, endpoint.url, schemePrefix)) return undefined;
+
+  let authorityEnd = endpoint.url.length;
+  for (const separator of ["/", "?", "#"]) {
+    const candidate = apply(stringIndexOf, endpoint.url, [
+      separator,
+      schemePrefix.length,
+    ]) as number;
+    if (candidate !== -1 && candidate < authorityEnd) authorityEnd = candidate;
+  }
+  const tokenStart = apply(stringIndexOf, endpoint.url, [
+    "{",
+    schemePrefix.length,
+  ]) as number;
+  if (tokenStart === -1 || tokenStart >= authorityEnd) return undefined;
+  const tokenEnd = apply(stringIndexOf, endpoint.url, ["}", tokenStart + 1]) as number;
+  if (tokenEnd === -1 || tokenEnd >= authorityEnd) {
+    configurationError(`Local integration tool "${toolId}" has an invalid host placeholder`);
+  }
+  const nextToken = apply(stringIndexOf, endpoint.url, ["{", tokenEnd + 1]) as number;
+  if (nextToken !== -1 && nextToken < authorityEnd) {
+    configurationError(`Local integration tool "${toolId}" has multiple host placeholders`);
+  }
+
+  const parameterName = apply(stringSlice, endpoint.url, [tokenStart + 1, tokenEnd]) as string;
+  const parameter = endpoint.params?.[parameterName];
+  if (
+    !parameter || parameter.in !== "path" || parameter.type !== "string" ||
+    typeof parameter.pattern !== "string" || parameter.pattern.length === 0
+  ) {
+    configurationError(
+      `Local integration tool "${toolId}" endpoint must be a fixed HTTPS URL ` +
+        "or restrict its host with a required string pattern",
+    );
+  }
+  const matcher = compileCatalogPattern(
+    parameter.pattern,
+    `Local integration tool "${toolId}" host`,
+  );
+  if (
+    parameter.default !== undefined &&
+    (typeof parameter.default !== "string" ||
+      !apply(regExpTest, matcher, [parameter.default]))
+  ) {
+    configurationError(`Local integration tool "${toolId}" has an invalid default host`);
+  }
+  return freeze({
+    token: `{${parameterName}}`,
+    parameterName,
+  });
+}
+
 function assertSupportedAuth(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
@@ -345,6 +420,7 @@ function assertSupportedEndpoint(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
   toolId: string,
+  patternedHost: PatternHostBinding | undefined,
 ): string | undefined {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
@@ -368,6 +444,8 @@ function assertSupportedEndpoint(
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
     return undefined;
+  } else if (patternedHost) {
+    return undefined;
   } else {
     return assertHttpsCatalogUrl(
       endpoint.url,
@@ -382,6 +460,7 @@ function inputPropertySchema(
     description: string;
     default?: unknown;
     exposeDefault?: boolean;
+    pattern?: string;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -396,6 +475,13 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
+  if (field.pattern !== undefined) {
+    if (field.type !== "string" || field.pattern.length === 0) {
+      configurationError("Local integration patterns require a non-empty string input");
+    }
+    compileCatalogPattern(field.pattern, "Local integration input");
+    schema.pattern = field.pattern;
+  }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
   }
@@ -466,10 +552,12 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
+  const patternedHost = patternHostBinding(tool.endpoint, canonicalToolId);
   const endpointOrigin = assertSupportedEndpoint(
     connector,
     tool.endpoint,
     canonicalToolId,
+    patternedHost,
   );
   assertSupportedAuth(connector, tool.endpoint);
   const authPlan = createLocalCredentialAuthPlan(connector);
@@ -478,6 +566,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     connector,
     endpoint: tool.endpoint,
     endpointOrigin,
+    patternedHost,
     tool,
     definition: toolDefinition(
       tool,
@@ -535,14 +624,28 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      let endpoint = tool.endpoint;
+      let allowedOrigin = tool.endpointOrigin;
+      if (tool.patternedHost) {
+        const host = validated.args[tool.patternedHost.parameterName];
+        if (typeof host !== "string") {
+          configurationError(`Local integration tool "${toolName}" has no allowed host`);
+        }
+        endpoint = freeze({
+          ...endpoint,
+          url: apply(stringReplace, endpoint.url, [tool.patternedHost.token, host]) as string,
+        });
+        allowedOrigin = assertHttpsCatalogUrl(
+          endpoint.url,
+          `Local integration tool "${toolName}" endpoint`,
+        );
+      }
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      let endpoint = tool.endpoint;
-      let allowedOrigin = tool.endpointOrigin;
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");

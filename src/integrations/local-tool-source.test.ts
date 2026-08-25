@@ -603,6 +603,52 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(transportCalls, 0);
   });
 
+  it("pins a patterned tenant host and rejects hostile hosts before credentials", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["sap__list_supplier_invoices"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        transportCalls += 1;
+        assertEquals(request.allowedOrigin, "https://tenant-api.s4hana.cloud.sap");
+        assertEquals(request.url.origin, "https://tenant-api.s4hana.cloud.sap");
+        assertEquals(
+          request.url.pathname,
+          "/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
+        );
+        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
+        return Promise.resolve(Response.json({ value: [] }));
+      },
+    );
+
+    assertEquals(
+      await source.executeTool("sap__list_supplier_invoices", {
+        sapHost: "tenant-api.s4hana.cloud.sap",
+      }),
+      { value: [] },
+    );
+    assertEquals(credentialProviderCalls, 1);
+    assertEquals(transportCalls, 1);
+
+    const error = await assertRejects(
+      () =>
+        source.executeTool("sap__list_supplier_invoices", {
+          sapHost: "tenant-api.s4hana.cloud.sap@attacker.example",
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 1);
+    assertEquals(transportCalls, 1);
+  });
+
   it("rejects a dot-segment path argument before minting credentials", async () => {
     for (const traversal of ["..", ".", ""]) {
       let credentialProviderCalls = 0;

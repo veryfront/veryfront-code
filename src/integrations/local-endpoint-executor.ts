@@ -57,6 +57,8 @@ const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")
 const responseHeaders = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
 const promiseCatch = Promise.prototype.catch;
+const RegExpConstructor = RegExp;
+const regExpTest = RegExp.prototype.test;
 const setTimeoutIntrinsic = setTimeout;
 const StringConstructor = String;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -284,6 +286,21 @@ function scalarString(value: unknown): string {
   requestInvalid("Local integration path, query, and header arguments must be scalar values");
 }
 
+function assertPattern(value: unknown, pattern: string, name: string): void {
+  if (typeof value !== "string") {
+    requestInvalid(`Local integration argument "${name}" must use a string pattern`);
+  }
+  let matcher: RegExp;
+  try {
+    matcher = new RegExpConstructor(`^(?:${pattern})$`, "u");
+  } catch {
+    requestInvalid(`Local integration argument "${name}" has an invalid pattern`);
+  }
+  if (!apply(regExpTest, matcher, [value])) {
+    requestInvalid(`Local integration argument "${name}" does not match its required pattern`);
+  }
+}
+
 /**
  * Encodes a path argument as a single URL path segment.
  *
@@ -396,6 +413,9 @@ function snapshotAndValidateArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
+    if (field.pattern !== undefined) {
+      assertPattern(resolved.value, field.pattern, name);
+    }
     // Path and header arguments are fully validated here, not only where the
     // request is built: `executeTool` mints credentials between this snapshot
     // and `buildRequest`, so a rejection that waits for build time would
