@@ -44,8 +44,12 @@ jobs:
                 workflowPulls.length === 1
               ? workflowPulls[0]
               : undefined;
-            let headSha = context.payload.workflow_run?.head_sha ??
-              context.payload.sha;
+            // pull_request_review workflows use a synthetic merge SHA. For a
+            // workflow_run wakeup, resolve the current source head from the
+            // pull request instead of treating that merge SHA as review proof.
+            let headSha = context.eventName === "workflow_run"
+              ? undefined
+              : context.payload.sha;
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number

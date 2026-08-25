@@ -958,7 +958,7 @@ describe("automated review workflow", () => {
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
         "context.payload.workflow_run?.pull_requests",
-        "context.payload.workflow_run?.head_sha",
+        'context.eventName === "workflow_run"',
         "github.rest.pulls.get",
         "Could not resolve a valid review target commit",
       ]
@@ -966,6 +966,10 @@ describe("automated review workflow", () => {
     assert(
       !targetScript.includes("pull_request?.head.sha"),
       "queued pull request events must resolve the current head before choosing a lock",
+    );
+    assert(
+      !targetScript.includes("workflow_run?.head_sha"),
+      "a review wakeup merge SHA must not be mistaken for the pull request head",
     );
 
     const job = record(jobs.review, "review job");
