@@ -156,6 +156,65 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
         "/local/rq.js",
       );
     });
+
+    it("prefers an exact package+subpath mapping for a scoped package", () => {
+      const map: ImportMapConfig = {
+        imports: {
+          "@scope/pkg": "https://cdn.example/pkg",
+          "@scope/pkg/sub": "/local/sub.js",
+        },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1.0/sub", map),
+        "/local/sub.js",
+        "the package+subpath key must win for scoped packages just as it does for unscoped ones",
+      );
+    });
+
+    it("appends the subpath of a scoped package to a URL mapping", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1.0/sub", map),
+        "https://cdn.example/pkg/sub",
+        "a scoped subpath must reach its own entry point rather than resolving to the package root",
+      );
+    });
+
+    it("appends the subpath of an unversioned scoped package", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg/sub", map),
+        "https://cdn.example/pkg/sub",
+        "the version is optional, so an unversioned scoped specifier keeps its subpath",
+      );
+    });
+
+    it("keeps a deep build-target subpath for a scoped package", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1.0/es2022/pkg.mjs", map),
+        "https://cdn.example/pkg/es2022/pkg.mjs",
+        "esm.sh build-target paths are multi-segment subpaths and must survive intact",
+      );
+    });
+
+    it("returns null when only a scoped package+subpath key is mapped", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg/sub": "/local/sub.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1.0/other", map),
+        null,
+        "an unmapped scoped subpath must not silently fall back to the package root mapping",
+      );
+    });
+
+    it("resolves a scoped package carrying a non-numeric version tag", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@beta/sub", map),
+        "https://cdn.example/pkg/sub",
+        "version tags are not always numeric, so the package name must be split on the version separator",
+      );
+    });
   });
 
   describe("rewrite", () => {

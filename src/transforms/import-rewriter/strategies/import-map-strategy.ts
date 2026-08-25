@@ -7,51 +7,43 @@ import type {
 } from "../types.ts";
 import { isEsmShUrl } from "../url-builder.ts";
 
-function extractEsmShPackage(url: string): string | null {
-  if (!isEsmShUrl(url)) return null;
+/**
+ * Splits an esm.sh path into its package name and subpath.
+ *
+ * esm.sh serves two specifier shapes, `pkg[@version][/subpath]` and
+ * `@scope/pkg[@version][/subpath]`. The version is optional and never contains
+ * a slash, so taking it off first leaves the subpath as the remainder in both
+ * shapes. Parsing the two shapes separately is what previously let them drift:
+ * the scoped branch consumed the version as part of the package name and then
+ * looked for it again, so every scoped subpath was dropped.
+ *
+ * The subpath is multi-segment for esm.sh build targets such as
+ * `@scope/pkg@1.0/es2022/pkg.mjs`, so the whole remainder is kept.
+ */
+const ESM_SH_SPECIFIER = /^(@[^/]+\/[^/@]+|[^/@]+)(?:@[^/]+)?(.*)$/;
 
+function parseEsmShSpecifier(url: string): { pkg: string; subpath: string } | null {
   try {
     const parsed = new URL(url);
     const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
+    const match = pathname.match(ESM_SH_SPECIFIER);
+    if (!match?.[1]) return null;
 
-    if (pathname.startsWith("@")) {
-      const pkg = pathname.split("/").slice(0, 2).join("/");
-      return pkg.replace(/@[\d.]+.*$/, "") || null;
-    }
-
-    const pkg = (pathname.split("@")[0] ?? "").split("/")[0] ?? "";
-    return pkg || null;
+    const remainder = match[2] ?? "";
+    return { pkg: match[1], subpath: remainder.startsWith("/") ? remainder : "" };
   } catch (_) {
     /* expected: URL may be malformed */
     return null;
   }
 }
 
+function extractEsmShPackage(url: string): string | null {
+  if (!isEsmShUrl(url)) return null;
+  return parseEsmShSpecifier(url)?.pkg ?? null;
+}
+
 function extractEsmShSubpath(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
-
-    if (pathname.startsWith("@")) {
-      const parts = pathname.split("/");
-      if (parts.length <= 2) return "";
-
-      const packageParts = parts.slice(0, 2).join("/");
-      const afterPackage = pathname.slice(packageParts.length);
-      const versionMatch = afterPackage.match(/^@[^/]+(.*)$/);
-
-      return versionMatch?.[1] ?? "";
-    }
-
-    const firstSlash = pathname.indexOf("/");
-    if (firstSlash === -1) return "";
-
-    const restPath = pathname.slice(firstSlash);
-    return restPath.startsWith("/") ? restPath : "";
-  } catch (_) {
-    /* expected: URL may be malformed */
-    return "";
-  }
+  return parseEsmShSpecifier(url)?.subpath ?? "";
 }
 
 export function resolveImportWithMap(
