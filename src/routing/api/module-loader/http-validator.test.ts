@@ -1058,10 +1058,6 @@ describe("routing/api/module-loader/http-validator", () => {
         `const Thing = getThing(); const local = new Thing("https://blocked.example/mod.js");`,
         [],
       );
-      await validateHTTPImports(
-        `const RouteWorker = globalThis.Worker; new RouteWorker("./worker.ts");`,
-        [],
-      );
     });
 
     it("should accept a Worker that loads a local module URL", async () => {
@@ -1070,8 +1066,35 @@ describe("routing/api/module-loader/http-validator", () => {
         [],
       );
       await validateHTTPImports(`const w = new Worker("./worker.ts", { type: "module" });`, []);
+    });
+
+    it("should reject relative string Workers reached through constructors a bundle cannot wrap", async () => {
+      for (
+        const construction of [
+          `new globalThis.Worker("./worker.ts")`,
+          `new self.Worker("./worker.ts")`,
+          `new RouteWorker("./worker.ts")`,
+          `new DestructuredWorker("./worker.ts")`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const RouteWorker = globalThis.Worker;` +
+                ` const { Worker: DestructuredWorker } = globalThis;` +
+                ` ${construction};`,
+              [],
+            ),
+          Error,
+          "relative string Worker constructor cannot be preserved while bundling",
+          `${construction} must not bypass the route-relative Worker wrapper`,
+        );
+      }
+
+      // An explicit URL is already absolute at runtime and needs no wrapper.
       await validateHTTPImports(
-        `const { Worker: RouteWorker } = globalThis; new RouteWorker("./worker.ts");`,
+        `const { Worker: RouteWorker } = globalThis;` +
+          ` new RouteWorker(new URL("./worker.ts", import.meta.url));`,
         [],
       );
     });

@@ -3116,7 +3116,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  denoIt("keeps a validated local Worker graph direct despite slash syntax", async () => {
+  denoIt("keeps a validated local Worker URL at its source location", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(
       join(tmpDir, "worker.ts"),
@@ -3249,6 +3249,404 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("keeps local Worker entries resolvable when the route must bundle", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `self.postMessage("worker-ready");`,
+    );
+
+    const modulePath = join(tmpDir, "bundled-worker-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("worker-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(route),
+      "worker-x",
+      "bundling must not leave local Worker specifiers relative to the temporary bundle",
+    );
+  });
+
+  it("rejects relative string Workers reached through constructors the bundle cannot wrap", async () => {
+    for (
+      const construction of [
+        `new globalThis.Worker("./worker.ts", { type: "module" })`,
+        `new self.Worker("./worker.ts", { type: "module" })`,
+        `new routeGlobal.Worker("./worker.ts", { type: "module" })`,
+        `new RouteWorker("./worker.ts", { type: "module" })`,
+      ]
+    ) {
+      const tmpDir = await makeTempDir();
+      await fs.writeTextFile(join(tmpDir, "worker.ts"), `self.postMessage("unreachable");`);
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `const marker = /x/;`,
+          `const routeGlobal = globalThis;`,
+          `const { Worker: RouteWorker } = globalThis;`,
+          `export function GET() {`,
+          `  const worker = ${construction};`,
+          `  worker.terminate();`,
+          `  return new Response("ok-" + marker.source);`,
+          `}`,
+        ].join("\n"),
+      );
+
+      await assertRejects(
+        async () =>
+          await loadHandlerModule({
+            projectDir: tmpDir,
+            modulePath,
+            adapter,
+            config: undefined,
+          }),
+        Error,
+        "relative string Worker constructor cannot be preserved while bundling",
+        `${construction} must fail before the route is evaluated`,
+      );
+    }
+  });
+
+  it("validates bundled helper Worker entries against the route-relative execution base", async () => {
+    for (
+      const { aliasInitializer, workerUrlExpression } of [
+        { aliasInitializer: `globalThis`, workerUrlExpression: `"./worker.ts"` },
+        {
+          aliasInitializer: `globalThis`,
+          workerUrlExpression: `new URL("./worker.ts", import.meta.url)`,
+        },
+        {
+          aliasInitializer: `globalThis.window`,
+          workerUrlExpression: `new routeGlobal.URL("./worker.ts", import.meta.url)`,
+        },
+        {
+          aliasInitializer: `globalThis.self`,
+          workerUrlExpression: `new routeGlobal.URL("./worker.ts", import.meta.url)`,
+        },
+        {
+          aliasInitializer: `self.window`,
+          workerUrlExpression: `new routeGlobal.URL("./worker.ts", import.meta.url)`,
+        },
+        {
+          aliasInitializer: `window.self`,
+          workerUrlExpression: `new routeGlobal.URL("./worker.ts", import.meta.url)`,
+        },
+      ]
+    ) {
+      const tmpDir = await makeTempDir();
+      await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
+      await fs.writeTextFile(
+        join(tmpDir, "helpers", "worker.ts"),
+        `self.postMessage("helper-relative-safe");`,
+      );
+      await fs.writeTextFile(
+        join(tmpDir, "worker.ts"),
+        `import "https://blocked.example.com/worker.js";`,
+      );
+      await fs.writeTextFile(
+        join(tmpDir, "helpers", "start-worker.ts"),
+        [
+          `const routeGlobal = ${aliasInitializer};`,
+          `export function startWorker() {`,
+          `  const worker = new Worker(${workerUrlExpression}, { type: "module" });`,
+          `  worker.terminate();`,
+          `}`,
+        ].join("\n"),
+      );
+
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { startWorker } from "./helpers/start-worker.ts";`,
+          `const marker = /x/;`,
+          `export function GET() {`,
+          `  startWorker();`,
+          `  return new Response("ok-" + marker.source);`,
+          `}`,
+        ].join("\n"),
+      );
+
+      await assertRejects(
+        async () =>
+          await loadHandlerModule({
+            projectDir: tmpDir,
+            modulePath,
+            adapter,
+            config: undefined,
+          }),
+        Error,
+        "Remote import blocked",
+        `Worker ${workerUrlExpression} via ${aliasInitializer} in a bundled helper must be validated against the route execution base`,
+      );
+    }
+  });
+
+  it("runs bundled helper Worker entries against the route-relative execution base", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
+    await fs.writeTextFile(
+      join(tmpDir, "helpers", "worker.ts"),
+      `import "https://blocked.example.com/worker.js";`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `self.postMessage("route-relative-safe");`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "helpers", "start-worker.ts"),
+      [
+        `export async function workerValue() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  try {`,
+        `    return await new Promise<string>((resolve, reject) => {`,
+        `      worker.onmessage = (event) => resolve(String(event.data));`,
+        `      worker.onerror = (event) => reject(new Error(event.message));`,
+        `    });`,
+        `  } finally { worker.terminate(); }`,
+        `}`,
+      ].join("\n"),
+    );
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { workerValue } from "./helpers/start-worker.ts";`,
+        `const marker = /x/;`,
+        `export const GET = async () => new Response(await workerValue() + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(route),
+      "route-relative-safex",
+      "bundled helper Worker specifiers must execute relative to the route, not the helper module",
+    );
+  });
+
+  it("rejects bundled Worker entries whose local import graph reaches a blocked remote", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "./worker-helper.ts"; self.postMessage("unreachable");`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker-helper.ts"),
+      `import "https://blocked.example.com/worker-helper.js";`,
+    );
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      async () =>
+        await loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Remote import blocked",
+      "a bundled Worker entry must validate local imports loaded by the worker module",
+    );
+  });
+
+  it("rejects bundled Worker imports mapped to a blocked remote", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      `{ "imports": { "worker-lib": "https://blocked.example.com/worker-lib.js" } }\n`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "worker-lib"; self.postMessage("unreachable");`,
+    );
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      async () =>
+        await loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Remote import blocked",
+      "a Worker import-map alias must be checked against the remote allow-list",
+    );
+  });
+
+  it("validates local import-map descendants in bundled Worker graphs", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      `{ "imports": { "worker-helper": "./worker-helper.ts" } }\n`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "worker-helper"; self.postMessage("unreachable");`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker-helper.ts"),
+      `import "https://blocked.example.com/worker-helper.js";`,
+    );
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      async () =>
+        await loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Remote import blocked",
+      "a local Worker alias must be traversed before the Worker is allowed to start",
+    );
+  });
+
+  it("rejects bare imports in bundled Worker graphs when the import map is undecidable", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      `{ "extends": "./base.json", "imports": { "worker-helper": "./worker-helper.ts" } }\n`,
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "worker-helper"; self.postMessage("unreachable");`,
+    );
+    await fs.writeTextFile(join(tmpDir, "worker-helper.ts"), `export {};`);
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      async () =>
+        await loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Worker import cannot be validated",
+      "an undecidable import map must not let a Worker resolve an unchecked bare import",
+    );
+  });
+
+  it("rejects bundled Worker entries whose nested Worker reaches a blocked remote", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "nested"), { recursive: true });
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      [
+        `const nested = new Worker("./nested/worker.ts", { type: "module" });`,
+        `nested.terminate();`,
+        `self.postMessage("unreachable");`,
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "nested", "worker.ts"),
+      `import "https://blocked.example.com/nested-worker.js";`,
+    );
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      async () =>
+        await loadHandlerModule({
+          projectDir: tmpDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        }),
+      Error,
+      "Remote import blocked",
+      "nested local Worker entries must be validated relative to the Worker module that starts them",
+    );
+  });
+
   it("preserves module URL suffixes while resolving bundled relative imports", async () => {
     for (const suffix of ["?version=1", "#named"]) {
       const tmpDir = await makeTempDir();
@@ -3273,6 +3671,34 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         await getText(route),
         "helpedx",
         `the filesystem path must exclude ${suffix} while esbuild retains it as a module suffix`,
+      );
+    }
+  });
+
+  it("preserves query and hash suffixes after splitting an encoded module path", async () => {
+    for (const suffix of ["?version=1", "#named"]) {
+      const tmpDir = await makeTempDir();
+      await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const help = "helped";`);
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { help } from "./%68elper.ts${suffix}";`,
+          `const marker = /x/;`,
+          `export const GET = () => new Response(help + marker.source);`,
+        ].join("\n"),
+      );
+
+      const route = await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+      assertEquals(
+        await getText(route),
+        "helpedx",
+        `the raw ${suffix} suffix must survive after the encoded path segment is decoded`,
       );
     }
   });

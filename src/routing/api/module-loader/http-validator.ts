@@ -1007,7 +1007,11 @@ const IMPORT_META_URL_BASE = /^import\s*\.\s*meta\s*\.\s*url\s*[,)]/;
 type WorkerUrlClassification =
   | { kind: "remote" | "dynamic" }
   | { kind: "file"; specifier: null }
-  | { kind: "local"; specifier: string | null };
+  | {
+    kind: "local";
+    specifier: string | null;
+    requiresUnqualifiedWorkerShim?: boolean;
+  };
 
 const REMOTE_WORKER: WorkerUrlClassification = { kind: "remote" };
 const DYNAMIC_WORKER: WorkerUrlClassification = { kind: "dynamic" };
@@ -1136,15 +1140,33 @@ async function workerUrlClassifications(
  */
 async function findModuleWorkerViolation(
   source: string,
-): Promise<"remote" | "dynamic" | null> {
-  for (const classification of await workerUrlClassifications(source)) {
-    if (classification.kind === "file") return "remote";
-    if (classification.kind !== "local") return classification.kind;
-    // A local worker without a specifier names an entry no graph walk can
-    // vet, so it is as opaque as a non-literal URL.
-    if (classification.specifier === null) return "dynamic";
+): Promise<WorkerViolation | null> {
+  return firstWorkerViolation(await workerUrlClassifications(source));
+}
+
+function firstWorkerViolation(
+  workers: readonly WorkerUrlClassification[],
+): WorkerViolation | null {
+  for (const worker of workers) {
+    if (worker.kind === "file" || worker.kind === "remote") return "remote";
+    if (worker.kind === "dynamic") return "dynamic";
+    // A local worker without a specifier names an entry no graph walk can vet.
+    if (worker.specifier === null) return "dynamic";
+    if (worker.requiresUnqualifiedWorkerShim === true) return "shim";
   }
   return null;
+}
+
+type WorkerViolation = "remote" | "dynamic" | "shim";
+
+function workerViolationDetail(violation: WorkerViolation): string {
+  if (violation === "remote") {
+    return "a Worker() loading a remote, inline, or file URL bypasses the remote import allow-list";
+  }
+  if (violation === "shim") {
+    return "a relative string Worker constructor cannot be preserved while bundling";
+  }
+  return "a Worker() with a non-literal URL cannot be checked against the remote import allow-list";
 }
 
 /**
@@ -1175,13 +1197,10 @@ export async function collectLocalWorkerSpecifiers(
 export async function validateModuleWorkers(source: string): Promise<void> {
   const violation = await findModuleWorkerViolation(source);
   if (violation === null) return;
-  const detail = violation === "remote"
-    ? "a Worker() loading a remote, inline, or file URL bypasses the remote import allow-list"
-    : "a Worker() with a non-literal URL cannot be checked against the remote import allow-list";
   throw toError(
     createError({
       type: "api",
-      message: `[API] handler build failed: ${detail}.`,
+      message: `[API] handler build failed: ${workerViolationDetail(violation)}.`,
     }),
   );
 }
@@ -1204,19 +1223,12 @@ export async function validateHTTPImports(
   validateModuleSpecifierHosts([...specifiers], allowedHosts);
   assertNoRestrictedRuntimeModules(specifiers);
   const workers = analysis?.workers ?? fallbackWorkerUrlClassifications(source);
-  // A local worker without a specifier has an entry no graph walk can vet, so
-  // it is as much a violation as a non-literal worker URL.
-  const workerViolation = workers.find((worker) =>
-    worker.kind !== "local" || worker.specifier === null
-  );
-  if (workerViolation) {
-    const detail = workerViolation.kind === "remote" || workerViolation.kind === "file"
-      ? "a Worker() loading a remote, inline, or file URL bypasses the remote import allow-list"
-      : "a Worker() with a non-literal URL cannot be checked against the remote import allow-list";
+  const workerViolation = firstWorkerViolation(workers);
+  if (workerViolation !== null) {
     throw toError(
       createError({
         type: "api",
-        message: `[API] handler build failed: ${detail}.`,
+        message: `[API] handler build failed: ${workerViolationDetail(workerViolation)}.`,
       }),
     );
   }
