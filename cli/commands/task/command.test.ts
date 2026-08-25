@@ -8,7 +8,7 @@ describe("commands/task/command", () => {
     assertEquals(parseTaskConfig('{"limit":3}'), { limit: 3 });
     assertEquals(parseTaskConfig(undefined), {});
 
-    for (const value of ["null", "[]", '"scalar"', "42", "true"]) {
+    for (const value of ["{", "null", "[]", '"scalar"', "42", "true"]) {
       assertThrows(
         () => parseTaskConfig(value),
         Error,

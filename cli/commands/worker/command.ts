@@ -12,14 +12,8 @@ import type { WorkerArgs } from "./handler.ts";
 
 export interface WorkerOptions extends WorkerArgs {}
 
-export function formatRedisLogTarget(redisUrl: string): string {
-  try {
-    const url = new URL(redisUrl);
-    if (url.protocol !== "redis:" && url.protocol !== "rediss:") return "<configured>";
-    return "<configured>";
-  } catch {
-    return "<configured>";
-  }
+export function formatRedisLogTarget(_redisUrl: string): string {
+  return "<configured>";
 }
 
 export async function workerCommand(options: WorkerOptions): Promise<void> {

@@ -10,6 +10,7 @@ describe("commands/worker/command", () => {
       "<configured>",
     );
     assertEquals(formatRedisLogTarget("redis://localhost:6379"), "<configured>");
+    assertEquals(formatRedisLogTarget("https://example.com/cache"), "<configured>");
     assertEquals(formatRedisLogTarget("redis://example.com/non-database-path"), "<configured>");
     assertEquals(formatRedisLogTarget("not a URL"), "<configured>");
   });
