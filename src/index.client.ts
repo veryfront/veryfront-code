@@ -75,3 +75,4 @@ export {
 export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
 
 export { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
+export type { CsrfMutationHeadersOptions } from "#veryfront/security/csrf/browser-mutation-headers.ts";

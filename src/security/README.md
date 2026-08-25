@@ -73,7 +73,7 @@ import { csrfMutationHeaders } from "veryfront/index.client";
 const response = await fetch("/api/cases", {
   method: "POST",
   headers: csrfMutationHeaders("/api/cases", {
-    "content-type": "application/json",
+    headers: { "content-type": "application/json" },
   }),
   body: JSON.stringify({ title: "Example case" }),
 });
@@ -81,6 +81,17 @@ const response = await fetch("/api/cases", {
 if (!response.ok) {
   throw new Error(`Request failed with status ${response.status}`);
 }
+```
+
+The default names require no options. If `security.csrf` sets custom names,
+pass the same names to the browser helper:
+
+```ts
+const headers = csrfMutationHeaders("/api/cases", {
+  headers: { "content-type": "application/json" },
+  cookieName: "my_csrf",
+  headerName: "x-my-csrf",
+});
 ```
 
 `security.csrf` defaults to on in production and stays unset locally. Local

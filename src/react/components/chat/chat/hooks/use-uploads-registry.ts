@@ -504,10 +504,9 @@ export function useAttachments(
             const response = await fetch(endpoint, {
               method: "POST",
               body: form,
-              // A production build turns `security.csrf` on by default, so this
-              // POST has to echo the `__Host-vf_csrf` cookie back or the server
-              // answers 403 — dev, where CSRF is off, would never show it.
-              headers: csrfMutationHeaders(endpoint, headersRef.current),
+              // Production enables CSRF by default, so this POST has to echo
+              // the `__Host-vf_csrf` cookie or the server answers 403.
+              headers: csrfMutationHeaders(endpoint, { headers: headersRef.current }),
               signal: controller.signal,
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
@@ -555,7 +554,7 @@ export function useAttachments(
           method: "DELETE",
           // Same CSRF requirement as the upload POST above. The token is keyed
           // off the request target, so pass the `?id=` URL actually being hit.
-          headers: csrfMutationHeaders(target, headersRef.current),
+          headers: csrfMutationHeaders(target, { headers: headersRef.current }),
           signal: controller.signal,
         });
         if (!response.ok) {

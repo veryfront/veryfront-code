@@ -294,6 +294,41 @@ describe("security/http/csrf/csrf-handler", () => {
   });
 
   describe("when CSRF is not configured", () => {
+    it("suppresses the warning only for the exact local client-log mutation", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log/subpath", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/_veryfront/log", { method: "PUT" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.length,
+        2,
+        "only the registered POST /_veryfront/log mutation is framework-owned",
+      );
+      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
+      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
+    });
+
     it("warns once per path in local development when production would reject", async () => {
       const localHandler = new CsrfHandler();
       const ctx = createCtx();

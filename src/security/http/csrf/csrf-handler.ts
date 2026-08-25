@@ -44,8 +44,10 @@ import {
 } from "#veryfront/channels/control-plane.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import { INTERNAL_ENDPOINTS } from "#veryfront/utils/constants/server.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { validateCsrf } from "../../csrf/helpers.ts";
+import { DEFAULT_CSRF_HEADER_NAME } from "../../csrf/names.ts";
 import type {
   HandlerContext,
   HandlerMetadata,
@@ -56,7 +58,6 @@ import type {
 type CsrfSetting = NonNullable<HandlerContext["securityConfig"]>["csrf"];
 
 const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-const DEFAULT_CSRF_HEADER_NAME = "x-csrf-token";
 const MAX_WARNED_PATHS = 100;
 const REDACTED_PATH_LABEL = "request [path redacted]";
 
@@ -86,6 +87,10 @@ function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean 
     if (pathname === excludePath || pathname.startsWith(excludePath + "/")) return true;
   }
   return false;
+}
+
+function isLocalFrameworkMutation(method: string, pathname: string): boolean {
+  return method === "POST" && pathname === INTERNAL_ENDPOINTS.CLIENT_LOG;
 }
 
 function csrfValidationOptions(csrfConfig: CsrfSetting) {
@@ -163,7 +168,14 @@ export class CsrfHandler extends BaseHandler {
     if (isSignedChannelDispatch(req)) return this.continue();
 
     if (csrfConfig === undefined) {
-      if (shouldWarnAboutProductionDefault(req, ctx)) {
+      // The framework's local client logger owns this exact mutation and has
+      // its own loopback admission gate. Keep the development diagnostic about
+      // application traffic; CSRF enforcement below still protects this route
+      // whenever a project explicitly enables CSRF.
+      if (
+        !isLocalFrameworkMutation(method, pathname) &&
+        shouldWarnAboutProductionDefault(req, ctx)
+      ) {
         this.warnMissingCsrfHeaderOnce(ctx, method, pathname);
       }
       return this.continue();
