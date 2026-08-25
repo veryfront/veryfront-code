@@ -763,6 +763,42 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("does not delete a cache entry published by a concurrent graph", async () => {
+      const esmCache = new Map<string, string>();
+      const concurrentRootPath = `${tmpDir}/concurrent-root.js`;
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return Promise.resolve(jsonResponse(
+            `import { b } from "https://esm.sh/cycle-b";`,
+          ));
+        }
+        if (url === "https://esm.sh/cycle-b") {
+          return Promise.resolve(jsonResponse(
+            `import { r } from "https://esm.sh/root";\n` +
+              `import { x } from "https://esm.sh/broken";\n` +
+              `export const b = r;`,
+          ));
+        }
+        if (url === "https://esm.sh/broken") {
+          esmCache.set("https://esm.sh/root", concurrentRootPath);
+          return Promise.resolve(new Response("upstream broken", { status: 500 }));
+        }
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+        Error,
+      );
+
+      assertEquals(
+        esmCache.get("https://esm.sh/root"),
+        concurrentRootPath,
+        "a failed graph must not remove another graph's published root artifact",
+      );
+    });
+
     it("still throws when the top-level URL itself fails", async () => {
       const esmCache = new Map<string, string>();
       globalThis.fetch =

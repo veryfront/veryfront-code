@@ -143,14 +143,10 @@ export async function fetchEsmModule(
     }
     return result;
   } catch (error) {
-    // A cycle member points at the predicted path of an ancestor that only
-    // writes that file on its way out. When an ancestor throws instead, the
-    // file never appears, so the member's cached artifact would import a
-    // missing path forever. Dropping the entry makes the next fetch redo the
-    // work; the stale temp file needs no cleanup because a redo rewrites the
-    // same deterministic path, and everything that referenced it was itself
-    // provisional and is dropped here too.
-    for (const key of graph.provisional) esmCache.delete(key);
+    // Failed graph artifacts stay graph-local and are never published. Do not
+    // delete shared-cache entries here: another concurrent graph may have
+    // successfully published the same URL after this graph marked it
+    // provisional.
     throw error;
   }
 }
