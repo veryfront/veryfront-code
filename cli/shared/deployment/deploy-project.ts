@@ -698,12 +698,10 @@ interface EnvironmentReadinessTarget {
   url: string;
   route?: string | null;
   protected: boolean;
-  apiToken: string;
 }
 
 interface EnvironmentReadinessProbe {
   url: string;
-  authenticate: boolean;
   acceptAuthenticationChallenge: boolean;
 }
 
@@ -732,7 +730,6 @@ function buildEnvironmentReadinessProbes(
     return [
       {
         url: targetUrl,
-        authenticate: false,
         acceptAuthenticationChallenge: true,
       },
       {
@@ -740,15 +737,13 @@ function buildEnvironmentReadinessProbes(
           buildCanonicalEnvironmentUrl(target.projectSlug, target.environmentName),
           route,
         ),
-        authenticate: true,
-        acceptAuthenticationChallenge: false,
+        acceptAuthenticationChallenge: true,
       },
     ];
   }
   return [{
     url: target.protected ? secureEnvironmentProbeUrl(targetUrl) : targetUrl,
-    authenticate: target.protected,
-    acceptAuthenticationChallenge: false,
+    acceptAuthenticationChallenge: target.protected,
   }];
 }
 
@@ -796,9 +791,6 @@ export async function waitForEnvironmentReady(
   const deadline = Date.now() + timeoutMs;
   for (const probe of buildEnvironmentReadinessProbes(target)) {
     const headers = new Headers({ "Cache-Control": "no-cache" });
-    if (probe.authenticate) {
-      headers.set("Cookie", `authToken=${target.apiToken}`);
-    }
     let lastResponse = "no response";
 
     for (;;) {
@@ -827,10 +819,9 @@ export async function waitForEnvironmentReady(
 
         if (ready) break;
         if (authenticationChallenge) {
-          const message = probe.authenticate
-            ? `Could not authenticate the protected environment URL ${probe.url}. Run veryfront login and deploy again.`
-            : `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`;
-          throw new Error(message);
+          throw new Error(
+            `Environment URL ${probe.url} redirected to sign-in. Check its protection settings and deploy again.`,
+          );
         }
         if (!isTransientEnvironmentStatus(response.status)) {
           throw new Error(
@@ -1120,7 +1111,6 @@ export function createDeployProject(options: {
           url: environmentUrl,
           route: readinessRoute,
           protected: environment.protected,
-          apiToken: config.apiToken,
         }, {
           pollIntervalMs: polling.environmentPollIntervalMs,
           timeoutMs: polling.environmentTimeoutMs,
