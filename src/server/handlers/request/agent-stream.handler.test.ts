@@ -925,7 +925,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
-  it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
+  it("does not trust forwarded integration metadata as a remote tool allowlist", async () => {
     let capturedAllowedTools: string[] | undefined;
 
     const handler = createTestAgentStreamHandler({
@@ -965,6 +965,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       forwardedProps: {
         runtimeOverrides: {
           allowedTools: ["gmail__list_emails", "gmail__get_email"],
+          serverResolvedIntegrationTools: ["gmail__list_emails"],
+          integrationToolDefinitions: [{
+            name: "gmail__get_email",
+            description: "Get an email",
+            inputSchema: { type: "object" },
+          }],
         },
       },
     });
