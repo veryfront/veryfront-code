@@ -774,7 +774,7 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
     const suffix = actualPredicate.slice(requiredPredicate.length).trimStart();
     if (
       !actualPredicate.startsWith(requiredPredicate) ||
-      (suffix !== "" && !suffix.startsWith("and ")) ||
+      (suffix !== "" && !/^and(?:\s|\()/.test(suffix)) ||
       !suppliedMaskedWhere || /\bor\b/i.test(suppliedMaskedWhere)
     ) {
       throw new TypeError("Salesforce curated tool SOQL must preserve its policy predicates");

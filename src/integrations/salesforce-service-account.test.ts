@@ -817,17 +817,21 @@ describe("Salesforce service-account integration source", () => {
     await source.executeTool("salesforce__search_knowledge_articles", {
       q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus ='Online' ORDER BY LastPublishedDate DESC LIMIT 25",
     });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND(Title = 'FAQ') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
 
     const queries = transport.captures.filter((capture) =>
       capture.request.url.includes("/services/data/")
     ).map((capture) => new URL(capture.request.url).searchParams.get("q"));
-    assertEquals(queries.length, 6);
+    assertEquals(queries.length, 7);
     assertStringIncludes(queries[0] ?? "", "WHERE NOT (Status = 'Closed')");
     assertStringIncludes(queries[1] ?? "", "AND NOT (Title = 'Internal')");
     assertStringIncludes(queries[2] ?? "", "WHERE\n\tPublishStatus = 'Online'");
     assertStringIncludes(queries[3] ?? "", "WHERE (Status = 'New')");
     assertStringIncludes(queries[4] ?? "", "Status IN('New', 'Working')");
     assertStringIncludes(queries[5] ?? "", "PublishStatus ='Online'");
+    assertStringIncludes(queries[6] ?? "", "AND(Title = 'FAQ')");
   });
 
   it("accepts blank curated queries as defaults and reordered equivalent projections", async () => {
