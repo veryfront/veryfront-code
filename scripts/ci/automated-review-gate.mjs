@@ -181,9 +181,9 @@ export async function findAutomatedReview(
     ? markerTime
     : Math.max(markerTime, validReviewNotBefore);
 
+  let codexApproval;
+  let codexReviewFinding = false;
   {
-    let codexApproval;
-    let codexFinding = false;
     const latestHumanReviews = new Map();
     for (const [index, review] of reviews.entries()) {
       const state = typeof review?.state === "string"
@@ -213,7 +213,7 @@ export async function findAutomatedReview(
         exactHead && isPinnedBot(review?.user, CODEX_LOGIN) &&
         (state === "COMMENTED" || state === "CHANGES_REQUESTED")
       ) {
-        codexFinding = true;
+        codexReviewFinding = true;
         continue;
       }
       if (
@@ -242,8 +242,6 @@ export async function findAutomatedReview(
         };
       }
     }
-    if (codexFinding) return undefined;
-    if (codexApproval) return codexApproval;
   }
 
   let codexNoFindings;
@@ -283,7 +281,9 @@ export async function findAutomatedReview(
       }
     }
   }
-  return codexFinding ? undefined : codexNoFindings;
+  return codexReviewFinding || codexFinding
+    ? undefined
+    : codexApproval ?? codexNoFindings;
 }
 
 async function collectAll(github, endpoint, parameters, source) {

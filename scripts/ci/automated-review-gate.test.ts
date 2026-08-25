@@ -211,6 +211,20 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("lets an exact-head Codex finding comment override a Codex approval", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({ state: "APPROVED" })],
+          comments: [codexFindingComment()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
   it("does not let CodeRabbit satisfy the Codex gate", async () => {
     assertEquals(
       await findAutomatedReview({
