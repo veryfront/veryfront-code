@@ -36,6 +36,7 @@
  */
 
 /** Directives this module is permitted to contribute to. */
+import { compareStrings } from "#veryfront/utils/compare.ts";
 export const DERIVABLE_CSP_DIRECTIVES = Object.freeze(
   ["img-src", "media-src", "font-src"] as const,
 );
@@ -160,7 +161,7 @@ export function deriveCspOriginsFromSource(
     )
     .slice(0, MAX_DERIVED_ORIGINS)
     .map(([origin]) => origin)
-    .sort();
+    .sort(compareStrings);
 
   // Every retained origin is granted to all three passive directives rather
   // than routed between them. Splitting by file extension would reintroduce a

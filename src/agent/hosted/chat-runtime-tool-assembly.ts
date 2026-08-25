@@ -43,6 +43,7 @@ import {
 import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -412,7 +413,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     : "eager";
   const authorizedToolNames = [
     ...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames]),
-  ].sort();
+  ].sort(compareStrings);
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
@@ -432,7 +433,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     ? [
       ...bootstrapToolNames,
       ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
-    ].sort()
+    ].sort(compareStrings)
     : availableToolNames;
 
   input.taskContext.availableToolNames = modelVisibleToolNames;

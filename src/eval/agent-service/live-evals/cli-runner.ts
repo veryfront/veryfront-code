@@ -25,6 +25,7 @@ import {
   normalizeEvalString,
   stringifyEvalError,
 } from "../../validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 type EnvRecord = Record<string, string | undefined>;
 
@@ -261,7 +262,7 @@ export async function runLiveEvalCli(input: RunLiveEvalCliInput): Promise<number
   const knownCaseIds = new Set(allCases.map((testCase) => testCase.id));
   const unknownCaseIds = [...resolvedRequestedCaseIds].filter((id) => !knownCaseIds.has(id));
   if (unknownCaseIds.length > 0) {
-    error(`Unknown live eval case ids: ${unknownCaseIds.sort().join(", ")}`);
+    error(`Unknown live eval case ids: ${unknownCaseIds.sort(compareStrings).join(", ")}`);
     return 1;
   }
   const enabledCases = runWriteEvals
@@ -278,7 +279,7 @@ export async function runLiveEvalCli(input: RunLiveEvalCliInput): Promise<number
   if (disabledRequestedCaseIds.length > 0) {
     error(
       `Requested live eval cases are not enabled by the write-eval flags: ${
-        disabledRequestedCaseIds.sort().join(", ")
+        disabledRequestedCaseIds.sort(compareStrings).join(", ")
       }`,
     );
     return 1;

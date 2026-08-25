@@ -8,6 +8,7 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Run state that may change after the immutable run snapshot is created. */
 export type WorkflowRunUpdate = Partial<
@@ -49,7 +50,7 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
   if (immutableFields.length > 0) {
     throw INVALID_ARGUMENT.create({
       detail: `Workflow run fields are immutable after creation: ${
-        immutableFields.sort().join(", ")
+        immutableFields.sort(compareStrings).join(", ")
       }`,
     });
   }

@@ -22,6 +22,7 @@ import {
   MAX_CACHED_HTTP_BUNDLE_BYTES,
   MAX_HTTP_BUNDLE_GRAPH_ENTRIES,
 } from "./http-bundle-file.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 export type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
 export { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 
@@ -62,7 +63,7 @@ const getCache = createDistributedCacheAccessor(
  * Sorts hashes to ensure the same set of bundles always produces the same ID.
  */
 export async function computeManifestId(hashes: string[]): Promise<string> {
-  return computeHash([...new Set(hashes)].sort().join(":"));
+  return computeHash([...new Set(hashes)].sort(compareStrings).join(":"));
 }
 
 /**

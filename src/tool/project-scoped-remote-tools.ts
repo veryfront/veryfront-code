@@ -1,6 +1,7 @@
 import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Options accepted by project scoped remote tool. */
 export type ProjectScopedRemoteToolOptions = {
@@ -445,5 +446,5 @@ export async function listProjectScopedRemoteToolNames(
     }
   }
 
-  return [...remoteToolNames].sort();
+  return [...remoteToolNames].sort(compareStrings);
 }

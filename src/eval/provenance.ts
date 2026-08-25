@@ -2,6 +2,7 @@ import { join } from "#veryfront/compat/path";
 import { computeHash, computeHashBytes } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import type { EvalRunProvenance } from "./types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -196,7 +197,7 @@ async function runGit(
 
 function parseNullSeparated(value: string | undefined): string[] {
   if (!value) return [];
-  return value.split("\0").filter(Boolean).sort();
+  return value.split("\0").filter(Boolean).sort(compareStrings);
 }
 
 async function hashUntrackedFiles(

@@ -9,6 +9,7 @@ import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { isEvalDefinition } from "./factory.ts";
 import type { EvalDefinition } from "./types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const EVAL_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 const EVAL_IGNORE_PATTERNS = [
@@ -212,7 +213,7 @@ export async function discoverEvals(
       uniqueEvals.push(matches[0]!);
       continue;
     }
-    const paths = matches.map((item) => item.filePath).sort();
+    const paths = matches.map((item) => item.filePath).sort(compareStrings);
     for (const filePath of paths) {
       errors.push({
         filePath,

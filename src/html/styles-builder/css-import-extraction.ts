@@ -20,6 +20,7 @@
  */
 
 import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Module extensions whose sources can carry CSS imports. */
 export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
@@ -133,5 +134,5 @@ export function collectCssImportPaths(
     }
   }
 
-  return [...cssImports].sort();
+  return [...cssImports].sort(compareStrings);
 }
