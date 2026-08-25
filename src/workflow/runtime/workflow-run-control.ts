@@ -81,6 +81,7 @@ export interface WorkflowRunControlExecuteInput {
     nodeId: string,
     waitConfig?: WaitNodeConfig,
   ): void | Promise<void>;
+  onWaitingBatchComplete?(run: WorkflowRun): void | Promise<void>;
 }
 
 export interface WorkflowRunControlExecuteOutcome {
@@ -805,8 +806,14 @@ export async function executeWorkflowRunControl(
         };
       }
       for (const waiting of waitingNodes) {
+        // A composite can rediscover a sibling that remained parked while a
+        // different wait in the same child graph was resolved. Its durable
+        // record is still live, so announcing it again would create a second
+        // approval or event wait for the same node.
+        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
         await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
       }
+      await input.onWaitingBatchComplete?.(pausedRun);
       return { status: "waiting", run: pausedRun };
     }
 
@@ -864,6 +871,7 @@ export async function executeWorkflowRunControl(
       // wakeable instead of being failed while merely parked.
       if (pausedRun.nodeStates[stalledWaitNode]?.status === "running") {
         await input.onWaiting?.(pausedRun, stalledWaitNode, undefined);
+        await input.onWaitingBatchComplete?.(pausedRun);
         const latestRun = await backend.getRun(runId);
         if (
           latestRun && (

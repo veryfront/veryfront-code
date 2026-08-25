@@ -103,6 +103,10 @@ export interface WorkflowExecutorConfig {
     nodeId: string,
     waitConfig?: WaitNodeConfig,
   ) => void | Promise<void>;
+  /** Callback after every wait in one settled DAG batch has been persisted. */
+  onWaitingBatchComplete?: (run: WorkflowRun) => void | Promise<void>;
+  /** Notify the owning wait manager after cancellation resolves a durable wait. */
+  onEventWaitResolved?: (runId: string, waitId: string) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -540,6 +544,8 @@ export class WorkflowExecutor {
         },
         onWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
+        onWaitingBatchComplete: (waitingRun) =>
+          this.config.onWaitingBatchComplete?.(waitingRun),
       });
     }, {
       "workflow.id": run.workflowId,
@@ -809,8 +815,8 @@ export class WorkflowExecutor {
   /**
    * Resolve the event waits of a run that was just cancelled.
    *
-   * A cancelled run will never consume an event, so a wait left pending —
-   * above all one without a deadline — would report the terminal run as
+   * A cancelled run will never consume an event, so a wait left pending,
+   * above all one without a deadline, would report the terminal run as
    * parked forever and be enumerated by every expiration sweep. Cleanup is
    * best-effort: the cancellation itself already committed, and the sweep
    * resolves any record this pass could not.
@@ -820,7 +826,8 @@ export class WorkflowExecutor {
     if (!hasEventWaitSupport(backend)) return;
     try {
       for (const wait of await backend.getPendingEventWaits(runId)) {
-        await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+        const resolved = await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+        if (resolved) await this.config.onEventWaitResolved?.(runId, wait.id);
       }
     } catch (error) {
       logger.warn(`Failed to clear pending event waits for cancelled run ${runId}:`, error);

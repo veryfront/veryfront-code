@@ -1405,6 +1405,7 @@ describe("DAGExecutor", () => {
   describe("nested wait reporting", () => {
     const nestedWait = {
       id: "inner-wait",
+      dependsOn: [],
       config: { type: "wait", waitType: "approval", message: "approve?" } as any,
     };
 
@@ -1432,11 +1433,19 @@ describe("DAGExecutor", () => {
     });
 
     it("reports the inner node when a wait is nested in a parallel", async () => {
+      const secondWait: WorkflowNode = {
+        ...nestedWait,
+        id: "inner-wait-2",
+        config: {
+          ...nestedWait.config,
+          eventName: "second.ready",
+        } as any,
+      };
       const nodes: WorkflowNode[] = [
         {
           id: "group",
           dependsOn: [],
-          config: { type: "parallel", nodes: [nestedWait] } as any,
+          config: { type: "parallel", nodes: [nestedWait, secondWait] } as any,
         },
       ];
 
@@ -1444,6 +1453,10 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "inner-wait");
+      assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), [
+        "inner-wait",
+        "inner-wait-2",
+      ]);
     });
 
     it("reports the inner node when a wait is nested in a sub-workflow", async () => {

@@ -22,6 +22,7 @@ const logger = baseLogger.component("event-wait-manager");
 
 /** Default interval for sweeping event waits whose declared timeout elapsed. */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
+const MIN_EXPIRY_RETRY_DELAY_MS = 1_000;
 const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_WAIT_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
@@ -193,8 +194,17 @@ export class EventWaitManager {
     }
 
     this.scheduleExpiry(wait);
-    await this.drain(run.id);
     return projectEventWait(wait);
+  }
+
+  /** Drain buffered events after a complete waiting batch has been persisted. */
+  async drainPendingEvents(runId: string): Promise<void> {
+    await this.drain(runId);
+  }
+
+  /** Release an in-process deadline after another owner resolves the wait. */
+  clearWaitExpiry(waitId: string): void {
+    this.clearExpiry(waitId);
   }
 
   /**
@@ -292,7 +302,6 @@ export class EventWaitManager {
     };
     if (!hasEventWaitSupport(backend)) return outcome;
 
-    const now = Date.now();
     for (const wait of await backend.getPendingEventWaits(runId)) {
       // A delay is released by its own deadline, never by a published event,
       // so it must not consume anything from the mailbox.
@@ -302,7 +311,7 @@ export class EventWaitManager {
       // by an event published after it: a delayed timer or a restarted process
       // does not extend the timeout. Expire it here, before matching, so the
       // race is decided by the deadline and not by which sweep ran last.
-      if (wait.expiresAt && now > wait.expiresAt.getTime()) {
+      if (wait.expiresAt && Date.now() > wait.expiresAt.getTime()) {
         try {
           await this.expire(wait);
         } catch (error) {
@@ -326,6 +335,15 @@ export class EventWaitManager {
       try {
         reconciled = await this.deliver(wait, event.payload);
       } catch (error) {
+        if (await this.nodeOutcomeCommitted(wait)) {
+          outcome.deliveredEventIds.add(event.id);
+          logger.error(
+            "Event wait node committed but resuming the run failed",
+            { runId, waitId: wait.id, nodeId: wait.nodeId },
+            error,
+          );
+          continue;
+        }
         // The event is out of the mailbox and the wait is marked delivered, but
         // the node never completed. Leaving it there strands the run: nothing
         // pending remains for a later publish to match, and run control reads
@@ -342,6 +360,11 @@ export class EventWaitManager {
       }
 
       if (reconciled.status === "skipped-terminal") {
+        if (reconciled.run?.status === "failed") {
+          outcome.failedEventIds.add(event.id);
+          await this.rollBackDelivery(wait, event);
+          continue;
+        }
         outcome.terminal = true;
         continue;
       }
@@ -387,20 +410,33 @@ export class EventWaitManager {
    * The deadline is only re-armed when the record really came back. A claim
    * that cannot be given back belongs to whoever holds it now.
    *
-   * An already-elapsed deadline is deliberately not re-armed. `scheduleExpiry`
-   * floors its delay at zero, so re-arming one would fire again on the next
-   * tick, and a delay whose delivery keeps failing would spin: each attempt
-   * restores the claim, re-arms at zero, and immediately retries. The periodic
-   * sweep owns that retry instead, which paces it at the sweep interval.
+   * An already-elapsed deadline is left to the periodic sweep when one exists.
+   * Managers with sweeping disabled re-arm it with a bounded minimum delay, so
+   * a failed delay delivery remains live without spinning on every event-loop
+   * tick.
    */
   private async restoreClaimedWait(wait: PersistedPendingEventWait): Promise<boolean> {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) return false;
     const restored = await backend.restorePendingEventWait(wait.runId, wait.id);
-    if (restored && wait.expiresAt && wait.expiresAt.getTime() > Date.now()) {
-      this.scheduleExpiry(wait);
+    if (restored && wait.expiresAt) {
+      const remaining = wait.expiresAt.getTime() - Date.now();
+      if (remaining > 0) {
+        this.scheduleExpiry(wait);
+      } else if ((this.config.expirationCheckInterval ?? 0) <= 0) {
+        this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
+      }
     }
     return restored;
+  }
+
+  private async nodeOutcomeCommitted(wait: PersistedPendingEventWait): Promise<boolean> {
+    try {
+      const run = await this.config.backend.getRun(wait.runId);
+      return run?.nodeStates[wait.nodeId]?.status === "completed";
+    } catch {
+      return false;
+    }
   }
 
   private async deliver(
@@ -434,17 +470,17 @@ export class EventWaitManager {
    * wait out a 60s poll. The sweep remains the recovery path for a wait whose
    * process died with this timer in it.
    */
-  private scheduleExpiry(wait: PersistedPendingEventWait): void {
+  private scheduleExpiry(wait: PersistedPendingEventWait, minimumDelayMs = 0): void {
     if (!wait.expiresAt || this.destroyed) return;
     const timer = setTimeout(() => {
       this.expiryTimers.delete(wait.id);
       this.expire(wait).catch((error) => {
         logger.error("Failed to apply event wait timeout", { waitId: wait.id }, error);
       });
-    }, Math.max(0, wait.expiresAt.getTime() - Date.now()));
+    }, Math.max(minimumDelayMs, wait.expiresAt.getTime() - Date.now()));
     // Unreferenced like the sweep interval: a deadline timer is a convenience
     // for promptness, not what keeps the wait enforceable. A process done with
-    // its work — an isolated per-run executor above all — must be free to exit
+    // its work, an isolated per-run executor above all, must be free to exit
     // during a long delay; the durable record and another process's sweep
     // still enforce the deadline.
     unrefTimer(timer);
@@ -483,6 +519,14 @@ export class EventWaitManager {
       try {
         await this.deliver(wait, undefined);
       } catch (error) {
+        if (await this.nodeOutcomeCommitted(wait)) {
+          logger.error(
+            "Delay node committed but resuming the run failed",
+            { runId: wait.runId, waitId: wait.id, nodeId: wait.nodeId },
+            error,
+          );
+          return;
+        }
         // Same bargain as a failed event delivery: the record says the delay
         // was served but the node never completed, so give the claim back and
         // let the sweep reach this already-elapsed deadline again.
@@ -541,7 +585,6 @@ export class EventWaitManager {
         message: `Wait for event "${wait.eventName}" at node "${wait.nodeId}" timed out`,
       },
       nodeStates: {
-        ...run.nodeStates,
         [wait.nodeId]: {
           ...existingNodeState,
           nodeId: wait.nodeId,
@@ -570,8 +613,8 @@ export class EventWaitManager {
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
     for (const { runId, wait } of await backend.listPendingEventWaits()) {
       // A wait whose run is already terminal can never be delivered or
-      // expired: without a deadline it would stay pending — and enumerated by
-      // every future sweep — forever. Resolve it as cancelled instead.
+      // expired: without a deadline it would stay pending, and enumerated by
+      // every future sweep, forever. Resolve it as cancelled instead.
       let status = runStatuses.get(runId);
       if (status === undefined) {
         try {

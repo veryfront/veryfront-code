@@ -124,4 +124,6 @@ export interface NodeExecutionResult {
   waitingNode?: string;
   /** Exact config of the node that suspended this execution. */
   waitingConfig?: WaitNodeConfig;
+  /** Every nested wait parked by a composite child graph. */
+  waitingNodes?: ReadonlyArray<{ nodeId: string; waitConfig?: WaitNodeConfig }>;
 }

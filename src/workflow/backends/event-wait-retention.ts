@@ -93,7 +93,7 @@ export function takeRetainedRunEvent(
  * The claimed event was the oldest with its name, and waits consume matching
  * events oldest-first, so it goes back at the front: re-appending it at the
  * tail would deliver an event published later ahead of it after a transient
- * failure. No bound is enforced here on purpose — the event already held a
+ * failure. No bound is enforced here on purpose: the event already held a
  * place in this mailbox when it was claimed, and refusing the restore would
  * lose an event that was durably accepted.
  */

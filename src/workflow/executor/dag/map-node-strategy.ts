@@ -136,5 +136,6 @@ export async function executeMapNodeStrategy(
     waiting: result.waiting,
     waitingNode: result.waitingNode,
     waitingConfig: result.waitingConfig,
+    waitingNodes: result.waitingNodes,
   };
 }

@@ -96,6 +96,8 @@ export class WorkflowClient {
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
     const userOnWaiting = config.executor?.onWaiting;
+    const userOnWaitingBatchComplete = config.executor?.onWaitingBatchComplete;
+    const userOnEventWaitResolved = config.executor?.onEventWaitResolved;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
     const userInternalResponseSchemaResolver = config.approval?.internalResponseSchemaResolver;
 
@@ -105,7 +107,13 @@ export class WorkflowClient {
       ...config.executor,
       onWaiting: async (run, nodeId, activeWaitConfig) => {
         const input = run.nodeStates[nodeId]?.input as
-          | { type?: string; message?: string; payload?: unknown }
+          | {
+            type?: string;
+            eventName?: string;
+            timeout?: string | number;
+            message?: string;
+            payload?: unknown;
+          }
           | undefined;
 
         if (!input) {
@@ -115,13 +123,20 @@ export class WorkflowClient {
         }
 
         if (input.type === "event") {
-          // The persisted node state carries only the wait type, never the
-          // event name, so the durable record has to be built from the runtime
-          // config (or the registered definition as a restart fallback). A wait
-          // parked with neither is left alone: there is no name to match a
-          // later event against.
+          // Prefer the exact runtime config, then the registered definition.
+          // The persisted event identity is the restart fallback for dynamic
+          // definitions that cannot be indexed before their input is known.
           const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
-          const eventConfig = activeWaitConfig ?? registeredEventConfig;
+          const persistedEventConfig: WaitNodeConfig | undefined =
+            input.eventName === undefined
+              ? undefined
+              : {
+                type: "wait",
+                waitType: "event",
+                eventName: input.eventName,
+                ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+              };
+          const eventConfig = activeWaitConfig ?? registeredEventConfig ?? persistedEventConfig;
           if (eventConfig?.waitType === "event") {
             try {
               await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
@@ -179,6 +194,14 @@ export class WorkflowClient {
         }
 
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
+      },
+      onWaitingBatchComplete: async (run) => {
+        await this.eventWaitManager.drainPendingEvents(run.id);
+        await userOnWaitingBatchComplete?.(run);
+      },
+      onEventWaitResolved: async (runId, waitId) => {
+        this.eventWaitManager.clearWaitExpiry(waitId);
+        await userOnEventWaitResolved?.(runId, waitId);
       },
     });
 

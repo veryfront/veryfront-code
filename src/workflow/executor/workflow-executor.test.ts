@@ -1233,6 +1233,40 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(cancelledRun.status, "cancelled");
   });
 
+  it("notifies the wait manager when cancellation resolves a timed event wait", async () => {
+    const backend = new MemoryBackend();
+    const resolved: Array<{ runId: string; waitId: string }> = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      onEventWaitResolved: (runId, waitId) => {
+        resolved.push({ runId, waitId });
+      },
+    });
+    const run = {
+      ...createRun("cancel-event-wait"),
+      status: "waiting" as const,
+      nodeStates: {
+        pause: { nodeId: "pause", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["pause"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "wait-cancelled",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "resume.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      expiresAt: new Date(Date.now() + 86_400_000),
+      status: "pending",
+    });
+
+    await executor.cancel(run.id);
+
+    assertEquals(resolved, [{ runId: run.id, waitId: "wait-cancelled" }]);
+  });
+
   it("refuses to cancel a run that already completed", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend });

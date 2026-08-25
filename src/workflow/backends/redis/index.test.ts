@@ -1861,6 +1861,16 @@ describe("RedisBackend", () => {
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
       assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "cjson.decode_array_with_array_mt",
+        "Redis patch merges must preserve nested array identity when the runtime supports it",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "cannot preserve empty arrays",
+        "older Redis cjson runtimes must reject ambiguous empty-array patches instead of corrupting them",
+      );
     });
 
     it("reports an invalid duplicated output through the workflow serializer", async () => {

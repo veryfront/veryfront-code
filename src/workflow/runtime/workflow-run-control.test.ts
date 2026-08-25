@@ -2,7 +2,6 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { WorkflowRunUpdate } from "../backends/types.ts";
 import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -428,7 +427,7 @@ class ConcurrentNodeOutcomeBackend extends MemoryBackend {
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId: string,
-    patch: WorkflowRunUpdate,
+    patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
     if (patch.nodeStates?.first || patch.nodeStates?.second) {
       this.pendingOutcomeUpdates++;

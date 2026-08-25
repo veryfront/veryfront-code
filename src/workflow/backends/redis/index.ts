@@ -144,10 +144,18 @@ return 1`;
  */
 const UPDATE_RUN_SCRIPT = `-- observable-run-update
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
+local preserveArrays = cjson.decode_array_with_array_mt
+if preserveArrays then preserveArrays(true) end
+local function decodePatchJson(value)
+  if not preserveArrays and string.find(value, '%[%s*%]') then
+    error('Redis cjson cannot preserve empty arrays during a run patch')
+  end
+  return cjson.decode(value)
+end
 local function applyPatchField(field, value)
   if field == 'nodeStates' or field == 'context' then
-    local current = cjson.decode(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = cjson.decode(value)
+    local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = decodePatchJson(value)
     for key, changed in pairs(patch) do current[key] = changed end
     redis.call('hset', KEYS[1], field, cjson.encode(current))
   else
@@ -188,10 +196,18 @@ return revision`;
 /** Atomically verify the current status, update fields, and move the status index. */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
+local preserveArrays = cjson.decode_array_with_array_mt
+if preserveArrays then preserveArrays(true) end
+local function decodePatchJson(value)
+  if not preserveArrays and string.find(value, '%[%s*%]') then
+    error('Redis cjson cannot preserve empty arrays during a run patch')
+  end
+  return cjson.decode(value)
+end
 local function applyPatchField(field, value)
   if field == 'nodeStates' or field == 'context' then
-    local current = cjson.decode(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = cjson.decode(value)
+    local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = decodePatchJson(value)
     for key, changed in pairs(patch) do current[key] = changed end
     redis.call('hset', KEYS[1], field, cjson.encode(current))
   else

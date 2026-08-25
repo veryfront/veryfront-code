@@ -392,7 +392,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   countRuns(filter: RunFilter): Promise<number> {
-    // Count in place — no structuredClone per run (unlike listRuns).
+    // Count in place, with no structuredClone per run (unlike listRuns).
     const statuses = filter.status
       ? Array.isArray(filter.status) ? filter.status : [filter.status]
       : null;
@@ -701,14 +701,22 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
-    const mailbox = this.runEvents.get(runId) ?? [];
+    const existingMailbox = this.runEvents.get(runId);
+    if (existingMailbox === undefined) {
+      this.evictOrphanRunEventMailboxes(1);
+      if (this.runEvents.size >= MAX_WORKFLOW_RUN_EVENT_MAILBOXES) {
+        return Promise.reject(ORCHESTRATION_ERROR.create({
+          detail: "Run event mailbox capacity reached",
+        }));
+      }
+    }
+    const mailbox = existingMailbox ?? [];
     try {
       appendRetainedRunEvent(mailbox, event);
     } catch (error) {
       return Promise.reject(error);
     }
     this.runEvents.set(runId, mailbox);
-    this.evictOrphanRunEventMailboxes();
     return Promise.resolve();
   }
 
@@ -716,13 +724,13 @@ export class MemoryBackend implements WorkflowBackend {
    * Drop the oldest mailboxes that no wait can ever claim from again, once the
    * mailbox count is over its bound. Publishing to a run id before the run
    * exists is supported, so a caller publishing to ids that never become runs
-   * would otherwise accumulate mailboxes forever — and a run that reached a
+   * would otherwise accumulate mailboxes forever, and a run that reached a
    * terminal status will never park on anything again, so its buffered events
    * are equally unclaimable. A mailbox whose run is still active is kept: a
    * parked wait may still claim its events.
    */
-  private evictOrphanRunEventMailboxes(): void {
-    let overflow = this.runEvents.size - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
+  private evictOrphanRunEventMailboxes(requiredSlots = 0): void {
+    let overflow = this.runEvents.size + requiredSlots - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
     if (overflow <= 0) return;
     const activeStatuses: WorkflowRun["status"][] = ["pending", "running", "waiting"];
     for (const mailboxRunId of this.runEvents.keys()) {

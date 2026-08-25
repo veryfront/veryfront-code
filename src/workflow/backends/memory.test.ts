@@ -843,6 +843,38 @@ describe("MemoryBackend", () => {
       );
     });
 
+    it("rejects a new orphan mailbox when active runs occupy the global bound", async () => {
+      await backend.appendRunEvent("run-events", {
+        id: "evt-active-0",
+        eventName: "ready",
+        payload: undefined,
+        publishedAt: new Date(),
+      });
+      for (let index = 1; index < MAX_WORKFLOW_RUN_EVENT_MAILBOXES; index++) {
+        const runId = `run-active-${index}`;
+        await backend.createRun(createTestRun(runId, { status: "waiting" }));
+        await backend.appendRunEvent(runId, {
+          id: `evt-active-${index}`,
+          eventName: "ready",
+          payload: undefined,
+          publishedAt: new Date(),
+        });
+      }
+
+      await assertRejects(
+        () =>
+          backend.appendRunEvent("run-not-created", {
+            id: "evt-refused",
+            eventName: "ready",
+            payload: undefined,
+            publishedAt: new Date(),
+          }),
+        Error,
+        "mailbox capacity",
+      );
+      assertEquals(await backend.takeRunEvent("run-not-created", "ready"), null);
+    });
+
     it("clears waits and buffered events when the run is deleted", async () => {
       await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
       await backend.appendRunEvent("run-events", {
