@@ -222,6 +222,51 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("lets a later exact-head no-findings comment supersede a Codex finding", async () => {
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "COMMENTED",
+            body: "P1: An earlier exact-head review reported a false positive.",
+            submitted_at: "2026-08-25T08:00:00Z",
+          })],
+          comments: [codexComment(HEAD.slice(0, 10), {
+            created_at: "2026-08-25T08:00:01Z",
+          })],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+
+    const submittedAt = "2026-08-25T08:00:00Z";
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({
+            id: 100,
+            state: "COMMENTED",
+            body: "P1: An earlier exact-head review reported a false positive.",
+            submitted_at: submittedAt,
+          })],
+          comments: [codexComment(HEAD.slice(0, 10), {
+            id: 101,
+            created_at: submittedAt,
+          })],
+          timeline: [
+            { event: "reviewed", id: 100 },
+            { event: "commented", id: 101 },
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+  });
+
   it("lets an exact-head Codex finding comment supersede an earlier no-findings comment", async () => {
     assertEquals(
       await findAutomatedReview(
@@ -2447,7 +2492,28 @@ describe("automated review workflow", () => {
     };
     assertEquals(record(workflow.permissions, "permissions"), {});
 
-    assertEquals(workflow.concurrency, undefined);
+    const workflowConcurrency = record(
+      workflow.concurrency,
+      "workflow concurrency",
+    );
+    const workflowConcurrencyGroup = String(workflowConcurrency.group);
+    for (
+      const identity of [
+        "github.event_name == 'workflow_run'",
+        "github.event.workflow_run.display_title",
+        "github.event_name == 'issue_comment'",
+        "github.event.issue.pull_request",
+        "github.event.issue.number",
+        "github.run_id",
+      ]
+    ) {
+      assert(
+        workflowConcurrencyGroup.includes(identity),
+        "workflow concurrency must coalesce only replaceable reconciliation events",
+      );
+    }
+    assertEquals(workflowConcurrency["cancel-in-progress"], false);
+    assertEquals("queue" in workflowConcurrency, false);
 
     const triggers = record(workflow.on, "triggers");
     assertEquals(
@@ -2864,6 +2930,11 @@ describe("automated review workflow", () => {
       "automated-review-wakeup-pr-${{ github.event.pull_request.number }}",
     );
     assertEquals(record(workflow.permissions, "wakeup permissions"), {});
+    assertEquals(
+      workflow.concurrency,
+      undefined,
+      "cancelled wakeups are fail-closed signals and must not be coalesced",
+    );
     assertEquals(
       record(
         record(workflow.on, "wakeup triggers").pull_request_review,

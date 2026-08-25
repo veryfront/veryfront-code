@@ -249,6 +249,38 @@ function evidenceFreshness(
   return evidencePosition > boundaryPosition ? "newer" : "older";
 }
 
+function evidenceTime(evidence, timelineEvent) {
+  return Date.parse(
+    timelineEvent === "reviewed"
+      ? evidence?.submitted_at ?? ""
+      : evidence?.created_at ?? "",
+  );
+}
+
+function isEvidenceProvablyLater(candidate, current, timeline) {
+  const candidateTime = evidenceTime(
+    candidate.evidence,
+    candidate.timelineEvent,
+  );
+  const currentTime = evidenceTime(current.evidence, current.timelineEvent);
+  if (!Number.isFinite(candidateTime) || !Number.isFinite(currentTime)) {
+    return false;
+  }
+  if (candidateTime !== currentTime) return candidateTime > currentTime;
+  const candidatePosition = timelinePosition(
+    timeline,
+    candidate.timelineEvent,
+    candidate.evidence?.id,
+  );
+  const currentPosition = timelinePosition(
+    timeline,
+    current.timelineEvent,
+    current.evidence?.id,
+  );
+  return candidatePosition !== undefined && currentPosition !== undefined &&
+    candidatePosition > currentPosition;
+}
+
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
   const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
   return requestKey === undefined
@@ -315,8 +347,8 @@ export async function findAutomatedReview(
     validReviewNotBefore,
     latestBaseRefChange(events),
   );
-  let codexApproval;
-  let codexReviewFinding = false;
+  const codexSuccesses = [];
+  const codexFindings = [];
   {
     const latestHumanReviews = new Map();
     for (const [index, review] of reviews.entries()) {
@@ -336,21 +368,29 @@ export async function findAutomatedReview(
         freshness === "newer" && state === "APPROVED" &&
         isPinnedBot(review?.user, CODEX_LOGIN)
       ) {
-        codexApproval = {
-          reviewer: CODEX_LOGIN,
-          source: "pull-request-review",
-          state,
-          url: typeof review.html_url === "string"
-            ? review.html_url
-            : undefined,
-        };
+        codexSuccesses.push({
+          evidence: review,
+          timelineEvent: "reviewed",
+          proof: {
+            reviewer: CODEX_LOGIN,
+            source: "pull-request-review",
+            state,
+            url: typeof review.html_url === "string"
+              ? review.html_url
+              : undefined,
+          },
+        });
         continue;
       }
       if (
         freshness !== "older" && isPinnedBot(review?.user, CODEX_LOGIN) &&
         (state === "COMMENTED" || state === "CHANGES_REQUESTED")
       ) {
-        codexReviewFinding = true;
+        codexFindings.push({
+          evidence: review,
+          freshness,
+          timelineEvent: "reviewed",
+        });
         continue;
       }
       if (
@@ -381,8 +421,6 @@ export async function findAutomatedReview(
     }
   }
 
-  let codexNoFindings;
-  let codexFinding = false;
   for (const comment of comments) {
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
@@ -413,22 +451,34 @@ export async function findAutomatedReview(
       if (
         freshness === "newer" && comment.body.startsWith(CODEX_NO_FINDINGS)
       ) {
-        codexNoFindings = {
-          reviewer: CODEX_LOGIN,
-          source: "codex-comment",
-          state: "COMMENTED",
-          url: typeof comment.html_url === "string"
-            ? comment.html_url
-            : undefined,
-        };
+        codexSuccesses.push({
+          evidence: comment,
+          timelineEvent: "commented",
+          proof: {
+            reviewer: CODEX_LOGIN,
+            source: "codex-comment",
+            state: "COMMENTED",
+            url: typeof comment.html_url === "string"
+              ? comment.html_url
+              : undefined,
+          },
+        });
       } else {
-        codexFinding = true;
+        codexFindings.push({
+          evidence: comment,
+          freshness,
+          timelineEvent: "commented",
+        });
       }
     }
   }
-  return codexReviewFinding || codexFinding
-    ? undefined
-    : codexApproval ?? codexNoFindings;
+  if (codexFindings.length === 0) return codexSuccesses[0]?.proof;
+  return codexSuccesses.find((success) =>
+    codexFindings.every((finding) =>
+      finding.freshness === "newer" &&
+      isEvidenceProvablyLater(success, finding, timeline)
+    )
+  )?.proof;
 }
 
 async function collectAll(github, endpoint, parameters, source) {

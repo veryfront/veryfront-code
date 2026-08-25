@@ -20,6 +20,19 @@ on:
 
 permissions: {}
 
+# Coalesce replaceable state reconciliations before they allocate a runner.
+# Source updates and merge-group checks keep unique run IDs so none are lost.
+concurrency:
+  group: >-
+    ${{
+      github.event_name == 'workflow_run' &&
+        format('{0}-wakeup-{1}', github.workflow, github.event.workflow_run.display_title) ||
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+        format('{0}-comment-pr-{1}', github.workflow, github.event.issue.number) ||
+      format('{0}-run-{1}', github.workflow, github.run_id)
+    }}
+  cancel-in-progress: false
+
 jobs:
   target:
     name: resolve automated review target
