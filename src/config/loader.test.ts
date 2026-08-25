@@ -759,6 +759,14 @@ export default config as const;
       // Each case below is one runtime's real wording, so a phrasing change in
       // any of them fails here rather than silently reverting the reader to the
       // syntax advice.
+      /**
+       * The `VeryfrontError` a config source fails to load with.
+       *
+       * The source is written to a real temp dir *and* seeded into the mock
+       * adapter, so the failure comes from the runtime's own module resolver
+       * rather than from a stubbed message -- which is what makes each row's
+       * wording a real regression test.
+       */
       async function loadFailure(prefix: string, source: string): Promise<VeryfrontError> {
         const adapter = setup();
         return await withTempDir(async (projectDir) => {
@@ -876,6 +884,12 @@ export default config as const;
       it("classifies dependencies without project-controlled string methods", async () => {
         const receiverValue = String.prototype.valueOf;
         const restores: Array<() => void> = [];
+        /**
+         * Make one `String.prototype` method throw for the config's specifier.
+         *
+         * A config file can install these before the loader runs, so the
+         * classifier must reach its answer through captured intrinsics.
+         */
         const poisonForSpecifier = (
           method: "startsWith" | "slice" | "includes" | "replace" | "trim",
         ) => {

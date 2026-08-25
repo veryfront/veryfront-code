@@ -317,6 +317,15 @@ function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefin
   return lines[0];
 }
 
+/**
+ * The specifier named by a single, complete resolver message.
+ *
+ * Split out from `reportedMissingSpecifier` so the first-line retry can reuse
+ * the same anchored patterns instead of loosening them. Each branch is one
+ * runtime's real wording; the `exports`-shaped branches rebuild the subpath
+ * the importer asked for, because the runtime reports only the package and
+ * the subpath separately.
+ */
 function matchReportedMissingSpecifier(message: string): string | undefined {
   for (
     const prefix of [
