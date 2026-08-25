@@ -176,6 +176,44 @@ describe("conversation run lifecycle read adapter", () => {
   });
 
   it("projects a stored version 1 provider-executed tool result", () => {
+    // Durable writers serialize structured tool output into `content`, so the
+    // stored payload is the writer's JSON text rather than a live object. Take
+    // it from the writer itself so this fixture cannot drift from history.
+    const storedContent = writeDurableEvents(frames([
+      {
+        event: {
+          type: "tool_input_start",
+          toolCallId: "legacy-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "tool_input_ready",
+          toolCallId: "legacy-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://docs.example/page" },
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "legacy-fetch",
+          toolName: "web_fetch",
+          output: { ok: true },
+          isError: false,
+          providerExecuted: true,
+        },
+      },
+    ])).find((event) => event.type === "TOOL_CALL_RESULT")?.content;
+    assertEquals(
+      storedContent,
+      '{"ok":true}',
+      "the durable writer must store structured tool output as JSON text",
+    );
+
     const events = [
       {
         type: "TOOL_CALL_START",
@@ -196,7 +234,7 @@ describe("conversation run lifecycle read adapter", () => {
         type: "TOOL_CALL_RESULT",
         toolCallId: "legacy-fetch",
         toolName: "web_fetch",
-        content: { ok: true },
+        content: storedContent,
         isError: false,
       },
     ];
@@ -225,7 +263,56 @@ describe("conversation run lifecycle read adapter", () => {
         isError: false,
         providerExecuted: true,
       }],
-      "a stored v1 provider-executed result must be replayed exactly once",
+      "a stored v1 provider-executed result must be decoded and replayed exactly once",
+    );
+  });
+
+  it("keeps a non-JSON version 1 provider-executed tool result verbatim", () => {
+    const events = [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "legacy-fetch",
+        toolCallName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: "legacy-fetch",
+        delta: '{"url":"https://docs.example/page"}',
+      },
+      {
+        type: "TOOL_CALL_END",
+        toolCallId: "legacy-fetch",
+      },
+      {
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        content: "Tool output denied",
+        isError: true,
+      },
+    ];
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ).map((frame) => frame.event),
+      [{
+        type: "provider_tool_result",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        output: "Tool output denied",
+        isError: true,
+        providerExecuted: true,
+      }],
+      "a stored v1 plain-text result must survive decoding unchanged",
     );
   });
 

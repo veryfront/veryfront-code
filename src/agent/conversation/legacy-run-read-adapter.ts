@@ -177,7 +177,10 @@ function readVersion1(
             type: "provider_tool_result",
             toolCallId,
             toolName,
-            output: event.content,
+            // Durable writers serialize structured tool output into `content`,
+            // so decode it exactly as the version 2 reader does; otherwise a
+            // stored object replays to the runs UI as its JSON source text.
+            output: parseToolResultContent(event.content),
             isError: event.isError === true,
             providerExecuted: true,
           });
