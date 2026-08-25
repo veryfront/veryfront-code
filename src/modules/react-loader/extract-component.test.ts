@@ -171,6 +171,19 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("skips a bare $$typeof marker re-exported before the component", () => {
+    // react-is re-exports Memo, ForwardRef, Element and friends as the bare
+    // symbols React uses for $$typeof. react-is's own isValidElementType
+    // rejects every one of them standing alone.
+    const Memo = Symbol.for("react.memo");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Memo, Page }, "react-is-memo.tsx"),
+      Page,
+      "a wrapper marker is only meaningful as a tag, never as a type on its own",
+    );
+  });
+
   it("skips a bare react-is node marker re-exported before the component", () => {
     // react-is exposes `Element` and `Portal` as the same bare symbols that
     // appear on a node's $$typeof. React rejects them as element types.

@@ -37,18 +37,33 @@ function isReactComponentObject(value: unknown): boolean {
 }
 
 /**
- * Detects React's symbol-valued built-in types.
+ * The built-in components React exports as bare symbols.
  *
- * `Fragment`, `Suspense`, `StrictMode` and `Profiler` are registered symbols
- * rather than functions or tagged objects, and a layout is allowed to be one.
+ * Verified against `react@19.2.4` by enumerating its symbol-valued exports, and
+ * cross-checked with `react-is`, whose `isValidElementType` accepts
+ * `react.fragment`, `react.suspense`, `react.strict_mode` and `react.profiler`
+ * standing alone and rejects every `$$typeof` marker. `Activity` is included
+ * because React exports it as a component; `react-is` has not caught up, and
+ * React's own export is what the renderer follows.
  *
- * The node tags are excluded here too. A module can re-export the bare markers
- * `react-is` exposes as `Element` and `Portal`, and those are the same symbols
- * that appear on a node's `$$typeof`. React rejects them as element types, so
- * they are no more renderable standing alone than they are as a tag.
+ * This is a whitelist while the object check is an exclusion list, and the
+ * asymmetry is real rather than an oversight. Component *wrappers* are
+ * open-ended, so excluding the rendered-node tags is the claim that stays true
+ * there. Bare symbols are the opposite: only these few are element types, and
+ * every other `react.*` symbol is a marker `react-is` re-exports, which React
+ * rejects if it reaches the renderer.
  */
+const REACT_BUILTIN_TYPES: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.fragment"),
+  Symbol.for("react.suspense"),
+  Symbol.for("react.strict_mode"),
+  Symbol.for("react.profiler"),
+  Symbol.for("react.activity"),
+]);
+
+/** Detects React's symbol-valued built-in components, such as `Fragment`. */
 function isReactBuiltinType(value: unknown): boolean {
-  return isReactTag(value) && !REACT_NODE_TAGS.has(value);
+  return typeof value === "symbol" && REACT_BUILTIN_TYPES.has(value);
 }
 
 /**
