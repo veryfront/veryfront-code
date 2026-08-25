@@ -20,6 +20,16 @@ export function defaultCsrfCookieNameForOrigin(origin: string): string {
   }
 }
 
+/** Resolve the documented default through the browser origin. */
+export function effectiveCsrfCookieNameForOrigin(
+  configuredCookieName: string | undefined,
+  origin: string,
+): string {
+  return configuredCookieName === undefined || configuredCookieName === DEFAULT_CSRF_COOKIE_NAME
+    ? defaultCsrfCookieNameForOrigin(origin)
+    : configuredCookieName;
+}
+
 export interface CsrfNameOptions {
   cookieName?: string;
   headerName?: string;

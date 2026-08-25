@@ -52,7 +52,11 @@ import {
 import { INTERNAL_ENDPOINTS } from "#veryfront/utils/constants/server.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { browserFacingOrigin, validateCsrf } from "../../csrf/helpers.ts";
-import { defaultCsrfCookieNameForOrigin, resolveCsrfNames } from "../../csrf/names.ts";
+import {
+  defaultCsrfCookieNameForOrigin,
+  effectiveCsrfCookieNameForOrigin,
+  resolveCsrfNames,
+} from "../../csrf/names.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import type {
   HandlerContext,
@@ -105,10 +109,9 @@ function isFrameworkLocalControlSurface(method: string, pathname: string): boole
 
 function csrfValidationOptions(csrfConfig: CsrfSetting, req: Request) {
   const configured = typeof csrfConfig === "object" ? csrfConfig : undefined;
+  const origin = browserFacingOrigin(req, isProxyTopologyTrusted());
   return {
-    cookieName: configured?.cookieName ?? defaultCsrfCookieNameForOrigin(
-      browserFacingOrigin(req, isProxyTopologyTrusted()),
-    ),
+    cookieName: effectiveCsrfCookieNameForOrigin(configured?.cookieName, origin),
     headerName: configured?.headerName,
   };
 }

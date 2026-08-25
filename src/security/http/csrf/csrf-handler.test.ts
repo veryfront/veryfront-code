@@ -820,6 +820,21 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
+    it("normalizes an explicitly configured default cookie on plain-HTTP LAN origins", async () => {
+      const ctx = createCtx({ cookieName: "__Host-vf_csrf" });
+      const token = "lan-token";
+      const req = new Request("http://192.168.1.20:3000/submit", {
+        method: "POST",
+        headers: {
+          cookie: `vf_csrf=${token}`,
+          "x-csrf-token": token,
+        },
+      });
+
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
     it("should reject when using default names with custom config", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
       const { token } = generateCsrfToken({ secure: false });
