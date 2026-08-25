@@ -15,8 +15,11 @@ import {
 // would make these assertions wrong wherever those variables are configured.
 const DEFAULT_THRESHOLDS = THRESHOLDS;
 
-function withHeapUsedPercent(heapUsedPercent: number): void {
-  __injectDepsForTests({ getHeapStats: () => ({ heapUsedPercent }) });
+function withHeapUsedPercent(
+  heapUsedPercent: number,
+  thresholds: typeof THRESHOLDS = THRESHOLDS,
+): void {
+  __injectDepsForTests({ getHeapStats: () => ({ heapUsedPercent }), thresholds });
 }
 
 describe("server/shared/renderer/memory/pressure", () => {
@@ -72,30 +75,32 @@ describe("server/shared/renderer/memory/pressure", () => {
   });
 
   describe("getMemoryPressureLevel", () => {
-    it("walks the level ladder at the configured thresholds", () => {
-      withHeapUsedPercent(DEFAULT_THRESHOLDS.WARNING - 0.1);
+    it("walks the level ladder against explicit ordered thresholds", () => {
+      const thresholds = { WARNING: 10, HIGH: 20, CRITICAL: 30 };
+
+      withHeapUsedPercent(thresholds.WARNING - 0.1, thresholds);
       assertEquals(
         getMemoryPressureLevel(),
         "normal",
-        `below WARNING (${DEFAULT_THRESHOLDS.WARNING}) is normal`,
+        "below WARNING is normal",
       );
-      withHeapUsedPercent(DEFAULT_THRESHOLDS.WARNING);
+      withHeapUsedPercent(thresholds.WARNING, thresholds);
       assertEquals(
         getMemoryPressureLevel(),
         "warning",
-        `exactly WARNING (${DEFAULT_THRESHOLDS.WARNING}) is warning`,
+        "exactly WARNING is warning",
       );
-      withHeapUsedPercent(DEFAULT_THRESHOLDS.HIGH);
+      withHeapUsedPercent(thresholds.HIGH, thresholds);
       assertEquals(
         getMemoryPressureLevel(),
         "high",
-        `exactly HIGH (${DEFAULT_THRESHOLDS.HIGH}) is high`,
+        "exactly HIGH is high",
       );
-      withHeapUsedPercent(DEFAULT_THRESHOLDS.CRITICAL);
+      withHeapUsedPercent(thresholds.CRITICAL, thresholds);
       assertEquals(
         getMemoryPressureLevel(),
         "critical",
-        `exactly CRITICAL (${DEFAULT_THRESHOLDS.CRITICAL}) is critical`,
+        "exactly CRITICAL is critical",
       );
     });
 

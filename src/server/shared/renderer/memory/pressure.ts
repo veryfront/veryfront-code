@@ -69,7 +69,10 @@ export function classifyMemoryPressure(
   return "normal";
 }
 
-type PressureDeps = { getHeapStats: () => { heapUsedPercent: number } };
+type PressureDeps = {
+  getHeapStats: () => { heapUsedPercent: number };
+  thresholds?: typeof THRESHOLDS;
+};
 let injectedDeps: PressureDeps | null = null;
 
 /** Test-only seam for substituting heap statistics. */
@@ -79,7 +82,10 @@ export function __injectDepsForTests(deps: PressureDeps | null): void {
 
 function getMemoryPressure(): { level: MemoryPressureLevel; heapUsedPercent: number } {
   const { heapUsedPercent } = (injectedDeps?.getHeapStats ?? getHeapStats)();
-  return { level: classifyMemoryPressure(heapUsedPercent), heapUsedPercent };
+  return {
+    level: classifyMemoryPressure(heapUsedPercent, injectedDeps?.thresholds),
+    heapUsedPercent,
+  };
 }
 
 export function shouldRejectDueToMemory(): boolean {

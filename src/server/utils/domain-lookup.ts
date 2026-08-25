@@ -180,7 +180,7 @@ function fetchDomainLookup(
         });
         injectContext(headers);
 
-        const response = await (injectedFetch ?? fetch)(url, {
+        const response = await fetch(url, {
           headers,
           signal: controller.signal,
         });
@@ -266,16 +266,6 @@ export function clearDomainCache(): void {
  */
 export function __injectCacheForTests(cacheRepo: CacheRepository<string> | null): void {
   injectedCacheRepo = cacheRepo;
-}
-
-let injectedFetch: typeof fetch | null = null;
-
-/**
- * Inject a fetch implementation for testing.
- * Call with null to restore the runtime fetch.
- */
-export function __injectFetchForTests(fetchImpl: typeof fetch | null): void {
-  injectedFetch = fetchImpl;
 }
 
 export function getEnvironmentType(
