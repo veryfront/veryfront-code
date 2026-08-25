@@ -3,14 +3,40 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createSessionCookie } from "./cookies.ts";
 import { createOidcApplicationAuthRuntime } from "./oidc-runtime.ts";
 import type { PublicJwk } from "./jwks-cache.ts";
+
+const TestArrayPrototypeSort = Array.prototype.sort;
+const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestReflectApply = Reflect.apply;
+const TestTextEncoderPrototypeEncode = TextEncoder.prototype.encode;
+const TestUint8ArrayPrototypeSet = Uint8Array.prototype.set;
+const TestTypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 
 const NOW = 1_900_000_000;
 const APP_ORIGIN = "https://app.example.test";
 const ISSUER = "https://issuer.example.test";
 const SESSION_SECRET = "s".repeat(32);
 const CLIENT_SECRET = "client-secret-value";
+
+function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
+  const descriptor = TestReflectApply(
+    TestObjectGetOwnPropertyDescriptor,
+    undefined,
+    [target, key],
+  ) as PropertyDescriptor | undefined;
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
+  TestReflectApply(TestObjectDefineProperty, undefined, [
+    target,
+    key,
+    { ...descriptor, value },
+  ]);
+  return () => {
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
+  };
+}
 
 function env(values: Readonly<Record<string, string | undefined>>) {
   return {
@@ -740,6 +766,280 @@ describe("security/application-auth OIDC runtime", () => {
       (hugeSession.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
       false,
     );
+  });
+
+  it("rejects a scope-only policy change after Array.sort is poisoned", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+    const restore = [
+      replacePropertyForTest(
+        Array.prototype,
+        "sort",
+        function (this: unknown[], ...args: unknown[]): unknown[] {
+          for (let index = 0; index < this.length; index += 1) {
+            if (this[index] === "openid") {
+              this.length = 0;
+              return this;
+            }
+          }
+          return TestReflectApply(TestArrayPrototypeSort, this, args) as unknown[];
+        },
+      ),
+    ];
+
+    try {
+      const callback = await successfulCallback(runtime, state, nonce, cookie);
+      assertEquals(callback.status, 303);
+      const session = sessionCookie(callback);
+
+      const unchanged = await runtime.admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(!(unchanged instanceof Response));
+
+      const changedPolicy = await createRuntimeAt(
+        NOW,
+        {
+          APP_URL: APP_ORIGIN,
+          OIDC_ISSUER: ISSUER,
+          OIDC_CLIENT_ID: "client-id",
+          OIDC_CLIENT_SECRET: CLIENT_SECRET,
+          OIDC_SESSION_SECRET: SESSION_SECRET,
+        },
+        {
+          scopes: ["openid", "groups"],
+        },
+      ).admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(changedPolicy instanceof Response);
+      assertEquals(changedPolicy.status, 401);
+    } finally {
+      for (let index = restore.length - 1; index >= 0; index -= 1) restore[index]?.();
+    }
+  });
+
+  it("rejects a claim-only policy change between distinct lone surrogates", async () => {
+    const initialRuntime = createRuntimeAt(
+      NOW,
+      undefined,
+      { claims: { groups: "\uD800" } },
+    );
+    const { state, nonce, cookie } = await startTransaction(initialRuntime);
+    const callback = await successfulCallback(initialRuntime, state, nonce, cookie);
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+
+    const changedPolicy = await createRuntimeAt(
+      NOW,
+      undefined,
+      { claims: { groups: "\uD801" } },
+    ).admitRequest(
+      new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+    );
+
+    assert(changedPolicy instanceof Response);
+    assertEquals(changedPolicy.status, 401);
+  });
+
+  it("rejects a claim-only policy change after TextEncoder.encode is poisoned", async () => {
+    const initialRuntime = createRuntimeAt(
+      NOW,
+      undefined,
+      { claims: { groups: "\uD800" } },
+    );
+    const { state, nonce, cookie } = await startTransaction(initialRuntime);
+    const callback = await successfulCallback(initialRuntime, state, nonce, cookie);
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+    const restore = replacePropertyForTest(
+      TextEncoder.prototype,
+      "encode",
+      function (this: TextEncoder, value = ""): Uint8Array {
+        const encoded = value === "\uD800" || value === "\uD801" ? "\uFFFD" : value;
+        return TestReflectApply(TestTextEncoderPrototypeEncode, this, [encoded]) as Uint8Array;
+      },
+    );
+
+    try {
+      const changedPolicy = await createRuntimeAt(
+        NOW,
+        undefined,
+        { claims: { groups: "\uD801" } },
+      ).admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(changedPolicy instanceof Response);
+      assertEquals(changedPolicy.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a session policy change after crypto digest is poisoned", async () => {
+    const originalDigest = crypto.subtle.digest;
+    crypto.subtle.digest = () => Promise.resolve(new Uint8Array(32).buffer);
+
+    try {
+      const { runtime, state, nonce, cookie } = await startTransaction();
+      const callback = await successfulCallback(runtime, state, nonce, cookie);
+      assertEquals(callback.status, 303);
+      const session = sessionCookie(callback);
+
+      const changedPolicy = await createRuntimeAt(
+        NOW,
+        undefined,
+        { scopes: ["openid", "groups"] },
+      ).admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+
+      assert(changedPolicy instanceof Response);
+      assertEquals(changedPolicy.status, 401);
+    } finally {
+      crypto.subtle.digest = originalDigest;
+    }
+  });
+
+  it("rejects a trusted endpoint origin policy change without depending on origin order", async () => {
+    const initialRuntime = createRuntimeAt(
+      NOW,
+      undefined,
+      {
+        trustedEndpointOrigins: [
+          "https://tokens-b.example.test",
+          "https://tokens-a.example.test",
+        ],
+      },
+    );
+    const { state, nonce, cookie } = await startTransaction(initialRuntime);
+    const callback = await successfulCallback(initialRuntime, state, nonce, cookie);
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+
+    const sameOrigins = await createRuntimeAt(
+      NOW,
+      undefined,
+      {
+        trustedEndpointOrigins: [
+          "https://tokens-a.example.test",
+          "https://tokens-b.example.test",
+        ],
+      },
+    ).admitRequest(
+      new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+    );
+    assert(!(sameOrigins instanceof Response));
+    assertEquals(sameOrigins.subject, "subject-123");
+
+    const changedOrigins = await createRuntimeAt(
+      NOW,
+      undefined,
+      { trustedEndpointOrigins: ["https://tokens-a.example.test"] },
+    ).admitRequest(
+      new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+    );
+
+    assert(changedOrigins instanceof Response);
+    assertEquals(changedOrigins.status, 401);
+  });
+
+  it("preserves an unchanged session after typed-array set is poisoned", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+    const callback = await successfulCallback(runtime, state, nonce, cookie);
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+    const restore = replacePropertyForTest(
+      TestTypedArrayPrototype,
+      "set",
+      function (this: Uint8Array, source: ArrayLike<number>, offset?: number): void {
+        if (
+          source instanceof Uint8Array && source[0] === 0 && source[1] === 0 &&
+          source[2] === 0 && source[3] === 30
+        ) {
+          return;
+        }
+        TestReflectApply(TestUint8ArrayPrototypeSet, this, [source, offset ?? 0]);
+      },
+    );
+
+    try {
+      const admitted = await runtime.admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(!(admitted instanceof Response));
+      assertEquals(admitted.subject, "subject-123");
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a forged policy binding after typed-array iteration is poisoned", async () => {
+    const setCookie = await createSessionCookie({
+      secret: SESSION_SECRET,
+      payload: {
+        v: 2,
+        binding: "A".repeat(43),
+        issuer: ISSUER,
+        subject: "subject-123",
+        claims: { iss: ISSUER, sub: "subject-123", aud: "client-id" },
+      },
+      maxAgeSeconds: 60,
+      now: NOW,
+      randomBytes: fixedRandom(),
+    });
+    const session = cookiePair(setCookie, "__Host-vf_session");
+    const restore = replacePropertyForTest(
+      TestTypedArrayPrototype,
+      Symbol.iterator,
+      function* (this: Uint8Array): IterableIterator<number> {
+        for (let index = 0; index < this.length; index += 1) yield 0;
+      },
+    );
+
+    try {
+      const admitted = await createRuntime().admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(admitted instanceof Response);
+      assertEquals(admitted.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a scope change after mutable array iteration is poisoned", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction(createRuntimeAt(NOW));
+    const callback = await successfulCallback(runtime, state, nonce, cookie);
+    assertEquals(callback.status, 303);
+    const session = sessionCookie(callback);
+    const restore = replacePropertyForTest(
+      Array.prototype,
+      Symbol.iterator,
+      function* (this: unknown[]): IterableIterator<unknown> {
+        let containsOpenid = false;
+        for (let index = 0; index < this.length; index += 1) {
+          if (this[index] === "openid") containsOpenid = true;
+        }
+        for (let index = 0; index < this.length; index += 1) {
+          if (containsOpenid && this[index] === "groups") continue;
+          yield this[index];
+        }
+      },
+    );
+
+    try {
+      const changedPolicy = await createRuntimeAt(
+        NOW,
+        undefined,
+        { scopes: ["openid", "groups"] },
+      ).admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+      );
+      assert(changedPolicy instanceof Response);
+      assertEquals(changedPolicy.status, 401);
+    } finally {
+      restore();
+    }
   });
 
   it("bounds environment and origin derivation while supporting independent parallel flows", async () => {

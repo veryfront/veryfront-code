@@ -2,6 +2,7 @@ import {
   guardedExactHttpLoopbackOutboundFetch,
   guardedOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
+import { primordialArraySort } from "#veryfront/platform/compat/primordials/array.ts";
 
 const MAX_ISSUER_LENGTH = 2_048;
 const MAX_METADATA_BYTES = 256 * 1024;
@@ -12,6 +13,29 @@ const DEFAULT_CACHE_TTL_SECONDS = 600;
 const MAX_CACHE_TTL_SECONDS = 2_592_000;
 const DEFAULT_CACHE_ENTRIES = 64;
 const MAX_CACHE_ENTRIES = 64;
+const ArrayIsArray = Array.isArray;
+const NativeMap = Map;
+const NativePromise = Promise;
+const NativeSet = Set;
+const ReflectApply = Reflect.apply;
+const JsonParse = JSON.parse;
+const MapPrototypeDelete = NativeMap.prototype.delete;
+const MapPrototypeForEach = NativeMap.prototype.forEach;
+const MapPrototypeGet = NativeMap.prototype.get;
+const MapPrototypeHas = NativeMap.prototype.has;
+const MapPrototypeSet = NativeMap.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(NativeMap.prototype, "size")?.get;
+const ObjectFreeze = Object.freeze;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectKeys = Object.keys;
+const ObjectPrototype = Object.prototype;
+const PromiseReject = NativePromise.reject;
+const PromiseResolve = NativePromise.resolve;
+const PromisePrototypeThen = NativePromise.prototype.then;
+const SetPrototypeAdd = NativeSet.prototype.add;
+const SetPrototypeHas = NativeSet.prototype.has;
+const TextDecoderDecode = TextDecoder.prototype.decode;
+const Utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface OidcMetadata {
   readonly issuer: string;
@@ -81,58 +105,199 @@ export function createOidcMetadataCache(
   const defaultTtlMs = parseCacheTtlMs(options.ttlSeconds);
   const maxEntries = parseMaxEntries(options.maxEntries);
   const now = options.now ?? (() => performance.now());
-  const entries = new Map<string, CacheEntry>();
+  const entries = new NativeMap<string, CacheEntry>();
 
   function evictIfNeeded(): void {
-    while (entries.size > maxEntries) {
-      const oldestSettled = [...entries.entries()].find(([, entry]) => entry.pending === undefined);
-      if (oldestSettled === undefined) return;
-      entries.delete(oldestSettled[0]);
+    while (mapSize(entries) > maxEntries) {
+      let oldestSettledKey: string | undefined;
+      mapForEach(entries, (entry, key) => {
+        if (oldestSettledKey === undefined && entry.pending === undefined) {
+          oldestSettledKey = key;
+        }
+      });
+      if (oldestSettledKey === undefined) return;
+      mapDelete(entries, oldestSettledKey);
     }
   }
 
-  return Object.freeze({
+  function reserveLoadCapacity(key: string): void {
+    if (mapHas(entries, key)) return;
+    while (mapSize(entries) >= maxEntries) {
+      let settledKey: string | undefined;
+      mapForEach(entries, (entry, candidateKey) => {
+        if (settledKey === undefined && entry.pending === undefined) {
+          settledKey = candidateKey;
+        }
+      });
+      if (settledKey === undefined) {
+        throw new TypeError("OIDC metadata cache pending load capacity reached");
+      }
+      mapDelete(entries, settledKey);
+    }
+  }
+
+  return ObjectFreeze({
     get(
       fetchOptions: FetchOidcMetadataOptions,
       cacheTtlSeconds?: number,
     ): Promise<OidcMetadata> {
-      const ttlMs = cacheTtlSeconds === undefined ? defaultTtlMs : parseCacheTtlMs(cacheTtlSeconds);
-      const key = cacheKey(fetchOptions, ttlMs);
-      const current = entries.get(key);
-      const currentTime = now();
-      if (current?.value !== undefined && current.expiresAt > currentTime) {
-        entries.delete(key);
-        entries.set(key, current);
-        return Promise.resolve(current.value);
-      }
-      if (current?.pending !== undefined) {
-        return current.pending;
-      }
-
-      const pending = fetchOidcMetadata(fetchOptions).then((value) => {
-        entries.set(key, { value, expiresAt: now() + ttlMs });
-        evictIfNeeded();
-        return value;
-      }).catch((error) => {
-        if (entries.get(key)?.pending === pending) {
-          entries.delete(key);
+      try {
+        const ttlMs = cacheTtlSeconds === undefined
+          ? defaultTtlMs
+          : parseCacheTtlMs(cacheTtlSeconds);
+        const key = cacheKey(fetchOptions, ttlMs);
+        const current = mapGet(entries, key);
+        const currentTime = now();
+        if (current?.value !== undefined && current.expiresAt > currentTime) {
+          try {
+            const value = revalidateCachedMetadata(current.value, fetchOptions);
+            mapDelete(entries, key);
+            mapSet(entries, key, current);
+            return ReflectApply(PromiseResolve, NativePromise, [value]) as Promise<OidcMetadata>;
+          } catch {
+            mapDelete(entries, key);
+          }
         }
-        throw error;
-      });
-      entries.set(key, { pending, expiresAt: currentTime + ttlMs });
-      evictIfNeeded();
-      return pending;
+        if (current?.pending !== undefined) {
+          return current.pending;
+        }
+
+        reserveLoadCapacity(key);
+        const pending = promiseThen(
+          fetchOidcMetadata(fetchOptions),
+          (value) => {
+            mapSet(entries, key, { value, expiresAt: now() + ttlMs });
+            evictIfNeeded();
+            return value;
+          },
+          (error) => {
+            if (mapGet(entries, key)?.pending === pending) {
+              mapDelete(entries, key);
+            }
+            throw error;
+          },
+        );
+        mapSet(entries, key, { pending, expiresAt: currentTime + ttlMs });
+        evictIfNeeded();
+        return pending;
+      } catch (error) {
+        return ReflectApply(PromiseReject, NativePromise, [error]) as Promise<OidcMetadata>;
+      }
     },
   });
 }
 
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return ReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapForEach<K, V>(
+  map: ReadonlyMap<K, V>,
+  callback: (value: V, key: K) => void,
+): void {
+  ReflectApply(MapPrototypeForEach, map, [callback]);
+}
+
+function mapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return ReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K>(map: ReadonlyMap<K, unknown>, key: K): boolean {
+  return ReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  ReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapSize(map: ReadonlyMap<unknown, unknown>): number {
+  if (MapSizeGetter === undefined) throw new TypeError("Map size accessor is unavailable");
+  return ReflectApply(MapSizeGetter, map, []) as number;
+}
+
+function promiseThen<T, U>(
+  promise: Promise<T>,
+  onFulfilled: (value: T) => U | PromiseLike<U>,
+  onRejected: (reason: unknown) => U | PromiseLike<U>,
+): Promise<U> {
+  return ReflectApply(PromisePrototypeThen, promise, [onFulfilled, onRejected]) as Promise<U>;
+}
+
+function setAdd<T>(set: Set<T>, value: T): void {
+  ReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return ReflectApply(SetPrototypeHas, set, [value]) as boolean;
+}
+
 function cacheKey(options: FetchOidcMetadataOptions, ttlMs: number): string {
-  return JSON.stringify({
-    issuer: options.issuer,
-    trustedEndpointOrigins: [...(options.trustedEndpointOrigins ?? [])].sort(),
-    allowInsecureLoopback: options.allowInsecureLoopback === true,
-    timeoutMs: options.timeoutMs,
-    ttlMs,
+  const configuredOrigins = options.trustedEndpointOrigins ?? [];
+  const trustedOrigins: string[] = [];
+  for (let index = 0; index < configuredOrigins.length; index += 1) {
+    trustedOrigins[index] = configuredOrigins[index]!;
+  }
+  primordialArraySort(
+    trustedOrigins,
+    (left, right) => left < right ? -1 : left > right ? 1 : 0,
+  );
+  const fields = [
+    "oidc-metadata-cache-v1",
+    options.issuer,
+    options.allowInsecureLoopback === true ? "loopback-http" : "https-only",
+    `${options.timeoutMs ?? DEFAULT_TIMEOUT_MS}`,
+    `${ttlMs}`,
+    `${trustedOrigins.length}`,
+  ];
+  for (let index = 0; index < trustedOrigins.length; index += 1) {
+    fields[fields.length] = trustedOrigins[index]!;
+  }
+  return lengthPrefixedCacheKey(fields);
+}
+
+function lengthPrefixedCacheKey(fields: readonly string[]): string {
+  let key = "";
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]!;
+    key += `${field.length}:${field}`;
+  }
+  return key;
+}
+
+function revalidateCachedMetadata(
+  metadata: OidcMetadata,
+  options: FetchOidcMetadataOptions,
+): OidcMetadata {
+  const issuer = parseConfiguredIssuer(options.issuer, options.allowInsecureLoopback === true);
+  const trustedOrigins = parseTrustedEndpointOrigins(options.trustedEndpointOrigins ?? []);
+  if (metadata.issuer !== issuer.issuer) {
+    throw new TypeError("Cached OIDC discovery issuer does not match the configured issuer");
+  }
+  const authorizationEndpoint = parseMetadataEndpoint(
+    metadata.authorizationEndpoint,
+    "authorization_endpoint",
+    issuer,
+    trustedOrigins,
+  );
+  const tokenEndpoint = parseMetadataEndpoint(
+    metadata.tokenEndpoint,
+    "token_endpoint",
+    issuer,
+    trustedOrigins,
+  );
+  const jwksUri = parseMetadataEndpoint(metadata.jwksUri, "jwks_uri", issuer, trustedOrigins);
+  if (
+    authorizationEndpoint !== metadata.authorizationEndpoint ||
+    tokenEndpoint !== metadata.tokenEndpoint ||
+    jwksUri !== metadata.jwksUri
+  ) {
+    throw new TypeError("Cached OIDC discovery endpoints are not canonical");
+  }
+  return freezeMetadata({
+    issuer: issuer.issuer,
+    authorizationEndpoint,
+    tokenEndpoint,
+    jwksUri,
   });
 }
 
@@ -141,11 +306,12 @@ function parseOidcMetadata(
   issuer: ParsedIssuer,
   trustedOrigins: ReadonlySet<string>,
 ): OidcMetadata {
-  const keys = Object.keys(value);
+  const keys = ObjectKeys(value);
   if (keys.length > MAX_METADATA_FIELDS) {
     throw new TypeError("OIDC discovery metadata exceeds the top-level field limit");
   }
-  for (const key of keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     const entry = value[key];
     if (typeof entry === "string" && entry.length > MAX_METADATA_STRING_LENGTH) {
       throw new TypeError("OIDC discovery metadata contains a string over the size limit");
@@ -157,7 +323,7 @@ function parseOidcMetadata(
     throw new TypeError("OIDC discovery issuer must exactly match the configured issuer");
   }
 
-  return Object.freeze({
+  return freezeMetadata({
     issuer: discoveredIssuer,
     authorizationEndpoint: parseMetadataEndpoint(
       readRequiredString(value, "authorization_endpoint"),
@@ -177,6 +343,15 @@ function parseOidcMetadata(
       issuer,
       trustedOrigins,
     ),
+  });
+}
+
+function freezeMetadata(metadata: OidcMetadata): OidcMetadata {
+  return ObjectFreeze({
+    issuer: metadata.issuer,
+    authorizationEndpoint: metadata.authorizationEndpoint,
+    tokenEndpoint: metadata.tokenEndpoint,
+    jwksUri: metadata.jwksUri,
   });
 }
 
@@ -250,8 +425,9 @@ function parseTrustedEndpointOrigins(values: readonly string[]): ReadonlySet<str
   if (values.length > MAX_CACHE_ENTRIES) {
     throw new TypeError("OIDC trusted endpoint origins must contain at most 64 origins");
   }
-  const origins = new Set<string>();
-  for (const value of values) {
+  const origins = new NativeSet<string>();
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]!;
     let url: URL;
     try {
       url = new URL(value);
@@ -269,10 +445,10 @@ function parseTrustedEndpointOrigins(values: readonly string[]): ReadonlySet<str
     ) {
       throw new TypeError("OIDC trusted endpoint origins must be canonical HTTPS origins");
     }
-    if (origins.has(url.origin)) {
+    if (setHas(origins, url.origin)) {
       throw new TypeError("OIDC trusted endpoint origins must not contain duplicates");
     }
-    origins.add(url.origin);
+    setAdd(origins, url.origin);
   }
   return origins;
 }
@@ -299,7 +475,7 @@ function validateEndpointUrl(
       return;
     }
   }
-  if (url.protocol === "https:" && trustedOrigins.has(url.origin)) {
+  if (url.protocol === "https:" && setHas(trustedOrigins, url.origin)) {
     return;
   }
   throw new TypeError(`${label} must use the issuer origin or a trusted HTTPS endpoint origin`);
@@ -418,7 +594,7 @@ async function readBoundedText(
         await reader.cancel();
         throw new TypeError(`${kind} response exceeds the size limit`);
       }
-      chunks.push(result.value);
+      chunks[chunks.length] = result.value;
     }
   } catch (error) {
     if (signal.aborted) {
@@ -430,11 +606,14 @@ async function readBoundedText(
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const chunk = chunks[chunkIndex]!;
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      bytes[offset + index] = chunk[index]!;
+    }
     offset += chunk.byteLength;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return ReflectApply(TextDecoderDecode, Utf8Decoder, [bytes]) as string;
 }
 
 function readWithAbort(
@@ -442,22 +621,27 @@ function readWithAbort(
   signal: AbortSignal,
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   if (signal.aborted) {
-    return Promise.reject(new DOMException("aborted", "AbortError"));
+    return ReflectApply(PromiseReject, NativePromise, [
+      new DOMException("aborted", "AbortError"),
+    ]) as Promise<ReadableStreamReadResult<Uint8Array>>;
   }
-  return new Promise((resolve, reject) => {
+  return new NativePromise((resolve, reject) => {
     const abort = () => {
       void reader.cancel();
       reject(new DOMException("aborted", "AbortError"));
     };
     signal.addEventListener("abort", abort, { once: true });
-    reader.read().then(
+    promiseThen(
+      reader.read(),
       (result) => {
         signal.removeEventListener("abort", abort);
         resolve(result);
+        return undefined;
       },
       (error: unknown) => {
         signal.removeEventListener("abort", abort);
         reject(error);
+        return undefined;
       },
     );
   });
@@ -467,7 +651,7 @@ export function parseStrictJsonObject(text: string, kind: string): JsonObject {
   rejectDuplicateJsonObjectKeys(text, kind);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = ReflectApply(JsonParse, JSON, [text]);
   } catch (error) {
     throw new TypeError(`${kind} must contain valid JSON`, { cause: error });
   }
@@ -485,19 +669,21 @@ function rejectDuplicateJsonObjectKeys(text: string, kind: string): void {
 
 export function isPlainObject(value: unknown): value is JsonObject {
   if (value === null || typeof value !== "object") return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  const prototype = ObjectGetPrototypeOf(value);
+  return prototype === ObjectPrototype || prototype === null;
 }
 
 function rejectReservedJsonKeys(value: unknown, kind: string): void {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      rejectReservedJsonKeys(entry, kind);
+  if (ArrayIsArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      rejectReservedJsonKeys(value[index], kind);
     }
     return;
   }
   if (!isPlainObject(value)) return;
-  for (const key of Object.keys(value)) {
+  const keys = ObjectKeys(value);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       throw new TypeError(`${kind} contains a reserved JSON object key`);
     }
@@ -542,7 +728,7 @@ class JsonDuplicateKeyParser {
 
   #parseObject(): void {
     this.#index += 1;
-    const keys = new Set<string>();
+    const keys = new NativeSet<string>();
     this.#skipWhitespace();
     if (this.text[this.#index] === "}") {
       this.#index += 1;
@@ -554,10 +740,10 @@ class JsonDuplicateKeyParser {
         throw new TypeError(`${this.kind} must contain valid JSON`);
       }
       const key = this.#parseString();
-      if (keys.has(key)) {
+      if (setHas(keys, key)) {
         throw new TypeError(`${this.kind} contains a duplicate JSON object key`);
       }
-      keys.add(key);
+      setAdd(keys, key);
       this.#skipWhitespace();
       if (this.text[this.#index] !== ":") {
         throw new TypeError(`${this.kind} must contain valid JSON`);
@@ -618,7 +804,7 @@ class JsonDuplicateKeyParser {
       if (char === '"') {
         this.#index += 1;
         try {
-          const parsed = JSON.parse(this.text.slice(start, this.#index));
+          const parsed = ReflectApply(JsonParse, JSON, [this.text.slice(start, this.#index)]);
           if (typeof parsed !== "string") {
             throw new TypeError(`${this.kind} must contain valid JSON`);
           }
@@ -642,7 +828,7 @@ class JsonDuplicateKeyParser {
       throw new TypeError(`${this.kind} must contain valid JSON`);
     }
     try {
-      JSON.parse(token);
+      ReflectApply(JsonParse, JSON, [token]);
     } catch {
       throw new TypeError(`${this.kind} must contain valid JSON`);
     }

@@ -2,8 +2,30 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createJwksCache, type PublicJwk } from "./jwks-cache.ts";
+import { createJwksCache, type JwksCache, type PublicJwk } from "./jwks-cache.ts";
 import { verifyOidcIdToken } from "./id-token.ts";
+
+const TestReflectApply = Reflect.apply;
+const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestTextEncoderPrototypeEncode = TextEncoder.prototype.encode;
+
+function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
+  const descriptor = TestReflectApply(
+    TestObjectGetOwnPropertyDescriptor,
+    undefined,
+    [target, key],
+  ) as PropertyDescriptor | undefined;
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
+  TestReflectApply(TestObjectDefineProperty, undefined, [
+    target,
+    key,
+    { ...descriptor, value },
+  ]);
+  return () => {
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
+  };
+}
 
 const ISSUER = "https://issuer.example.com/tenant";
 const ENTRA_ISSUER = "https://login.microsoftonline.com/tenant-id/v2.0";
@@ -18,6 +40,7 @@ interface KeyMaterial {
   readonly alg: IdTokenAlg;
   readonly kid: string;
   readonly publicJwk: PublicJwk;
+  readonly publicKey: CryptoKey;
   readonly privateKey: CryptoKey;
 }
 
@@ -244,6 +267,278 @@ describe("security/application-auth OIDC ID tokens", () => {
     );
     assertEquals(identity.subject, "user-123");
     assertEquals(calls, 2);
+  });
+
+  it("preserves getKey-only injected caches with one bounded forced retry", async () => {
+    const keys = await material();
+    const stale = await generateKeyMaterial("stale-custom-cache");
+    const token = await signToken(keys.RS256, claims());
+    const forceRefreshes: boolean[] = [];
+    const cache: JwksCache = {
+      getKey(options) {
+        forceRefreshes[forceRefreshes.length] = options.forceRefresh === true;
+        return Promise.resolve(
+          options.forceRefresh === true ? keys.RS256.publicJwk : stale.RS256.publicJwk,
+        );
+      },
+    };
+
+    const identity = await verifyOidcIdToken({
+      token,
+      issuer: ISSUER,
+      clientId: CLIENT_ID,
+      nonce: NONCE,
+      jwksUri: JWKS_URI,
+      jwksCache: cache,
+      now: () => NOW,
+    });
+
+    assertEquals(identity.subject, "user-123");
+    assertEquals(forceRefreshes, [false, true]);
+  });
+
+  it("rejects a forged signature after crypto verification is poisoned", async () => {
+    const keys = await material();
+    const signed = await signToken(keys.RS256, claims());
+    const segments = signed.split(".");
+    const forged = `${segments[0]}.${base64Json({ ...claims(), sub: "attacker" })}.${segments[2]}`;
+    const cache: JwksCache = {
+      getKey: () => Promise.resolve(keys.RS256.publicJwk),
+    };
+    const originalVerify = crypto.subtle.verify;
+    crypto.subtle.verify = () => Promise.resolve(true);
+
+    try {
+      await assertRejects(
+        () =>
+          verifyOidcIdToken({
+            token: forged,
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: cache,
+            now: () => NOW,
+          }),
+        TypeError,
+        "signature",
+      );
+    } finally {
+      crypto.subtle.verify = originalVerify;
+    }
+  });
+
+  it("rejects an attacker key after crypto key import is poisoned", async () => {
+    const keys = await material();
+    const attacker = await generateKeyMaterial("import-attacker");
+    const forged = await signToken(attacker.RS256, claims(), { kid: keys.RS256.kid });
+    const cache: JwksCache = {
+      getKey: () => Promise.resolve(keys.RS256.publicJwk),
+    };
+    const originalImportKey = crypto.subtle.importKey;
+    crypto.subtle.importKey = () => Promise.resolve(attacker.RS256.publicKey);
+
+    try {
+      await assertRejects(
+        () =>
+          verifyOidcIdToken({
+            token: forged,
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: cache,
+            now: () => NOW,
+          }),
+        TypeError,
+        "signature",
+      );
+    } finally {
+      crypto.subtle.importKey = originalImportKey;
+    }
+  });
+
+  it("rejects a wrong nonce after the TextEncoder constructor is poisoned", async () => {
+    const keys = await material();
+    const token = await signToken(keys.RS256, claims({ nonce: "wrong-nonce" }));
+    const cache: JwksCache = {
+      getKey: () => Promise.resolve(keys.RS256.publicJwk),
+    };
+    const nativeEncoder = new TextEncoder();
+    const restore = replacePropertyForTest(
+      globalThis,
+      "TextEncoder",
+      class PoisonedTextEncoder {
+        encode(value = ""): Uint8Array {
+          if (value === "wrong-nonce" || value === NONCE) return new Uint8Array([1]);
+          return nativeEncoder.encode(value);
+        }
+      },
+    );
+
+    try {
+      await assertRejects(
+        () =>
+          verifyOidcIdToken({
+            token,
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: cache,
+            now: () => NOW,
+          }),
+        TypeError,
+        "nonce",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects a wrong nonce after TextEncoder.encode is poisoned", async () => {
+    const keys = await material();
+    const token = await signToken(keys.RS256, claims({ nonce: "wrong-nonce" }));
+    const cache: JwksCache = {
+      getKey: () => Promise.resolve(keys.RS256.publicJwk),
+    };
+    const restore = replacePropertyForTest(
+      TextEncoder.prototype,
+      "encode",
+      function (this: TextEncoder, value = ""): Uint8Array {
+        const encoded = value === "wrong-nonce" || value === NONCE ? "same-nonce" : value;
+        return TestReflectApply(TestTextEncoderPrototypeEncode, this, [encoded]) as Uint8Array;
+      },
+    );
+
+    try {
+      await assertRejects(
+        () =>
+          verifyOidcIdToken({
+            token,
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: cache,
+            now: () => NOW,
+          }),
+        TypeError,
+        "nonce",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("bounds forced same-kid refreshes across staggered invalid signatures", async () => {
+    const keys = await material();
+    const attacker = await generateKeyMaterial("staggered-attacker");
+    const cache = createJwksCache({ ttlSeconds: 60 });
+    const validToken = await signToken(keys.RS256, claims());
+    const invalidToken = await signToken(attacker.RS256, claims(), { kid: keys.RS256.kid });
+    let calls = 0;
+
+    await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk])));
+      },
+      async () => {
+        await verifyOidcIdToken({
+          token: validToken,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: cache,
+          now: () => NOW,
+        });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await assertRejects(
+            () =>
+              verifyOidcIdToken({
+                token: invalidToken,
+                issuer: ISSUER,
+                clientId: CLIENT_ID,
+                nonce: NONCE,
+                jwksUri: JWKS_URI,
+                jwksCache: cache,
+                now: () => NOW,
+              }),
+            TypeError,
+            "signature",
+          );
+        }
+      },
+    );
+
+    assertEquals(calls, 2);
+  });
+
+  it("does not chain same-kid refreshes after a staggered verifier observes a newer generation", async () => {
+    const initial = await material();
+    const replacement = await generateKeyMaterial("test");
+    const cache = createJwksCache({ ttlSeconds: 60 });
+    const initialToken = await signToken(initial.RS256, claims());
+    const replacementToken = await signToken(replacement.RS256, claims());
+
+    await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([initial.RS256.publicJwk]))),
+      () =>
+        verifyOidcIdToken({
+          token: initialToken,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: cache,
+          now: () => NOW,
+        }),
+    );
+
+    let signalRefreshStarted: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => {
+      signalRefreshStarted = resolve;
+    });
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+
+    let refreshCalls = 0;
+    try {
+      const outcomes = await withMockFetch(
+        async () => {
+          refreshCalls += 1;
+          signalRefreshStarted?.();
+          await refreshGate;
+          return jsonResponse(jwks([replacement.RS256.publicJwk]));
+        },
+        async () => {
+          const verify = () =>
+            verifyOidcIdToken({
+              token: replacementToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: cache,
+              now: () => NOW,
+            });
+          const first = verify();
+          await refreshStarted;
+          const second = verify();
+          releaseRefresh?.();
+          return await Promise.all([first, second]);
+        },
+      );
+
+      assertEquals(outcomes.map((identity) => identity.subject), ["user-123", "user-123"]);
+      assertEquals(refreshCalls, 1);
+    } finally {
+      releaseRefresh?.();
+    }
   });
 
   it("rejects missing kids, key-type mismatches, and unknown kids without extra token-level refresh", async () => {
@@ -625,7 +920,7 @@ async function exportMaterial(
     alg,
     use: "sig" as const,
   });
-  return { alg, kid, publicJwk, privateKey: pair.privateKey };
+  return { alg, kid, publicJwk, publicKey: pair.publicKey, privateKey: pair.privateKey };
 }
 
 async function signToken(

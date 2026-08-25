@@ -11,8 +11,49 @@ import {
   parseStrictJsonObject,
 } from "./oidc-metadata.ts";
 
+const TestArrayPrototypeSort = Array.prototype.sort;
+const TestJSONParse = JSON.parse;
+const TestJSONStringify = JSON.stringify;
+const TestMapPrototypeGet = Map.prototype.get;
+const TestMapPrototypeHas = Map.prototype.has;
+const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestPromisePrototypeThen = Promise.prototype.then;
+const TestPromiseResolve = Promise.resolve;
+const TestReflectApply = Reflect.apply;
+
 const ISSUER = "https://issuer.example.com/tenant";
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
+
+function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
+  const descriptor = TestReflectApply(
+    TestObjectGetOwnPropertyDescriptor,
+    undefined,
+    [target, key],
+  ) as PropertyDescriptor | undefined;
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
+  TestReflectApply(TestObjectDefineProperty, undefined, [
+    target,
+    key,
+    { ...descriptor, value },
+  ]);
+  return () => {
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
+  };
+}
+
+function replaceGetterForTest(target: object, key: PropertyKey, get: () => unknown): () => void {
+  const descriptor = TestReflectApply(
+    TestObjectGetOwnPropertyDescriptor,
+    undefined,
+    [target, key],
+  ) as PropertyDescriptor | undefined;
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
+  TestReflectApply(TestObjectDefineProperty, undefined, [target, key, { ...descriptor, get }]);
+  return () => {
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
+  };
+}
 
 function metadata(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -264,6 +305,35 @@ describe("security/application-auth OIDC metadata", () => {
     await expectDiscoveryRejects(metadata({ x: "x".repeat(4_097) }), "string");
   });
 
+  it("does not let poisoned JSON.parse inject OIDC metadata", async () => {
+    const body = metadata();
+    const restore = replacePropertyForTest(
+      JSON,
+      "parse",
+      function (text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown) {
+        if (text === body) {
+          return {
+            issuer: ISSUER,
+            authorization_endpoint: `${ISSUER}/injected-authorize`,
+            token_endpoint: `${ISSUER}/injected-token`,
+            jwks_uri: `${ISSUER}/injected-jwks`,
+          };
+        }
+        return TestReflectApply(TestJSONParse, JSON, [text, reviver]);
+      },
+    );
+
+    try {
+      const discovered = await withMockFetch(
+        () => Promise.resolve(jsonResponse(body)),
+        () => fetchOidcMetadata({ issuer: ISSUER }),
+      );
+      assertEquals(discovered.tokenEndpoint, `${ISSUER}/token`);
+    } finally {
+      restore();
+    }
+  });
+
   it("aborts slow discovery requests without leaking URL queries in errors", async () => {
     const error = await assertRejects(
       () =>
@@ -467,14 +537,240 @@ describe("security/application-auth OIDC metadata", () => {
     assertEquals(calls, 2);
   });
 
-  it("keeps pending metadata loads coalesced under cache capacity pressure", async () => {
+  it("preserves metadata tenant isolation after JSON serialization is poisoned", async () => {
+    const issuerA = "https://primordial-a.example.com";
+    const issuerB = "https://primordial-b.example.com";
+    const bodyA = metadataFor(issuerA);
+    const bodyB = metadataFor(issuerB);
+    const cache = createOidcMetadataCache();
+    const fetches: string[] = [];
+    const restore = replacePropertyForTest(
+      JSON,
+      "stringify",
+      function (value: unknown, ...args: unknown[]): string | undefined {
+        if (
+          value !== null && typeof value === "object" &&
+          "issuer" in value && "trustedEndpointOrigins" in value && "ttlMs" in value
+        ) {
+          return '"attacker-controlled-cache-key"';
+        }
+        return TestReflectApply(TestJSONStringify, JSON, [value, ...args]) as string | undefined;
+      },
+    );
+
+    try {
+      const [metadataA, metadataB] = await withMockFetch(
+        (input: RequestInfo | URL) => {
+          const issuer = String(input).replace("/.well-known/openid-configuration", "");
+          fetches.push(issuer);
+          return Promise.resolve(jsonResponse(issuer === issuerA ? bodyA : bodyB));
+        },
+        async () => [
+          await cache.get({ issuer: issuerA }),
+          await cache.get({ issuer: issuerB }),
+        ],
+      );
+
+      assertEquals(metadataA.issuer, issuerA);
+      assertEquals(metadataB.issuer, issuerB);
+      assertEquals(fetches, [issuerA, issuerB]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let poisoned Map.get inject cached OIDC metadata", async () => {
+    const cache = createOidcMetadataCache();
+    const injected = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      value: {
+        issuer: ISSUER,
+        authorizationEndpoint: `${ISSUER}/injected-authorize`,
+        tokenEndpoint: `${ISSUER}/injected-token`,
+        jwksUri: `${ISSUER}/injected-jwks`,
+      },
+    };
+    const restore = replacePropertyForTest(
+      Map.prototype,
+      "get",
+      function (this: Map<unknown, unknown>, key: unknown): unknown {
+        if (typeof key === "string" && key.includes("oidc-metadata-cache-v1")) return injected;
+        return TestReflectApply(TestMapPrototypeGet, this, [key]);
+      },
+    );
+    let calls = 0;
+
+    try {
+      const discovered = await withMockFetch(
+        () => {
+          calls += 1;
+          return Promise.resolve(jsonResponse(metadata()));
+        },
+        () => cache.get({ issuer: ISSUER }),
+      );
+      assertEquals(discovered.tokenEndpoint, `${ISSUER}/token`);
+      assertEquals(calls, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let poisoned Promise.resolve replace revalidated cached metadata", async () => {
+    const cache = createOidcMetadataCache();
+    await withMockFetch(
+      () => Promise.resolve(jsonResponse(metadata())),
+      () => cache.get({ issuer: ISSUER }),
+    );
+    const injected: OidcMetadata = {
+      issuer: ISSUER,
+      authorizationEndpoint: `${ISSUER}/injected-authorize`,
+      tokenEndpoint: `${ISSUER}/injected-token`,
+      jwksUri: `${ISSUER}/injected-jwks`,
+    };
+    const restore = replacePropertyForTest(
+      Promise,
+      "resolve",
+      function (value: unknown): Promise<unknown> {
+        const resolved = value !== null && typeof value === "object" && "issuer" in value
+          ? injected
+          : value;
+        return TestReflectApply(TestPromiseResolve, Promise, [resolved]) as Promise<unknown>;
+      },
+    );
+
+    try {
+      const discovered = await cache.get({ issuer: ISSUER });
+      assertEquals(discovered.tokenEndpoint, `${ISSUER}/token`);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let poisoned Promise.then bypass metadata validation", async () => {
+    const cache = createOidcMetadataCache();
+    const injected: OidcMetadata = {
+      issuer: ISSUER,
+      authorizationEndpoint: `${ISSUER}/injected-authorize`,
+      tokenEndpoint: `${ISSUER}/injected-token`,
+      jwksUri: `${ISSUER}/injected-jwks`,
+    };
+
+    const discovered = await withMockFetch(
+      () => Promise.resolve(jsonResponse(metadata())),
+      async () => {
+        const restore = replacePropertyForTest(
+          Promise.prototype,
+          "then",
+          function (
+            this: Promise<unknown>,
+            onFulfilled?: ((value: unknown) => unknown) | null,
+            onRejected?: ((reason: unknown) => unknown) | null,
+          ): Promise<unknown> {
+            return TestReflectApply(TestPromisePrototypeThen, this, [
+              (value: unknown) => {
+                const replacement = value !== null && typeof value === "object" &&
+                    "tokenEndpoint" in value
+                  ? injected
+                  : value;
+                return typeof onFulfilled === "function" ? onFulfilled(replacement) : replacement;
+              },
+              onRejected,
+            ]) as Promise<unknown>;
+          },
+        );
+        try {
+          return await cache.get({ issuer: ISSUER });
+        } finally {
+          restore();
+        }
+      },
+    );
+
+    assertEquals(discovered.tokenEndpoint, `${ISSUER}/token`);
+  });
+
+  it("does not cache mutable metadata after Object.freeze is poisoned", async () => {
+    const cache = createOidcMetadataCache();
+    const restore = replacePropertyForTest(Object, "freeze", <T>(value: T): T => value);
+    let discovered: OidcMetadata;
+    try {
+      discovered = await withMockFetch(
+        () => Promise.resolve(jsonResponse(metadata())),
+        () => cache.get({ issuer: ISSUER }),
+      );
+    } finally {
+      restore();
+    }
+
+    try {
+      TestReflectApply(TestObjectDefineProperty, undefined, [
+        discovered,
+        "tokenEndpoint",
+        { value: `${ISSUER}/mutated-token` },
+      ]);
+    } catch {
+      // A captured Object.freeze keeps the provider metadata immutable.
+    }
+    const cached = await cache.get({ issuer: ISSUER });
+    assertEquals(cached.tokenEndpoint, `${ISSUER}/token`);
+    assertEquals(Object.isFrozen(cached), true);
+  });
+
+  it("revalidates cached endpoints after trusted-origin sorting is poisoned", async () => {
+    const originA = "https://keys-a.example.net";
+    const originB = "https://keys-b.example.net";
+    const bodyA = metadata({
+      token_endpoint: `${originA}/token`,
+      jwks_uri: `${originA}/jwks`,
+    });
+    const bodyB = metadata({
+      token_endpoint: `${originB}/token`,
+      jwks_uri: `${originB}/jwks`,
+    });
+    const cache = createOidcMetadataCache();
+    let calls = 0;
+    const restore = replacePropertyForTest(
+      Array.prototype,
+      "sort",
+      function (this: unknown[], ...args: unknown[]): unknown[] {
+        for (let index = 0; index < this.length; index += 1) {
+          if (this[index] === originA || this[index] === originB) {
+            this.length = 0;
+            return this;
+          }
+        }
+        return TestReflectApply(TestArrayPrototypeSort, this, args) as unknown[];
+      },
+    );
+
+    try {
+      const [metadataA, metadataB] = await withMockFetch(
+        () => {
+          calls += 1;
+          return Promise.resolve(jsonResponse(calls === 1 ? bodyA : bodyB));
+        },
+        async () => [
+          await cache.get({ issuer: ISSUER, trustedEndpointOrigins: [originA] }),
+          await cache.get({ issuer: ISSUER, trustedEndpointOrigins: [originB] }),
+        ],
+      );
+
+      assertEquals(metadataA.jwksUri, `${originA}/jwks`);
+      assertEquals(metadataB.jwksUri, `${originB}/jwks`);
+      assertEquals(calls, 2);
+    } finally {
+      restore();
+    }
+  });
+
+  it("bounds pending metadata loads while coalescing the admitted key and recovering after settle", async () => {
     const cache = createOidcMetadataCache({ ttlSeconds: 60, maxEntries: 1 });
     const resolvers = new Map<string, (response: Response) => void>();
     const fetches: string[] = [];
     const issuerA = "https://pending-a.example.com";
     const issuerB = "https://pending-b.example.com";
 
-    const [firstA, secondA] = await withMockFetch(
+    const result = await withMockFetch(
       (input: RequestInfo | URL) => {
         const issuer = String(input).replace("/.well-known/openid-configuration", "");
         fetches.push(issuer);
@@ -484,18 +780,88 @@ describe("security/application-auth OIDC metadata", () => {
       },
       async () => {
         const firstLoadA = cache.get({ issuer: issuerA });
-        const loadB = cache.get({ issuer: issuerB });
         const secondLoadA = cache.get({ issuer: issuerA });
+        const saturatedB = cache.get({ issuer: issuerB }).then(
+          () => "resolved" as const,
+          (error: unknown) => error,
+        );
         await testDelay(1);
-        assertEquals(fetches, [issuerA, issuerB]);
+        const fetchesAtCapacity = fetches.slice();
         resolvers.get(issuerA)?.(jsonResponse(metadataFor(issuerA)));
         resolvers.get(issuerB)?.(jsonResponse(metadataFor(issuerB)));
-        await loadB;
-        return await Promise.all([firstLoadA, secondLoadA]);
+        const [firstA, secondA, saturatedOutcome] = await Promise.all([
+          firstLoadA,
+          secondLoadA,
+          saturatedB,
+        ]);
+
+        const recoveredB = cache.get({ issuer: issuerB });
+        await testDelay(1);
+        resolvers.get(issuerB)?.(jsonResponse(metadataFor(issuerB)));
+        return {
+          firstA,
+          secondA,
+          saturatedOutcome,
+          recoveredB: await recoveredB,
+          fetchesAtCapacity,
+        };
       },
     );
 
-    assertEquals(firstA, secondA);
+    assertEquals(result.firstA, result.secondA);
+    assert(result.saturatedOutcome instanceof TypeError);
+    assertEquals(
+      result.saturatedOutcome.message,
+      "OIDC metadata cache pending load capacity reached",
+    );
+    assertEquals(result.recoveredB.issuer, issuerB);
+    assertEquals(result.fetchesAtCapacity, [issuerA]);
     assertEquals(fetches, [issuerA, issuerB]);
+  });
+
+  it("does not let poisoned Map.has or size bypass pending metadata capacity", async () => {
+    const cache = createOidcMetadataCache({ maxEntries: 1 });
+    const issuerA = "https://pending-primordial-a.example.com";
+    const issuerB = "https://pending-primordial-b.example.com";
+    let releaseFirst: ((response: Response) => void) | undefined;
+    const firstResponse = new Promise<Response>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let fetches = 0;
+
+    await withMockFetch(
+      () => {
+        fetches += 1;
+        return fetches === 1 ? firstResponse : Promise.resolve(jsonResponse(metadataFor(issuerB)));
+      },
+      async () => {
+        const first = cache.get({ issuer: issuerA });
+        await testDelay(1);
+        const restore = [
+          replacePropertyForTest(
+            Map.prototype,
+            "has",
+            function (this: Map<unknown, unknown>, key: unknown): boolean {
+              if (typeof key === "string" && key.includes(issuerB)) return true;
+              return TestReflectApply(TestMapPrototypeHas, this, [key]) as boolean;
+            },
+          ),
+          replaceGetterForTest(Map.prototype, "size", () => 0),
+        ];
+        try {
+          await assertRejects(
+            () => cache.get({ issuer: issuerB }),
+            TypeError,
+            "capacity",
+          );
+        } finally {
+          for (let index = restore.length - 1; index >= 0; index -= 1) restore[index]?.();
+          releaseFirst?.(jsonResponse(metadataFor(issuerA)));
+        }
+        await first;
+      },
+    );
+
+    assertEquals(fetches, 1);
   });
 });

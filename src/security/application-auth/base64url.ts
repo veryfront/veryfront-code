@@ -6,7 +6,8 @@ export function encodeAuthBase64Url(bytes: Uint8Array): string {
   let buffer = 0;
   let bits = 0;
 
-  for (const byte of bytes) {
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index]!;
     buffer = (buffer << 8) | byte;
     bits += 8;
     while (bits >= 6) {
@@ -25,7 +26,6 @@ export function encodeAuthBase64Url(bytes: Uint8Array): string {
 export function decodeAuthBase64Url(value: string): Uint8Array {
   if (
     value.length % 4 === 1 ||
-    value.includes("=") ||
     !BASE64URL_PATTERN.test(value)
   ) {
     throw new TypeError("Auth cookie value must use strict unpadded base64url");
@@ -36,7 +36,8 @@ export function decodeAuthBase64Url(value: string): Uint8Array {
   let buffer = 0;
   let bits = 0;
 
-  for (const character of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
     const decoded = BASE64URL_ALPHABET.indexOf(character);
     if (decoded < 0) {
       throw new TypeError("Auth cookie value must use strict unpadded base64url");
@@ -55,5 +56,5 @@ export function decodeAuthBase64Url(value: string): Uint8Array {
     throw new TypeError("Auth cookie value has non-canonical base64url trailing bits");
   }
 
-  return bytes.subarray(0, outputIndex);
+  return bytes;
 }

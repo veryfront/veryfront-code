@@ -8,9 +8,33 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { testDelay } from "#veryfront/testing/timing.ts";
-import { createJwksCache } from "./jwks-cache.ts";
+import { createJwksCache, getJwksKeyWithFreshness } from "./jwks-cache.ts";
+
+const TestJSONStringify = JSON.stringify;
+const TestMapPrototypeGet = Map.prototype.get;
+const TestMapPrototypeHas = Map.prototype.has;
+const TestObjectDefineProperty = Object.defineProperty;
+const TestObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const TestReflectApply = Reflect.apply;
 
 const JWKS_URI = "https://issuer.example.com/jwks.json";
+
+function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
+  const descriptor = TestReflectApply(
+    TestObjectGetOwnPropertyDescriptor,
+    undefined,
+    [target, key],
+  ) as PropertyDescriptor | undefined;
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
+  TestReflectApply(TestObjectDefineProperty, undefined, [
+    target,
+    key,
+    { ...descriptor, value },
+  ]);
+  return () => {
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
+  };
+}
 
 const RSA_KEY = Object.freeze({
   kty: "RSA",
@@ -227,6 +251,136 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(calls, 3);
   });
 
+  it("preserves JWKS tenant isolation after JSON serialization is poisoned", async () => {
+    const cache = createJwksCache();
+    const bodyA = jwks([RSA_KEY]);
+    const bodyB = jwks([RSA_ROTATED_KEY]);
+    let calls = 0;
+    const restore = replacePropertyForTest(
+      JSON,
+      "stringify",
+      function (value: unknown, ...args: unknown[]): string | undefined {
+        if (
+          value !== null && typeof value === "object" &&
+          "issuer" in value && "jwksUri" in value && "allowInsecureLoopback" in value
+        ) {
+          return '"attacker-controlled-cache-key"';
+        }
+        return TestReflectApply(TestJSONStringify, JSON, [value, ...args]) as string | undefined;
+      },
+    );
+
+    try {
+      const [keyA, keyB] = await withMockFetch(
+        () => {
+          calls += 1;
+          return Promise.resolve(jsonResponse(calls === 1 ? bodyA : bodyB));
+        },
+        async () => [
+          await cache.getKey({
+            issuer: "https://primordial-a.example.com",
+            jwksUri: JWKS_URI,
+            kid: "rsa-1",
+            alg: "RS256",
+          }),
+          await cache.getKey({
+            issuer: "https://primordial-b.example.com",
+            jwksUri: JWKS_URI,
+            kid: "rsa-1",
+            alg: "RS256",
+          }),
+        ],
+      );
+
+      assertEquals(keyA.n, RSA_KEY.n);
+      assertEquals(keyB.n, RSA_ROTATED_KEY.n);
+      assertEquals(calls, 2);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let poisoned Map.get inject a nested JWKS key", async () => {
+    const cache = createJwksCache();
+    await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+      () => cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
+    );
+    const injected = Object.freeze({ ...RSA_KEY, kid: "attacker-key" });
+    const restore = replacePropertyForTest(
+      Map.prototype,
+      "get",
+      function (this: Map<unknown, unknown>, key: unknown): unknown {
+        if (key === "attacker-key") return injected;
+        return TestReflectApply(TestMapPrototypeGet, this, [key]);
+      },
+    );
+
+    try {
+      await assertRejects(
+        () =>
+          withMockFetch(
+            () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+            () => cache.getKey({ jwksUri: JWKS_URI, kid: "attacker-key", alg: "RS256" }),
+          ),
+        TypeError,
+        "kid",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not let poisoned Map.has bypass pending JWKS capacity", async () => {
+    const cache = createJwksCache({ maxEntries: 1 });
+    let releaseFirst: ((response: Response) => void) | undefined;
+    const firstResponse = new Promise<Response>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let fetches = 0;
+
+    await withMockFetch(
+      () => {
+        fetches += 1;
+        return fetches === 1 ? firstResponse : Promise.resolve(jsonResponse(jwks([RSA_KEY])));
+      },
+      async () => {
+        const first = cache.getKey({
+          jwksUri: "https://pending-map-a.example.com/jwks",
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+        await testDelay(1);
+        const restore = replacePropertyForTest(
+          Map.prototype,
+          "has",
+          function (this: Map<unknown, unknown>, key: unknown): boolean {
+            if (typeof key === "string" && key.includes("pending-map-b")) return true;
+            return TestReflectApply(TestMapPrototypeHas, this, [key]) as boolean;
+          },
+        );
+        try {
+          await assertRejects(
+            () =>
+              cache.getKey({
+                jwksUri: "https://pending-map-b.example.com/jwks",
+                kid: "rsa-1",
+                alg: "RS256",
+              }),
+            TypeError,
+            "capacity",
+          );
+        } finally {
+          restore();
+          releaseFirst?.(jsonResponse(jwks([RSA_KEY])));
+        }
+        await first;
+      },
+    );
+
+    assertEquals(fetches, 1);
+  });
+
   it("rejects malformed JWKS documents and duplicate or missing key ids", async () => {
     for (
       const [body, message] of [
@@ -318,17 +472,23 @@ describe("security/application-auth JWKS cache", () => {
       return Promise.reject(new DOMException("forced import failure", "DataError"));
     };
     try {
-      await expectJwksRejects(
-        jwks([{ ...validEc, kid: "ec-not-importable" }]),
-        "import",
-        {},
-        "ec-not-importable",
-        "ES256",
+      const imported = await withMockFetch(
+        () =>
+          Promise.resolve(
+            jsonResponse(jwks([{ ...validEc, kid: "ec-captured-import" }])),
+          ),
+        () =>
+          createJwksCache().getKey({
+            jwksUri: JWKS_URI,
+            kid: "ec-captured-import",
+            alg: "ES256",
+          }),
       );
+      assertEquals(imported.kid, "ec-captured-import");
     } finally {
       crypto.subtle.importKey = originalImportKey;
     }
-    assertEquals(importAttempted, true);
+    assertEquals(importAttempted, false);
   });
 
   it("rejects non-JSON, malformed JSON, redirects, oversize bodies, and sanitized fetch failures", async () => {
@@ -477,6 +637,104 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(forcedRefreshCalls, 1);
   });
 
+  it("bounds staggered unknown-kid refreshes while allowing later rotation", async () => {
+    let now = 0;
+    let calls = 0;
+    const cache = createJwksCache({ ttlSeconds: 60, now: () => now });
+    const rotated = await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([calls === 3 ? RSA_ROTATED_KEY : RSA_KEY])));
+      },
+      async () => {
+        await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await assertRejects(
+            () => cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" }),
+            TypeError,
+            "kid",
+          );
+        }
+        assertEquals(calls, 2);
+
+        const observed = await getJwksKeyWithFreshness(cache, {
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+        now += 1_001;
+        return await getJwksKeyWithFreshness(
+          cache,
+          { jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256", forceRefresh: true },
+          observed.freshness,
+        );
+      },
+    );
+
+    assertEquals(rotated.key.n, RSA_ROTATED_KEY.n);
+    assertEquals(calls, 3);
+  });
+
+  it("recovers with one refresh when an observed JWKS generation has expired", async () => {
+    let now = 0;
+    let calls = 0;
+    const cache = createJwksCache({ ttlSeconds: 1, now: () => now });
+    const recovered = await withMockFetch(
+      () => {
+        calls += 1;
+        const key = calls === 2 ? RSA_ROTATED_KEY : RSA_KEY;
+        return Promise.resolve(jsonResponse(jwks([key])));
+      },
+      async () => {
+        const observed = await getJwksKeyWithFreshness(cache, {
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+        now += 1_001;
+        await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
+        now += 1_001;
+        return await getJwksKeyWithFreshness(
+          cache,
+          { jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256", forceRefresh: true },
+          observed.freshness,
+        );
+      },
+    );
+
+    assertEquals(recovered.key.n, RSA_KEY.n);
+    assertEquals(calls, 3);
+  });
+
+  it("recovers with one refresh when an observed JWKS generation was evicted", async () => {
+    const cache = createJwksCache({ ttlSeconds: 60, maxEntries: 1 });
+    const uriA = "https://evicted-a.example.com/jwks";
+    const uriB = "https://evicted-b.example.com/jwks";
+    let calls = 0;
+    const recovered = await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([calls === 2 ? RSA_ROTATED_KEY : RSA_KEY])));
+      },
+      async () => {
+        const observed = await getJwksKeyWithFreshness(cache, {
+          jwksUri: uriA,
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+        await cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" });
+        return await getJwksKeyWithFreshness(
+          cache,
+          { jwksUri: uriA, kid: "rsa-1", alg: "RS256", forceRefresh: true },
+          observed.freshness,
+        );
+      },
+    );
+
+    assertEquals(recovered.key.n, RSA_KEY.n);
+    assertEquals(calls, 3);
+  });
+
   it("expires stale entries, evicts failed loads, bounds LRU entries, coalesces concurrency, and stays per-instance", async () => {
     let now = 1_000;
     let calls = 0;
@@ -594,14 +852,14 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(coldCalls, 2);
   });
 
-  it("keeps pending JWKS loads coalesced under cache capacity pressure", async () => {
+  it("bounds pending JWKS loads while coalescing the admitted key and recovering after settle", async () => {
     const cache = createJwksCache({ ttlSeconds: 60, maxEntries: 1 });
     const resolvers = new Map<string, (response: Response) => void>();
     const fetches: string[] = [];
     const uriA = "https://pending-a.example.com/jwks";
     const uriB = "https://pending-b.example.com/jwks";
 
-    const [firstA, secondA] = await withMockFetch(
+    const result = await withMockFetch(
       (input: RequestInfo | URL) => {
         const uri = String(input);
         fetches.push(uri);
@@ -611,18 +869,39 @@ describe("security/application-auth JWKS cache", () => {
       },
       async () => {
         const firstLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
-        const loadB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" });
         const secondLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
+        const saturatedB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" }).then(
+          () => "resolved" as const,
+          (error: unknown) => error,
+        );
         await testDelay(1);
-        assertEquals(fetches, [uriA, uriB]);
+        const fetchesAtCapacity = fetches.slice();
         resolvers.get(uriA)?.(jsonResponse(jwks([RSA_KEY])));
         resolvers.get(uriB)?.(jsonResponse(jwks([RSA_KEY])));
-        await loadB;
-        return await Promise.all([firstLoadA, secondLoadA]);
+        const [firstA, secondA, saturatedOutcome] = await Promise.all([
+          firstLoadA,
+          secondLoadA,
+          saturatedB,
+        ]);
+
+        const recoveredB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" });
+        await testDelay(1);
+        resolvers.get(uriB)?.(jsonResponse(jwks([RSA_KEY])));
+        return {
+          firstA,
+          secondA,
+          saturatedOutcome,
+          recoveredB: await recoveredB,
+          fetchesAtCapacity,
+        };
       },
     );
 
-    assertEquals(firstA, secondA);
+    assertEquals(result.firstA, result.secondA);
+    assert(result.saturatedOutcome instanceof TypeError);
+    assertEquals(result.saturatedOutcome.message, "JWKS cache pending load capacity reached");
+    assertEquals(result.recoveredB.kid, "rsa-1");
+    assertEquals(result.fetchesAtCapacity, [uriA]);
     assertEquals(fetches, [uriA, uriB]);
   });
 });

@@ -1,4 +1,8 @@
 import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  primordialArrayJoin,
+  primordialArraySort,
+} from "#veryfront/platform/compat/primordials/array.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import {
   guardedExactHttpLoopbackOutboundFetch,
@@ -49,8 +53,21 @@ const MAX_CALLBACK_VALUE_LENGTH = 2_048;
 const MAX_ID_TOKEN_LENGTH = 16_384;
 const MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
 const TOKEN_TIMEOUT_MS = 5_000;
+const arrayIsArray = Array.isArray;
+const NativePromise = Promise;
+const objectFreeze = Object.freeze;
 const textEncoder = new TextEncoder();
 const apply = Reflect.apply;
+const WebCrypto = crypto;
+const cryptoGetRandomValues = WebCrypto.getRandomValues;
+const cryptoSubtle = WebCrypto.subtle;
+const promiseReject = NativePromise.reject;
+const promiseThen = NativePromise.prototype.then;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const subtleDigest = cryptoSubtle.digest;
+const textDecoderDecode = TextDecoder.prototype.decode;
+const textEncoderEncode = TextEncoder.prototype.encode;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const NativeWeakSet = WeakSet;
 const weakSetAdd = NativeWeakSet.prototype.add;
 const weakSetHas = NativeWeakSet.prototype.has;
@@ -119,7 +136,7 @@ export function createOidcApplicationAuthRuntime(
     return await resolveRuntimeConfig(options.config, options.env, request);
   }
 
-  return Object.freeze({
+  return objectFreeze({
     async handleAuthRoute(request: Request): Promise<Response | null> {
       const url = new URL(request.url);
       if (
@@ -215,7 +232,7 @@ export function createOidcApplicationAuthRuntime(
     authorizationUrl.searchParams.set("response_type", "code");
     authorizationUrl.searchParams.set("client_id", runtime.clientId);
     authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-    authorizationUrl.searchParams.set("scope", runtime.scopes.join(" "));
+    authorizationUrl.searchParams.set("scope", primordialArrayJoin(runtime.scopes, " "));
     authorizationUrl.searchParams.set("state", state);
     authorizationUrl.searchParams.set("nonce", nonce);
     authorizationUrl.searchParams.set("code_challenge", challenge);
@@ -379,9 +396,10 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   if (url.search.length > MAX_CALLBACK_QUERY_LENGTH) {
     throw new TypeError("OIDC callback query exceeds the size limit");
   }
-  const allowed = new Set(["state", "code", "error", "error_description", "iss"]);
   for (const key of url.searchParams.keys()) {
-    if (!allowed.has(key)) throw new TypeError("OIDC callback contains an unsupported parameter");
+    if (!isAllowedCallbackParameter(key)) {
+      throw new TypeError("OIDC callback contains an unsupported parameter");
+    }
   }
   const state = parseRandomValue(readSingleParam(url, "state", true));
   const code = readSingleParam(url, "code", false);
@@ -395,6 +413,11 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
     throw new TypeError("OIDC callback issuer does not match");
   }
   return { state, code, error, iss };
+}
+
+function isAllowedCallbackParameter(value: string): boolean {
+  return value === "state" || value === "code" || value === "error" ||
+    value === "error_description" || value === "iss";
 }
 
 function readSingleParam(url: URL, name: string, required: true): string;
@@ -482,7 +505,6 @@ function authorizeProviderEndpoint(
   },
 ): void {
   const issuer = new URL(options.issuer);
-  const trusted = new Set(options.trustedEndpointOrigins ?? []);
   if (url.origin === issuer.origin) {
     if (
       url.protocol === "https:" ||
@@ -491,7 +513,10 @@ function authorizeProviderEndpoint(
       return;
     }
   }
-  if (url.protocol === "https:" && trusted.has(url.origin)) return;
+  const trusted = options.trustedEndpointOrigins ?? [];
+  for (let index = 0; index < trusted.length; index += 1) {
+    if (url.protocol === "https:" && trusted[index] === url.origin) return;
+  }
   throw new TypeError("OIDC provider endpoint is not trusted");
 }
 
@@ -515,18 +540,21 @@ async function readBoundedText(
         await reader.cancel();
         throw new TypeError("OIDC token response exceeds the size limit");
       }
-      chunks.push(result.value);
+      chunks[chunks.length] = result.value;
     }
   } finally {
     reader.releaseLock();
   }
   const output = new Uint8Array(total);
   let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const chunk = chunks[chunkIndex]!;
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      output[offset + index] = chunk[index]!;
+    }
     offset += chunk.byteLength;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(output);
+  return apply(textDecoderDecode, utf8Decoder, [output]) as string;
 }
 
 function readStreamChunk(
@@ -535,17 +563,26 @@ function readStreamChunk(
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   if (signal.aborted) {
     void reader.cancel();
-    return Promise.reject(new DOMException("aborted", "AbortError"));
+    return apply(promiseReject, NativePromise, [
+      new DOMException("aborted", "AbortError"),
+    ]) as Promise<ReadableStreamReadResult<Uint8Array>>;
   }
-  return new Promise((resolve, reject) => {
+  return new NativePromise((resolve, reject) => {
     const abort = () => {
       void reader.cancel();
       reject(new DOMException("aborted", "AbortError"));
     };
     signal.addEventListener("abort", abort, { once: true });
-    reader.read().then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", abort);
-    });
+    apply(promiseThen, reader.read(), [
+      (result: ReadableStreamReadResult<Uint8Array>) => {
+        signal.removeEventListener("abort", abort);
+        resolve(result);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    ]);
   });
 }
 
@@ -645,7 +682,7 @@ async function resolveRuntimeConfig(
   const clientId = readRequiredEnv(env, config.clientIdEnvVar);
   const clientSecret = readRequiredEnv(env, config.clientSecretEnvVar);
   const sessionSecret = readRequiredEnv(env, config.sessionSecretEnvVar);
-  return Object.freeze({
+  return objectFreeze({
     issuer,
     clientId,
     clientSecret,
@@ -703,26 +740,31 @@ function parseAppUrl(value: string): string {
 }
 
 function parseScopes(value: readonly string[]): readonly string[] {
-  if (
-    !Array.isArray(value) || value.length < 1 || value.length > MAX_SCOPES ||
-    !value.includes("openid")
-  ) {
+  if (!arrayIsArray(value) || value.length < 1 || value.length > MAX_SCOPES) {
     throw new TypeError("OIDC scopes must include openid");
   }
-  const seen = new Set<string>();
-  for (const scope of value) {
+  const scopes: string[] = [];
+  let includesOpenid = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const scope = value[index];
     if (
       typeof scope !== "string" ||
       scope.length === 0 ||
       scope.length > MAX_SCOPE_LENGTH ||
-      /\s/.test(scope) ||
-      seen.has(scope)
+      /\s/.test(scope)
     ) {
       throw new TypeError("OIDC scopes must be bounded unique strings");
     }
-    seen.add(scope);
+    for (let seenIndex = 0; seenIndex < scopes.length; seenIndex += 1) {
+      if (scopes[seenIndex] === scope) {
+        throw new TypeError("OIDC scopes must be bounded unique strings");
+      }
+    }
+    if (scope === "openid") includesOpenid = true;
+    scopes[index] = scope;
   }
-  return Object.freeze([...value]);
+  if (!includesOpenid) throw new TypeError("OIDC scopes must include openid");
+  return objectFreeze(scopes);
 }
 
 function parseSessionTtl(value: number | undefined): number {
@@ -754,7 +796,7 @@ function isTrustedOidcLoopbackRequest(request: Request): boolean {
 
 function randomBase64Url(randomBytes: ((length: number) => Uint8Array) | undefined): string {
   const bytes = randomBytes === undefined
-    ? crypto.getRandomValues(new Uint8Array(RANDOM_BYTES))
+    ? apply(cryptoGetRandomValues, WebCrypto, [new Uint8Array(RANDOM_BYTES)]) as Uint8Array
     : randomBytes(RANDOM_BYTES);
   if (!(bytes instanceof Uint8Array) || bytes.byteLength !== RANDOM_BYTES) {
     throw new TypeError("OIDC random byte source returned an invalid value");
@@ -768,7 +810,7 @@ function randomBase64Url(randomBytes: ((length: number) => Uint8Array) | undefin
 
 async function codeChallenge(verifier: string): Promise<string> {
   return encodeAuthBase64Url(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", textEncoder.encode(verifier))),
+    new Uint8Array(await digestSha256(toArrayBuffer(encodeUtf8(verifier)))),
   );
 }
 
@@ -777,9 +819,9 @@ async function configurationBinding(
   clientId: string,
   redirectUri: string,
 ): Promise<string> {
-  const bytes = lengthPrefixed(issuer, clientId, redirectUri);
+  const bytes = lengthPrefixedUtf8([issuer, clientId, redirectUri]);
   return encodeAuthBase64Url(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes))),
+    new Uint8Array(await digestSha256(toArrayBuffer(bytes))),
   );
 }
 
@@ -787,21 +829,56 @@ async function sessionConfigurationBinding(
   runtime: RuntimeConfig,
   config: OidcAuthConfig,
 ): Promise<string> {
-  const authorizationConfig = JSON.stringify({
-    claims: canonicalClaimNames(config.claims),
-    scopes: [...runtime.scopes].sort(),
-    signingAlgorithms: [...(config.signingAlgorithms ?? ["RS256"])].sort(),
-  });
-  const bytes = lengthPrefixed(
-    "oidc-session-v2",
+  const claims = canonicalClaimNames(config.claims);
+  const scopes = canonicalStrings(runtime.scopes);
+  const signingAlgorithms = canonicalStrings(config.signingAlgorithms ?? ["RS256"]);
+  const trustedEndpointOrigins = canonicalStrings(config.trustedEndpointOrigins ?? []);
+  const fields = [
+    "oidc-session-v4",
     runtime.issuer,
     runtime.clientId,
     callbackUri(runtime),
-    authorizationConfig,
-  );
+    "claims",
+    claims.email,
+    claims.name,
+    claims.groups,
+    claims.roles,
+    "scopes",
+    `${scopes.length}`,
+  ];
+  for (let index = 0; index < scopes.length; index += 1) {
+    fields[fields.length] = scopes[index]!;
+  }
+  fields[fields.length] = "signing-algorithms";
+  fields[fields.length] = `${signingAlgorithms.length}`;
+  for (let index = 0; index < signingAlgorithms.length; index += 1) {
+    fields[fields.length] = signingAlgorithms[index]!;
+  }
+  fields[fields.length] = "trusted-endpoint-origins";
+  fields[fields.length] = `${trustedEndpointOrigins.length}`;
+  for (let index = 0; index < trustedEndpointOrigins.length; index += 1) {
+    fields[fields.length] = trustedEndpointOrigins[index]!;
+  }
+  const bytes = lengthPrefixedUtf16CodeUnits(fields);
   return encodeAuthBase64Url(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes))),
+    new Uint8Array(await digestSha256(toArrayBuffer(bytes))),
   );
+}
+
+function digestSha256(bytes: BufferSource): Promise<ArrayBuffer> {
+  return apply(subtleDigest, cryptoSubtle, ["SHA-256", bytes]) as Promise<ArrayBuffer>;
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  return apply(textEncoderEncode, textEncoder, [value]) as Uint8Array;
+}
+
+function canonicalStrings(values: readonly string[]): string[] {
+  const canonical: string[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    canonical[index] = values[index]!;
+  }
+  return primordialArraySort(canonical, (left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 function canonicalClaimNames(claimNames: OidcAuthConfig["claims"]): {
@@ -820,21 +897,58 @@ function canonicalClaimNames(claimNames: OidcAuthConfig["claims"]): {
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
+  for (let index = 0; index < bytes.byteLength; index += 1) {
+    copy[index] = bytes[index]!;
+  }
   return copy.buffer;
 }
 
-function lengthPrefixed(...values: readonly string[]): Uint8Array {
-  const parts = values.map((value) => textEncoder.encode(value));
-  const total = parts.reduce((sum, part) => sum + 4 + part.byteLength, 0);
+function lengthPrefixedUtf8(values: readonly string[]): Uint8Array {
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const part = encodeUtf8(values[index]!);
+    parts[index] = part;
+    total += 4 + part.byteLength;
+  }
   const output = new Uint8Array(total);
-  const view = new DataView(output.buffer);
   let offset = 0;
-  for (const part of parts) {
-    view.setUint32(offset, part.byteLength, false);
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    output[offset] = part.byteLength >>> 24;
+    output[offset + 1] = part.byteLength >>> 16;
+    output[offset + 2] = part.byteLength >>> 8;
+    output[offset + 3] = part.byteLength;
     offset += 4;
-    output.set(part, offset);
+    for (let byteIndex = 0; byteIndex < part.byteLength; byteIndex += 1) {
+      output[offset + byteIndex] = part[byteIndex]!;
+    }
     offset += part.byteLength;
+  }
+  return output;
+}
+
+function lengthPrefixedUtf16CodeUnits(values: readonly string[]): Uint8Array {
+  let total = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    total += 4 + values[index]!.length * 2;
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (let valueIndex = 0; valueIndex < values.length; valueIndex += 1) {
+    const value = values[valueIndex]!;
+    const byteLength = value.length * 2;
+    output[offset] = byteLength >>> 24;
+    output[offset + 1] = byteLength >>> 16;
+    output[offset + 2] = byteLength >>> 8;
+    output[offset + 3] = byteLength;
+    offset += 4;
+    for (let index = 0; index < value.length; index += 1) {
+      const codeUnit = apply(stringCharCodeAt, value, [index]) as number;
+      output[offset] = codeUnit >>> 8;
+      output[offset + 1] = codeUnit;
+      offset += 2;
+    }
   }
   return output;
 }

@@ -1,6 +1,6 @@
 import { type ApplicationIdentityClaimNames, createApplicationIdentity } from "./identity.ts";
 import { decodeAuthBase64Url } from "./base64url.ts";
-import { type JwksCache, type PublicJwk } from "./jwks-cache.ts";
+import { getJwksKeyWithFreshness, type JwksCache, type PublicJwk } from "./jwks-cache.ts";
 import { parseStrictJsonObject } from "./oidc-metadata.ts";
 import type { ApplicationIdentity } from "./types.ts";
 
@@ -21,20 +21,36 @@ const MAX_MAX_TOKEN_AGE_SECONDS = 3_600;
 const MAX_VALIDITY_WINDOW_SECONDS = 86_400;
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const PRINTABLE_ASCII_PATTERN = /^[\x20-\x7E]+$/u;
-const FORBIDDEN_HEADER_NAMES = new Set(["crit", "b64", "jku", "jwk", "x5u", "x5c"]);
-const DEFAULT_ALLOWED_ALGORITHMS = Object.freeze(["RS256"]);
-const RSA_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]);
-const EC_SIGNATURE_BYTES = new Map([
+const ArrayIsArray = Array.isArray;
+const NativeMap = Map;
+const NativeSet = Set;
+const ReflectApply = Reflect.apply;
+const MapPrototypeGet = NativeMap.prototype.get;
+const MapPrototypeHas = NativeMap.prototype.has;
+const ObjectFreeze = Object.freeze;
+const SetPrototypeAdd = NativeSet.prototype.add;
+const SetPrototypeHas = NativeSet.prototype.has;
+const FORBIDDEN_HEADER_NAMES = ["crit", "b64", "jku", "jwk", "x5u", "x5c"];
+const DEFAULT_ALLOWED_ALGORITHMS = ObjectFreeze(["RS256"]);
+const RSA_ALGORITHMS = new NativeSet([
+  "RS256",
+  "RS384",
+  "RS512",
+  "PS256",
+  "PS384",
+  "PS512",
+]);
+const EC_SIGNATURE_BYTES = new NativeMap([
   ["ES256", 64],
   ["ES384", 96],
   ["ES512", 132],
 ]);
-const EC_CURVE_BY_ALGORITHM = new Map([
+const EC_CURVE_BY_ALGORITHM = new NativeMap([
   ["ES256", "P-256"],
   ["ES384", "P-384"],
   ["ES512", "P-521"],
 ]);
-const HASH_BY_ALGORITHM = new Map([
+const HASH_BY_ALGORITHM = new NativeMap([
   ["RS256", "SHA-256"],
   ["RS384", "SHA-384"],
   ["RS512", "SHA-512"],
@@ -45,11 +61,19 @@ const HASH_BY_ALGORITHM = new Map([
   ["ES384", "SHA-384"],
   ["ES512", "SHA-512"],
 ]);
-const PSS_SALT_LENGTH_BY_ALGORITHM = new Map([
+const PSS_SALT_LENGTH_BY_ALGORITHM = new NativeMap([
   ["PS256", 32],
   ["PS384", 48],
   ["PS512", 64],
 ]);
+const CryptoSubtle = crypto.subtle;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const SubtleCryptoImportKey = CryptoSubtle.importKey;
+const SubtleCryptoVerify = CryptoSubtle.verify;
+const TextDecoderDecode = TextDecoder.prototype.decode;
+const TextEncoderEncode = TextEncoder.prototype.encode;
+const TokenTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const TokenTextEncoder = new TextEncoder();
 
 type JsonObject = { readonly [key: string]: unknown };
 type IdTokenAlgorithm =
@@ -182,8 +206,9 @@ function parseCompactJws(token: string): ParsedToken {
   ) {
     throw new TypeError("OIDC ID token compact JWS segments must be non-empty");
   }
-  for (const segment of segments) {
-    if (segment.includes("=") || !BASE64URL_SEGMENT_PATTERN.test(segment)) {
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    if (!BASE64URL_SEGMENT_PATTERN.test(segment)) {
       throw new TypeError("OIDC ID token compact JWS segment must use strict base64url");
     }
   }
@@ -196,18 +221,48 @@ function parseCompactJws(token: string): ParsedToken {
   if (signature.byteLength > MAX_SIGNATURE_BYTES) {
     throw new TypeError("OIDC ID token signature exceeds the size limit");
   }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
   const protectedHeader = parseStrictJsonObject(
-    decoder.decode(headerBytes),
+    decodeUtf8(headerBytes),
     "OIDC ID token protected header",
   );
-  const claims = parseStrictJsonObject(decoder.decode(payloadBytes), "OIDC ID token claims");
+  const claims = parseStrictJsonObject(decodeUtf8(payloadBytes), "OIDC ID token claims");
   return {
-    signingInput: new TextEncoder().encode(`${headerSegment}.${payloadSegment}`),
+    signingInput: encodeUtf8(`${headerSegment}.${payloadSegment}`),
     protectedHeader,
     claims,
     signature,
   };
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return ReflectApply(TextDecoderDecode, TokenTextDecoder, [bytes]) as string;
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  return ReflectApply(TextEncoderEncode, TokenTextEncoder, [value]) as Uint8Array;
+}
+
+function arrayIncludes<T>(values: readonly T[], expected: T): boolean {
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] === expected) return true;
+  }
+  return false;
+}
+
+function mapGet<K, V>(map: ReadonlyMap<K, V>, key: K): V | undefined {
+  return ReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K>(map: ReadonlyMap<K, unknown>, key: K): boolean {
+  return ReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function setAdd<T>(set: Set<T>, value: T): void {
+  ReflectApply(SetPrototypeAdd, set, [value]);
+}
+
+function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
+  return ReflectApply(SetPrototypeHas, set, [value]) as boolean;
 }
 
 function isAsciiString(value: string): boolean {
@@ -233,23 +288,24 @@ function parseAllowedAlgorithms(value: readonly string[] | undefined): readonly 
   if (algorithms.length < 1 || algorithms.length > 9) {
     throw new TypeError("OIDC ID token algorithm allowlist must contain 1 through 9 entries");
   }
-  const seen = new Set<string>();
+  const seen = new NativeSet<string>();
   const parsed: IdTokenAlgorithm[] = [];
-  for (const algorithm of algorithms) {
+  for (let index = 0; index < algorithms.length; index += 1) {
+    const algorithm = algorithms[index]!;
     if (!isIdTokenAlgorithm(algorithm)) {
       throw new TypeError("OIDC ID token algorithm allowlist must contain asymmetric algorithms");
     }
-    if (seen.has(algorithm)) {
+    if (setHas(seen, algorithm)) {
       throw new TypeError("OIDC ID token algorithm allowlist must not contain duplicates");
     }
-    seen.add(algorithm);
-    parsed.push(algorithm);
+    setAdd(seen, algorithm);
+    parsed[parsed.length] = algorithm;
   }
-  return Object.freeze(parsed);
+  return ObjectFreeze(parsed);
 }
 
 function isIdTokenAlgorithm(value: string): value is IdTokenAlgorithm {
-  return HASH_BY_ALGORITHM.has(value);
+  return mapHas(HASH_BY_ALGORITHM, value);
 }
 
 function parseHeaderAlgorithm(
@@ -257,7 +313,10 @@ function parseHeaderAlgorithm(
   allowedAlgorithms: readonly IdTokenAlgorithm[],
 ): IdTokenAlgorithm {
   const alg = header.alg;
-  if (typeof alg !== "string" || !isIdTokenAlgorithm(alg) || !allowedAlgorithms.includes(alg)) {
+  if (
+    typeof alg !== "string" || !isIdTokenAlgorithm(alg) ||
+    !arrayIncludes(allowedAlgorithms, alg)
+  ) {
     throw new TypeError("OIDC ID token uses an unsupported signing algorithm");
   }
   return alg;
@@ -272,7 +331,8 @@ function parseHeaderKid(header: JsonObject): string {
 }
 
 function rejectForbiddenHeaders(header: JsonObject): void {
-  for (const name of FORBIDDEN_HEADER_NAMES) {
+  for (let index = 0; index < FORBIDDEN_HEADER_NAMES.length; index += 1) {
+    const name = FORBIDDEN_HEADER_NAMES[index]!;
     if (header[name] !== undefined) {
       throw new TypeError("OIDC ID token protected header contains a forbidden header");
     }
@@ -297,7 +357,7 @@ async function verifySignatureWithRefresh(options: {
   readonly signingInput: Uint8Array;
   readonly signature: Uint8Array;
 }): Promise<void> {
-  const firstKey = await options.jwksCache.getKey({
+  const firstKey = await getJwksKeyWithFreshness(options.jwksCache, {
     issuer: options.issuer,
     jwksUri: options.jwksUri,
     kid: options.kid,
@@ -305,19 +365,25 @@ async function verifySignatureWithRefresh(options: {
     allowInsecureLoopback: options.allowInsecureLoopback,
     timeoutMs: options.timeoutMs,
   });
-  if (await verifySignature(firstKey, options.alg, options.signingInput, options.signature)) {
+  if (await verifySignature(firstKey.key, options.alg, options.signingInput, options.signature)) {
     return;
   }
-  const refreshedKey = await options.jwksCache.getKey({
-    issuer: options.issuer,
-    jwksUri: options.jwksUri,
-    kid: options.kid,
-    alg: options.alg,
-    forceRefresh: true,
-    allowInsecureLoopback: options.allowInsecureLoopback,
-    timeoutMs: options.timeoutMs,
-  });
-  if (await verifySignature(refreshedKey, options.alg, options.signingInput, options.signature)) {
+  const refreshedKey = await getJwksKeyWithFreshness(
+    options.jwksCache,
+    {
+      issuer: options.issuer,
+      jwksUri: options.jwksUri,
+      kid: options.kid,
+      alg: options.alg,
+      forceRefresh: true,
+      allowInsecureLoopback: options.allowInsecureLoopback,
+      timeoutMs: options.timeoutMs,
+    },
+    firstKey.freshness,
+  );
+  if (
+    await verifySignature(refreshedKey.key, options.alg, options.signingInput, options.signature)
+  ) {
     return;
   }
   throw new TypeError("OIDC ID token signature verification failed");
@@ -330,23 +396,23 @@ async function verifySignature(
   signature: Uint8Array,
 ): Promise<boolean> {
   validateKeyType(key, alg, signature);
-  const cryptoKey = await crypto.subtle.importKey(
+  const cryptoKey = await ReflectApply(SubtleCryptoImportKey, CryptoSubtle, [
     "jwk",
     jwkForImport(key),
     importAlgorithm(key, alg),
     false,
     ["verify"],
-  );
-  return await crypto.subtle.verify(
+  ]) as CryptoKey;
+  return await ReflectApply(SubtleCryptoVerify, CryptoSubtle, [
     verifyAlgorithm(alg),
     cryptoKey,
     toArrayBuffer(signature),
     toArrayBuffer(signingInput),
-  );
+  ]) as boolean;
 }
 
 function validateKeyType(key: PublicJwk, alg: IdTokenAlgorithm, signature: Uint8Array): void {
-  if (RSA_ALGORITHMS.has(alg)) {
+  if (setHas(RSA_ALGORITHMS, alg)) {
     if (key.kty !== "RSA") {
       throw new TypeError("OIDC ID token key type is not compatible with the signing algorithm");
     }
@@ -355,8 +421,8 @@ function validateKeyType(key: PublicJwk, alg: IdTokenAlgorithm, signature: Uint8
   if (key.kty !== "EC") {
     throw new TypeError("OIDC ID token key type is not compatible with the signing algorithm");
   }
-  const expectedCurve = EC_CURVE_BY_ALGORITHM.get(alg);
-  const expectedBytes = EC_SIGNATURE_BYTES.get(alg);
+  const expectedCurve = mapGet(EC_CURVE_BY_ALGORITHM, alg);
+  const expectedBytes = mapGet(EC_SIGNATURE_BYTES, alg);
   if (
     key.crv !== expectedCurve || expectedBytes === undefined ||
     signature.byteLength !== expectedBytes
@@ -367,7 +433,9 @@ function validateKeyType(key: PublicJwk, alg: IdTokenAlgorithm, signature: Uint8
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
+  for (let index = 0; index < bytes.byteLength; index += 1) {
+    copy[index] = bytes[index]!;
+  }
   return copy.buffer;
 }
 
@@ -383,7 +451,7 @@ function importAlgorithm(
   alg: IdTokenAlgorithm,
 ): RsaHashedImportParams | EcKeyImportParams {
   if (key.kty === "EC") {
-    const namedCurve = EC_CURVE_BY_ALGORITHM.get(alg);
+    const namedCurve = mapGet(EC_CURVE_BY_ALGORITHM, alg);
     if (namedCurve === undefined) {
       throw new TypeError("OIDC ID token key type is not compatible with the signing algorithm");
     }
@@ -397,7 +465,7 @@ function importAlgorithm(
 
 function verifyAlgorithm(alg: IdTokenAlgorithm): AlgorithmIdentifier | RsaPssParams | EcdsaParams {
   if (alg.startsWith("PS")) {
-    const saltLength = PSS_SALT_LENGTH_BY_ALGORITHM.get(alg);
+    const saltLength = mapGet(PSS_SALT_LENGTH_BY_ALGORITHM, alg);
     if (saltLength === undefined) {
       throw new TypeError("OIDC ID token uses an unsupported signing algorithm");
     }
@@ -408,7 +476,7 @@ function verifyAlgorithm(alg: IdTokenAlgorithm): AlgorithmIdentifier | RsaPssPar
 }
 
 function hashFor(alg: IdTokenAlgorithm): string {
-  const hash = HASH_BY_ALGORITHM.get(alg);
+  const hash = mapGet(HASH_BY_ALGORITHM, alg);
   if (hash === undefined) {
     throw new TypeError("OIDC ID token uses an unsupported signing algorithm");
   }
@@ -441,7 +509,7 @@ export function validateOidcAudienceClaims(
   clientId: string,
 ): void {
   const audiences = parseAudience(aud);
-  if (!audiences.includes(clientId)) {
+  if (!arrayIncludes(audiences, clientId)) {
     throw new TypeError("OIDC ID token audience must contain the configured client ID");
   }
   if (azp !== undefined && azp !== clientId) {
@@ -456,18 +524,19 @@ function parseAudience(value: unknown): readonly string[] {
   if (typeof value === "string") {
     return [parseBoundedClaimString(value, "audience")];
   }
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_AUDIENCES) {
+  if (!ArrayIsArray(value) || value.length < 1 || value.length > MAX_AUDIENCES) {
     throw new TypeError("OIDC ID token audience must be a bounded string or string array");
   }
-  const seen = new Set<string>();
+  const seen = new NativeSet<string>();
   const output: string[] = [];
-  for (const entry of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = value[index];
     const audience = parseBoundedClaimString(entry, "audience");
-    if (seen.has(audience)) {
+    if (setHas(seen, audience)) {
       throw new TypeError("OIDC ID token audience values must be unique");
     }
-    seen.add(audience);
-    output.push(audience);
+    setAdd(seen, audience);
+    output[output.length] = audience;
   }
   return output;
 }
@@ -500,12 +569,11 @@ function validateNonce(value: unknown, expected: string): void {
 }
 
 function constantWorkEqual(actual: string, expected: string): boolean {
-  const actualBytes = new TextEncoder().encode(actual);
-  const expectedBytes = new TextEncoder().encode(expected);
-  if (actualBytes.byteLength !== expectedBytes.byteLength) return false;
+  if (actual.length !== expected.length) return false;
   let diff = 0;
-  for (let index = 0; index < actualBytes.byteLength; index += 1) {
-    diff |= (actualBytes[index] ?? 0) ^ (expectedBytes[index] ?? 0);
+  for (let index = 0; index < actual.length; index += 1) {
+    diff |= (ReflectApply(StringPrototypeCharCodeAt, actual, [index]) as number) ^
+      (ReflectApply(StringPrototypeCharCodeAt, expected, [index]) as number);
   }
   return diff === 0;
 }
