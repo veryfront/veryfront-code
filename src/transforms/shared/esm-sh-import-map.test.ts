@@ -191,6 +191,17 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("decodes the remote filename only when classifying its extension", () => {
+    for (const filename of ["pkg%2Ejs", "pkg.j%73"]) {
+      const mapping = `https://cdn.example/${filename}`;
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        mapping,
+        `${filename} is a single remote module`,
+      );
+    }
+  });
+
   it("still appends to a bare versioned coordinate", () => {
     assertEquals(
       resolve("https://esm.sh/pkg@1/fp", { pkg: "https://cdn.example/lodash@4.17.21" }),
@@ -252,6 +263,33 @@ describe("transforms/shared/esm-sh-import-map", () => {
       resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh/v8" }),
       "https://esm.sh/v8",
       "without a channel the collision stands and the mapping stays exact",
+    );
+  });
+
+  it("normalises dot segments before stripping an esm.sh build channel", () => {
+    assertEquals(
+      resolve("https://esm.sh/./v135/react@18/sub", {
+        react: "https://cdn.example/react",
+        v135: "https://cdn.example/wrong-package",
+      }),
+      "https://cdn.example/react/sub",
+    );
+  });
+
+  it("recognises a jsDelivr GitHub repository as a coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/build/pdf.mjs", {
+        pkg: "https://cdn.jsdelivr.net/gh/mozilla/pdf.js",
+      }),
+      "https://cdn.jsdelivr.net/gh/mozilla/pdf.js/build/pdf.mjs",
+      "a dotted repository name is still the GitHub coordinate",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/other", {
+        pkg: "https://cdn.jsdelivr.net/gh/mozilla/pdf.js/build/pdf.mjs",
+      }),
+      "https://cdn.jsdelivr.net/gh/mozilla/pdf.js/build/pdf.mjs",
+      "a path below the repository coordinate already selects an export",
     );
   });
 

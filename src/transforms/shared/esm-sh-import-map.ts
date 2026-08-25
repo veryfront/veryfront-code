@@ -112,23 +112,26 @@ function isReservedCoordinateName(packageName: string): boolean {
 export function parseEsmShSpecifier(
   url: string,
 ): { packageName: string; subpath: string; version: string | null } | null {
-  const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
-
-  // Normalise before reading the tail. `pkg@18/.` and `pkg@18/` are the same
-  // path, but only the normalised form ends in the separator, and the parser
-  // rejects the empty final segment the raw spelling leaves behind.
   let normalized: string;
   try {
-    normalized = new URL(withoutBuildPrefix).href;
+    normalized = new URL(url).href;
   } catch (_) {
     /* expected: URL may be malformed */
     return null;
   }
 
-  const stripped = stripTrailingSlash(normalized);
-  const hadTrailingSeparator = stripped !== normalized;
+  // Normalise before stripping the channel as well as before reading the tail.
+  // Dot segments can otherwise hide a valid build prefix from the raw-string
+  // pattern, leaving `v135` to be misread as the package coordinate.
+  const withoutBuildPrefix = normalized.replace(ESM_SH_BUILD_PREFIX, "$1");
+  const afterBuildChannel = withoutBuildPrefix !== normalized;
 
-  const coordinates = reservedNamePackage(stripped, withoutBuildPrefix !== url) ??
+  // `pkg@18/.` and `pkg@18/` are the same path, but only the normalised form
+  // ends in the separator, and the parser rejects the empty final segment.
+  const stripped = stripTrailingSlash(withoutBuildPrefix);
+  const hadTrailingSeparator = stripped !== withoutBuildPrefix;
+
+  const coordinates = reservedNamePackage(stripped, afterBuildChannel) ??
     parseEsmShUrl(stripped);
   if (!coordinates) return null;
 
@@ -210,11 +213,15 @@ function decodedCoordinateSegments(segments: readonly string[]): string[] {
 }
 
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
-  if (
-    PACKAGE_ROUTE_HOSTS.has(url.hostname) && segments[0] !== undefined &&
-    PACKAGE_COORDINATE_ROUTES.has(segments[0])
-  ) {
-    return isScopeSegment(segments[1]) ? 3 : 2;
+  if (PACKAGE_ROUTE_HOSTS.has(url.hostname)) {
+    if (segments[0] === "gh") {
+      // jsDelivr's GitHub route is `gh/<owner>/<repo>`. The repository name is
+      // still a coordinate when it contains a dot, not a filename.
+      return 3;
+    }
+    if (segments[0] !== undefined && PACKAGE_COORDINATE_ROUTES.has(segments[0])) {
+      return isScopeSegment(segments[1]) ? 3 : 2;
+    }
   }
 
   if (PACKAGE_ROOT_HOSTS.has(url.hostname)) {
@@ -251,6 +258,13 @@ function addressesRemoteFile(mapping: string): boolean {
   const lastSegment = segments.at(-1) ?? "";
   if (!lastSegment) return false;
 
+  let decodedLastSegment = lastSegment;
+  try {
+    decodedLastSegment = decodeURIComponent(lastSegment);
+  } catch (_) {
+    /* expected: malformed escapes remain an opaque path segment */
+  }
+
   const coordinateSegments = decodedCoordinateSegments(segments);
   const coordinateLength = coordinateSegmentCount(url, coordinateSegments);
   if (coordinateLength !== -1) return coordinateSegments.length > coordinateLength;
@@ -258,9 +272,9 @@ function addressesRemoteFile(mapping: string): boolean {
   // Outside a recognised shape, a version marks a coordinate unless the name
   // also carries an extension, which makes it a version-stamped file such as
   // `pkg@2.0.0.js`.
-  if (lastSegment.includes("@") && !FILE_EXTENSION.test(lastSegment)) return false;
+  if (decodedLastSegment.includes("@") && !FILE_EXTENSION.test(decodedLastSegment)) return false;
 
-  return FILE_EXTENSION.test(lastSegment);
+  return FILE_EXTENSION.test(decodedLastSegment);
 }
 
 function coordinateSelectsExport(coordinate: string): boolean {
@@ -305,7 +319,13 @@ function isSingleModuleMapping(mapping: string): boolean {
       // than a channel route. A build channel already occupying the first
       // segment does the same, since `v135/v8/sub` reads back as the package
       // `v8` while a bare `stable/sub` reads back as the package `sub`.
-      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(mapping);
+      let normalizedMapping = mapping;
+      try {
+        normalizedMapping = new URL(mapping).href;
+      } catch (_) {
+        /* expected: parseEsmShSpecifier already rejects malformed URLs */
+      }
+      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(normalizedMapping);
       if (
         isReservedCoordinateName(parsed.packageName) && parsed.version === null && !hasBuildChannel
       ) {
