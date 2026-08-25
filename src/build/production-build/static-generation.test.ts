@@ -263,6 +263,46 @@ describe(
         assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".h-screen");
       });
 
+      it("includes CSS imported by App Router modules in production output", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/page.tsx",
+          `import "./foo.css";
+          export default function Page() {
+            return <main className="foo">Hello</main>;
+          }`,
+        );
+        adapter.fs.files.set(
+          "/tmp/project/app/foo/foo.css",
+          ".foo { color: red; }",
+        );
+
+        await buildAppRoutes(
+          [{
+            path: "/foo",
+            pageFile: "/tmp/project/app/foo/page.tsx",
+            segments: ["foo"],
+            segmentDirs: ["/tmp/project/app/foo"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        const cssPath = [...adapter.fs.files.keys()].find((path) =>
+          path.startsWith("/tmp/output/_vf/css/") && path.endsWith(".css")
+        );
+        assertEquals(typeof cssPath, "string");
+        assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".foo");
+      });
+
       it("caches generated App Router CSS by hash for runtime CSS handler lookups", async () => {
         clearCSSCache();
         const adapter = createMemoryAdapter();

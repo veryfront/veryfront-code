@@ -21,9 +21,14 @@ import {
   generateTailwindCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
+import {
+  collectCssImportPaths,
+  CSS_IMPORTING_SOURCE_EXTENSIONS,
+} from "#veryfront/html/styles-builder/css-import-extraction.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-imported-css.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -145,8 +150,8 @@ async function readOptionalFile(
 async function collectAppRouteStyleSources(
   adapter: RuntimeAdapter,
   dir: string,
-): Promise<Array<{ path: string; content?: string }>> {
-  const files: Array<{ path: string; content?: string }> = [];
+): Promise<Array<{ path: string; content: string }>> {
+  const files: Array<{ path: string; content: string }> = [];
 
   async function walk(currentDir: string): Promise<void> {
     let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
@@ -186,13 +191,26 @@ async function prepareAppRouteStylesheet(
     join(options.projectDir, stylesheetPath),
   );
   const sourceFiles = await collectAppRouteStyleSources(options.adapter, options.projectDir);
+  const cssImportSources = sourceFiles.filter((file) =>
+    CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))
+  );
+  const cssImports = collectCssImportPaths(cssImportSources, options.projectDir);
+  const mergedStylesheet = await mergeImportedCSS({
+    fs: options.adapter.fs,
+    logger,
+    projectDir: options.projectDir,
+    globalCSS: stylesheet,
+    cssImports,
+    stylesheetPath,
+  });
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
 
   const generationSession = acquireCSSGenerationSession(true);
-  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+  const resolvedStylesheet = mergedStylesheet ??
+    generationSession.compilationSession.defaultStylesheet;
   const generated = await generateTailwindCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
