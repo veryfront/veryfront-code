@@ -1105,7 +1105,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(fetchUrls, []);
-    assertEquals(contextCalls, ["restrict-gmail"]);
+    assertEquals(contextCalls, ["restrict-gmail", "restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
     assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
     assertEquals(discoveryConfig?.integrations, {
@@ -1896,12 +1896,16 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("keeps request-scoped credentials out of project agent environments", async () => {
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
+    let capturedProjectContextToken: string | null | undefined;
     let capturedMcpRequest: { url: string; authorization: string | null } | null = null;
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
 
     const agent = createAgentWithConfig("assistant-1", {
-      system: () => `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`,
+      system: () => {
+        capturedProjectContextToken = getCurrentRequestContext()?.token;
+        return `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`;
+      },
       tools: { search_knowledge: true, list_projects: true },
     });
 
@@ -2101,6 +2105,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", "project_reference=support-agent-fork");
     assertStringIncludes(capturedSystem ?? "", '<project_context>\nproject_reference: "proj-1"');
+    assertEquals(capturedProjectContextToken, "run-scoped-token");
     assertEquals(capturedMcpRequest, {
       url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
       authorization: "Bearer request-scoped-user-token",
@@ -2734,6 +2739,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
@@ -2767,11 +2773,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(runWithContextCalls.length, 1);
+    assertEquals(runWithContextCalls.length, 2);
     assertEquals(runWithContextCalls[0]?.token, "request-scoped-user-token");
     assertEquals(runWithContextCalls[0]?.environmentName, "staging");
     assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
     assertEquals(runWithContextCalls[0]?.productionMode, true);
+    assertEquals(runWithContextCalls[1]?.token, "run-scoped-token");
+    assertEquals(runWithContextCalls[1]?.environmentName, "staging");
+    assertEquals(runWithContextCalls[1]?.releaseId, "10000000-1000-4000-8000-100000000099");
+    assertEquals(runWithContextCalls[1]?.productionMode, true);
     assertEquals(observedEnvironmentTarget, {
       environmentName: "staging",
       environmentId: "10000000-1000-4000-8000-100000000098",

@@ -845,99 +845,116 @@ export class AgentStreamHandler extends BaseHandler {
               ...requestScopedContext,
               config: sourceConfig,
             };
+            // Source selection and config loading are framework-owned and may
+            // use the signed user credential. Re-enter the same source with the
+            // runtime credential before discovery or any project-authored agent
+            // code can execute.
+            const projectScopedContext: HandlerContext = {
+              ...sourceScopedContext,
+              proxyToken: projectRuntimeToken || undefined,
+              requestContext: sourceScopedContext.requestContext
+                ? { ...sourceScopedContext.requestContext, token: projectRuntimeToken }
+                : sourceScopedContext.requestContext,
+            };
             const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
               sourceConfig.integrations,
             );
 
-            return await runWithExactSourceIntegrationPolicy(
-              sourceIntegrationPolicy,
-              async () => {
-                await this.deps.ensureProjectDiscovery(sourceScopedContext);
+            return await this.withAgentSourceContext(
+              projectScopedContext,
+              payload.agentSource,
+              () =>
+                runWithExactSourceIntegrationPolicy(
+                  sourceIntegrationPolicy,
+                  async () => {
+                    await this.deps.ensureProjectDiscovery(projectScopedContext);
 
-                const agent = this.deps.getAgent(payload.agentId);
-                if (!agent) {
-                  logger.warn("Internal agent stream request referenced unknown agent", {
-                    runId: payload.runId,
-                    agentId: payload.agentId,
-                    projectId: sourceScopedContext.projectId,
-                    projectSlug: sourceScopedContext.projectSlug,
-                  });
-                  return this.respond(builder.json({ error: "Agent not found" }, 404));
-                }
+                    const agent = this.deps.getAgent(payload.agentId);
+                    if (!agent) {
+                      logger.warn("Internal agent stream request referenced unknown agent", {
+                        runId: payload.runId,
+                        agentId: payload.agentId,
+                        projectId: projectScopedContext.projectId,
+                        projectSlug: projectScopedContext.projectSlug,
+                      });
+                      return this.respond(builder.json({ error: "Agent not found" }, 404));
+                    }
 
-                // veryfront-api is the trusted control-plane caller; it resolves
-                // authorization before attaching request-scoped project-agent config.
-                const runtimeBaseAgent = payload.agentConfig
-                  ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
-                  : agent;
-                const runtimeInput = sanitizeRuntimeRunAgentInput(
-                  toRuntimeRunAgentInput(payload),
-                );
-                const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
-                const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-                  agent: runtimeBaseAgent as Agent,
-                  token: apiAuthToken || null,
-                  projectId: sourceScopedContext.projectId ?? null,
-                  availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                });
-                const runtimeAgent = withVeryfrontStudioRemoteTools({
-                  agent: platformRuntimeAgent,
-                  token: apiAuthToken || null,
-                  projectId: sourceScopedContext.projectId ?? null,
-                  forwardedProps: runtimeInput.forwardedProps,
-                  availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                  conversationId: runtimeInput.threadId,
-                });
+                    // veryfront-api is the trusted control-plane caller; it resolves
+                    // authorization before attaching request-scoped project-agent config.
+                    const runtimeBaseAgent = payload.agentConfig
+                      ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
+                      : agent;
+                    const runtimeInput = sanitizeRuntimeRunAgentInput(
+                      toRuntimeRunAgentInput(payload),
+                    );
+                    const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
+                    const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+                      agent: runtimeBaseAgent as Agent,
+                      token: apiAuthToken || null,
+                      projectId: projectScopedContext.projectId ?? null,
+                      availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                    });
+                    const runtimeAgent = withVeryfrontStudioRemoteTools({
+                      agent: platformRuntimeAgent,
+                      token: apiAuthToken || null,
+                      projectId: projectScopedContext.projectId ?? null,
+                      forwardedProps: runtimeInput.forwardedProps,
+                      availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                      conversationId: runtimeInput.threadId,
+                    });
 
-                // Source-defined MCP tool headers resolve these via
-                // _getProjectEnv(); they are the same variables the source
-                // config was evaluated against.
-                logger.debug("Agent stream env vars loaded", {
-                  runId: payload.runId,
-                  projectSlug: sourceScopedContext.projectSlug,
-                  count: Object.keys(envVarsForAgent).length,
-                });
+                    // Source-defined MCP tool headers resolve these via
+                    // _getProjectEnv(); they are the same variables the source
+                    // config was evaluated against.
+                    logger.debug("Agent stream env vars loaded", {
+                      runId: payload.runId,
+                      projectSlug: projectScopedContext.projectSlug,
+                      count: Object.keys(envVarsForAgent).length,
+                    });
 
-                const runAgentStream = () =>
-                  createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
-                    ...this.deps,
-                    localTools,
-                    projectAgentSandbox: {
-                      apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-                      authToken: projectRuntimeToken || undefined,
-                      branchId: payload.runtimeTargetBranchId,
-                      projectId: sourceScopedContext.projectId ?? null,
-                    },
-                  });
-                const shouldIsolateEnv = apiAuthToken.length > 0;
-                const response = shouldIsolateEnv
-                  ? await runWithProjectEnv(
-                    buildAgentStreamEnv({
-                      envVars: envVarsForAgent,
-                      proxyToken: projectRuntimeToken,
-                      projectSlug: sourceScopedContext.projectSlug,
-                    }),
-                    runAgentStream,
-                  )
-                  : await runAgentStream();
-                logger.info("Internal agent stream response created", {
-                  runId: payload.runId,
-                  threadId: payload.threadId,
-                  agentId: payload.agentId,
-                  projectId: sourceScopedContext.projectId,
-                  projectSlug: sourceScopedContext.projectSlug,
-                });
-                const runtimeOwnerInvokeUrl = await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
-                  null;
-                const responseWithOwner = runtimeOwnerInvokeUrl
-                  ? setResponseHeader(
-                    response,
-                    RUNTIME_OWNER_INVOKE_URL_HEADER,
-                    runtimeOwnerInvokeUrl,
-                  )
-                  : response;
-                return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
-              },
+                    const runAgentStream = () =>
+                      createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+                        ...this.deps,
+                        localTools,
+                        projectAgentSandbox: {
+                          apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+                          authToken: projectRuntimeToken || undefined,
+                          branchId: payload.runtimeTargetBranchId,
+                          projectId: projectScopedContext.projectId ?? null,
+                        },
+                      });
+                    const shouldIsolateEnv = apiAuthToken.length > 0;
+                    const response = shouldIsolateEnv
+                      ? await runWithProjectEnv(
+                        buildAgentStreamEnv({
+                          envVars: envVarsForAgent,
+                          proxyToken: projectRuntimeToken,
+                          projectSlug: projectScopedContext.projectSlug,
+                        }),
+                        runAgentStream,
+                      )
+                      : await runAgentStream();
+                    logger.info("Internal agent stream response created", {
+                      runId: payload.runId,
+                      threadId: payload.threadId,
+                      agentId: payload.agentId,
+                      projectId: projectScopedContext.projectId,
+                      projectSlug: projectScopedContext.projectSlug,
+                    });
+                    const runtimeOwnerInvokeUrl =
+                      await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
+                        null;
+                    const responseWithOwner = runtimeOwnerInvokeUrl
+                      ? setResponseHeader(
+                        response,
+                        RUNTIME_OWNER_INVOKE_URL_HEADER,
+                        runtimeOwnerInvokeUrl,
+                      )
+                      : response;
+                    return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
+                  },
+                ),
             );
           },
         );
