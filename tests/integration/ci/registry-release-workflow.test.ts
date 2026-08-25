@@ -88,6 +88,22 @@ async function readJobs(): Promise<YamlRecord> {
   return asRecord(workflow.jobs, "CI workflow jobs");
 }
 
+async function runVersionValidation(version: string): Promise<Deno.CommandOutput> {
+  const jobs = await readJobs();
+  const versionCheck = asRecord(jobs["version-check"], "version check job");
+  const detect = namedStep(versionCheck, "Detect release type");
+  const run = String(detect.run);
+  const match = run.match(/if ! \[\[ "\$VERSION" =~ (.+) \]\]; then/);
+
+  assert(match?.[1], "version-check must expose its validation regex");
+  return await new Deno.Command("bash", {
+    args: ["-c", `[[ "$VERSION" =~ ${match[1]} ]]`],
+    env: { VERSION: version },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
 describe("registry release workflow", () => {
   it("validates the deno.json version before exposing release outputs", async () => {
     const jobs = await readJobs();
@@ -108,13 +124,34 @@ describe("registry release workflow", () => {
     );
     assertStringIncludes(
       run,
-      "(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?",
-      "version-check must allow safe npm prerelease identifiers",
+      "(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(\\.((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?",
+      "version-check must reject leading zeroes only in numeric prerelease identifiers",
     );
     assert(
       validationIndex < outputIndex,
       "version-check must validate the version before writing GITHUB_OUTPUT",
     );
+  });
+
+  it("enforces numeric prerelease identifiers without rejecting alphanumeric identifiers", async () => {
+    for (
+      const version of [
+        "1.2.3",
+        "1.2.3-rc.0",
+        "1.2.3-rc.1",
+        "1.2.3-0rc",
+        "1.2.3-01rc",
+        "1.2.3-rc-01",
+      ]
+    ) {
+      const output = await runVersionValidation(version);
+      assertEquals(output.code, 0, `${version} must be accepted`);
+    }
+
+    for (const version of ["1.2.3-01", "1.2.3-rc.01"]) {
+      const output = await runVersionValidation(version);
+      assertEquals(output.code, 1, `${version} must be rejected`);
+    }
   });
 
   for (const jobName of ["prerelease", "release"] as const) {
