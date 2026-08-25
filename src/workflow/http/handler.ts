@@ -94,10 +94,10 @@ function routeSegments(pathname: string, basePath: string): string[] | null {
 }
 
 function canonicalWorkflowPath(basePath: string, segments: readonly string[]): string {
-  const encoded = [...toSegments(basePath), ...segments].map((segment) =>
-    encodeURIComponent(segment)
-  );
-  return `/${encoded.join("/")}`;
+  const normalizedBase = `/${basePath.split("/").filter(Boolean).join("/")}`;
+  const encodedSuffix = segments.map((segment) => encodeURIComponent(segment)).join("/");
+  if (!encodedSuffix) return normalizedBase;
+  return normalizedBase === "/" ? `/${encodedSuffix}` : `${normalizedBase}/${encodedSuffix}`;
 }
 
 function problem(message: string, status: number): Response {
@@ -436,7 +436,7 @@ export function createWorkflowHandler(
       if (url.pathname !== canonicalWorkflowPath(basePath, segments)) {
         return problem("Workflow route must use its canonical path", 400);
       }
-      const authorizedApprover = await options.authorize(request);
+      const authorizedApprover = await options.authorize(request.clone());
       if (!authorizedApprover) return problem("Workflow request is not authorized", 403);
 
       const [first, second, third, approvalId] = segments;

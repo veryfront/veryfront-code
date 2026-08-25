@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
 import { normalizeWorkflowApiBase, useStableWorkflowHeaders } from "./mutation-headers.ts";
@@ -60,6 +60,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
+  const requestSequence = useRef(0);
 
   const [filter, setFilterState] = useState<RunFilter>({
     workflowId,
@@ -95,6 +96,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
 
   const fetchRuns = useCallback(
     async (append = false): Promise<void> => {
+      const sequence = ++requestSequence.current;
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${normalizedApiBase}/runs?${queryString}`, {
@@ -115,12 +117,15 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         const nextCursor: string | undefined = data.cursor;
         const total: number | undefined = data.totalCount;
 
+        if (sequence !== requestSequence.current) return;
+
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
         setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
         setTotalCount(total);
         setError(null);
       } catch (err) {
+        if (sequence !== requestSequence.current) return;
         setError(err instanceof Error ? err : new Error(String(err)));
       }
     },

@@ -204,6 +204,26 @@ describe("createWorkflowHandler", () => {
     ).toBe(403);
   });
 
+  it("preserves the request body when authorization inspects it", async () => {
+    const bodyAware = createWorkflowHandler(client, {
+      authorize: async (request) => {
+        await request.json();
+        return "tester";
+      },
+    });
+
+    const response = await bodyAware.POST(
+      post("/api/workflows/pipeline/start", { input: { topic: "x" } }),
+    );
+
+    expect(response.status).toBe(200);
+    const { runId } = await response.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
+  });
+
   it("rejects a non-canonical operation path before authorization", async () => {
     let authorizationCalls = 0;
     const routeAware = createWorkflowHandler(client, {
@@ -524,6 +544,21 @@ describe("createWorkflowHandler", () => {
 
     // The default mount point must not answer once basePath moved.
     expect((await mounted.GET(get("/api/workflows/runs"))).status).toBe(404);
+  });
+
+  it("preserves literal reserved characters in a custom basePath", async () => {
+    const mounted = authorizedHandler(client, { basePath: "/api/flows:v2+preview/" });
+
+    const response = await mounted.POST(
+      post("/api/flows:v2+preview/pipeline/start", { input: {} }),
+    );
+
+    expect(response.status).toBe(200);
+    const { runId } = await response.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
   });
 
   it("does not answer for a path outside its mount point", async () => {

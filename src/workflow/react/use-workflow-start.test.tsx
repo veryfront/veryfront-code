@@ -5,7 +5,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { useApproval, type UseApprovalResult } from "./use-approval.ts";
 import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
-import { useWorkflowList } from "./use-workflow-list.ts";
+import { useWorkflowList, type UseWorkflowListResult } from "./use-workflow-list.ts";
 import { useWorkflowStart, type UseWorkflowStartResult } from "./use-workflow-start.ts";
 
 function installDom(): () => void {
@@ -44,6 +44,47 @@ function installDom(): () => void {
 }
 
 describe("useWorkflowStart", () => {
+  it("ignores an obsolete list response after request options change", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    const firstResponse = Promise.withResolvers<Response>();
+    const secondResponse = Promise.withResolvers<Response>();
+    let requestCount = 0;
+    let hook: UseWorkflowListResult | null = null;
+
+    globalThis.fetch = (() => {
+      requestCount++;
+      return requestCount === 1 ? firstResponse.promise : secondResponse.promise;
+    }) as typeof fetch;
+
+    function Capture({ token }: { token: string }): null {
+      hook = useWorkflowList({
+        autoRefresh: false,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      flushSync(() => root.render(<Capture token="new" />));
+
+      secondResponse.resolve(Response.json({ runs: [], totalCount: 2 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(requestCount, 2);
+      assertEquals(hook!.totalCount, 2);
+
+      firstResponse.resolve(Response.json({ runs: [], totalCount: 1 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.totalCount, 2);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("does not refetch when inline authorization headers are semantically unchanged", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
