@@ -30,6 +30,7 @@ import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts"
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
   type AgentServiceEvalAdapterConfig,
+  type AgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
@@ -624,6 +625,142 @@ function createLocalEvalAgentFetch(input: {
   };
 }
 
+interface DurableEvalAgentFetchInput {
+  apiBaseUrl: string;
+  authToken: string;
+  projectId: string;
+  parentRunId: string;
+  agentId: string;
+  runtimeTargetKind?: ProjectRunExecuteRequest["runtimeTargetKind"];
+  runtimeTargetEnvironmentId?: string | null;
+  runtimeTargetBranchId?: string | null;
+}
+
+function parseEvalAgentRequestBody(init: RequestInit | undefined): AgentServiceEvalRequestBody {
+  if (typeof init?.body !== "string") {
+    throw INVALID_ARGUMENT.create({ detail: "Managed eval agent request body must be JSON" });
+  }
+
+  const body: unknown = JSON.parse(init.body);
+  if (
+    typeof body !== "object" || body === null ||
+    typeof (body as { runId?: unknown }).runId !== "string" ||
+    !Array.isArray((body as { messages?: unknown }).messages)
+  ) {
+    throw INVALID_ARGUMENT.create({ detail: "Managed eval agent request body is invalid" });
+  }
+
+  return body as AgentServiceEvalRequestBody;
+}
+
+function getEvalAgentPrompt(request: AgentServiceEvalRequestBody): string {
+  const prompt = request.messages
+    .flatMap((message) => message.parts)
+    .map((part) => part.text)
+    .join("\n");
+  if (prompt.trim().length === 0) {
+    throw INVALID_ARGUMENT.create({ detail: "Managed eval agent prompt is required" });
+  }
+  return prompt;
+}
+
+function createApiUrl(apiBaseUrl: string, path: string): URL {
+  const baseHref = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
+  const relativePath = path.startsWith("/") ? path.slice(1) : path;
+  return new URL(relativePath, baseHref);
+}
+
+function createDurableEvalAgentRunBody(
+  input: DurableEvalAgentFetchInput,
+  request: AgentServiceEvalRequestBody,
+) {
+  return {
+    kind: "agent",
+    owner: { kind: "project", id: input.projectId },
+    public_id: request.runId,
+    parent_run_id: input.parentRunId,
+    conversation_mode: "create_new",
+    request: {
+      mode: "agent",
+      input: {
+        agent_id: input.agentId,
+        source_target_kind: "project",
+        messages: [],
+        tools: request.tools,
+        context: request.context,
+        forwarded_props: {
+          ...request.forwardedProps,
+          prompt: getEvalAgentPrompt(request),
+        },
+        ...(input.runtimeTargetKind ? { runtime_target_kind: input.runtimeTargetKind } : {}),
+        ...(input.runtimeTargetEnvironmentId
+          ? { target_environment_id: input.runtimeTargetEnvironmentId }
+          : {}),
+        ...(input.runtimeTargetBranchId ? { target_branch_id: input.runtimeTargetBranchId } : {}),
+      },
+    },
+  };
+}
+
+function createDurableEvalAgentFetch(
+  input: DurableEvalAgentFetchInput,
+): NonNullable<AgentServiceEvalAdapterConfig["fetch"]> {
+  const headers = {
+    Authorization: `Bearer ${input.authToken}`,
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+
+  return async (_requestInput, init) => {
+    const requestBody = parseEvalAgentRequestBody(init);
+    const createRunUrl = createApiUrl(input.apiBaseUrl, "/runs");
+    const createResponse = await fetch(createRunUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
+      signal: init?.signal,
+    });
+    if (!createResponse.ok) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          `Veryfront API request failed: ${createResponse.status} ${createResponse.statusText}`,
+      });
+    }
+
+    const created: unknown = await createResponse.json();
+    const conversationId = (created as { conversation_id?: unknown }).conversation_id;
+    const runId = (created as { run?: { run_id?: unknown } }).run?.run_id;
+    if (typeof conversationId !== "string" || typeof runId !== "string") {
+      throw API_CLIENT_ERROR.create({
+        detail: "Veryfront API returned an invalid durable agent run",
+      });
+    }
+
+    const streamUrl = createApiUrl(
+      input.apiBaseUrl,
+      `/conversations/${encodeURIComponent(conversationId)}/runs/${
+        encodeURIComponent(runId)
+      }/stream`,
+    );
+    const streamResponse = await fetch(streamUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${input.authToken}`,
+        Accept: "text/event-stream",
+      },
+      signal: init?.signal,
+    });
+    if (!streamResponse.ok) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          `Veryfront API request failed: ${streamResponse.status} ${streamResponse.statusText}`,
+      });
+    }
+
+    return streamResponse;
+  };
+}
+
 function getEndpointHost(endpoint?: string): string | undefined {
   if (!endpoint) return undefined;
   try {
@@ -1009,7 +1146,18 @@ function createEvalAdapterConfig(input: {
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
-    fetch: createLocalEvalAgentFetch({ endpoint, agentId }),
+    fetch: managedEndpointContext && agentId
+      ? createDurableEvalAgentFetch({
+        apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+        authToken,
+        projectId: input.request.projectId,
+        parentRunId: input.request.runId,
+        agentId,
+        runtimeTargetKind: input.request.runtimeTargetKind,
+        runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
+        runtimeTargetBranchId: input.request.runtimeTargetBranchId,
+      })
+      : createLocalEvalAgentFetch({ endpoint, agentId }),
   };
 }
 
