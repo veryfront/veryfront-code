@@ -318,6 +318,7 @@ export interface LayoutCollectionResult {
 export interface LayoutCollectorOptions {
   projectDir: string;
   projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   compileMDX: (
@@ -330,6 +331,7 @@ export interface LayoutCollectorOptions {
 export class LayoutCollector {
   private projectDir: string;
   private projectId?: string;
+  private contentSourceId?: string;
   private adapter: RuntimeAdapter;
   private config: VeryfrontConfig;
   private compileMDX: (
@@ -341,6 +343,7 @@ export class LayoutCollector {
   constructor(options: LayoutCollectorOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
+    this.contentSourceId = options.contentSourceId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.compileMDX = options.compileMDX;
@@ -560,12 +563,20 @@ export class LayoutCollector {
       this.config,
     );
 
-    return this.collectLayoutsUnified(pageFilePath, rootDir);
+    const snapshotVersion = await this.adapter.fs.getSourceSnapshotVersion?.();
+    const contentSourceId = this.contentSourceId === undefined
+      ? snapshotVersion === undefined ? undefined : `snapshot-${snapshotVersion}`
+      : snapshotVersion === undefined
+      ? this.contentSourceId
+      : `${this.contentSourceId}:snapshot-${snapshotVersion}`;
+
+    return this.collectLayoutsUnified(pageFilePath, rootDir, contentSourceId);
   }
 
   private async collectLayoutsUnified(
     pageFilePath: string,
     rootDir: string,
+    contentSourceId: string | undefined,
   ): Promise<LayoutItem[]> {
     logger.debug("collectLayoutsUnified", {
       pageFilePath,
@@ -578,6 +589,11 @@ export class LayoutCollector {
       rootDir,
       this.projectDir,
       this.adapter,
+      {
+        projectId: this.projectId,
+        contentSourceId,
+        cache: this.projectId !== undefined && contentSourceId !== undefined,
+      },
     );
 
     if (nestedLayouts.length > 0) {
