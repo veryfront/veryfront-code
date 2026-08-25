@@ -1,8 +1,18 @@
 import { ensureDir } from "#std/fs/ensure-dir";
 import { dirname, join } from "#std/path";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { formatSemanticAuditFailure } from "../lint/audit-test-semantic-dispositions.ts";
+import {
+  formatSemanticAuditFailure,
+  type GitResult,
+  resolveSemanticAuditBaselineRef,
+  resolveSemanticBaselineFromGit,
+  type SemanticAuditGitRunner,
+} from "../lint/audit-test-semantic-dispositions.ts";
 import { planSuiteFiles } from "./run-suite.ts";
 import { discoverTests } from "./test-layout.ts";
 import {
@@ -7858,12 +7868,163 @@ describe("semantic audit task wiring", () => {
     );
     assertEquals(
       workflow.includes(
-        'git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"',
+        "git rev-parse --is-shallow-repository",
+      ),
+      true,
+    );
+    assertEquals(
+      workflow.includes(
+        'git fetch --no-tags --unshallow origin "$fetch_ref"',
       ),
       true,
     );
   });
+
+  it("normalizes a configured base ref through the merge-base with HEAD", async () => {
+    const mergeBase = "8722798ef90122cc04652149ce6fef5dc8dc3e3d";
+    const git = recordingGit(() => ({
+      ok: true,
+      stdout: `${mergeBase}\n`,
+      stderr: "",
+    }));
+
+    const resolved = await resolveSemanticAuditBaselineRef({
+      configuredRef: "  refs/heads/divergent  ",
+      git: git.run,
+    });
+
+    assertEquals(
+      git.calls,
+      [["merge-base", "HEAD", "refs/heads/divergent"]],
+      "configured base ref must be normalized through git merge-base against HEAD",
+    );
+    assertEquals(
+      resolved,
+      mergeBase,
+      "configured base ref must resolve to the merge-base so both audit arms read an ancestor of the scanned tree",
+    );
+  });
+
+  it("normalizes the local baseline ref through the same merge-base call", async () => {
+    const mergeBase = "3fbb1c0a5d4e2f1908877665544332211aabbccd";
+    const git = recordingGit(() => ({
+      ok: true,
+      stdout: `${mergeBase}\n`,
+      stderr: "",
+    }));
+
+    const resolved = await resolveSemanticAuditBaselineRef({
+      configuredRef: "   ",
+      git: git.run,
+    });
+
+    assertEquals(
+      git.calls,
+      [["merge-base", "HEAD", "origin/main"]],
+      "a blank configured base ref must fall back to the local origin/main baseline",
+    );
+    assertEquals(
+      resolved,
+      mergeBase,
+      "the local baseline must resolve to the merge-base commit",
+    );
+  });
+
+  it("rejects a configured base ref when no merge-base exists", async () => {
+    const git = recordingGit(() => ({
+      ok: false,
+      stdout: "",
+      stderr: "fatal: Not a valid object name base-ref",
+    }));
+
+    await assertRejects(
+      () =>
+        resolveSemanticAuditBaselineRef({
+          configuredRef: "base-ref",
+          git: git.run,
+        }),
+      Error,
+      "Unable to resolve semantic audit baseline",
+    );
+  });
+
+  it("normalizes the configured base ref before the baseline inventory is read", async () => {
+    const mergeBase = "4b1d0f2c9a8e7d6c5b4a39281706f5e4d3c2b1a0";
+    const migrationPath = "scripts/test/test-semantic-audit-migration.ts";
+    const git = recordingGit((args) => {
+      if (args[0] === "merge-base") {
+        return { ok: true, stdout: `${mergeBase}\n`, stderr: "" };
+      }
+      if (args[0] === "cat-file") return { ok: true, stdout: "", stderr: "" };
+      if (args[0] === "show") {
+        return {
+          ok: true,
+          stdout:
+            `export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES = [{ path: "src/example.test.ts", effects: ["network"] }];`,
+          stderr: "",
+        };
+      }
+      return {
+        ok: false,
+        stdout: "",
+        stderr: `unexpected git call: ${args.join(" ")}`,
+      };
+    });
+
+    const baseline = await resolveSemanticBaselineFromGit({
+      configuredRef: "refs/heads/divergent",
+      git: git.run,
+    });
+
+    assertEquals(
+      git.calls.filter((call) => call[0] === "cat-file" || call[0] === "show")
+        .map((call) => call[call.length - 1]),
+      [
+        `${mergeBase}^{commit}`,
+        `${mergeBase}:${migrationPath}`,
+        `${mergeBase}:${migrationPath}`,
+      ],
+      "the baseline arm must read the merge-base commit; reading the configured ref verbatim is the defect this audit gate exists to avoid",
+    );
+    assertEquals(
+      baseline.ref,
+      mergeBase,
+      "the reported baseline ref must be the normalized merge-base, not the configured ref",
+    );
+    assertEquals(
+      baseline.kind,
+      "paths",
+      "the normalized ref must still yield a parsed inventory",
+    );
+  });
+
+  it("fails loudly when the local baseline has no merge-base", async () => {
+    const git = recordingGit(() => ({
+      ok: false,
+      stdout: "",
+      stderr: "fatal: Not a valid object name origin/main",
+    }));
+
+    await assertRejects(
+      () => resolveSemanticAuditBaselineRef({ git: git.run }),
+      Error,
+      "Unable to resolve semantic audit baseline",
+    );
+  });
 });
+
+function recordingGit(
+  respond: (args: readonly string[]) => GitResult,
+): { readonly calls: string[][]; readonly run: SemanticAuditGitRunner } {
+  const calls: string[][] = [];
+  return {
+    calls,
+    run: (args) => {
+      calls.push([...args]);
+      return Promise.resolve(respond(args));
+    },
+  };
+}
 
 function marker(
   effect: SemanticDispositionEntry["effects"][number],

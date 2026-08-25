@@ -45,10 +45,18 @@ async function main(): Promise<void> {
     root: ".",
     dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
   });
-  const baselineErrors = compareSemanticDispositionBaseline(
-    TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
-    await resolveSemanticBaselineFromGit(),
-  );
+  let baselineErrors: string[];
+  try {
+    baselineErrors = compareSemanticDispositionBaseline(
+      TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
+      await resolveSemanticBaselineFromGit(),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    baselineErrors = [
+      `semantic audit baseline resolution failed: ${message}`,
+    ];
+  }
   const errors = [...result.errors, ...baselineErrors];
 
   if (flags.json) {
@@ -76,12 +84,30 @@ async function main(): Promise<void> {
   );
 }
 
-async function resolveSemanticBaselineFromGit(): Promise<
-  SemanticDispositionBaseline
-> {
-  const ref = Deno.env.get("TEST_SEMANTIC_AUDIT_BASE_REF")?.trim() ||
-    await resolveLocalBaselineRef();
-  const commitCheck = await runGit(["cat-file", "-e", `${ref}^{commit}`]);
+export interface SemanticBaselineFromGitOptions {
+  readonly configuredRef?: string;
+  readonly git?: SemanticAuditGitRunner;
+}
+
+/**
+ * Reads the migration inventory out of the baseline commit.
+ *
+ * The configured ref is routed through {@link resolveSemanticAuditBaselineRef}
+ * before any `cat-file` or `show` sees it. Reading the configured ref straight
+ * out of the environment here is the original defect: it bypassed the
+ * normalizer entirely, so a ref that is not an ancestor of HEAD made the two
+ * audit arms read different trees.
+ */
+export async function resolveSemanticBaselineFromGit(
+  options: SemanticBaselineFromGitOptions = {},
+): Promise<SemanticDispositionBaseline> {
+  const git = options.git ?? runGit;
+  const ref = await resolveSemanticAuditBaselineRef({
+    configuredRef: options.configuredRef ??
+      Deno.env.get("TEST_SEMANTIC_AUDIT_BASE_REF") ?? undefined,
+    git,
+  });
+  const commitCheck = await git(["cat-file", "-e", `${ref}^{commit}`]);
   if (!commitCheck.ok) {
     return {
       kind: "malformed",
@@ -89,13 +115,13 @@ async function resolveSemanticBaselineFromGit(): Promise<
       reason: `base ref is not a commit: ${commitCheck.stderr}`,
     };
   }
-  const fileCheck = await runGit([
+  const fileCheck = await git([
     "cat-file",
     "-e",
     `${ref}:${MIGRATION_FILE_PATH}`,
   ]);
   if (!fileCheck.ok) return { kind: "missing", ref };
-  const source = await runGit(["show", `${ref}:${MIGRATION_FILE_PATH}`]);
+  const source = await git(["show", `${ref}:${MIGRATION_FILE_PATH}`]);
   if (!source.ok) {
     return {
       kind: "malformed",
@@ -106,23 +132,48 @@ async function resolveSemanticBaselineFromGit(): Promise<
   return parseSemanticDispositionBaselineSource(source.stdout, ref);
 }
 
-async function resolveLocalBaselineRef(): Promise<string> {
-  const mergeBase = await runGit(["merge-base", "HEAD", "origin/main"]);
-  if (!mergeBase.ok || mergeBase.stdout.trim() === "") {
-    throw new Error(
-      `Unable to resolve semantic audit baseline. Set TEST_SEMANTIC_AUDIT_BASE_REF or fetch origin/main. git merge-base failed: ${mergeBase.stderr}`,
-    );
-  }
-  return mergeBase.stdout.trim();
+export type SemanticAuditGitRunner = (
+  args: readonly string[],
+) => Promise<GitResult>;
+
+export interface SemanticAuditBaselineRefOptions {
+  readonly configuredRef?: string;
+  readonly git?: SemanticAuditGitRunner;
 }
 
-async function runGit(args: readonly string[]): Promise<
-  { readonly ok: true; readonly stdout: string; readonly stderr: string } | {
-    readonly ok: false;
-    readonly stdout: string;
-    readonly stderr: string;
-  }
-> {
+/**
+ * Resolves the commit the baseline arm of the semantic audit reads.
+ *
+ * Both the configured ref and the local fallback are normalized through
+ * `git merge-base HEAD <ref>` so the baseline is an ancestor of the tree the
+ * candidate arm scans. Without that normalization a configured
+ * `TEST_SEMANTIC_AUDIT_BASE_REF` pointing at a commit that is not an ancestor
+ * of HEAD makes the two arms read different trees.
+ * Resolution fails closed when no merge base exists. Callers must fetch enough
+ * history for Git to prove the configured baseline is an ancestor.
+ */
+export async function resolveSemanticAuditBaselineRef(
+  options: SemanticAuditBaselineRefOptions = {},
+): Promise<string> {
+  const git = options.git ?? runGit;
+  const configuredRef = options.configuredRef?.trim();
+  const mergeBase = await git([
+    "merge-base",
+    "HEAD",
+    configuredRef || "origin/main",
+  ]);
+  const normalized = mergeBase.ok ? mergeBase.stdout.trim() : "";
+  if (normalized !== "") return normalized;
+  throw new Error(
+    `Unable to resolve semantic audit baseline. Set TEST_SEMANTIC_AUDIT_BASE_REF or fetch origin/main. git merge-base failed: ${mergeBase.stderr}`,
+  );
+}
+
+export type GitResult =
+  | { readonly ok: true; readonly stdout: string; readonly stderr: string }
+  | { readonly ok: false; readonly stdout: string; readonly stderr: string };
+
+async function runGit(args: readonly string[]): Promise<GitResult> {
   const command = new Deno.Command("git", {
     args: [...args],
     stdout: "piped",

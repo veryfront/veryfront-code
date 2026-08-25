@@ -59,7 +59,13 @@ jobs:
             fetch_ref="main"
             base="origin/main"
           fi
-          if [ "$base" = "origin/main" ]; then
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            if [ "$base" = "origin/main" ]; then
+              git fetch --no-tags --unshallow origin "main:refs/remotes/origin/main"
+            else
+              git fetch --no-tags --unshallow origin "$fetch_ref"
+            fi
+          elif [ "$base" = "origin/main" ]; then
             git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"
           else
             git fetch --no-tags --depth=1 origin "$fetch_ref"
