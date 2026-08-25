@@ -22,6 +22,10 @@ const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
   import.meta.url,
 );
+const REVIEW_SIGNAL_WORKFLOW_PATH = new URL(
+  "../../.github/workflows/automated-review-approval-signal.yml",
+  import.meta.url,
+);
 
 const bot = (login: string, id: number) => ({ login, id, type: "Bot" });
 
@@ -270,6 +274,57 @@ describe("automated review evidence", () => {
         () => Promise.resolve(false),
       ),
       undefined,
+    );
+  });
+
+  it("honors each trusted human reviewer's latest exact-head state", async () => {
+    const trustedReviewer = {
+      login: "trusted-maintainer",
+      id: 7,
+      type: "User",
+    };
+    const approval = review({
+      id: 100,
+      user: trustedReviewer,
+      state: "APPROVED",
+      submitted_at: "2026-08-25T07:00:00Z",
+    });
+    const changesRequested = review({
+      id: 101,
+      user: trustedReviewer,
+      state: "CHANGES_REQUESTED",
+      submitted_at: "2026-08-25T07:01:00Z",
+    });
+    const isTrusted = (login: string) =>
+      Promise.resolve(login === trustedReviewer.login);
+
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [approval, changesRequested], comments: [] },
+        HEAD,
+        undefined,
+        isTrusted,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [
+            changesRequested,
+            review({
+              ...approval,
+              id: 102,
+              submitted_at: "2026-08-25T07:02:00Z",
+            }),
+          ],
+          comments: [],
+        },
+        HEAD,
+        undefined,
+        isTrusted,
+      ))?.source,
+      "human-approval",
     );
   });
 
@@ -882,6 +937,14 @@ describe("automated review workflow", () => {
       record(triggers.merge_group, "merge group trigger").types,
       ["checks_requested"],
     );
+    assertEquals(
+      record(triggers.workflow_run, "workflow run trigger").workflows,
+      ["Automated review approval signal"],
+    );
+    assertEquals(
+      record(triggers.workflow_run, "workflow run trigger").types,
+      ["completed"],
+    );
     assertEquals("status" in triggers, false);
     const jobs = record(workflow.jobs, "jobs");
     const targetJob = record(jobs.target, "target job");
@@ -890,6 +953,8 @@ describe("automated review workflow", () => {
       const condition of [
         "github.event.issue.pull_request",
         "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.event.workflow_run.conclusion == 'success'",
+        "github.event.workflow_run.pull_requests[0]",
       ]
     ) {
       assert(
@@ -918,6 +983,7 @@ describe("automated review workflow", () => {
         "context.payload.sha",
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
+        "context.payload.workflow_run?.pull_requests?.[0]?.number",
         "github.rest.pulls.get",
         "Could not resolve a valid review target commit",
       ]
@@ -954,7 +1020,13 @@ describe("automated review workflow", () => {
       String(job.if).includes(
         "github.event.pull_request.head.repo.full_name == github.repository",
       ),
-      "fork pull request review events must remain skipped",
+      "fork pull request review events must use privileged workflow-run reconciliation",
+    );
+    assert(
+      String(job.if).includes(
+        "github.event.workflow_run.conclusion == 'success'",
+      ),
+      "only a successful trusted signal workflow may reconcile fork reviews",
     );
     const steps = job.steps;
     assert(Array.isArray(steps));
@@ -971,6 +1043,11 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
+    assert(
+      script.includes(
+        "context.payload.workflow_run?.pull_requests?.[0]?.number",
+      ),
+    );
     assert(script.includes("process.env.TARGET_SHA"));
     assert(script.includes("pullRequest.head.sha !== headSha"));
     assert(
@@ -1053,6 +1130,35 @@ describe("automated review workflow", () => {
     assert(
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",
+    );
+
+    const signalWorkflow = record(
+      parse(await Deno.readTextFile(REVIEW_SIGNAL_WORKFLOW_PATH)),
+      "review signal workflow",
+    );
+    assertEquals(record(signalWorkflow.permissions, "signal permissions"), {});
+    const signalTriggers = record(signalWorkflow.on, "signal triggers");
+    assertEquals(
+      record(signalTriggers.pull_request_review, "signal review trigger").types,
+      ["submitted", "dismissed"],
+    );
+    const signalJobs = record(signalWorkflow.jobs, "signal jobs");
+    const signalJob = record(signalJobs.signal, "signal job");
+    assert(
+      String(signalJob.if).includes(
+        "github.event.pull_request.head.repo.full_name != github.repository",
+      ),
+      "the privileged follow-up must be limited to fork review events",
+    );
+    assertEquals(signalJob.permissions, undefined);
+    const signalSteps = signalJob.steps;
+    assert(Array.isArray(signalSteps));
+    assertEquals(
+      signalSteps.some((step) =>
+        typeof step === "object" && step !== null && "uses" in step
+      ),
+      false,
+      "the untrusted fork event signal must not execute repository actions",
     );
   });
 });

@@ -7,6 +7,9 @@ on:
     types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
+  workflow_run:
+    workflows: [Automated review approval signal]
+    types: [completed]
   merge_group:
     types: [checks_requested]
 
@@ -19,6 +22,9 @@ jobs:
     # resolver exists only to feed pull request reconciliation below.
     if: >-
       github.event_name != 'merge_group' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.pull_requests[0])) &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
        (github.event_name != 'pull_request_review' ||
         github.event.pull_request.head.repo.full_name == github.repository)
@@ -40,7 +46,7 @@ jobs:
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
-                : undefined);
+                : context.payload.workflow_run?.pull_requests?.[0]?.number);
             if (!headSha && pullNumber) {
               const response = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -72,10 +78,13 @@ jobs:
       statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
     # pull_request_review hands fork pull requests a read-only token that cannot
-    # write a commit status, so skip it there and let the trusted
-    # pull_request_target and issue_comment runs publish the decision instead.
+    # write a commit status. The read-only signal workflow wakes this workflow
+    # through workflow_run so trusted default-branch code can reconcile it.
     if: >-
       github.event_name != 'merge_group' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.pull_requests[0])) &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -110,7 +119,8 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
             const pullNumber = context.payload.pull_request?.number ??
-              context.payload.issue.number;
+              context.payload.issue?.number ??
+              context.payload.workflow_run?.pull_requests?.[0]?.number;
             const response = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
