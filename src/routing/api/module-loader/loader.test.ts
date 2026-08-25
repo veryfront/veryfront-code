@@ -3806,54 +3806,57 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  denoIt("runs bundled helper Worker entries against the route-relative execution base", async () => {
-    const tmpDir = await makeTempDir();
-    await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
-    await fs.writeTextFile(
-      join(tmpDir, "helpers", "worker.ts"),
-      `import "https://blocked.example.com/worker.js";`,
-    );
-    await fs.writeTextFile(
-      join(tmpDir, "worker.ts"),
-      `self.postMessage("route-relative-safe");`,
-    );
-    await fs.writeTextFile(
-      join(tmpDir, "helpers", "start-worker.ts"),
-      [
-        `export async function workerValue() {`,
-        `  const worker = new Worker("./worker.ts", { type: "module" });`,
-        `  try {`,
-        `    return await new Promise<string>((resolve, reject) => {`,
-        `      worker.onmessage = (event) => resolve(String(event.data));`,
-        `      worker.onerror = (event) => reject(new Error(event.message));`,
-        `    });`,
-        `  } finally { worker.terminate(); }`,
-        `}`,
-      ].join("\n"),
-    );
+  denoIt(
+    "runs bundled helper Worker entries against the route-relative execution base",
+    async () => {
+      const tmpDir = await makeTempDir();
+      await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
+      await fs.writeTextFile(
+        join(tmpDir, "helpers", "worker.ts"),
+        `import "https://blocked.example.com/worker.js";`,
+      );
+      await fs.writeTextFile(
+        join(tmpDir, "worker.ts"),
+        `self.postMessage("route-relative-safe");`,
+      );
+      await fs.writeTextFile(
+        join(tmpDir, "helpers", "start-worker.ts"),
+        [
+          `export async function workerValue() {`,
+          `  const worker = new Worker("./worker.ts", { type: "module" });`,
+          `  try {`,
+          `    return await new Promise<string>((resolve, reject) => {`,
+          `      worker.onmessage = (event) => resolve(String(event.data));`,
+          `      worker.onerror = (event) => reject(new Error(event.message));`,
+          `    });`,
+          `  } finally { worker.terminate(); }`,
+          `}`,
+        ].join("\n"),
+      );
 
-    const modulePath = join(tmpDir, "route.ts");
-    await fs.writeTextFile(
-      modulePath,
-      [
-        `import { workerValue } from "./helpers/start-worker.ts";`,
-        `const marker = /x/;`,
-        `export const GET = async () => new Response(await workerValue() + marker.source);`,
-      ].join("\n"),
-    );
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { workerValue } from "./helpers/start-worker.ts";`,
+          `const marker = /x/;`,
+          `export const GET = async () => new Response(await workerValue() + marker.source);`,
+        ].join("\n"),
+      );
 
-    const route = await loadHandlerModule({
-      projectDir: tmpDir,
-      modulePath,
-      adapter,
-      config: undefined,
-    });
-    assertEquals(
-      await getText(route),
-      "route-relative-safex",
-      "bundled helper Worker specifiers must execute relative to the route, not the helper module",
-    );
-  });
+      const route = await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+      assertEquals(
+        await getText(route),
+        "route-relative-safex",
+        "bundled helper Worker specifiers must execute relative to the route, not the helper module",
+      );
+    },
+  );
 
   it("rejects bundled Worker entries whose local import graph reaches a blocked remote", async () => {
     const tmpDir = await makeTempDir();
