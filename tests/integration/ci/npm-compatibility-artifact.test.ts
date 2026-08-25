@@ -9,8 +9,10 @@ import { makeTempDirWithOptions, remove, withTempDir } from "#veryfront/testing/
 import { join } from "#std/path/join";
 import {
   createNpmCompatibilityArtifact,
+  formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
   materializeNpmCompatibilityArtifact,
+  NpmCompatibilityArtifactError,
 } from "../../../scripts/ci/npm-compatibility-artifact.ts";
 
 async function writePackage(
@@ -39,6 +41,28 @@ function withTempDirs<T>(
 }
 
 describe("npm compatibility artifact", () => {
+  it("sanitizes package paths and npm stderr at the CLI error boundary", () => {
+    const packageDirectory = "/private/tmp/npm-controlled/package";
+    const npmStderr = "npm ERR! token=attacker-controlled\n::error::injected";
+    const error = new NpmCompatibilityArtifactError(
+      "pack",
+      `npm pack failed for ${packageDirectory}: ${npmStderr}`,
+      { packageName: "@veryfront/ext-alpha" },
+    );
+
+    assertStringIncludes(error.message, packageDirectory);
+    assertStringIncludes(error.message, npmStderr);
+    assertEquals(
+      formatNpmCompatibilityArtifactCliError(error, "pack"),
+      "npm compatibility artifact pack failed for @veryfront/ext-alpha.",
+    );
+    const publicMessage = formatNpmCompatibilityArtifactCliError(error, "pack");
+    assertEquals(publicMessage.includes(packageDirectory), false);
+    assertEquals(publicMessage.includes(npmStderr), false);
+    assertEquals(publicMessage.includes("token=attacker-controlled"), false);
+    assertEquals(publicMessage.includes("::error::injected"), false);
+  });
+
   it("packs into a destination relative to the caller working directory", async () => {
     await withTempDir(async (root) => {
       const workspace = await makeTempDirWithOptions({

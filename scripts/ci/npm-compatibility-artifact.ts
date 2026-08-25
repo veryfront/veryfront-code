@@ -34,6 +34,19 @@ interface NpmPackResult {
   readonly filename?: unknown;
 }
 
+type NpmCompatibilityArtifactOperation = "pack" | "verify" | "materialize";
+
+export class NpmCompatibilityArtifactError extends Error {
+  constructor(
+    readonly operation: NpmCompatibilityArtifactOperation,
+    message: string,
+    readonly context: { readonly packageName?: string } = {},
+  ) {
+    super(message);
+    this.name = "NpmCompatibilityArtifactError";
+  }
+}
+
 const MANIFEST_FILE = "manifest.json";
 const EXTENSION_PREFIX = "@veryfront/ext-";
 
@@ -94,6 +107,7 @@ async function packageDirectories(npmDirectory: string): Promise<string[]> {
 async function packPackage(
   packageDirectory: string,
   destination: string,
+  packageName: string,
 ): Promise<string> {
   const output = await new Deno.Command("npm", {
     args: ["pack", "--json", "--pack-destination", destination],
@@ -102,8 +116,12 @@ async function packPackage(
     stderr: "piped",
   }).output();
   if (!output.success) {
-    throw new Error(
-      `npm pack failed for ${packageDirectory}: ${new TextDecoder().decode(output.stderr).trim()}`,
+    throw new NpmCompatibilityArtifactError(
+      "pack",
+      `npm pack failed for ${packageDirectory}: ${
+        new TextDecoder().decode(output.stderr).trim().slice(0, 4096)
+      }`,
+      { packageName },
     );
   }
   const result = JSON.parse(
@@ -111,8 +129,10 @@ async function packPackage(
   ) as NpmPackResult[];
   const filename = result[0]?.filename;
   if (typeof filename !== "string" || basename(filename) !== filename) {
-    throw new Error(
+    throw new NpmCompatibilityArtifactError(
+      "pack",
       `npm pack returned an invalid filename for ${packageDirectory}`,
+      { packageName },
     );
   }
   return filename;
@@ -150,7 +170,11 @@ export async function createNpmCompatibilityArtifact(
 
   const packages: NpmCompatibilityPackage[] = [];
   for (const source of packageSources) {
-    const file = await packPackage(source.directory, resolvedDestination);
+    const file = await packPackage(
+      source.directory,
+      resolvedDestination,
+      source.manifest.name,
+    );
     packages.push({
       name: source.manifest.name,
       version: source.manifest.version,
@@ -307,4 +331,39 @@ async function main(args: string[]): Promise<void> {
   );
 }
 
-if (import.meta.main) await main(Deno.args);
+function safePackageName(value: string | undefined): string | undefined {
+  if (
+    value && value.length <= 214 &&
+    /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(value)
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+export function formatNpmCompatibilityArtifactCliError(
+  error: unknown,
+  requestedOperation?: string,
+): string {
+  const operation = error instanceof NpmCompatibilityArtifactError
+    ? error.operation
+    : requestedOperation === "pack" || requestedOperation === "verify" ||
+        requestedOperation === "materialize"
+    ? requestedOperation
+    : undefined;
+  const packageName = error instanceof NpmCompatibilityArtifactError
+    ? safePackageName(error.context.packageName)
+    : undefined;
+  const operationText = operation ? ` ${operation}` : " command";
+  const packageText = packageName ? ` for ${packageName}` : "";
+  return `npm compatibility artifact${operationText} failed${packageText}.`;
+}
+
+if (import.meta.main) {
+  try {
+    await main(Deno.args);
+  } catch (error) {
+    console.error(formatNpmCompatibilityArtifactCliError(error, Deno.args[0]));
+    Deno.exit(1);
+  }
+}

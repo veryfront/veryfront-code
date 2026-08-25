@@ -900,7 +900,11 @@ jobs:
         id: check
         run: |
           VERSION=$(jq -r '.version' deno.json)
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "::error::deno.json version must be a valid npm semver or prerelease"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           STABLE_RELEASE_REQUESTED=$(bash scripts/ci/stable-release-requested.sh \
             "${{ github.event_name }}" \
@@ -1133,10 +1137,12 @@ jobs:
 
       - name: Compute RC version
         id: version
+        env:
+          BASE_VERSION: ${{ needs.version-check.outputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
-          BASE="${{ needs.version-check.outputs.version }}"
-          RC_VERSION="${BASE}.${{ github.run_number }}"
-          echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
+          RC_VERSION="${BASE_VERSION}.${RUN_NUMBER}"
+          echo "version=${RC_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing RC: ${RC_VERSION}"
 
       - name: Download tested npm compatibility artifact
@@ -1245,9 +1251,11 @@ jobs:
 
       - name: Read version
         id: version
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
         run: |
-          echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
-          echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing stable: ${VERSION}"
 
       - name: Create release GitHub App token
         id: release-app-token
@@ -1461,6 +1469,14 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Build dispatch payload
+        id: payload
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          payload=$(jq -cn --arg version "$VERSION" '{version: $version}')
+          echo "payload=$payload" >> "$GITHUB_OUTPUT"
+
       - name: Create release GitHub App token
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -1480,8 +1496,7 @@ jobs:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
-          client-payload: >-
-            {"version": "${{ steps.version.outputs.version }}"}
+          client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger job-runner deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1489,8 +1504,7 @@ jobs:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
-          client-payload: >-
-            {"version": "${{ steps.version.outputs.version }}"}
+          client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1498,8 +1512,7 @@ jobs:
           token: ${{ steps.release-app-token.outputs.token }}
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
-          client-payload: >-
-            {"version": "${{ steps.version.outputs.version }}"}
+          client-payload: ${{ steps.payload.outputs.payload }}
 
   # ============================================
   # CD: Update Homebrew (stable releases only)

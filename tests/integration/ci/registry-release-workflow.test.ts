@@ -31,7 +31,10 @@ function namedStep(job: YamlRecord, name: string): YamlRecord {
 function tokenRepositories(job: YamlRecord): string[] {
   const tokenStep = namedStep(job, "Create release GitHub App token");
   const repositories = asRecord(tokenStep.with, "release token inputs").repositories;
-  assert(typeof repositories === "string", "release token repositories must be a string");
+  assert(
+    typeof repositories === "string",
+    "release token repositories must be a string",
+  );
   return repositories.trim().split("\n");
 }
 
@@ -86,6 +89,34 @@ async function readJobs(): Promise<YamlRecord> {
 }
 
 describe("registry release workflow", () => {
+  it("validates the deno.json version before exposing release outputs", async () => {
+    const jobs = await readJobs();
+    const versionCheck = asRecord(jobs["version-check"], "version check job");
+    const detect = namedStep(versionCheck, "Detect release type");
+    const run = String(detect.run);
+    const validationIndex = run.indexOf('if ! [[ "$VERSION" =~');
+    const outputIndex = run.indexOf('echo "version=${VERSION}"');
+
+    assert(
+      validationIndex >= 0,
+      "version-check must validate a safe npm version",
+    );
+    assertStringIncludes(
+      run,
+      "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)",
+      "version-check must reject leading zeroes in numeric semver components",
+    );
+    assertStringIncludes(
+      run,
+      "(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?",
+      "version-check must allow safe npm prerelease identifiers",
+    );
+    assert(
+      validationIndex < outputIndex,
+      "version-check must validate the version before writing GITHUB_OUTPUT",
+    );
+  });
+
   for (const jobName of ["prerelease", "release"] as const) {
     it(`exposes the published version without dispatching inside ${jobName}`, async () => {
       const jobs = await readJobs();
@@ -122,10 +153,38 @@ describe("registry release workflow", () => {
         0,
       );
       if (jobName === "prerelease") {
+        const versionStep = namedStep(job, "Compute RC version");
+        assertEquals(
+          asRecord(versionStep.env, "prerelease version environment"),
+          {
+            BASE_VERSION: "${{ needs.version-check.outputs.version }}",
+            RUN_NUMBER: "${{ github.run_number }}",
+          },
+        );
         assertStringIncludes(
-          String(namedStep(job, "Compute RC version").run),
-          'BASE="${{ needs.version-check.outputs.version }}"',
-          "prerelease must quote the base version assignment",
+          String(versionStep.run),
+          'RC_VERSION="${BASE_VERSION}.${RUN_NUMBER}"',
+          "prerelease must compute the version from environment variables",
+        );
+        assertEquals(
+          String(versionStep.run).includes(
+            "${{ needs.version-check.outputs.version }}",
+          ),
+          false,
+          "prerelease shell must not interpolate the version-check output directly",
+        );
+      } else {
+        const versionStep = namedStep(job, "Read version");
+        assertEquals(
+          asRecord(versionStep.env, "stable version environment"),
+          { VERSION: "${{ needs.version-check.outputs.version }}" },
+        );
+        assertEquals(
+          String(versionStep.run).includes(
+            "${{ needs.version-check.outputs.version }}",
+          ),
+          false,
+          "stable shell must not interpolate the version-check output directly",
         );
       }
       assertEquals(
@@ -254,6 +313,7 @@ describe("registry release workflow", () => {
       String(step.uses).startsWith("peter-evans/repository-dispatch@")
     );
     const versionStep = namedStep(dispatch, "Resolve published version");
+    const payloadStep = namedStep(dispatch, "Build dispatch payload");
     const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
@@ -272,6 +332,7 @@ describe("registry release workflow", () => {
       "release dispatch must time out if token creation or dispatch hangs",
     );
     assertEquals(versionStep.id, "version");
+    assertEquals(payloadStep.id, "payload");
     assertEquals(
       asRecord(versionStep.env, "dispatch version environment"),
       {
@@ -283,6 +344,25 @@ describe("registry release workflow", () => {
     assert(
       dispatchSteps.indexOf(versionStep) < dispatchSteps.indexOf(tokenStep),
       "published version must be resolved before the release token is created",
+    );
+    assertEquals(
+      asRecord(payloadStep.env, "dispatch payload environment"),
+      { VERSION: "${{ steps.version.outputs.version }}" },
+    );
+    assertStringIncludes(
+      String(payloadStep.run),
+      'jq -cn --arg version "$VERSION"',
+      "dispatch payload must pass the version to jq as an argument",
+    );
+    assertStringIncludes(
+      String(payloadStep.run),
+      "'{version: $version}'",
+      "dispatch payload must be constructed as JSON by jq",
+    );
+    assert(
+      dispatchSteps.indexOf(versionStep) < dispatchSteps.indexOf(payloadStep) &&
+        dispatchSteps.indexOf(payloadStep) < dispatchSteps.indexOf(tokenStep),
+      "dispatch payload must be built after version resolution and before token creation",
     );
     assertEquals(dispatchActions.length, 3);
     assertEquals(
@@ -305,7 +385,7 @@ describe("registry release workflow", () => {
     for (const action of dispatchActions) {
       assertEquals(
         asRecord(action.with, "repository dispatch inputs")["client-payload"],
-        '{"version": "${{ steps.version.outputs.version }}"}',
+        "${{ steps.payload.outputs.payload }}",
       );
     }
 
@@ -315,7 +395,9 @@ describe("registry release workflow", () => {
         ["true", "version=0.1.2"],
       ] as const
     ) {
-      const outputFile = await Deno.makeTempFile({ prefix: "vf-release-version-" });
+      const outputFile = await Deno.makeTempFile({
+        prefix: "vf-release-version-",
+      });
       try {
         const output = await runDispatchVersionResolution({
           GITHUB_OUTPUT: outputFile,
