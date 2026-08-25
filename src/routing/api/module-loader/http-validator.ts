@@ -45,24 +45,10 @@ function readEscapedCharacter(
 ): { value: string; end: number } | null {
   const char = source[index];
   if (char === undefined) return null;
-
-  if (char === "\n") return { value: "", end: index + 1 };
-  if (char === "\r") {
-    const end = source[index + 1] === "\n" ? index + 2 : index + 1;
-    return { value: "", end };
-  }
-
-  const simpleEscapes: Record<string, string> = {
-    "0": "\0",
-    b: "\b",
-    f: "\f",
-    n: "\n",
-    r: "\r",
-    t: "\t",
-    v: "\v",
-  };
-  if (simpleEscapes[char] !== undefined) return { value: simpleEscapes[char], end: index + 1 };
-
+  const lineEscape = readEscapedLineTerminator(source, index);
+  if (lineEscape !== null) return lineEscape;
+  const simpleEscape = readSimpleEscape(char, index);
+  if (simpleEscape !== null) return simpleEscape;
   if (char === "x") return readFixedHexEscape(source, index + 1, 2);
   if (char === "u" && source[index + 1] === "{") {
     return readBracedUnicodeEscape(source, index + 2);
@@ -70,6 +56,35 @@ function readEscapedCharacter(
   if (char === "u") return readFixedHexEscape(source, index + 1, 4);
 
   return { value: char, end: index + 1 };
+}
+
+function readEscapedLineTerminator(
+  source: string,
+  index: number,
+): { value: string; end: number } | null {
+  const char = source[index];
+  if (char === "\n") return { value: "", end: index + 1 };
+  if (char !== "\r") return null;
+  const end = source[index + 1] === "\n" ? index + 2 : index + 1;
+  return { value: "", end };
+}
+
+const SIMPLE_ESCAPES: Record<string, string> = {
+  "0": "\0",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+};
+
+function readSimpleEscape(
+  char: string,
+  index: number,
+): { value: string; end: number } | null {
+  const value = SIMPLE_ESCAPES[char];
+  return value === undefined ? null : { value, end: index + 1 };
 }
 
 function readFixedHexEscape(
@@ -128,9 +143,11 @@ function readTemplateExpression(
   source: string,
   openBraceIndex: number,
 ): { body: string; end: number; scan: ModuleSpecifierScan } | null {
-  const specifiers: string[] = [];
-  let hasUnconstrainedDynamicImport = false;
-  let requiresBundling = false;
+  const scan: MutableScanAccumulator = {
+    specifiers: [],
+    hasUnconstrainedDynamicImport: false,
+    requiresBundling: false,
+  };
   const bodyStart = openBraceIndex + 1;
   let depth = 1;
 
@@ -141,14 +158,8 @@ function readTemplateExpression(
     const skipped = skipTemplateExpressionToken(source, i);
     if (skipped === null) return null;
     if (skipped !== undefined) {
-      const accumulator: MutableScanAccumulator = {
-        specifiers,
-        hasUnconstrainedDynamicImport,
-        requiresBundling,
-      };
-      mergeModuleSpecifierScan(accumulator, skipped.scan);
-      hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
-      requiresBundling = accumulator.requiresBundling || skipped.requiresBundling;
+      mergeModuleSpecifierScan(scan, skipped.scan);
+      scan.requiresBundling ||= skipped.requiresBundling;
       i = skipped.end;
       continue;
     }
@@ -162,9 +173,9 @@ function readTemplateExpression(
           body: source.slice(bodyStart, i),
           end: i + 1,
           scan: {
-            specifiers,
-            hasUnconstrainedDynamicImport,
-            requiresBundling,
+            specifiers: scan.specifiers,
+            hasUnconstrainedDynamicImport: scan.hasUnconstrainedDynamicImport,
+            requiresBundling: scan.requiresBundling,
             hasDynamicCodeGeneration: containsDynamicCodeGenerationIdentifier(
               source.slice(bodyStart, i),
             ),
@@ -309,71 +320,104 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
   let i = skipWhitespaceAndComments(source, index);
   if (source[i] !== "{") return null;
 
-  const states: Array<"key" | "colon" | "value" | "commaOrClose"> = [];
+  const states: ImportAttributeState[] = [];
   while (i < source.length) {
     i = skipWhitespaceAndComments(source, i);
-    const char = source[i];
-    if (char === undefined) return null;
-
-    if (char === '"' || char === "'") {
-      const literal = readStringLiteral(source, i);
-      if (literal === null) return null;
-      if (!advanceImportAttributeStringState(states)) return null;
-      i = literal.end;
-      continue;
-    }
-
-    if (char === "{") {
-      if (!startImportAttributeObjectState(states)) return null;
-      states.push("key");
-      i++;
-      continue;
-    }
-
-    if (char === "}") {
-      const state = states.pop();
-      if (state === undefined || state === "colon" || state === "value") return null;
-      if (states.length === 0) return i + 1;
-      i++;
-      continue;
-    }
-
-    if (char === ":") {
-      if (states.at(-1) !== "colon") return null;
-      states[states.length - 1] = "value";
-      i++;
-      continue;
-    }
-
-    if (char === ",") {
-      if (states.at(-1) !== "commaOrClose") return null;
-      states[states.length - 1] = "key";
-      i++;
-      continue;
-    }
-
-    if (/[A-Za-z_$]/.test(char)) {
-      if (states.at(-1) !== "key") return null;
-      let end = i + 1;
-      while (isIdentifierChar(source[end])) end++;
-      states[states.length - 1] = "colon";
-      i = end;
-      continue;
-    }
-
-    if (/\s/.test(char)) {
-      i++;
-      continue;
-    }
-
-    return null;
+    const next = readStaticImportAttributeToken(source, i, states);
+    if (next === null) return null;
+    if (typeof next === "number") return next;
+    i = next.index;
   }
 
   return null;
 }
 
+type ImportAttributeState = "key" | "colon" | "value" | "commaOrClose";
+
+type AttributeTokenRead = { index: number } | number | null;
+
+function readStaticImportAttributeToken(
+  source: string,
+  index: number,
+  states: ImportAttributeState[],
+): AttributeTokenRead {
+  const char = source[index];
+  if (char === undefined) return null;
+  if (char === '"' || char === "'") return readImportAttributeStringToken(source, index, states);
+  if (char === "{") return startImportAttributeObjectToken(states, index);
+  if (char === "}") return finishImportAttributeObjectToken(states, index);
+  if (char === ":") return readImportAttributeColonToken(states, index);
+  if (char === ",") return readImportAttributeCommaToken(states, index);
+  if (/[A-Za-z_$]/.test(char)) return readImportAttributeIdentifierToken(source, index, states);
+  if (/\s/.test(char)) return { index: index + 1 };
+  return null;
+}
+
+function readImportAttributeStringToken(
+  source: string,
+  index: number,
+  states: ImportAttributeState[],
+): AttributeTokenRead {
+  const literal = readStringLiteral(source, index);
+  if (literal === null || !advanceImportAttributeStringState(states)) return null;
+  return { index: literal.end };
+}
+
+function startImportAttributeObjectToken(
+  states: ImportAttributeState[],
+  index: number,
+): AttributeTokenRead {
+  if (!startImportAttributeObjectState(states)) return null;
+  states.push("key");
+  return { index: index + 1 };
+}
+
+function finishImportAttributeObjectToken(
+  states: ImportAttributeState[],
+  index: number,
+): AttributeTokenRead {
+  const state = states.pop();
+  if (state === undefined || state === "colon" || state === "value") return null;
+  return states.length === 0 ? index + 1 : { index: index + 1 };
+}
+
+function readImportAttributeColonToken(
+  states: ImportAttributeState[],
+  index: number,
+): AttributeTokenRead {
+  if (states.at(-1) !== "colon") return null;
+  states[states.length - 1] = "value";
+  return { index: index + 1 };
+}
+
+function readImportAttributeCommaToken(
+  states: ImportAttributeState[],
+  index: number,
+): AttributeTokenRead {
+  if (states.at(-1) !== "commaOrClose") return null;
+  states[states.length - 1] = "key";
+  return { index: index + 1 };
+}
+
+function readImportAttributeIdentifierToken(
+  source: string,
+  index: number,
+  states: ImportAttributeState[],
+): AttributeTokenRead {
+  if (states.at(-1) !== "key") return null;
+  const end = readIdentifierEnd(source, index + 1);
+  states[states.length - 1] = "colon";
+  return { index: end };
+}
+
+function readIdentifierEnd(source: string, index: number): number {
+  let end = index;
+  while (isIdentifierChar(source[end])) end++;
+  return end;
+}
+
 function advanceImportAttributeStringState(
-  states: Array<"key" | "colon" | "value" | "commaOrClose">,
+  states: ImportAttributeState[],
 ): boolean {
   const state = states.at(-1);
   if (state === "colon") return false;
@@ -389,7 +433,7 @@ function advanceImportAttributeStringState(
 }
 
 function startImportAttributeObjectState(
-  states: Array<"key" | "colon" | "value" | "commaOrClose">,
+  states: ImportAttributeState[],
 ): boolean {
   const state = states.at(-1);
   if (state === "colon" || state === "commaOrClose") return false;
@@ -495,40 +539,45 @@ function readSpecifierAfterFrom(source: string, index: number): string | null {
   let i = index;
   while (i < source.length) {
     i = skipWhitespaceAndComments(source, i);
-    const char = source[i];
-    const next = source[i + 1];
-
-    if (char === '"' || char === "'" || char === "`") {
-      i = skipStringLiteral(source, i);
-      continue;
-    }
-    if (char === "/" && next === "/") {
-      i = skipLineComment(source, i);
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      i = skipBlockComment(source, i);
-      continue;
-    }
-    if (char === ";" || char === undefined) return null;
-
-    if (
-      source.startsWith("from", i) &&
-      isKeywordBoundary(source, i, "from")
-    ) {
-      const specifierIndex = skipWhitespaceAndComments(source, i + "from".length);
-      const specifier = readStringLiteral(source, specifierIndex);
-      // `from` is a legal binding name, as in `import { from as value } from
-      // "..."`. Only the occurrence a string literal follows is the module
-      // clause; keep scanning past any other so the real specifier is read.
-      if (specifier !== null) return specifier.value;
-      i += "from".length;
-      continue;
-    }
-
-    i++;
+    const token = readSpecifierFromToken(source, i);
+    if (token.kind === "done") return null;
+    if (token.kind === "specifier") return token.value;
+    i = token.next;
   }
   return null;
+}
+
+type SpecifierFromToken =
+  | { kind: "continue"; next: number }
+  | { kind: "specifier"; value: string }
+  | { kind: "done" };
+
+function readSpecifierFromToken(source: string, index: number): SpecifierFromToken {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === '"' || char === "'" || char === "`") {
+    return { kind: "continue", next: skipStringLiteral(source, index) };
+  }
+  if (char === "/" && next === "/") {
+    return { kind: "continue", next: skipLineComment(source, index) };
+  }
+  if (char === "/" && next === "*") {
+    return { kind: "continue", next: skipBlockComment(source, index) };
+  }
+  if (char === ";" || char === undefined) return { kind: "done" };
+  if (!source.startsWith("from", index) || !isKeywordBoundary(source, index, "from")) {
+    return { kind: "continue", next: index + 1 };
+  }
+
+  const specifierIndex = skipWhitespaceAndComments(source, index + "from".length);
+  const specifier = readStringLiteral(source, specifierIndex);
+  // `from` is a legal binding name, as in `import { from as value } from
+  // "..."`. Only the occurrence a string literal follows is the module clause;
+  // keep scanning past any other so the real specifier is read.
+  return specifier === null
+    ? { kind: "continue", next: index + "from".length }
+    : { kind: "specifier", value: specifier.value };
 }
 
 export type ModuleSpecifierScan = {
@@ -546,7 +595,7 @@ const IDENTIFIER_UNICODE_ESCAPE = /\\u\{([0-9A-Fa-f]{1,6})\}|\\u([0-9A-Fa-f]{4})
 const CONSTRUCTOR_PROPERTY_REFERENCE =
   /(?:\.\s*constructor\b|\[\s*(?:"constructor"|'constructor')\s*\])/;
 const DESTRUCTURED_CONSTRUCTOR_REFERENCE =
-  /(?:\{|,)\s*(?:constructor|"constructor"|'constructor')\s*(?::|[,}])/;
+  /[,{]\s*(?:constructor|"constructor"|'constructor')\s*(?::|[,}])/;
 
 function containsComputedDynamicCodeGenerationProperty(source: string): boolean {
   let openBracket = source.indexOf("[");
@@ -664,30 +713,43 @@ function collectGlobalObjectAliases(source: string): Set<string> {
  */
 function containsComputedGlobalDynamicCodeGeneration(source: string): boolean {
   for (const globalName of collectGlobalObjectAliases(source)) {
-    let i = source.indexOf(globalName);
-    while (i !== -1) {
-      const property = readComputedGlobalProperty(source, i, globalName);
-      if (property === "dynamic" || dynamicCodeGenerationIdentifiersProperty(property)) {
-        return true;
-      }
-      i = source.indexOf(globalName, i + globalName.length);
-    }
+    if (containsComputedGlobalDynamicCodeGenerationForName(source, globalName)) return true;
   }
   return false;
 }
+
+function containsComputedGlobalDynamicCodeGenerationForName(
+  source: string,
+  globalName: string,
+): boolean {
+  let i = source.indexOf(globalName);
+  while (i !== -1) {
+    const property = readComputedGlobalProperty(source, i, globalName);
+    if (property.kind === "dynamic" || dynamicCodeGenerationIdentifiersProperty(property)) {
+      return true;
+    }
+    i = source.indexOf(globalName, i + globalName.length);
+  }
+  return false;
+}
+
+type ComputedGlobalProperty =
+  | { kind: "static"; value: string }
+  | { kind: "dynamic" }
+  | { kind: "absent" };
 
 function readComputedGlobalProperty(
   source: string,
   index: number,
   globalName: string,
-): string | "dynamic" | null {
-  if (!isKeywordBoundary(source, index, globalName)) return null;
+): ComputedGlobalProperty {
+  if (!isKeywordBoundary(source, index, globalName)) return { kind: "absent" };
   const openBracket = readComputedPropertyOpenBracket(source, index + globalName.length);
-  if (openBracket === null) return null;
+  if (openBracket === null) return { kind: "absent" };
   const property = readConcatenatedStringLiteral(source, openBracket + 1);
   const closeBracket = property === null ? null : skipWhitespaceAndComments(source, property.end);
-  if (property === null || source[closeBracket ?? 0] !== "]") return "dynamic";
-  return property.value;
+  if (property === null || source[closeBracket ?? 0] !== "]") return { kind: "dynamic" };
+  return { kind: "static", value: property.value };
 }
 
 function readComputedPropertyOpenBracket(source: string, index: number): number | null {
@@ -699,10 +761,10 @@ function readComputedPropertyOpenBracket(source: string, index: number): number 
   return source[openBracket] === "[" ? openBracket : null;
 }
 
-function dynamicCodeGenerationIdentifiersProperty(name: string | null): boolean {
-  return name !== null &&
+function dynamicCodeGenerationIdentifiersProperty(property: ComputedGlobalProperty): boolean {
+  return property.kind === "static" &&
     DYNAMIC_CODE_GENERATION_IDENTIFIERS.includes(
-      name as (typeof DYNAMIC_CODE_GENERATION_IDENTIFIERS)[number],
+      property.value as (typeof DYNAMIC_CODE_GENERATION_IDENTIFIERS)[number],
     );
 }
 
@@ -854,27 +916,44 @@ function scanForUnconstrainedDynamicImport(
   start: number,
   alternativeReadings: number[],
 ): boolean {
-  const keyword = "import";
   let i = start;
   while (i < source.length) {
-    const skipped = skipDynamicImportScanToken(source, i, alternativeReadings);
-    if (skipped === null) return true;
-    if (skipped !== undefined) {
-      i = skipped;
-      continue;
-    }
-
-    if (source.startsWith(keyword, i) && isKeywordBoundary(source, i, keyword)) {
-      const outcome = readDynamicImportLiteralOutcome(source, i + keyword.length);
-      if (outcome === "dynamic") return true;
-      if (outcome !== "absent") {
-        i = outcome;
-        continue;
-      }
-    }
-    i++;
+    const result = readUnconstrainedDynamicImportScanStep(source, i, alternativeReadings);
+    if (result.kind === "found") return true;
+    i = result.next;
   }
   return false;
+}
+
+type DynamicImportScanStep =
+  | { kind: "continue"; next: number }
+  | { kind: "found" };
+
+function readUnconstrainedDynamicImportScanStep(
+  source: string,
+  index: number,
+  alternativeReadings: number[],
+): DynamicImportScanStep {
+  const skipped = skipDynamicImportScanToken(source, index, alternativeReadings);
+  if (skipped === null) return { kind: "found" };
+  if (skipped !== undefined) return { kind: "continue", next: skipped };
+  return readDynamicImportKeywordStep(source, index);
+}
+
+function readDynamicImportKeywordStep(
+  source: string,
+  index: number,
+): DynamicImportScanStep {
+  const keyword = "import";
+  if (!source.startsWith(keyword, index) || !isKeywordBoundary(source, index, keyword)) {
+    return { kind: "continue", next: index + 1 };
+  }
+  const outcome = readDynamicImportLiteralOutcome(source, index + keyword.length);
+  if (outcome === "dynamic") return { kind: "found" };
+  return {
+    kind: "continue",
+    next: outcome === "absent" ? index + 1 : outcome,
+  };
 }
 
 function skipDynamicImportScanToken(
@@ -937,64 +1016,71 @@ function readQuotedStringLiteralAt(
 }
 
 export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
-  const specifiers: string[] = [];
-  let hasUnconstrainedDynamicImport = false;
-  let requiresBundling = false;
   const hasDynamicCodeGeneration = containsDynamicCodeGenerationIdentifier(source);
-
   const accumulator: MutableScanAccumulator = {
-    specifiers,
-    hasUnconstrainedDynamicImport,
-    requiresBundling,
+    specifiers: [],
+    hasUnconstrainedDynamicImport: false,
+    requiresBundling: false,
   };
 
   let i = 0;
   while (i < source.length) {
-    const skipped = skipModuleScanToken(source, i, accumulator);
-    hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
-    requiresBundling = accumulator.requiresBundling;
-    if (skipped === null) {
-      return unreadableModuleSpecifierScan(specifiers, requiresBundling, hasDynamicCodeGeneration);
+    const result = readModuleSpecifierScanStep(source, i, accumulator);
+    if (result.kind === "unreadable") {
+      return unreadableModuleSpecifierScan(accumulator, hasDynamicCodeGeneration);
     }
-    if (skipped !== undefined) {
-      i = skipped;
-      continue;
-    }
-
-    if (source.startsWith("import", i) && isKeywordBoundary(source, i, "import")) {
-      readImportSpecifierInto(source, i, accumulator);
-      hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
-      i++;
-      continue;
-    }
-
-    if (source.startsWith("export", i) && isKeywordBoundary(source, i, "export")) {
-      const specifier = readSpecifierAfterFrom(source, i + "export".length);
-      if (specifier !== null) specifiers.push(specifier);
-    }
-    i++;
+    i = result.next;
   }
 
   return {
-    specifiers,
-    hasUnconstrainedDynamicImport: hasUnconstrainedDynamicImport ||
-      (requiresBundling && containsPotentialUnconstrainedDynamicImport(source)),
-    requiresBundling,
+    specifiers: accumulator.specifiers,
+    hasUnconstrainedDynamicImport: accumulator.hasUnconstrainedDynamicImport ||
+      (accumulator.requiresBundling && containsPotentialUnconstrainedDynamicImport(source)),
+    requiresBundling: accumulator.requiresBundling,
     hasDynamicCodeGeneration,
   };
 }
 
+type ModuleSpecifierScanStep =
+  | { kind: "continue"; next: number }
+  | { kind: "unreadable" };
+
+function readModuleSpecifierScanStep(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): ModuleSpecifierScanStep {
+  const skipped = skipModuleScanToken(source, index, accumulator);
+  if (skipped === null) return { kind: "unreadable" };
+  if (skipped !== undefined) return { kind: "continue", next: skipped };
+  if (source.startsWith("import", index) && isKeywordBoundary(source, index, "import")) {
+    readImportSpecifierInto(source, index, accumulator);
+    return { kind: "continue", next: index + 1 };
+  }
+  readExportSpecifierInto(source, index, accumulator);
+  return { kind: "continue", next: index + 1 };
+}
+
+function readExportSpecifierInto(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): void {
+  if (!source.startsWith("export", index) || !isKeywordBoundary(source, index, "export")) return;
+  const specifier = readSpecifierAfterFrom(source, index + "export".length);
+  if (specifier !== null) accumulator.specifiers.push(specifier);
+}
+
 function unreadableModuleSpecifierScan(
-  specifiers: string[],
-  requiresBundling: boolean,
+  accumulator: MutableScanAccumulator,
   hasDynamicCodeGeneration: boolean,
 ): ModuleSpecifierScan {
   return {
-    specifiers,
+    specifiers: accumulator.specifiers,
     // An unreadable template hides whatever follows it, so this scan cannot
     // claim the source names no unconstrained import.
     hasUnconstrainedDynamicImport: true,
-    requiresBundling,
+    requiresBundling: accumulator.requiresBundling,
     hasDynamicCodeGeneration,
   };
 }

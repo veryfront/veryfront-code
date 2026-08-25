@@ -541,44 +541,65 @@ async function canDirectImportModuleGraph(args: {
 
   while (pending.length > 0) {
     const filePath = pending.pop() as string;
-    if (visited.has(filePath)) continue;
-    visited.add(filePath);
-
-    if (!isWithinDirectory(projectRoot, filePath)) return false;
-    // JSON is data, so it cannot execute or introduce another module edge.
-    if (isJSONModulePath(filePath)) continue;
-
-    const source = await readDirectGraphSource(fs, filePath);
-    if (source === null) return false;
-
-    // Reuse the parser-aware public validator so direct and bundled routes
-    // enforce the same remote-import, Worker, and generated-code contract.
-    const scan = await validateHTTPImports(source, allowedHosts);
-    if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) {
-      canDirectImport = false;
-      continue;
+    if (markDirectGraphVisit(visited, filePath)) {
+      const moduleResult = await inspectDirectGraphModule({
+        filePath,
+        projectRoot,
+        fs,
+        allowedHosts,
+        importMap,
+        pending,
+      });
+      if (moduleResult === "reject") return false;
+      if (moduleResult === "bundle") canDirectImport = false;
     }
-
-    // A worker's entry is executed by the worker's own loader, which neither
-    // this file's import list nor the HTTP plugin ever sees. Vet it as part of
-    // the graph; one whose base this scanner does not follow cannot be walked,
-    // so the route bundles instead.
-    if (!enqueueDirectWorkerEntries(scan.localWorkerSpecifiers, projectRoot, filePath, pending)) {
-      return false;
-    }
-    const specifierResult = inspectDirectModuleSpecifiers({
-      specifiers: scan.specifiers,
-      importMap,
-      filePath,
-      projectRoot,
-      allowedHosts,
-      pending,
-    });
-    if (specifierResult === "reject") return false;
-    if (specifierResult === "bundle") canDirectImport = false;
   }
 
   return canDirectImport;
+}
+
+function markDirectGraphVisit(visited: Set<string>, filePath: string): boolean {
+  if (visited.has(filePath)) return false;
+  visited.add(filePath);
+  return true;
+}
+
+async function inspectDirectGraphModule(options: {
+  filePath: string;
+  projectRoot: string;
+  fs: FileSystem;
+  allowedHosts: string[];
+  importMap: DenoImportMap | null;
+  pending: string[];
+}): Promise<DirectSpecifierResult> {
+  const { filePath, projectRoot, fs, allowedHosts, importMap, pending } = options;
+  if (!isWithinDirectory(projectRoot, filePath)) return "reject";
+  // JSON is data, so it cannot execute or introduce another module edge.
+  if (isJSONModulePath(filePath)) return "direct";
+
+  const source = await readDirectGraphSource(fs, filePath);
+  if (source === null) return "reject";
+
+  // Reuse the parser-aware public validator so direct and bundled routes
+  // enforce the same remote-import, Worker, and generated-code contract.
+  const scan = await validateHTTPImports(source, allowedHosts);
+  if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) return "bundle";
+
+  // A worker's entry is executed by the worker's own loader, which neither
+  // this file's import list nor the HTTP plugin ever sees. Vet it as part of
+  // the graph; one whose base this scanner does not follow cannot be walked,
+  // so the route bundles instead.
+  if (!enqueueDirectWorkerEntries(scan.localWorkerSpecifiers, projectRoot, filePath, pending)) {
+    return "reject";
+  }
+  return inspectDirectModuleSpecifiers({
+    specifiers: scan.specifiers,
+    importMap,
+    filePath,
+    projectRoot,
+    allowedHosts,
+    pending,
+  });
 }
 
 async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<string | null> {
