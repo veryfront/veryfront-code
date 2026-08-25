@@ -1,61 +1,53 @@
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors";
 
-/**
- * The `$$typeof` tags that mark a rendered node rather than a component type.
- *
- * An element or a portal is the *result* of rendering, so handing one to React
- * as a component fails. Everything else React tags is a component type of some
- * kind: `memo`, `forwardRef`, `lazy`, context, provider, consumer, and the
- * client and server references the RSC path produces.
- */
-const REACT_NODE_TAGS: ReadonlySet<symbol> = new Set([
-  Symbol.for("react.element"),
-  Symbol.for("react.transitional.element"),
-  Symbol.for("react.portal"),
+/** React object tags that are valid element types across supported runtimes. */
+const REACT_COMPONENT_OBJECT_TAGS: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.memo"),
+  Symbol.for("react.forward_ref"),
+  Symbol.for("react.lazy"),
+  Symbol.for("react.context"),
+  // React 18 exposes Provider as a distinct type; React 19 renders Context
+  // directly and exposes Consumer separately. Supporting both keeps compiled
+  // modules portable across the React versions Veryfront accepts.
+  Symbol.for("react.provider"),
+  Symbol.for("react.consumer"),
+  Symbol.for("react.client.reference"),
 ]);
-
-/** Reports whether a symbol is one React registered, such as `react.memo`. */
-function isReactTag(tag: unknown): tag is symbol {
-  return typeof tag === "symbol" && (Symbol.keyFor(tag)?.startsWith("react.") ?? false);
-}
 
 /**
  * Detects React's component-type objects, which separates a component from an
  * ordinary data export such as an App Router `metadata` object.
  *
- * Excluding the node tags is what matters here, rather than listing the
- * component tags: React keeps adding component types, and this module has no
- * business tracking that list. Anything React tags that is not a rendered node
- * is something the caller can render.
+ * The allowlist is deliberate: `Symbol.for("react.*")` is a public namespace,
+ * not proof that an object is a renderable React type. React also uses it for
+ * rendered nodes and internal markers, and applications can mint arbitrary
+ * entries in the same registry.
  */
 function isReactComponentObject(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
 
   const tag = (value as { $$typeof?: unknown }).$$typeof;
-  return isReactTag(tag) && !REACT_NODE_TAGS.has(tag);
+  return typeof tag === "symbol" && REACT_COMPONENT_OBJECT_TAGS.has(tag);
 }
 
 /**
  * The built-in components React exports as bare symbols.
  *
  * Verified against `react@19.2.4` by enumerating its symbol-valued exports, and
- * cross-checked with `react-is`, whose `isValidElementType` accepts
- * `react.fragment`, `react.suspense`, `react.strict_mode` and `react.profiler`
- * standing alone and rejects every `$$typeof` marker. `Activity` is included
- * because React exports it as a component; `react-is` has not caught up, and
- * React's own export is what the renderer follows.
+ * cross-checked with `react-is`, whose `isValidElementType` accepts Fragment,
+ * Suspense, SuspenseList, StrictMode and Profiler standing alone and rejects
+ * every `$$typeof` marker. `Activity` is included because React exports it as a
+ * component; `react-is` has not caught up, and React's own export is what the
+ * renderer follows.
  *
- * This is a whitelist while the object check is an exclusion list, and the
- * asymmetry is real rather than an oversight. Component *wrappers* are
- * open-ended, so excluding the rendered-node tags is the claim that stays true
- * there. Bare symbols are the opposite: only these few are element types, and
- * every other `react.*` symbol is a marker `react-is` re-exports, which React
- * rejects if it reaches the renderer.
+ * Bare symbols need their own whitelist: every other `react.*` symbol is a
+ * marker `react-is` re-exports, which React rejects if it reaches the renderer.
  */
 const REACT_BUILTIN_TYPES: ReadonlySet<symbol> = new Set([
   Symbol.for("react.fragment"),
   Symbol.for("react.suspense"),
+  Symbol.for("react.suspense_list"),
   Symbol.for("react.strict_mode"),
   Symbol.for("react.profiler"),
   Symbol.for("react.activity"),

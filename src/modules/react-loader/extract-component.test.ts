@@ -107,6 +107,16 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("skips React-namespaced object markers that are not component types", () => {
+    const marker = { $$typeof: Symbol.for("react.not-a-component") };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, marker, Page }, "marker-object.tsx"),
+      Page,
+      "a react.* namespace alone must not make an arbitrary tagged object renderable",
+    );
+  });
+
   it("keeps a context provider declared before a helper function", () => {
     const Ctx = { $$typeof: Symbol.for("react.context"), Provider: () => null };
     const helper = () => null;
@@ -146,6 +156,16 @@ describe("modules/react-loader/extract-component", () => {
       extractComponent({ __esModule: true, Layout, helper }, "fragment-layout.tsx") as unknown,
       Layout,
       "a built-in React type must not lose to a helper declared after it",
+    );
+  });
+
+  it("keeps React's SuspenseList built-in declared before a helper", () => {
+    const SuspenseList = Symbol.for("react.suspense_list");
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, SuspenseList, helper }, "suspense-list.tsx") as unknown,
+      SuspenseList,
+      "SuspenseList is a valid bare-symbol element type and must retain declaration order",
     );
   });
 
