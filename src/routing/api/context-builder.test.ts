@@ -191,6 +191,7 @@ describe("API Context Builder", () => {
       );
 
       assertEquals(context.identity, identity);
+      assertEquals(context.applicationIdentity, identity);
       assertEquals(Object.isFrozen(context.identity), true);
       assertEquals(Object.isFrozen(context.identity?.claims), true);
     });
@@ -200,6 +201,17 @@ describe("API Context Builder", () => {
       const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
 
       assertEquals(context.identity, null);
+      assertEquals(context.applicationIdentity, null);
+    });
+
+    it("keeps application identity optional on the exported API context type", () => {
+      const request = new Request("http://localhost/api/users");
+      const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
+      const exported: APIContext = context;
+      const legacyAssignable: Omit<APIContext, "applicationIdentity"> = exported;
+
+      assertEquals(legacyAssignable.identity, null);
+      assertEquals(exported.applicationIdentity, null);
     });
 
     it("should extract route parameters from match", () => {

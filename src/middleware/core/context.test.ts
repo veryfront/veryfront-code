@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { MiddlewareContext } from "./context.ts";
+import type { Context } from "./types.ts";
 
 function createCtx(
   env: Record<string, unknown> = {},
@@ -38,6 +40,30 @@ describe("MiddlewareContext", () => {
       const ctx = new MiddlewareContext(req, {}, executionCtx);
 
       assertEquals(ctx.executionCtx, executionCtx);
+    });
+
+    it("keeps application identity optional on the public middleware context type", () => {
+      const identity = Object.freeze({
+        issuer: "veryfront:trusted-proxy",
+        subject: "user-123",
+        email: null,
+        name: null,
+        groups: Object.freeze([]),
+        roles: Object.freeze([]),
+        groupsComplete: true,
+        claims: Object.freeze({ sub: "user-123" }),
+      }) satisfies ApplicationIdentity;
+      const ctx = new MiddlewareContext(
+        new Request("https://example.com/"),
+        {},
+        undefined,
+        identity,
+      );
+      const exported: Context = ctx;
+      const legacyAssignable: Omit<Context, "applicationIdentity"> = exported;
+
+      assertEquals(legacyAssignable.identity, identity);
+      assertEquals(exported.applicationIdentity, identity);
     });
 
     it("should initialize var as empty object", () => {

@@ -7,6 +7,7 @@ export class MiddlewareContext implements Context {
   req: Request;
   request: Request;
   identity: ApplicationIdentity | null;
+  applicationIdentity: ApplicationIdentity | null;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;
   var: Record<string, unknown> = {};
@@ -22,6 +23,7 @@ export class MiddlewareContext implements Context {
     this.req = req;
     this.request = req; // Alias for compatibility
     this.identity = identity;
+    this.applicationIdentity = identity;
     this.env = env;
     this.executionCtx = executionCtx;
   }

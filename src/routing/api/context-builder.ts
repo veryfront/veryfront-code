@@ -12,6 +12,7 @@ export interface APIContext {
   request: Request;
   req: Request;
   identity: ApplicationIdentity | null;
+  applicationIdentity?: ApplicationIdentity | null;
   params: Record<string, string | string[]>;
   query: URLSearchParams;
   cookies: Record<string, string>;
@@ -133,6 +134,7 @@ export function createContext(
     request,
     req: request,
     identity,
+    applicationIdentity: identity,
     params: match.params,
     query: url.searchParams,
     cookies: parseCookies(request.headers.get("cookie") ?? ""),

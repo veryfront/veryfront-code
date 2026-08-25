@@ -11,6 +11,7 @@ export interface Context {
   req: Request;
   request: Request;
   identity: ApplicationIdentity | null;
+  applicationIdentity?: ApplicationIdentity | null;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;
   var: Record<string, unknown>;
