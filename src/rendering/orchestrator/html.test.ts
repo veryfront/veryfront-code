@@ -795,6 +795,115 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
     });
 
+    it("keeps a quoted > inside the html opening tag out of the theme injection", async () => {
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          '<!DOCTYPE html><html lang="en" data-x="a>b"><head><title>Layout Title</title></head><body><main>Hello</main></body></html>',
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      assertStringIncludes(
+        html,
+        'data-x="a>b"',
+        "a quoted > must not truncate the html opening tag",
+      );
+      assertEquals(
+        (html.match(/data-theme="dark"/g) ?? []).length,
+        1,
+        "theme is injected exactly once",
+      );
+      assertEquals(
+        html.includes('data-x="a data-theme'),
+        false,
+        "attributes must not be spliced mid-value",
+      );
+    });
+
+    it("replaces a layout's own data-theme and color-scheme declarations", async () => {
+      const mockAdapter = createMockAdapter(async () => `'use client';`);
+
+      const generator = createHTMLGenerator({
+        readFile: mockAdapter.fs.readFile,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html:
+          '<!DOCTYPE html><html lang="en" data-theme="light" style="color-scheme: light"><head><title>Layout Title</title></head><body><main>Hello</main></body></html>',
+        options: {
+          colorScheme: "dark",
+          colorSchemeFromParam: true,
+        },
+      }));
+
+      assertEquals(
+        (html.match(/data-theme="/g) ?? []).length,
+        1,
+        "the layout's own data-theme must be replaced, not duplicated",
+      );
+      assertStringIncludes(html, 'data-theme="dark"', "the requested theme wins");
+      assertEquals(
+        html.includes('data-theme="light"'),
+        false,
+        "the stale light declaration must not survive",
+      );
+      assertEquals(
+        (html.match(/color-scheme:\s*/g) ?? []).length,
+        1,
+        "the layout's own color-scheme must be replaced, not duplicated",
+      );
+      assertStringIncludes(
+        html,
+        "color-scheme: dark",
+        "the requested color scheme wins",
+      );
+      assertEquals(
+        html.includes("color-scheme: light"),
+        false,
+        "the stale light color scheme must not survive",
+      );
+    });
+
+    it("injects dev scripts only for a development-mode generator", async () => {
+      const devHtml = await createHTMLGenerator({
+        mode: "development",
+        readFile: async () => "",
+      }).generateFullHTML(createHTMLContext());
+      const prodHtml = await createHTMLGenerator({
+        mode: "production",
+        readFile: async () => "",
+      }).generateFullHTML(createHTMLContext());
+
+      assertStringIncludes(
+        devHtml,
+        '<script type="module" src="/_veryfront/hmr.js"></script>',
+        "development shells carry the HMR client",
+      );
+      assertStringIncludes(
+        devHtml,
+        ".dev-indicator",
+        "development shells carry the dev overlay styles",
+      );
+      assertEquals(
+        prodHtml.includes("/_veryfront/hmr.js"),
+        false,
+        "production shells must not carry development instrumentation",
+      );
+      assertEquals(
+        prodHtml.includes(".dev-indicator"),
+        false,
+        "production shells must not carry development overlay styles",
+      );
+    });
+
     it("escapes nonce values before injecting theme persistence scripts", async () => {
       const mockAdapter = createMockAdapter(async () => `'use client';`);
 

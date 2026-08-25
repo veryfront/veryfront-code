@@ -2,6 +2,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
+import { csrfMutationHeaders } from "./index.client.ts";
 
 /**
  * `src/index.client.ts` is the browser/SSR-safe mirror of the `veryfront` root
@@ -157,6 +158,10 @@ async function collectStaticGraph(entry: string): Promise<Map<string, string | n
 }
 
 describe("index.client static import boundary", () => {
+  it("exports the browser CSRF mutation helper", () => {
+    assertEquals(typeof csrfMutationHeaders, "function");
+  });
+
   it("never statically reaches a server runtime adapter (#3661)", async () => {
     const graph = await collectStaticGraph("src/index.client.ts");
 

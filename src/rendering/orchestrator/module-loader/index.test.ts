@@ -39,6 +39,41 @@ import {
   markBuildFailure,
   markTenantBuildFailure,
 } from "./build-failure.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  buildHttpCacheIdentity,
+  hashHttpCacheIdentity,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { __injectCachesForTests } from "#veryfront/transforms/esm/http-cache-state.ts";
+import { __setDistributedCacheAccessorForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+
+/**
+ * A distributed-cache stand-in keyed the way the HTTP bundle cache reads it:
+ * the stored keys carry a leading namespace segment the lookup adds.
+ */
+function createSuffixCacheBackend(entries: Record<string, string>): CacheBackend {
+  const values = new Map(Object.entries(entries));
+
+  function suffixKey(key: string): string {
+    const match = /^[^:]+:([^:]+):(.+)$/.exec(key);
+    if (!match) return key;
+    return `${match[1]}:${match[2]}`;
+  }
+
+  return {
+    type: "memory",
+    get: (key) => Promise.resolve(values.get(suffixKey(key)) ?? null),
+    set: (key, value) => {
+      values.set(suffixKey(key), value);
+      return Promise.resolve();
+    },
+    del: (key) => {
+      values.delete(suffixKey(key));
+      return Promise.resolve();
+    },
+  };
+}
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -1780,6 +1815,11 @@ describe("module-loader/loadModule build-failure tagging", () => {
           );
 
           assertEquals(isBuildFailure(error), true);
+          assertEquals(
+            isTenantBuildFailure(error),
+            false,
+            "an asset-import compile failure is framework-owned: the transform seam must not attribute it to the tenant",
+          );
         });
       },
     );
@@ -2372,7 +2412,10 @@ describe("module-loader/loadModule", () => {
           "app/page.pinned.mjs",
         );
         await Deno.mkdir(dirname(artifactPath), { recursive: true });
-        await Deno.writeTextFile(artifactPath, `export const value = "pinned";`);
+        // A sentinel the on-disk source cannot produce, so the assertion below
+        // separates "served from the pinned cache entry" from "re-transformed
+        // from source with the cache ignored".
+        await Deno.writeTextFile(artifactPath, `export const value = "from-pinned-cache";`);
         config.moduleCache.set(
           getModuleCacheKey(
             filePath,
@@ -2394,7 +2437,75 @@ describe("module-loader/loadModule", () => {
             moduleServerOrigin,
           });
 
-          assertEquals(loaded.value, "pinned");
+          assertEquals(
+            loaded.value,
+            "from-pinned-cache",
+            "the encoded dependency-pin cache artifact must be served instead of a fresh transform",
+          );
+        });
+      },
+    );
+  });
+
+  // The recovery seam is reached through a hard-coded dynamic import of
+  // #veryfront/transforms/esm/http-cache.ts, so it has to be driven for real:
+  // plant an artifact that imports an HTTP bundle which is absent from disk but
+  // present in the distributed cache, and let the import failure trigger it.
+  it("recovers an evicted HTTP bundle and retries the import", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "unused";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const url = "https://esm.sh/evicted@1";
+        const hash = await hashHttpCacheIdentity(
+          await buildHttpCacheIdentity(url, { importMap: { imports: {}, scopes: {} } }),
+        );
+        const bundleCode = "export const recovered = true;\n";
+
+        await runWithCacheDir(tmpDir, async () => {
+          const bundlePath = join(getHttpBundleCacheDir(), `http-${hash}.mjs`);
+          const artifactPath = join(tmpDir, "page.http-bundle.mjs");
+          await Deno.writeTextFile(
+            artifactPath,
+            `export { recovered } from ${JSON.stringify(toFileUrl(bundlePath).href)};\n`,
+          );
+          config.moduleCache.set(
+            getModuleCacheKey(
+              filePath,
+              undefined,
+              projectDir,
+              undefined,
+              undefined,
+              "development",
+            ),
+            artifactPath,
+          );
+
+          __injectCachesForTests({ cachedPaths: new Map<string, string>() });
+          __setDistributedCacheAccessorForTests(() =>
+            Promise.resolve(createSuffixCacheBackend({
+              [`code:${hash}`]: bundleCode,
+              [`hash:${hash}`]: url,
+            }))
+          );
+
+          try {
+            const loaded = await loadModule(filePath, config);
+
+            assertEquals(
+              loaded.recovered,
+              true,
+              "an import that failed on an evicted HTTP bundle must be retried after recovery",
+            );
+            assertEquals(
+              await Deno.readTextFile(bundlePath),
+              bundleCode,
+              "the evicted bundle must be restored to the HTTP bundle cache dir the error named",
+            );
+          } finally {
+            __setDistributedCacheAccessorForTests(null);
+            __injectCachesForTests(null);
+          }
         });
       },
     );

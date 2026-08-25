@@ -1,8 +1,9 @@
 # Security module reference
 
 `src/security` owns Veryfront's request-security primitives and the internal
-worker boundary used to run project code. Its only published package entrypoint
-is `veryfront/security`, mapped to [`index.ts`](./index.ts).
+worker boundary used to run project code. Its server-facing package entrypoint
+is `veryfront/security`, mapped to [`index.ts`](./index.ts). Browser code imports
+the CSRF mutation helper from `veryfront/index.client`.
 
 This module does not provide password hashing, JWT verification, SQL escaping,
 or a public sandbox API. Authentication here is limited to the runtime's Basic
@@ -61,6 +62,44 @@ CSRF uses a double-submit cookie and header comparison. The default cookie is
 Cookie/header names and token lifetimes are bounded both in configuration and
 at the public helper boundary. State-changing requests are checked unless an
 exact, schema-validated exclusion applies.
+
+Use `csrfMutationHeaders` for a browser mutation that does not use a Veryfront
+client hook. The helper adds the default CSRF header for same-origin requests
+and preserves any headers you provide.
+
+```ts
+import { csrfMutationHeaders } from "veryfront/index.client";
+
+const response = await fetch("/api/cases", {
+  method: "POST",
+  headers: csrfMutationHeaders("/api/cases", {
+    headers: { "content-type": "application/json" },
+  }),
+  body: JSON.stringify({ title: "Example case" }),
+});
+
+if (!response.ok) {
+  throw new Error(`Request failed with status ${response.status}`);
+}
+```
+
+The default names require no options. If `security.csrf` sets custom names,
+pass the same names to the browser helper:
+
+```ts
+const headers = csrfMutationHeaders("/api/cases", {
+  headers: { "content-type": "application/json" },
+  cookieName: "my_csrf",
+  headerName: "x-my-csrf",
+});
+```
+
+`security.csrf` defaults to on in production and stays unset locally. Local
+development still issues the same token cookie so the helper sends a real
+header before deploy; validation itself remains off until `security.csrf` is
+configured. A local mutation that still arrives without a non-empty
+`x-csrf-token` header is logged once per method and path, because production
+defaults would reject it.
 
 ### Authentication
 

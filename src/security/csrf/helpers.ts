@@ -10,12 +10,16 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
-import { HTTP_TOKEN_PATTERN } from "#veryfront/utils/cors-policy-limits.ts";
-import { MAX_CSRF_NAME_LENGTH, MAX_CSRF_TTL_SECONDS } from "#veryfront/utils/constants/security.ts";
+import { MAX_CSRF_TTL_SECONDS } from "#veryfront/utils/constants/security.ts";
+import {
+  type CsrfNameOptions,
+  DEFAULT_CSRF_COOKIE_NAME,
+  requireCsrfName,
+  resolveCsrfNames,
+} from "./names.ts";
 
 /** Default CSRF token TTL: 24 hours (longer than session action TTL to avoid stale-form 403s). */
 const CSRF_DEFAULT_TTL_SEC = 86_400;
-const DEFAULT_CSRF_COOKIE_NAME = "__Host-vf_csrf";
 
 export interface CsrfConfig {
   cookieName?: string;
@@ -31,20 +35,6 @@ export interface CsrfTokenOptions {
   httpOnly?: boolean;
   /** When true, adds the Secure flag (cookie only sent over HTTPS). Default: true */
   secure?: boolean;
-}
-
-function requireCsrfName(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_CSRF_NAME_LENGTH ||
-    !HTTP_TOKEN_PATTERN.test(value)
-  ) {
-    throw new TypeError(
-      `${label} must be a valid HTTP token no longer than ${MAX_CSRF_NAME_LENGTH} characters`,
-    );
-  }
-  return value;
 }
 
 function requireCsrfTtl(value: unknown): number {
@@ -118,17 +108,10 @@ function timingSafeEqual(a: string, b: string): boolean {
 /** Validate CSRF token by comparing header and cookie */
 export function validateCsrf(
   req: Request,
-  options?: { cookieName?: string; headerName?: string },
+  options?: CsrfNameOptions,
 ): boolean {
   try {
-    const cookieName = requireCsrfName(
-      options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME,
-      "CSRF cookieName",
-    );
-    const headerName = requireCsrfName(
-      options?.headerName ?? "x-csrf-token",
-      "CSRF headerName",
-    );
+    const { cookieName, headerName } = resolveCsrfNames(options);
     const cookieToken = parseCookiesFromHeaders(req.headers)[cookieName];
     if (!cookieToken) return false;
 
@@ -141,6 +124,26 @@ export function validateCsrf(
     // fail closed through this boolean validation contract.
     return false;
   }
+}
+
+/**
+ * Resolve the token-issuing CSRF setting for a response-serving surface.
+ *
+ * Production defaults `security.csrf` on, so `applyCsrfCookie` issues the
+ * double-submit token there. Local development leaves the setting unset and
+ * stays permissive, which used to mean no token cookie existed locally at all:
+ * every browser mutation — including the ones Veryfront's own hooks build with
+ * `csrfMutationHeaders` — had nothing to echo, so correct client code still
+ * sent no `x-csrf-token`. Issuing the same token cookie locally makes the
+ * double-submit contract exercisable before deploy without enforcing it, so
+ * the development warning is left to the mutations that genuinely omit the
+ * header. Enforcement still keys off `security.csrf`, which this never sets.
+ */
+export function csrfCookieSetting(
+  csrfConfig: boolean | CsrfConfig | undefined,
+  isLocalDevelopment: boolean,
+): boolean | CsrfConfig | undefined {
+  return csrfConfig === undefined && isLocalDevelopment ? true : csrfConfig;
 }
 
 /**
