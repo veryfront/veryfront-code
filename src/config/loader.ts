@@ -1723,8 +1723,11 @@ function reportedMissingSpecifier(message: string): string | undefined {
 
 /** Anchored resolution-failure formats, per runtime. */
 const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
-  // Node, and Deno's `Module not found "file:///…".` form.
-  /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
+  // Node (`imported from <path>`), Bun (`from '<path>'`, sometimes prefixed
+  // `ResolveMessage:`), and Deno's `Module not found "file:///…".` form. Only
+  // that one literal prefix is tolerated, so an ordinary error that happens to
+  // quote a resolver phrase still fails to match.
+  /^(?:ResolveMessage:\s+)?(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:\s+(?:imported\s+)?from\s+.+|\.)?$/,
   // Deno, when the importer resolves out of the global npm cache.
   /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
   // Deno, for a specifier no import map or node_modules entry claims.

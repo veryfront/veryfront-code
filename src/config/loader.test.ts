@@ -817,6 +817,55 @@ export default config as const;
         }, { prefix: "vf-config-referrer-" });
       });
 
+      it("classifies Bun's resolver wording as a missing dependency", async () => {
+        // A third phrasing for one failure: Bun says "Cannot find package 'x'
+        // from '<importer>'", where Node says "imported from <importer>". The
+        // importer suffix is what differs, so matching only Node's spelling
+        // left every Bun user on the syntax advice this issue is about.
+        const adapter = setup();
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source =
+            `throw new Error("Cannot find package 'left-pad' from '/app/veryfront.config.mjs'");\n`;
+
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "dependency-missing");
+          assert(
+            error.message.includes("left-pad"),
+            `error must name the unresolved package, got: ${error.message}`,
+          );
+        }, { prefix: "vf-config-bun-" });
+      });
+
+      it("does not blame a missing relative file on an uninstalled package under Bun", async () => {
+        // Bun uses the same `from '<importer>'` suffix for a missing relative
+        // file, so widening the pattern for packages must not widen it for
+        // files: the specifier shape is still what decides.
+        const adapter = setup();
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source =
+            `throw new Error("Cannot find module './missing.js' from '/app/veryfront.config.mjs'");\n`;
+
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "config-parse-error");
+        }, { prefix: "vf-config-bun-relative-" });
+      });
+
       it("does not reclassify an ordinary error that merely quotes a resolver phrase", async () => {
         // `Setup failed: Module not found "db"` is a config author's own error,
         // not a resolver's. Only an anchored match separates the two, and the
