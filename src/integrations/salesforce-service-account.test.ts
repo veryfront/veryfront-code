@@ -686,6 +686,14 @@ describe("Salesforce service-account integration source", () => {
       TypeError,
       "policy predicates",
     );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE NOT (PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
     assertEquals(transport.captures, []);
   });
 
@@ -777,6 +785,14 @@ describe("Salesforce service-account integration source", () => {
       TypeError,
       "must preserve its selected fields and object",
     );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} ${"from ".repeat(100_000)}`,
+        }),
+      TypeError,
+      "must preserve its selected fields and object",
+    );
     assertEquals(transport.captures, []);
   });
 
@@ -820,11 +836,20 @@ describe("Salesforce service-account integration source", () => {
     await source.executeTool("salesforce__search_knowledge_articles", {
       q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND(Title = 'FAQ') ORDER BY LastPublishedDate DESC LIMIT 25",
     });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE (PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE ((PublishStatus = 'Online')) AND Title = 'FAQ' ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE (PublishStatus = 'Online' AND Title = 'FAQ') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
 
     const queries = transport.captures.filter((capture) =>
       capture.request.url.includes("/services/data/")
     ).map((capture) => new URL(capture.request.url).searchParams.get("q"));
-    assertEquals(queries.length, 7);
+    assertEquals(queries.length, 10);
     assertStringIncludes(queries[0] ?? "", "WHERE NOT (Status = 'Closed')");
     assertStringIncludes(queries[1] ?? "", "AND NOT (Title = 'Internal')");
     assertStringIncludes(queries[2] ?? "", "WHERE\n\tPublishStatus = 'Online'");
@@ -832,6 +857,9 @@ describe("Salesforce service-account integration source", () => {
     assertStringIncludes(queries[4] ?? "", "Status IN('New', 'Working')");
     assertStringIncludes(queries[5] ?? "", "PublishStatus ='Online'");
     assertStringIncludes(queries[6] ?? "", "AND(Title = 'FAQ')");
+    assertStringIncludes(queries[7] ?? "", "WHERE (PublishStatus = 'Online')");
+    assertStringIncludes(queries[8] ?? "", "((PublishStatus = 'Online')) AND Title");
+    assertStringIncludes(queries[9] ?? "", "(PublishStatus = 'Online' AND Title");
   });
 
   it("accepts blank curated queries as defaults and reordered equivalent projections", async () => {
@@ -875,7 +903,11 @@ describe("Salesforce service-account integration source", () => {
       throw new Error("discovery must not access the network");
     });
     const source = createSalesforceServiceAccountToolSourceWithTransport({
-      allowedTools: ["salesforce__list_cases", "salesforce__run_soql_query"],
+      allowedTools: [
+        "salesforce__list_cases",
+        "salesforce__list_case_activity",
+        "salesforce__run_soql_query",
+      ],
       createOriginBoundFetch: transport.createOriginBoundFetch,
     });
 
@@ -891,8 +923,15 @@ describe("Salesforce service-account integration source", () => {
       qDescription(definitions[0]),
       "must keep the default query's selected fields and object",
     );
+    const caseActivityParameters = definitions[1]?.parameters as {
+      properties?: Record<string, { default?: unknown }>;
+    };
     assertEquals(
-      qDescription(definitions[1]).includes("selected fields and object"),
+      caseActivityParameters.properties?.q?.default,
+      "SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, IsPublished FROM CaseComment ORDER BY CreatedDate DESC LIMIT 50",
+    );
+    assertEquals(
+      qDescription(definitions[2]).includes("selected fields and object"),
       false,
       "the free-form SOQL tool must not advertise curated restrictions",
     );

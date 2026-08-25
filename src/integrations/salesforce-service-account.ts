@@ -615,6 +615,16 @@ function countSoqlCommas(value: string): number {
   return count;
 }
 
+function hasExactSoqlShapeKeywords(value: string): boolean {
+  const keywords = /\b(?:select|from)\b/gi;
+  let count = 0;
+  while (keywords.exec(value)) {
+    count++;
+    if (count > 2) return false;
+  }
+  return count === 2;
+}
+
 function normalizeSoqlProjection(value: string): string[] {
   return value.split(",").map((field) => collapseSoqlWhitespace(field).toLowerCase()).sort((a, b) =>
     a.localeCompare(b)
@@ -625,6 +635,59 @@ function normalizeSoqlClause(value: string): string {
   return collapseSoqlWhitespace(value)
     .replace(/ ?(!=|<=|>=|<|>|=) ?/g, "$1")
     .toLowerCase();
+}
+
+function hasBalancedSoqlParentheses(masked: string): boolean {
+  let depth = 0;
+  for (const character of masked) {
+    if (character === "(") depth++;
+    else if (character === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+function hasSoqlConjunctBoundaryBefore(masked: string, start: number): boolean {
+  let cursor = start - 1;
+  while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  while (masked[cursor] === "(") {
+    cursor--;
+    while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  }
+  if (cursor < 0) return true;
+  const tokenStart = cursor - 2;
+  return tokenStart >= 0 && masked.slice(tokenStart, cursor + 1).toLowerCase() === "and" &&
+    !/[a-z0-9_]/i.test(masked[tokenStart - 1] ?? "");
+}
+
+function hasSoqlConjunctBoundaryAfter(masked: string, end: number): boolean {
+  let cursor = end;
+  while (/\s/.test(masked[cursor] ?? "")) cursor++;
+  while (masked[cursor] === ")") {
+    cursor++;
+    while (/\s/.test(masked[cursor] ?? "")) cursor++;
+  }
+  if (cursor >= masked.length) return true;
+  return masked.slice(cursor, cursor + 3).toLowerCase() === "and" &&
+    !/[a-z0-9_]/i.test(masked[cursor + 3] ?? "");
+}
+
+function hasRequiredSoqlConjunct(value: string, requiredPredicate: string): boolean {
+  const masked = maskSoqlStrings(value);
+  if (!hasBalancedSoqlParentheses(masked)) return false;
+  let searchStart = 0;
+  while (searchStart <= value.length - requiredPredicate.length) {
+    const predicateStart = value.indexOf(requiredPredicate, searchStart);
+    if (predicateStart === -1) return false;
+    const predicateEnd = predicateStart + requiredPredicate.length;
+    if (
+      hasSoqlConjunctBoundaryBefore(masked, predicateStart) &&
+      hasSoqlConjunctBoundaryAfter(masked, predicateEnd)
+    ) {
+      return true;
+    }
+    searchStart = predicateStart + 1;
+  }
+  return false;
 }
 
 /**
@@ -736,11 +799,10 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
   }
   const expectedMatch = parseSoqlShape(expected);
   const suppliedMatch = parseSoqlShape(supplied);
-  const suppliedKeywords = supplied.match(/\b(?:select|from)\b/gi) ?? [];
   if (
     !expectedMatch ||
     !suppliedMatch ||
-    suppliedKeywords.length !== 2 ||
+    !hasExactSoqlShapeKeywords(supplied) ||
     // Compare comma counts first so an attacker-sized projection is rejected
     // without materializing and sorting an unbounded field array.
     countSoqlCommas(suppliedMatch.projection) !== countSoqlCommas(expectedMatch.projection) ||
@@ -771,10 +833,8 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
     const suppliedMaskedWhere = extractSoqlWhereClause(supplied);
     const requiredPredicate = normalizeSoqlClause(expectedWhere);
     const actualPredicate = suppliedWhere ? normalizeSoqlClause(suppliedWhere) : "";
-    const suffix = actualPredicate.slice(requiredPredicate.length).trimStart();
     if (
-      !actualPredicate.startsWith(requiredPredicate) ||
-      (suffix !== "" && !/^and(?:\s|\()/.test(suffix)) ||
+      !hasRequiredSoqlConjunct(actualPredicate, requiredPredicate) ||
       !suppliedMaskedWhere || /\bor\b/i.test(suppliedMaskedWhere)
     ) {
       throw new TypeError("Salesforce curated tool SOQL must preserve its policy predicates");
