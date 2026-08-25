@@ -251,7 +251,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-store")
       .withHeaders(problem.headers)
-      .build(problem.body, problem.status);
+      .build(req.method === "HEAD" ? null : problem.body, problem.status);
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 

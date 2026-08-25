@@ -592,6 +592,26 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(filesystemReads, 0);
   });
 
+  it("keeps denied shared-runtime HEAD document responses bodyless", async () => {
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+
+    const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+      new Request("http://localhost/review", { method: "HEAD" }),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(await result.response!.text(), "");
+  });
+
   it("never starts shared-runtime API discovery or a same-process Worker", async () => {
     let projectContextEntries = 0;
     let filesystemReads = 0;
