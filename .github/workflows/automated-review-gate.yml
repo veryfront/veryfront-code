@@ -548,6 +548,14 @@ jobs:
               core.setFailed("The review status boundary is invalid");
               return;
             }
+            const parseMergeQueuePullNumber = (headRef) => {
+              if (typeof headRef !== "string") return undefined;
+              const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
+              const number = match ? Number(match[1]) : undefined;
+              return Number.isSafeInteger(number)
+                ? { pullNumber: number, baseSha: match[2].toLowerCase() }
+                : undefined;
+            };
             const collectAll = async (endpoint, parameters, source) => {
               const items = [];
               for await (
@@ -566,13 +574,35 @@ jobs:
               }
               return items;
             };
+            const resolveQueueRefTarget = async (ref) => {
+              let response;
+              try {
+                response = await github.rest.git.getRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref,
+                });
+              } catch (error) {
+                if (error?.status === 404) return undefined;
+                throw error;
+              }
+              const sha = response?.data?.object?.sha;
+              if (!fullSha.test(sha ?? "")) {
+                throw new Error("Merge queue ref response has a malformed commit");
+              }
+              return sha;
+            };
             const publishIndependentFailure = async () => {
               const pull = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pullNumber,
               });
-              if (pull.data?.head?.sha?.toLowerCase() !== headSha.toLowerCase()) {
+              const pullHeadSha = pull.data?.head?.sha;
+              if (!fullSha.test(pullHeadSha ?? "")) {
+                throw new Error("Pull request head response has a malformed commit");
+              }
+              if (pullHeadSha.toLowerCase() !== headSha.toLowerCase()) {
                 return { headSha, queueFailures: 0, skipped: true };
               }
               const baseRepositoryId = pull.data?.base?.repo?.id;
@@ -631,77 +661,98 @@ jobs:
                 {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`,
+                  ref: "heads/gh-readonly-queue/",
                 },
                 "merge queue refs",
               );
-              let queueEntryIdentity;
-              if (refs.length > 0) {
-                const queueResponse = await github.graphql(
-                  `query ResolveIndependentQueueSource(
-                    $owner: String!
-                    $repo: String!
-                    $pullNumber: Int!
-                  ) {
-                    repository(owner: $owner, name: $repo) {
-                      pullRequest(number: $pullNumber) {
-                        number
-                        headRefOid
-                        mergeQueueEntry {
-                          baseCommit { oid }
-                          headCommit { oid }
-                          pullRequest { number headRefOid }
-                        }
-                      }
-                    }
-                  }`,
-                  { owner: context.repo.owner, repo: context.repo.repo, pullNumber },
-                );
-                const queuePull = queueResponse?.repository?.pullRequest;
-                const queueEntry = queuePull?.mergeQueueEntry;
-                const queueSourceHead = queueEntry?.pullRequest?.headRefOid;
-                const queueBaseSha = queueEntry?.baseCommit?.oid;
-                const queueMergeGroupSha = queueEntry?.headCommit?.oid;
-                if (
-                  queuePull?.number !== pullNumber ||
-                  queueEntry?.pullRequest?.number !== pullNumber ||
-                  !fullSha.test(queueSourceHead ?? "") ||
-                  !fullSha.test(queueBaseSha ?? "") ||
-                  !fullSha.test(queueMergeGroupSha ?? "") ||
-                  queuePull?.headRefOid?.toLowerCase() !==
-                    queueSourceHead.toLowerCase()
-                ) throw new Error("Merge queue entry is malformed");
-                if (queueSourceHead.toLowerCase() !== headSha.toLowerCase()) {
-                  return { headSha, queueFailures: 0, skipped: false };
-                }
-                queueEntryIdentity = {
-                  baseSha: queueBaseSha.toLowerCase(),
-                  mergeGroupSha: queueMergeGroupSha.toLowerCase(),
-                };
-              }
               const seen = new Set();
-              const queueRefPrefix =
-                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`;
               for (const queueRef of refs) {
-                if (
-                  typeof queueRef?.ref !== "string" ||
-                  !queueRef.ref.startsWith(queueRefPrefix)
-                ) continue;
-                const queueBaseSha = queueRef.ref.slice(queueRefPrefix.length);
-                if (!fullSha.test(queueBaseSha)) {
-                  throw new Error("Merge queue ref has a malformed base commit");
-                }
+                const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+                if (parsed?.pullNumber !== pullNumber) continue;
                 const mergeGroupSha = queueRef?.object?.sha;
                 if (!fullSha.test(mergeGroupSha ?? "")) {
                   throw new Error("Merge queue ref has a malformed commit");
                 }
-                if (
-                  queueBaseSha.toLowerCase() !== queueEntryIdentity?.baseSha ||
-                  mergeGroupSha.toLowerCase() !==
-                    queueEntryIdentity?.mergeGroupSha
-                ) continue;
                 if (seen.has(mergeGroupSha.toLowerCase())) continue;
-                seen.add(mergeGroupSha.toLowerCase());
+                const latestPull = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                const latestHeadSha = latestPull.data?.head?.sha;
+                if (!fullSha.test(latestHeadSha ?? "")) {
+                  throw new Error("Pull request head response has a malformed commit");
+                }
+                if (latestHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+                  continue;
+                }
+                let targetVerified = false;
+                try {
+                  const bindingResponse = await github.graphql(
+                    `query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+                      repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) {
+                          number
+                          state
+                          headRefOid
+                          baseRefName
+                          mergeQueueEntry {
+                            baseCommit { oid }
+                            headCommit { oid }
+                          }
+                        }
+                      }
+                    }`,
+                    {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      number: pullNumber,
+                    },
+                  );
+                  const boundPull = bindingResponse?.repository?.pullRequest;
+                  const boundEntry = boundPull?.mergeQueueEntry;
+                  const activeBindingMismatch =
+                    boundPull?.number !== pullNumber ||
+                    boundPull?.state !== "OPEN" ||
+                    boundPull?.headRefOid?.toLowerCase() !== headSha.toLowerCase() ||
+                    boundPull?.baseRefName !== baseRef ||
+                    boundEntry?.baseCommit?.oid?.toLowerCase() !==
+                      parsed.baseSha ||
+                    boundEntry?.headCommit?.oid?.toLowerCase() !==
+                      mergeGroupSha.toLowerCase();
+                  if (!activeBindingMismatch) {
+                    const liveRef = await github.rest.git.getRef({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      ref: queueRef.ref.slice("refs/".length),
+                    });
+                    targetVerified =
+                      liveRef?.data?.object?.sha?.toLowerCase() ===
+                        mergeGroupSha.toLowerCase();
+                  }
+                } catch {
+                  targetVerified = false;
+                }
+                if (!targetVerified) {
+                  const liveTarget = await resolveQueueRefTarget(
+                    queueRef.ref.slice("refs/".length),
+                  );
+                  targetVerified =
+                    liveTarget?.toLowerCase() === mergeGroupSha.toLowerCase();
+                }
+                if (!targetVerified) continue;
+                const finalPull = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                const finalHeadSha = finalPull.data?.head?.sha;
+                if (!fullSha.test(finalHeadSha ?? "")) {
+                  throw new Error("Pull request head response has a malformed commit");
+                }
+                if (finalHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+                  continue;
+                }
                 await github.rest.repos.createCommitStatus({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -711,6 +762,7 @@ jobs:
                   description: `Could not revalidate review for PR #${pullNumber}`,
                   target_url: pullUrl,
                 });
+                seen.add(mergeGroupSha.toLowerCase());
               }
               return {
                 headSha,

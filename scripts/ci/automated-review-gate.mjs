@@ -503,13 +503,34 @@ async function collectAll(github, endpoint, parameters, source) {
 async function resolveCommitRef(github, common, ref) {
   try {
     const response = await github.rest.repos.getCommit({ ...common, ref });
-    return response?.data?.sha;
+    const sha = response?.data?.sha;
+    if (!FULL_SHA.test(sha ?? "")) {
+      throw new Error("Commit ref response has a malformed commit");
+    }
+    return sha;
   } catch (error) {
     if (
       typeof error === "object" && error !== null && error.status === 404
     ) return undefined;
     throw error;
   }
+}
+
+async function resolveQueueRefTarget(github, common, ref) {
+  let response;
+  try {
+    response = await github.rest.git.getRef({ ...common, ref });
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null && error.status === 404
+    ) return undefined;
+    throw error;
+  }
+  const sha = response?.data?.object?.sha;
+  if (!FULL_SHA.test(sha ?? "")) {
+    throw new Error("Merge queue ref response has a malformed commit");
+  }
+  return sha;
 }
 
 /** Fail one source head and every active queue commit derived from it. */
@@ -527,6 +548,14 @@ export async function publishReviewResolutionFailure({
   if (!FULL_SHA.test(sourceHeadSha)) {
     throw new Error("Pull request source commit is malformed");
   }
+  const currentHeadSha = await resolveCommitRef(
+    github,
+    { owner, repo },
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (currentHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
+    return { queueFailures: 0, skipped: true };
+  }
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -542,32 +571,56 @@ export async function publishReviewResolutionFailure({
     { owner, repo, ref: "heads/gh-readonly-queue/" },
     "merge queue refs",
   );
-  const pullQueueRefs = refs.filter((queueRef) =>
-    parseMergeQueuePullNumber(queueRef?.ref)?.pullNumber === pullNumber
-  );
-  if (pullQueueRefs.length === 0) return { queueFailures: 0 };
-  const queueEntry = await resolveCurrentMergeQueueEntry({
-    github,
-    owner,
-    repo,
-    pullNumber,
-  });
-  if (queueEntry.sourceHeadSha !== sourceHeadSha.toLowerCase()) {
-    return { queueFailures: 0 };
-  }
   const seen = new Set();
-  for (const queueRef of pullQueueRefs) {
+  for (const queueRef of refs) {
     const parsed = parseMergeQueuePullNumber(queueRef?.ref);
     const mergeGroupSha = queueRef?.object?.sha;
+    if (parsed?.pullNumber !== pullNumber) continue;
     if (!FULL_SHA.test(mergeGroupSha ?? "")) {
       throw new Error("Merge queue ref has a malformed commit");
     }
-    if (
-      parsed?.baseSha !== queueEntry.baseSha ||
-      mergeGroupSha.toLowerCase() !== queueEntry.mergeGroupSha
-    ) continue;
     if (seen.has(mergeGroupSha.toLowerCase())) continue;
-    seen.add(mergeGroupSha.toLowerCase());
+    const latestSourceHeadSha = await resolveCommitRef(
+      github,
+      { owner, repo },
+      `refs/pull/${pullNumber}/head`,
+    );
+    if (latestSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
+      continue;
+    }
+    let targetVerified = false;
+    try {
+      await requireActiveMergeQueueBinding({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        sourceHeadSha,
+        baseSha: parsed.baseSha,
+        mergeGroupSha,
+      });
+      targetVerified = true;
+    } catch {
+      const ref = queueRef.ref.startsWith("refs/")
+        ? queueRef.ref.slice("refs/".length)
+        : queueRef.ref;
+      const liveTarget = await resolveQueueRefTarget(
+        github,
+        { owner, repo },
+        ref,
+      );
+      targetVerified =
+        liveTarget?.toLowerCase() === mergeGroupSha.toLowerCase();
+    }
+    if (!targetVerified) continue;
+    const finalSourceHeadSha = await resolveCommitRef(
+      github,
+      { owner, repo },
+      `refs/pull/${pullNumber}/head`,
+    );
+    if (
+      finalSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+    ) continue;
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -577,8 +630,9 @@ export async function publishReviewResolutionFailure({
       description: `Could not revalidate review for PR #${pullNumber}`,
       target_url: pullUrl,
     });
+    seen.add(mergeGroupSha.toLowerCase());
   }
-  return { queueFailures: seen.size };
+  return { queueFailures: seen.size, skipped: false };
 }
 
 async function isCurrentlyTrustedHuman(
@@ -861,7 +915,7 @@ export async function invalidateReviewProof({
       ? response.data.html_url
       : undefined,
   });
-  return { headSha, description, ...result, skipped: false };
+  return { headSha, description, skipped: false, ...result };
 }
 
 /** Extract the pull request represented by a merge queue head ref. */
@@ -1005,6 +1059,70 @@ function latestReviewGateStatusForPull(statuses, pullNumber) {
   );
 }
 
+const ACTIVE_MERGE_QUEUE_BINDING_QUERY = `
+  query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        number
+        state
+        headRefOid
+        baseRefName
+        mergeQueueEntry {
+          baseCommit { oid }
+          headCommit { oid }
+        }
+      }
+    }
+  }
+`;
+
+async function requireActiveMergeQueueBinding({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseSha,
+  mergeGroupSha,
+}) {
+  const response = await github.graphql(ACTIVE_MERGE_QUEUE_BINDING_QUERY, {
+    owner,
+    repo,
+    number: pullNumber,
+  });
+  const pull = response?.repository?.pullRequest;
+  const entry = pull?.mergeQueueEntry;
+  const liveBaseSha = entry?.baseCommit?.oid;
+  const queueHeadSha = entry?.headCommit?.oid;
+  const baseRef = pull?.baseRefName;
+  const normalizedBaseSha = baseSha.toLowerCase();
+  if (
+    pull?.number !== pullNumber || pull?.state !== "OPEN" ||
+    pull?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase() ||
+    liveBaseSha?.toLowerCase() !== normalizedBaseSha ||
+    queueHeadSha?.toLowerCase() !== mergeGroupSha.toLowerCase() ||
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error(
+      "Merge group is not bound to the current pull request head",
+    );
+  }
+  const ref =
+    `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${normalizedBaseSha}`;
+  const parsed = parseMergeQueuePullNumber(`refs/${ref}`);
+  if (
+    parsed?.pullNumber !== pullNumber ||
+    parsed?.baseSha !== normalizedBaseSha
+  ) {
+    throw new Error("Merge queue ref identity is malformed");
+  }
+  const liveTarget = await resolveQueueRefTarget(github, { owner, repo }, ref);
+  if (liveTarget?.toLowerCase() !== mergeGroupSha.toLowerCase()) {
+    throw new Error("Merge queue ref no longer targets this merge group");
+  }
+}
+
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
 export async function publishMergeGroupReviewStatus({
   github,
@@ -1016,6 +1134,7 @@ export async function publishMergeGroupReviewStatus({
   mergeGroupSha,
 }) {
   let failure;
+  let bindingVerified = false;
   let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
   try {
     assertMergeGroupInputs({
@@ -1024,17 +1143,16 @@ export async function publishMergeGroupReviewStatus({
       baseSha,
       mergeGroupSha,
     });
-    const queuedSourceHeadSha = await resolveMergeQueueSource({
+    await requireActiveMergeQueueBinding({
       github,
       owner,
       repo,
       pullNumber,
+      sourceHeadSha,
       baseSha,
       mergeGroupSha,
     });
-    if (queuedSourceHeadSha !== sourceHeadSha.toLowerCase()) {
-      throw new Error("Merge queue source does not match its queued entry");
-    }
+    bindingVerified = true;
     const pull = await github.rest.pulls.get({
       owner,
       repo,
@@ -1162,6 +1280,17 @@ export async function publishMergeGroupReviewStatus({
         "Human reviewer is no longer trusted for merge queue reuse",
       );
     }
+    bindingVerified = false;
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseSha,
+      mergeGroupSha,
+    });
+    bindingVerified = true;
     currentReviewStatus = latestReviewStatus;
     const description = `Reused exact-head review for PR #${pullNumber}`;
     await github.rest.repos.createCommitStatus({
@@ -1175,11 +1304,16 @@ export async function publishMergeGroupReviewStatus({
         ? currentReviewStatus.target_url
         : pullUrl,
     });
-    return { state: "success", description, failure: undefined };
+    return {
+      state: "success",
+      description,
+      failure: undefined,
+      published: true,
+    };
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }
-  if (FULL_SHA.test(mergeGroupSha)) {
+  if (bindingVerified && FULL_SHA.test(mergeGroupSha)) {
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -1190,7 +1324,12 @@ export async function publishMergeGroupReviewStatus({
       target_url: pullUrl,
     });
   }
-  return { state: "failure", description: undefined, failure };
+  return {
+    state: "failure",
+    description: undefined,
+    failure,
+    published: bindingVerified,
+  };
 }
 
 /** Reconcile copied review proof on every active queue ref for one source. */
@@ -1235,17 +1374,20 @@ export async function reconcileActiveMergeGroupReviewStatuses({
     }
     if (seen.has(mergeGroupSha.toLowerCase())) continue;
     seen.add(mergeGroupSha.toLowerCase());
-    results.push(
-      await publishMergeGroupReviewStatus({
-        github,
-        owner,
-        repo,
-        pullNumber,
-        sourceHeadSha,
-        baseSha: parsed.baseSha,
-        mergeGroupSha,
-      }),
-    );
+    const result = await publishMergeGroupReviewStatus({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseSha: parsed.baseSha,
+      mergeGroupSha,
+    });
+    if (result.state === "failure" && !result.published) {
+      throw result.failure ??
+        new Error("Could not publish the merge queue review failure");
+    }
+    results.push(result);
   }
   return results;
 }

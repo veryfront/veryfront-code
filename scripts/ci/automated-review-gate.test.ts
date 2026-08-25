@@ -23,6 +23,7 @@ import {
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
 const QUEUE_BASE = "4e85ab7773ea2341a4d2cc75a81001df3f084fcc";
+const NEW_HEAD = "b8459394dd5bac3a6736ee4c7723d7f291abb382";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -38,9 +39,14 @@ const WAKEUP_WORKFLOW_PATH = new URL(
   import.meta.url,
 );
 
-function publishMergeGroupReviewStatus(
-  options: Record<string, unknown>,
-) {
+function publishMergeGroupReviewStatus(options: {
+  github: ReturnType<typeof githubFixture>["github"];
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  sourceHeadSha: string;
+  mergeGroupSha: string;
+}) {
   return publishMergeGroupReviewStatusImpl({
     baseSha: QUEUE_BASE,
     ...options,
@@ -136,6 +142,31 @@ function associatedPull(overrides: Record<string, unknown> = {}) {
     head: { sha: HEAD },
     base: { ref: BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
     ...overrides,
+  };
+}
+
+function activeQueueBinding(overrides: Record<string, unknown> = {}) {
+  const number = Number.isSafeInteger(overrides.number) ? overrides.number : 1;
+  const headRefOid = typeof overrides.headRefOid === "string"
+    ? overrides.headRefOid
+    : HEAD;
+  const mergeQueueEntry = "mergeQueueEntry" in overrides
+    ? overrides.mergeQueueEntry
+    : {
+      baseCommit: { oid: QUEUE_BASE },
+      headCommit: { oid: OTHER_HEAD },
+      pullRequest: { number, headRefOid },
+    };
+  return {
+    repository: {
+      pullRequest: {
+        number,
+        state: overrides.state ?? "OPEN",
+        headRefOid,
+        baseRefName: overrides.baseRefName ?? BASE_REF,
+        mergeQueueEntry,
+      },
+    },
   };
 }
 
@@ -806,6 +837,7 @@ function githubFixture(options: {
   headResponses?: string[];
   pullResponses?: Record<string, unknown>[];
   commit?: string | undefined;
+  commitResponses?: (string | undefined)[];
   commitError?: Error;
   failAfterFirstPage?: string;
   pullError?: Error;
@@ -815,6 +847,10 @@ function githubFixture(options: {
   draft?: boolean;
   queueEntry?: Record<string, unknown> | null;
   queueSourceHead?: string;
+  queueBindings?: Record<string, unknown>[];
+  queueBindingError?: Error;
+  queueRefHeads?: (string | undefined)[];
+  queueRefError?: Error;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -825,26 +861,33 @@ function githubFixture(options: {
     timeline: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const refReads: Record<string, unknown>[] = [];
   const pageReads = new Map<string, number>();
   let pullRead = 0;
+  let commitRead = 0;
+  let queueBindingRead = 0;
+  let queueRefRead = 0;
   const queueSourceHead = options.queueSourceHead ?? HEAD;
   const github = {
-    graphql: () =>
-      Promise.resolve({
-        repository: {
-          pullRequest: {
-            number: 1,
+    graphql: () => {
+      if (options.queueBindingError) {
+        return Promise.reject(options.queueBindingError);
+      }
+      if (options.queueBindings) {
+        const data = options.queueBindings[
+          Math.min(queueBindingRead++, options.queueBindings.length - 1)
+        ];
+        return Promise.resolve(data);
+      }
+      return Promise.resolve(
+        options.queueEntry === undefined
+          ? activeQueueBinding({ headRefOid: queueSourceHead })
+          : activeQueueBinding({
             headRefOid: queueSourceHead,
-            mergeQueueEntry: options.queueEntry === undefined
-              ? {
-                baseCommit: { oid: QUEUE_BASE },
-                headCommit: { oid: OTHER_HEAD },
-                pullRequest: { number: 1, headRefOid: queueSourceHead },
-              }
-              : options.queueEntry,
-          },
-        },
-      }),
+            mergeQueueEntry: options.queueEntry,
+          }),
+      );
+    },
     paginate: {
       async *iterator(endpoint: unknown) {
         const name = Object.entries(endpoints).find(([, value]) =>
@@ -890,13 +933,26 @@ function githubFixture(options: {
         listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
       },
-      git: { listMatchingRefs: endpoints.refs },
+      git: {
+        listMatchingRefs: endpoints.refs,
+        getRef: (parameters: Record<string, unknown>) => {
+          refReads.push(parameters);
+          if (options.queueRefError) {
+            return Promise.reject(options.queueRefError);
+          }
+          const heads = options.queueRefHeads ?? [OTHER_HEAD];
+          const sha = heads[Math.min(queueRefRead++, heads.length - 1)];
+          return Promise.resolve({ data: { object: { sha } } });
+        },
+      },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
-        getCommit: () =>
-          options.commitError
-            ? Promise.reject(options.commitError)
-            : Promise.resolve({ data: { sha: options.commit } }),
+        getCommit: () => {
+          if (options.commitError) return Promise.reject(options.commitError);
+          const commits = options.commitResponses ?? [options.commit];
+          const sha = commits[Math.min(commitRead++, commits.length - 1)];
+          return Promise.resolve({ data: { sha } });
+        },
         getCollaboratorPermissionLevel: () =>
           options.permissionError
             ? Promise.reject(options.permissionError)
@@ -913,7 +969,7 @@ function githubFixture(options: {
       },
     },
   };
-  return { github, published };
+  return { github, published, refReads };
 }
 
 describe("automated review publication", () => {
@@ -1075,6 +1131,24 @@ describe("automated review publication", () => {
     assertEquals(result.state, "pending");
     assertEquals(result.failure, undefined);
     assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("fails when an exact-ref lookup returns a malformed commit", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment()]] },
+      commit: undefined,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "failure");
+    assert(result.failure instanceof Error);
+    assertEquals(fixture.published[0]?.state, "failure");
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
@@ -1507,9 +1581,10 @@ describe("merge queue review propagation", () => {
     }
   });
 
-  it("fails the source and only its identity-bound queue ref", async () => {
+  it("fails every exact queue ref still owned by the current source", async () => {
     const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
     const fixture = githubFixture({
+      commit: HEAD,
       pages: {
         refs: [[
           {
@@ -1527,6 +1602,7 @@ describe("merge queue review propagation", () => {
         ]],
       },
       pullError: new Error("pull lookup unavailable"),
+      queueRefHeads: [OTHER_HEAD, secondQueueHead],
     });
     const result = await publishReviewResolutionFailure({
       github: fixture.github,
@@ -1535,29 +1611,24 @@ describe("merge queue review propagation", () => {
       pullNumber: 1,
       sourceHeadSha: HEAD,
     });
-    assertEquals(result.queueFailures, 1);
+    assertEquals(result.queueFailures, 2);
     assertEquals(
       fixture.published.map((status) => [status.sha, status.state]),
       [
         [HEAD, "failure"],
         [OTHER_HEAD, "failure"],
+        [secondQueueHead, "failure"],
       ],
     );
   });
 
   it("does not let an old-head failure close a newer queue entry", async () => {
-    const newerQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
     const fixture = githubFixture({
-      queueSourceHead: OTHER_HEAD,
-      queueEntry: {
-        baseCommit: { oid: QUEUE_BASE },
-        headCommit: { oid: newerQueueHead },
-        pullRequest: { number: 1, headRefOid: OTHER_HEAD },
-      },
+      commit: OTHER_HEAD,
       pages: {
         refs: [[{
           ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
-          object: { sha: newerQueueHead },
+          object: { sha: OTHER_HEAD },
         }]],
       },
     });
@@ -1570,16 +1641,136 @@ describe("merge queue review propagation", () => {
       sourceHeadSha: HEAD,
     });
 
-    assertEquals(result.queueFailures, 0);
+    assertEquals(result, { queueFailures: 0, skipped: true });
+    assertEquals(fixture.published, []);
+  });
+
+  it("does not cross queue ownership when the head changes after failure begins", async () => {
+    const fixture = githubFixture({
+      commitResponses: [HEAD, HEAD, NEW_HEAD],
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindings: [activeQueueBinding({ headRefOid: NEW_HEAD })],
+    });
+
+    const result = await publishReviewResolutionFailure({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+    });
+    assertEquals(result, { queueFailures: 0, skipped: false });
     assertEquals(
       fixture.published.map((status) => [status.sha, status.state]),
       [[HEAD, "failure"]],
     );
   });
 
-  it("does not guess a queue failure target when entry identity is unavailable", async () => {
+  it("propagates operational queue ownership lookup failures", async () => {
     const fixture = githubFixture({
-      queueEntry: null,
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref unavailable"), {
+        status: 503,
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "queue ref unavailable",
+    );
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
+      "an ownership outage must fail the job instead of reporting queue invalidation complete",
+    );
+  });
+
+  it("skips only a confirmed missing queue ref", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref not found"), {
+        status: 404,
+      }),
+    });
+
+    assertEquals(
+      await publishReviewResolutionFailure({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+      }),
+      { queueFailures: 0, skipped: false },
+    );
+  });
+
+  it("rejects a malformed successful queue ref lookup", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefHeads: [undefined],
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "Merge queue ref response has a malformed commit",
+    );
+  });
+
+  it("rejects a malformed final source ownership lookup", async () => {
+    const fixture = githubFixture({
+      commitResponses: [HEAD, HEAD, undefined],
       pages: {
         refs: [[{
           ref: `refs/heads/gh-readonly-queue/main/pr-1-${QUEUE_BASE}`,
@@ -1598,11 +1789,12 @@ describe("merge queue review propagation", () => {
           sourceHeadSha: HEAD,
         }),
       Error,
-      "does not match its queued pull request",
+      "Commit ref response has a malformed commit",
     );
     assertEquals(
       fixture.published.map((status) => [status.sha, status.state]),
       [[HEAD, "failure"]],
+      "a malformed final source response must not leave queue invalidation looking complete",
     );
   });
 
@@ -1632,6 +1824,109 @@ describe("merge queue review propagation", () => {
       description: "Reused exact-head review for PR #1",
       target_url: "https://example.test/review-proof",
     }]);
+    assertEquals(fixture.refReads, [
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+      },
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+      },
+    ]);
+  });
+
+  it("fails closed when the live merge-queue binding does not match", async () => {
+    const staleBindings = [
+      ["source", activeQueueBinding({ headRefOid: OTHER_HEAD })],
+      [
+        "base",
+        activeQueueBinding({
+          mergeQueueEntry: {
+            baseCommit: { oid: HEAD },
+            headCommit: { oid: OTHER_HEAD },
+            pullRequest: { number: 1, headRefOid: HEAD },
+          },
+        }),
+      ],
+      [
+        "synthetic head",
+        activeQueueBinding({
+          mergeQueueEntry: {
+            baseCommit: { oid: QUEUE_BASE },
+            headCommit: { oid: HEAD },
+            pullRequest: { number: 1, headRefOid: HEAD },
+          },
+        }),
+      ],
+      ["missing entry", activeQueueBinding({ mergeQueueEntry: null })],
+    ] as const;
+    for (const [label, binding] of staleBindings) {
+      const fixture = githubFixture({
+        pages: {
+          reviews: [[review({ state: "APPROVED" })]],
+          statuses: [[automatedReviewStatus()]],
+        },
+        queueBindings: [binding],
+      });
+      const result = await publishMergeGroupReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+        mergeGroupSha: OTHER_HEAD,
+      });
+      assertEquals(result.state, "failure", label);
+      assertEquals(
+        fixture.published,
+        [],
+        `${label}: an unbound synthetic commit must not receive a status`,
+      );
+    }
+
+    const replacedRef = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueRefHeads: [HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: replacedRef.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(replacedRef.published, []);
+  });
+
+  it("rechecks the live merge-queue binding before publishing success", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueBindings: [
+        activeQueueBinding(),
+        activeQueueBinding({ headRefOid: OTHER_HEAD }),
+      ],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published, []);
   });
 
   it("does not reuse proof that predates a base-ref issue event", async () => {
@@ -1722,7 +2017,7 @@ describe("merge queue review propagation", () => {
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
-    assertEquals(fixture.published[0]?.state, "failure");
+    assertEquals(fixture.published, []);
   });
 
   it("selects the latest source status owned by the queued pull request", async () => {
@@ -1862,6 +2157,40 @@ describe("merge queue review propagation", () => {
     assertEquals(results[0]?.state, "failure");
     assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
     assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("surfaces an unpublished queue failure to the workflow", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+    });
+
+    await assertRejects(
+      () =>
+        reconcileActiveMergeGroupReviewStatuses({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+          baseRef: BASE_REF,
+        }),
+      Error,
+      "queue binding unavailable",
+    );
+    assertEquals(
+      fixture.published,
+      [],
+      "the workflow fallback must handle a failure that could not be published safely",
+    );
   });
 
   it("rechecks source proof immediately before publishing queue success", async () => {
@@ -2170,6 +2499,7 @@ describe("review proof invalidation", () => {
 
   it("invalidates a same-second success that existed when reconciliation began", async () => {
     const fixture = githubFixture({
+      commit: HEAD,
       headResponses: [HEAD],
       pages: {
         statuses: [[automatedReviewStatus({
@@ -2193,6 +2523,7 @@ describe("review proof invalidation", () => {
 
   it("closes source and queued gates a dropped reconciliation left behind", async () => {
     const fixture = githubFixture({
+      commit: HEAD,
       headResponses: [HEAD],
       pages: {
         refs: [[{
@@ -2255,6 +2586,28 @@ describe("review proof invalidation", () => {
       fixture.published,
       [],
       "an old reconciliation must not write a failure onto the new head",
+    );
+  });
+
+  it("reports a skipped invalidation when the head changes before publication", async () => {
+    const fixture = githubFixture({
+      headResponses: [HEAD],
+      commitResponses: [OTHER_HEAD],
+    });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+    });
+
+    assertEquals(result.skipped, true);
+    assertEquals(result.headSha, HEAD);
+    assertEquals(result.queueFailures, 0);
+    assertEquals(
+      fixture.published,
+      [],
+      "a head change after target resolution must remain visibly skipped",
     );
   });
 
@@ -2852,9 +3205,18 @@ describe("automated review workflow", () => {
         "reconciliationStatusId",
         "publishIndependentFailure",
         "listMatchingRefs",
+        "parseMergeQueuePullNumber",
         "github.graphql",
         "mergeQueueEntry",
+        "baseCommit",
         "headCommit",
+        "github.rest.git.getRef",
+        "resolveQueueRefTarget",
+        "error?.status === 404",
+        "Merge queue ref response has a malformed commit",
+        "Pull request head response has a malformed commit",
+        "finalPull",
+        'ref: "heads/gh-readonly-queue/"',
         "createCommitStatus",
         "process.env.TARGET_SHA",
         "process.env.PULL_NUMBER",
@@ -2868,16 +3230,8 @@ describe("automated review workflow", () => {
       );
     }
     assert(
-      invalidateScript.includes(
-        "`heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`",
-      ),
-      "the independent fallback must list every queue ref for the pull request",
-    );
-    assert(
-      !invalidateScript.includes(
-        "`heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`",
-      ),
-      "the queue ref suffix is the base commit, not the source head",
+      !invalidateScript.includes("pr-${pullNumber}-${headSha}"),
+      "the independent fallback must not treat the queue-ref base suffix as a source head",
     );
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
