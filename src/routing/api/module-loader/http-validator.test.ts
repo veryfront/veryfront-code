@@ -1058,6 +1058,18 @@ describe("routing/api/module-loader/http-validator", () => {
           "Worker",
           "the textual fallback must not accept an alias it cannot classify",
         );
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const RouteWorker = Worker;` +
+                ` new Worker("./safe-worker.ts", { type: "module" });` +
+                ` new RouteWorker("./missed-worker.ts", { type: "module" });`,
+              [],
+            ),
+          Error,
+          "Worker",
+          "a direct Worker must not hide an aliased construction from the textual fallback",
+        );
       } finally {
         __setSourceCapabilityParserLoaderForTests();
       }
