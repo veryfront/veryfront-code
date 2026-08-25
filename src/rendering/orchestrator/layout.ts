@@ -10,7 +10,7 @@ import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts"
 import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
 import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
-import { rendererLogger, throwIfAborted } from "#veryfront/utils";
+import { awaitAbortable, rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   type DependencyPinningSourceInput,
@@ -193,15 +193,18 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                const importMap = await preloadImportMap(
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
-                  {
-                    projectDir: this.config.projectDir,
-                    contentSourceId: this.config.contentSourceId,
-                    config: this.config.config,
-                  },
+                const importMap = await awaitAbortable(
+                  preloadImportMap(
+                    this.config.projectDir,
+                    this.config.adapter,
+                    this.config.projectId,
+                    {
+                      projectDir: this.config.projectDir,
+                      contentSourceId: this.config.contentSourceId,
+                      config: this.config.config,
+                    },
+                  ),
+                  signal,
                 );
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
@@ -281,6 +284,7 @@ export class LayoutOrchestrator {
                   moduleServerOrigin,
                   config: this.config.config,
                   isLocalProject: this.config.isLocalProject === true,
+                  signal,
                 });
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {

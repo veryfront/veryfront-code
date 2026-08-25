@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveAppComponentPath } from "./app-resolver.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { isVeryfrontError, VeryfrontError } from "#veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -73,12 +73,72 @@ describe("rendering/layouts/utils/app-resolver", () => {
       assertEquals(result, "/project/src/app.tsx");
     });
 
-    it("should use absolute config.app path", async () => {
-      const files = new Set(["/absolute/app.tsx"]);
+    it("should reject absolute config.app paths outside the project", async () => {
+      const absoluteAppPath = "/<PROJECT_DIR>/app.tsx";
+      const files = new Set([absoluteAppPath]);
       const adapter = createMockAdapter(files);
-      const config = { app: "/absolute/app.tsx" } as unknown as VeryfrontConfig;
-      const result = await resolveAppComponentPath("/project", adapter, config);
-      assertEquals(result, "/absolute/app.tsx");
+      const config = { app: absoluteAppPath } as unknown as VeryfrontConfig;
+      const error = await assertRejects(
+        () => resolveAppComponentPath("/project", adapter, config),
+        VeryfrontError,
+        "must stay inside the project directory",
+      );
+      assertEquals(
+        (error as Error).message.includes(absoluteAppPath),
+        false,
+        "app containment errors must not expose machine-specific absolute paths",
+      );
+      assertEquals((error as Error).message.includes("<absolute path>"), true);
+    });
+
+    it("should use absolute config.app paths inside the project", async () => {
+      const appPath = "/project/src/app.tsx";
+      const adapter = createMockAdapter(new Set([appPath]));
+      const config = { app: appPath } as unknown as VeryfrontConfig;
+
+      assertEquals(
+        await resolveAppComponentPath("/project", adapter, config),
+        appPath,
+      );
+    });
+
+    it("should reject config.app paths that escape through a symlink", async () => {
+      const appPath = "/project/src/app.tsx";
+      const adapter = createMockAdapter(new Set([appPath]));
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve("/canonical/project");
+        if (path === appPath) return Promise.resolve("/canonical/outside/app.tsx");
+        return Promise.resolve(path);
+      };
+      const config = { app: "src/app.tsx" } as unknown as VeryfrontConfig;
+
+      await assertRejects(
+        () => resolveAppComponentPath("/project", adapter, config),
+        VeryfrontError,
+        "resolves outside the project directory",
+      );
+    });
+
+    it("sanitizes app component canonicalization failures", async () => {
+      const projectDir = "/<PROJECT_DIR>";
+      const privatePath = `${projectDir}/src/app.tsx`;
+      const failure = Object.assign(
+        new Error(`EACCES: permission denied, realpath '${privatePath}'`),
+        { code: "EACCES" },
+      );
+      const adapter = createMockAdapter(new Set([privatePath]));
+      adapter.fs.realPath = (path: string) =>
+        path === privatePath ? Promise.reject(failure) : Promise.resolve(path);
+      const config = { app: "src/app.tsx" } as unknown as VeryfrontConfig;
+
+      const error = await assertRejects(() => resolveAppComponentPath(projectDir, adapter, config));
+
+      assertEquals(isVeryfrontError(error), true);
+      if (!isVeryfrontError(error)) throw error;
+      assertEquals(error.slug, "component-error");
+      assertEquals(error.message, "App component path could not be resolved");
+      assertEquals(error.message.includes(privatePath), false);
+      assertStrictEquals(error.cause, failure);
     });
 
     it("should throw when config.app path does not exist", async () => {

@@ -101,8 +101,8 @@ function readEnvironment(pageRenderer: PageRenderer): string {
 
 describe("render mode threading", () => {
   describe("layouts/layout-applicator.ts and layouts/utils/applicator.ts", () => {
-    // applyLayoutsFunctionBody is the default path: esmLayouts is off unless
-    // the project opts in.
+    // Layout application always uses the secure ESM path. Compile mode and
+    // request environment remain independent inputs to the TSX loader.
     for (
       const scenario of [
         { name: "hosted production", modes: HOSTED_PRODUCTION, dev: false, preview: false },
