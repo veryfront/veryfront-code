@@ -94,6 +94,20 @@ export function artifactClaim(runtime: RuntimeName): string {
   }
 }
 
+export async function loadPackedArtifactDirectory(
+  directory: string,
+): Promise<PackedWorkspace & { readonly manifestSha256: string }> {
+  const packed = await loadNpmCompatibilityArtifact(directory);
+  return {
+    ...packed,
+    root: await Deno.realPath(packed.root),
+    extensions: await Promise.all(packed.extensions.map(async (extension) => ({
+      ...extension,
+      tarball: await Deno.realPath(extension.tarball),
+    }))),
+  };
+}
+
 function bodyContainsMarker(value: unknown, marker: string): boolean {
   if (typeof value === "string") {
     return value.includes(marker);
@@ -976,7 +990,7 @@ export async function runRuntimeInferenceCriticalFlow(
     }
 
     const packed = packedDirectory
-      ? await loadNpmCompatibilityArtifact(packedDirectory)
+      ? await loadPackedArtifactDirectory(packedDirectory)
       : await packNpmPackage(rootDir, workDir);
     if ("manifestSha256" in packed) {
       console.log(

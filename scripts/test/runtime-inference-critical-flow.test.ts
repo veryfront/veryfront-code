@@ -10,6 +10,7 @@ import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
   assertListedRunFailure,
+  loadPackedArtifactDirectory,
   parseAgUiTextDeltas,
   parsePackedArtifactDirectory,
   parseRuntimeSelection,
@@ -25,6 +26,7 @@ import {
   parseCommaSeparatedFlag,
 } from "./runtime-e2e-helpers.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { isAbsolute, relative } from "#std/path";
 
 const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
@@ -99,6 +101,15 @@ function unresolvedCancellationFields(): {
   };
 }
 
+async function sha256File(path: string): Promise<string> {
+  const bytes = await Deno.readFile(path);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
 describe("runtime inference critical-flow pure contract", () => {
   it("accepts the canonical packed artifact directory as an inline or separate flag", () => {
     assertEquals(
@@ -150,6 +161,64 @@ describe("runtime inference critical-flow pure contract", () => {
       Error,
       "Packed extension is unavailable: @veryfront/ext-missing",
     );
+  });
+
+  it("loads packed artifact tarballs as absolute paths before scaffold cwd changes", async () => {
+    const artifactDir = await Deno.makeTempDir({
+      dir: Deno.cwd(),
+      prefix: ".runtime-packed-artifact-",
+    });
+    try {
+      const rootFile = `${artifactDir}/veryfront-0.1.0.tgz`;
+      const extensionFile = `${artifactDir}/ext-bundler-esbuild-0.1.0.tgz`;
+      await Deno.writeTextFile(rootFile, "root package");
+      await Deno.writeTextFile(extensionFile, "extension package");
+      await Deno.writeTextFile(
+        `${artifactDir}/manifest.json`,
+        `${
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              rootPackage: "veryfront",
+              rootExtensionNames: ["@veryfront/ext-bundler-esbuild"],
+              packages: [
+                {
+                  name: "veryfront",
+                  version: "0.1.0",
+                  file: "veryfront-0.1.0.tgz",
+                  sha256: await sha256File(rootFile),
+                },
+                {
+                  name: "@veryfront/ext-bundler-esbuild",
+                  version: "0.1.0",
+                  file: "ext-bundler-esbuild-0.1.0.tgz",
+                  sha256: await sha256File(extensionFile),
+                },
+              ],
+            },
+            null,
+            2,
+          )
+        }\n`,
+      );
+
+      const loaded = await loadPackedArtifactDirectory(
+        relative(Deno.cwd(), artifactDir),
+      );
+
+      assert(isAbsolute(loaded.root), "Root tarball path must be absolute");
+      assert(
+        loaded.extensions.every(({ tarball }) => isAbsolute(tarball)),
+        "Extension tarball paths must be absolute",
+      );
+      assertEquals(await Deno.readTextFile(loaded.root), "root package");
+      assertEquals(
+        await Deno.readTextFile(loaded.extensions[0]?.tarball ?? ""),
+        "extension package",
+      );
+    } finally {
+      await Deno.remove(artifactDir, { recursive: true }).catch(() => {});
+    }
   });
 
   it("selects all runtimes by default in stable order", () => {
