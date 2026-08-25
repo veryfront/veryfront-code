@@ -1786,7 +1786,25 @@ export class RedisBackend implements WorkflowBackend {
             // decided record is included once when it first appears so a fast
             // legacy decision cannot erase the preceding pending transition,
             // even when a queued pending-only projection already names it.
-            if (lastObservedState.status === "waiting") {
+            let legacyApprovalBaseState = lastObservedState.status === "waiting"
+              ? lastObservedState
+              : undefined;
+            if (legacyApprovalBaseState === undefined) {
+              try {
+                for (const record of records) {
+                  const state = parseRunObservedState(record.data);
+                  if (state.revision <= initialRevision) continue;
+                  if (state.status === "waiting") {
+                    legacyApprovalBaseState = state;
+                    break;
+                  }
+                }
+              } catch {
+                throw new Error("Workflow run observation failed");
+              }
+            }
+
+            if (legacyApprovalBaseState !== undefined) {
               let approvals: PendingApproval[];
               const journaledApprovalIds = new Set<string>();
               try {
@@ -1808,7 +1826,9 @@ export class RedisBackend implements WorkflowBackend {
                 for (const approval of unseen) observedApprovalIds.add(approval.id);
                 const projection = projectPendingApprovals(
                   approvals.filter((approval) =>
-                    approval.status === "pending" && !journaledApprovalIds.has(approval.id)
+                    approval.status === "pending" &&
+                    (observedApprovalIds.has(approval.id) ||
+                      !journaledApprovalIds.has(approval.id))
                   ),
                 );
                 const projectedIds = new Set(projection.map((approval) => approval.id));
@@ -1816,7 +1836,7 @@ export class RedisBackend implements WorkflowBackend {
                   if (!projectedIds.has(approval.id)) projection.push(projectApproval(approval));
                 }
                 const legacyApprovalState = {
-                  ...lastObservedState,
+                  ...legacyApprovalBaseState,
                   approvals: projection,
                 };
                 lastObservedState = legacyApprovalState;
