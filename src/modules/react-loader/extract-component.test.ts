@@ -79,6 +79,16 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("does not mistake a React element for a component type", () => {
+    const Header = { $$typeof: Symbol.for("react.transitional.element"), type: "div" };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Header, Page }, "element-export.tsx"),
+      Page,
+      "an element is a rendered node, not something React can instantiate as a component",
+    );
+  });
+
   it("falls back to an untagged object when no function or tagged component exists", () => {
     const Odd = { render: () => null };
     assertEquals(

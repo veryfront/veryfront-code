@@ -1,15 +1,28 @@
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors";
 
+/** The `$$typeof` tags React puts on component types, as opposed to elements. */
+const REACT_COMPONENT_TAGS: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.memo"),
+  Symbol.for("react.forward_ref"),
+  Symbol.for("react.lazy"),
+]);
+
 /**
  * Detects the component objects `React.memo`, `React.forwardRef` and
- * `React.lazy` produce. All of them carry a well-known symbol on `$$typeof`,
- * which is what separates a component from an ordinary data export such as an
- * App Router `metadata` object.
+ * `React.lazy` produce, which is what separates a component from an ordinary
+ * data export such as an App Router `metadata` object.
+ *
+ * The tags are matched individually rather than accepting any symbol-valued
+ * `$$typeof`, because a React *element* carries one too. An element is a
+ * rendered node, not a component type, so selecting one would hand React
+ * something it cannot instantiate.
  */
 function isReactComponentObject(value: unknown): boolean {
-  return typeof value === "object" && value !== null &&
-    typeof (value as { $$typeof?: unknown }).$$typeof === "symbol";
+  if (typeof value !== "object" || value === null) return false;
+
+  const tag = (value as { $$typeof?: unknown }).$$typeof;
+  return typeof tag === "symbol" && REACT_COMPONENT_TAGS.has(tag);
 }
 
 /**
