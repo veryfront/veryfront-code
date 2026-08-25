@@ -53,7 +53,6 @@ const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
 const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
-const RUN_OBSERVATION_APPROVAL_JOURNAL_RETENTION_MULTIPLIER = 2;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 
 function appendStorageSchemaVersion(base: string): string {
@@ -323,17 +322,17 @@ function parseRunObservedApprovals(
 function projectPendingApprovals(
   approvals: PendingApproval[],
 ): NonNullable<WorkflowRunObservedState["approvals"]> {
-  return projectObservableApprovals(approvals.filter((approval) => approval.status === "pending"));
+  return approvals.map((approval) => projectApproval(approval));
 }
 
-function projectObservableApprovals(
-  approvals: PendingApproval[],
-): NonNullable<WorkflowRunObservedState["approvals"]> {
-  return approvals.map((approval) => ({
+function projectApproval(
+  approval: PendingApproval,
+): NonNullable<WorkflowRunObservedState["approvals"]>[number] {
+  return {
     id: approval.id,
     nodeId: approval.nodeId,
     ...(approval.message !== undefined ? { message: approval.message } : {}),
-  }));
+  };
 }
 
 function serializeInitialRunObservation(run: WorkflowRun): Record<string, string> {
@@ -434,7 +433,7 @@ const JOURNAL_APPROVAL_PROJECTION_LUA = `local function journalApprovalProjectio
   maxLength
 )
   redis.call('hset', key, tostring(revision), approvalsJson)
-  local oldestRetainedRevision = revision - (maxLength * ${RUN_OBSERVATION_APPROVAL_JOURNAL_RETENTION_MULTIPLIER})
+  local oldestRetainedRevision = revision - maxLength
   if oldestRetainedRevision > 0 then
     local storedRevisions = redis.call('hkeys', key)
     for _, storedRevision in ipairs(storedRevisions) do
@@ -446,6 +445,69 @@ const JOURNAL_APPROVAL_PROJECTION_LUA = `local function journalApprovalProjectio
   local runTtl = redis.call('pttl', runKey)
   if runTtl > 0 then redis.call('pexpire', key, runTtl) end
 end`;
+
+/**
+ * Read observation stream records and their companion approval projections in
+ * one Redis turn. Without this script, a writer can prune a revision from the
+ * bounded journal after XREAD returns it but before HGETALL reaches Redis.
+ *
+ * KEYS[1] = observation stream key
+ * KEYS[2] = approval observation journal key
+ * ARGV[1] = last consumed stream id
+ * ARGV[2] = maximum records to return
+ */
+const READ_RUN_OBSERVATIONS_SCRIPT = `-- read-run-observations
+local streams = redis.call(
+  'xread',
+  'COUNT',
+  tonumber(ARGV[2]),
+  'STREAMS',
+  KEYS[1],
+  ARGV[1]
+)
+if not streams then return '[]' end
+local records = {}
+for _, message in ipairs(streams[1][2]) do
+  local fields = message[2]
+  local data = {}
+  for index = 1, #fields, 2 do data[fields[index]] = fields[index + 1] end
+  local record = { id = message[1], data = data }
+  if data.revision then
+    local approvals = redis.call('hget', KEYS[2], data.revision)
+    if approvals then record.approvals = approvals end
+  end
+  records[#records + 1] = record
+end
+return cjson.encode(records)`;
+
+function parseRunObservationRecords(
+  raw: unknown,
+): Array<{ id: string; data: Record<string, string>; approvals?: string }> {
+  if (typeof raw !== "string") throw new Error();
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error();
+  return parsed.map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.id !== "string" || !record.data || typeof record.data !== "object" ||
+      Array.isArray(record.data) ||
+      (record.approvals !== undefined && typeof record.approvals !== "string")
+    ) {
+      throw new Error();
+    }
+    const data: Record<string, string> = {};
+    for (const [field, fieldValue] of Object.entries(record.data)) {
+      if (typeof fieldValue !== "string") throw new Error();
+      data[field] = fieldValue;
+    }
+    return {
+      id: record.id,
+      data,
+      ...(record.approvals !== undefined ? { approvals: record.approvals } : {}),
+    };
+  });
+}
 
 /**
  * Atomically append a pending approval and journal it as its own observation
@@ -1343,10 +1405,14 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+  private async getApprovals(runId: string): Promise<PendingApproval[]> {
     const client = await this.ensureClient();
     const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
-    return rawList.map((raw) => this.parseApproval(raw)).filter((a) => a.status === "pending");
+    return rawList.map((raw) => this.parseApproval(raw));
+  }
+
+  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    return (await this.getApprovals(runId)).filter((approval) => approval.status === "pending");
   }
 
   async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
@@ -1637,6 +1703,7 @@ export class RedisBackend implements WorkflowBackend {
 
     let initialRevision: number;
     let initial: WorkflowRun;
+    let initialApprovals: PendingApproval[];
     try {
       initialRevision = Number(captured[0]);
       if (!Number.isSafeInteger(initialRevision) || initialRevision < 0) throw new Error();
@@ -1651,7 +1718,10 @@ export class RedisBackend implements WorkflowBackend {
       // and suppressed instead of reported twice. The reverse order would be
       // the real hazard (a snapshot older than the baseline revision misses
       // state), which is why the fetch must stay after the capture.
-      initial.pendingApprovals = await this.getPendingApprovals(runId);
+      initialApprovals = await this.getApprovals(runId);
+      initial.pendingApprovals = initialApprovals.filter((approval) =>
+        approval.status === "pending"
+      );
     } catch {
       throw new Error("Workflow run observation failed");
     }
@@ -1672,10 +1742,7 @@ export class RedisBackend implements WorkflowBackend {
     const runKey = this.runKey(runId);
     const streamKey = this.runObservationKey(runId);
     const approvalJournalKey = this.runObservationApprovalsKey(runId);
-    const readLegacyApprovalProjection = async () => {
-      const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
-      return projectPendingApprovals(rawList.map((raw) => this.parseApproval(raw)));
-    };
+    const readApprovals = () => this.getApprovals(runId);
     const changes: AsyncIterable<WorkflowRunObservedState> = {
       [Symbol.asyncIterator]: async function* () {
         if (TERMINAL_RUN_STATUSES.has(initial.status)) {
@@ -1688,38 +1755,22 @@ export class RedisBackend implements WorkflowBackend {
           ...serializeInitialRunObservation(initial),
           revision: String(initialRevision),
         });
-        let approvalProjectionJson = JSON.stringify(
-          projectPendingApprovals(initial.pendingApprovals),
-        );
-        const readLegacyApprovalState = async (): Promise<
-          WorkflowRunObservedState | undefined
-        > => {
-          if (lastObservedState.status !== "waiting") return undefined;
-          let approvals: NonNullable<WorkflowRunObservedState["approvals"]>;
-          try {
-            approvals = await readLegacyApprovalProjection();
-          } catch {
-            throw new Error("Workflow run observation failed");
-          }
-          const nextProjectionJson = JSON.stringify(approvals);
-          if (nextProjectionJson === approvalProjectionJson) return undefined;
-          approvalProjectionJson = nextProjectionJson;
-          const legacyApprovalState = { ...lastObservedState, approvals };
-          lastObservedState = legacyApprovalState;
-          return legacyApprovalState;
-        };
+        const observedApprovalIds = new Set(initialApprovals.map((approval) => approval.id));
         try {
           while (!controller.signal.aborted) {
-            let streams;
+            let records: ReturnType<typeof parseRunObservationRecords>;
             try {
-              streams = await client.xread([{ key: streamKey, xid: lastStreamId }], {
-                count: RUN_OBSERVATION_STREAM_MAX_LENGTH,
-              });
+              records = parseRunObservationRecords(
+                await client.eval(
+                  READ_RUN_OBSERVATIONS_SCRIPT,
+                  [streamKey, approvalJournalKey],
+                  [lastStreamId, String(RUN_OBSERVATION_STREAM_MAX_LENGTH)],
+                ),
+              );
             } catch {
               throw new Error("Workflow run observation failed");
             }
-            const messages = streams[0]?.messages ?? [];
-            if (messages.length === 0) {
+            if (records.length === 0) {
               try {
                 if (await client.exists(runKey) === 0) {
                   throw new Error("Workflow run observation failed");
@@ -1727,45 +1778,60 @@ export class RedisBackend implements WorkflowBackend {
               } catch {
                 throw new Error("Workflow run observation failed");
               }
-              // Older workers append approvals without a revision or stream
-              // record. While a run is waiting, dual-read the bounded approval
-              // list so rolling deployments still surface those requests. The
-              // repeated revision is intentional: no durable stream revision
-              // exists for this legacy write, and a later journaled record is
-              // still consumed against the unchanged contiguous expectation.
-              const legacyApprovalState = await readLegacyApprovalState();
-              if (legacyApprovalState !== undefined) yield legacyApprovalState;
+            }
+
+            // Older workers append and decide approvals without observation
+            // revisions. Compare every retained id before consuming a queued
+            // batch, while the last observed run state is still waiting. A
+            // decided record is included once when it first appears so a fast
+            // legacy decision cannot erase the preceding pending transition.
+            if (lastObservedState.status === "waiting") {
+              let approvals: PendingApproval[];
+              const journaledApprovalIds = new Set<string>();
+              try {
+                for (const record of records) {
+                  if (record.approvals === undefined) continue;
+                  for (const approval of parseRunObservedApprovals(record.approvals)) {
+                    journaledApprovalIds.add(approval.id);
+                  }
+                }
+                approvals = await readApprovals();
+              } catch {
+                throw new Error("Workflow run observation failed");
+              }
+              const unseen = approvals.filter((approval) =>
+                !observedApprovalIds.has(approval.id) &&
+                !journaledApprovalIds.has(approval.id)
+              );
+              if (unseen.length > 0) {
+                for (const approval of unseen) observedApprovalIds.add(approval.id);
+                const projection = projectPendingApprovals(
+                  approvals.filter((approval) => approval.status === "pending"),
+                );
+                const projectedIds = new Set(projection.map((approval) => approval.id));
+                for (const approval of unseen) {
+                  if (!projectedIds.has(approval.id)) projection.push(projectApproval(approval));
+                }
+                const legacyApprovalState = {
+                  ...lastObservedState,
+                  approvals: projection,
+                };
+                lastObservedState = legacyApprovalState;
+                yield legacyApprovalState;
+              }
+            }
+
+            if (records.length === 0) {
               await waitForObservationPoll(controller.signal);
               continue;
             }
-            let approvalRecords: Record<string, string>;
-            try {
-              approvalRecords = await client.hgetall(approvalJournalKey);
-            } catch {
-              throw new Error("Workflow run observation failed");
-            }
-            // Older workers can append approvals without a stream record and a
-            // newer worker can queue a transition before this reader reaches an
-            // empty read. Check the legacy list before consuming queued records
-            // when this batch does not already carry a journaled approval
-            // projection, so the waiting baseline is not overwritten first and
-            // normal journaled approval revisions still retain their durable
-            // revision number.
-            const batchHasApprovalProjection = messages.some((message) =>
-              approvalRecords[message.data.revision ?? ""] !== undefined
-            );
-            if (!batchHasApprovalProjection) {
-              const legacyApprovalState = await readLegacyApprovalState();
-              if (legacyApprovalState !== undefined) yield legacyApprovalState;
-            }
-            for (const message of messages) {
-              lastStreamId = message.id;
+            for (const record of records) {
+              lastStreamId = record.id;
               let state: WorkflowRunObservedState;
               try {
-                state = parseRunObservedState(message.data);
-                const approvals = approvalRecords[String(state.revision)];
-                if (approvals !== undefined) {
-                  state.approvals = parseRunObservedApprovals(approvals);
+                state = parseRunObservedState(record.data);
+                if (record.approvals !== undefined) {
+                  state.approvals = parseRunObservedApprovals(record.approvals);
                 }
               } catch {
                 throw new Error("Workflow run observation failed");
@@ -1777,7 +1843,7 @@ export class RedisBackend implements WorkflowBackend {
               expectedRevision++;
               lastObservedState = state;
               if (state.approvals !== undefined) {
-                approvalProjectionJson = JSON.stringify(state.approvals);
+                for (const approval of state.approvals) observedApprovalIds.add(approval.id);
               }
               yield state;
               if (TERMINAL_RUN_STATUSES.has(state.status)) return;
