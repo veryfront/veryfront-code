@@ -5,6 +5,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions, remove } from "#veryfront/testing/deno-compat.ts";
 import { isAbsolute, relative } from "#std/path";
 import {
   loadPackedArtifactDirectory,
@@ -53,7 +54,7 @@ async function writePackedArtifactFixture(
 
 describe("runtime inference critical-flow packed artifact integration", () => {
   it("loads packed artifact tarballs as absolute paths before scaffold cwd changes", async () => {
-    const artifactDir = await Deno.makeTempDir({
+    const artifactDir = await makeTempDirWithOptions({
       dir: Deno.cwd(),
       prefix: ".runtime-packed-artifact-",
     });
@@ -94,12 +95,12 @@ describe("runtime inference critical-flow packed artifact integration", () => {
         "extension package",
       );
     } finally {
-      await Deno.remove(artifactDir, { recursive: true }).catch(() => {});
+      await remove(artifactDir, { recursive: true }).catch(() => {});
     }
   });
 
   it("redacts paths when a checksum-valid packed artifact is not a tarball", async () => {
-    const artifactDir = await Deno.makeTempDir({
+    const artifactDir = await makeTempDirWithOptions({
       dir: Deno.cwd(),
       prefix: ".runtime-invalid-packed-artifact-",
     });
@@ -143,7 +144,7 @@ describe("runtime inference critical-flow packed artifact integration", () => {
         "Invalid packed-artifact failures must not include file URLs",
       );
     } finally {
-      await Deno.remove(artifactDir, { recursive: true }).catch(() => {});
+      await remove(artifactDir, { recursive: true }).catch(() => {});
     }
   });
 });
