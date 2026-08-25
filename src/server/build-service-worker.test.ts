@@ -44,13 +44,17 @@ const DEFAULT_STATIC_CACHE_URLS = [
 function parseStaticCacheUrls(output: string): string[] {
   const match = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
   assertExists(match, "STATIC_CACHE_URLS must be emitted as a parseable array literal");
-  return JSON.parse(match[1]) as string[];
+  const [, rawUrls] = match;
+  assertExists(rawUrls, "STATIC_CACHE_URLS must include the array literal capture group");
+  return JSON.parse(rawUrls) as string[];
 }
 
 function parseCacheStrategy(output: string, name: string): RegExp[] {
   const match = output.match(new RegExp(`${name}:\\s*\\[([^\\]]*?)\\]`));
   assertExists(match, `the ${name} strategy must be emitted with its own pattern list`);
-  return match[1]
+  const [, rawStrategy] = match;
+  assertExists(rawStrategy, `the ${name} strategy must include the pattern list capture group`);
+  return rawStrategy
     .split("\n")
     .map((line) => line.trim().replace(/,$/, ""))
     .filter((line) => line.startsWith("/") && line.endsWith("/"))
@@ -293,8 +297,10 @@ describe("server/build-service-worker", () => {
         const output = generateServiceWorker(manifest);
         const versionMatch = output.match(/const CACHE_VERSION = '([^']+)';/);
         assertExists(versionMatch, "CACHE_VERSION must be emitted as a single-quoted literal");
+        const [, cacheVersion] = versionMatch;
+        assertExists(cacheVersion, "CACHE_VERSION must include the literal value capture group");
         assertMatch(
-          versionMatch[1],
+          cacheVersion,
           /^veryfront-1\.0\.0-\d{4}-\d{2}-\d{2}T\d{6}\.\d{3}Z$/,
           "a manifest without buildTime must fall back to a generated ISO timestamp stamp",
         );

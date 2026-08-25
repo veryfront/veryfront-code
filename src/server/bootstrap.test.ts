@@ -11,6 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStrictEquals,
   assertThrows,
@@ -34,6 +35,8 @@ import { register, reset } from "#veryfront/extensions/contracts.ts";
 import {
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
   logger,
 } from "#veryfront/utils/logger/index.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
@@ -162,23 +165,46 @@ describe("orchestrateOrDisposeFS()", () => {
   it("preserves the original error when fsDispose itself throws", async () => {
     const originalError = new Error("orchestrate-boom");
     const disposeError = new Error("fsDispose-boom");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
 
-    const rejected = await assertRejects(
-      () =>
-        orchestrateOrDisposeFS(
-          () => Promise.reject(originalError),
-          () => {
-            throw disposeError;
-          },
-        ),
-      Error,
-      "orchestrate-boom",
+    try {
+      const rejected = await assertRejects(
+        () =>
+          orchestrateOrDisposeFS(
+            () => Promise.reject(originalError),
+            () => {
+              throw disposeError;
+            },
+          ),
+        Error,
+        "orchestrate-boom",
+      );
+
+      assertStrictEquals(
+        rejected,
+        originalError,
+        "a dispose failure must not mask the orchestration root cause",
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(records.length, 1);
+    const record = records[0];
+    assertExists(record);
+    assertEquals(record.context?.error, "fsDispose-boom");
+    assertEquals(record.error, undefined);
+    const serializedRecord = JSON.stringify(record);
+    assertEquals(
+      serializedRecord.includes("Error: fsDispose-boom"),
+      false,
+      "the disposal warning must not serialize the Error stack into JSON logs",
     );
-
-    assertStrictEquals(
-      rejected,
-      originalError,
-      "a dispose failure must not mask the orchestration root cause",
+    assertEquals(
+      serializedRecord.includes('"stack"'),
+      false,
+      "the disposal warning must keep stack metadata out of JSON logs",
     );
   });
 });

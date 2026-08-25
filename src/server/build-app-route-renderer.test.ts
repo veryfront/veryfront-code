@@ -5,6 +5,7 @@ import {
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { _renderAppRouteToHTMLForTest, renderAppRouteToHTML } from "./build-app-route-renderer.ts";
@@ -683,75 +684,71 @@ Deno.test({
   },
 });
 
-Deno.test({
-  name: "server/build-app-route-renderer links the compiled project stylesheet for a static build",
-  async fn() {
-    const { projectDir, pageFile } = await makeHeadLayoutProject();
+it("server/build-app-route-renderer links the compiled project stylesheet for a static build", async () => {
+  const { projectDir, pageFile } = await makeHeadLayoutProject();
 
-    try {
-      const html = await renderAppRouteToHTML({
-        adapter: denoAdapter,
-        projectDir,
-        routePath: "/",
-        pageFile,
-        contentSourceId: "test-content-source",
-        stylesheetHref: "/_vf/assets/app.abc.css",
-        includePreviewStylesheet: false,
-      });
+  try {
+    const html = await renderAppRouteToHTML({
+      adapter: denoAdapter,
+      projectDir,
+      routePath: "/",
+      pageFile,
+      contentSourceId: "test-content-source",
+      stylesheetHref: "/_vf/assets/app.abc.css",
+      includePreviewStylesheet: false,
+    });
 
-      assertStringIncludes(
-        html,
-        '<link rel="stylesheet" href="/_vf/assets/app.abc.css">',
-        "a statically built route must link its compiled project stylesheet",
-      );
-      assertEquals(
-        html.includes(getPreviewStylesheetLink()),
-        false,
-        "the dev preview stylesheet must not ship in a static build",
-      );
-      assertEquals(
-        html.match(/rel="stylesheet"/g)?.length,
-        1,
-        "a statically built route must carry exactly one stylesheet link",
-      );
+    assertStringIncludes(
+      html,
+      '<link rel="stylesheet" href="/_vf/assets/app.abc.css">',
+      "a statically built route must link its compiled project stylesheet",
+    );
+    assertEquals(
+      html.includes(getPreviewStylesheetLink()),
+      false,
+      "the dev preview stylesheet must not ship in a static build",
+    );
+    assertEquals(
+      html.match(/rel="stylesheet"/g)?.length,
+      1,
+      "a statically built route must carry exactly one stylesheet link",
+    );
 
-      // Same cascade order as the request-time shell, checked against the real
-      // compiled stylesheet rather than the dev preview link.
-      const importMapEndIndex = html.indexOf("</script>", html.indexOf('type="importmap"'));
-      const collectedScriptIndex = html.indexOf('src="/analytics.js"');
-      const stylesheetIndex = html.indexOf('href="/_vf/assets/app.abc.css"');
-      const faviconIndex = html.indexOf('href="/favicon.svg"');
-      const headCloseIndex = html.indexOf("</head>");
-      assertEquals(
-        importMapEndIndex >= 0 && importMapEndIndex < collectedScriptIndex,
-        true,
-        "the framework import map must close before the collected module script",
-      );
-      assertEquals(
-        collectedScriptIndex < stylesheetIndex,
-        true,
-        "the collected module script must precede the compiled stylesheet",
-      );
-      assertEquals(
-        stylesheetIndex < faviconIndex,
-        true,
-        "the compiled stylesheet must precede the remaining collected head elements",
-      );
-      assertEquals(
-        faviconIndex < headCloseIndex,
-        true,
-        "collected head elements must close the head",
-      );
-    } finally {
-      await cleanupProject(projectDir);
-    }
-  },
+    // Same cascade order as the request-time shell, checked against the real
+    // compiled stylesheet rather than the dev preview link.
+    const importMapEndIndex = html.indexOf("</script>", html.indexOf('type="importmap"'));
+    const collectedScriptIndex = html.indexOf('src="/analytics.js"');
+    const stylesheetIndex = html.indexOf('href="/_vf/assets/app.abc.css"');
+    const faviconIndex = html.indexOf('href="/favicon.svg"');
+    const headCloseIndex = html.indexOf("</head>");
+    assertEquals(
+      importMapEndIndex >= 0 && importMapEndIndex < collectedScriptIndex,
+      true,
+      "the framework import map must close before the collected module script",
+    );
+    assertEquals(
+      collectedScriptIndex < stylesheetIndex,
+      true,
+      "the collected module script must precede the compiled stylesheet",
+    );
+    assertEquals(
+      stylesheetIndex < faviconIndex,
+      true,
+      "the compiled stylesheet must precede the remaining collected head elements",
+    );
+    assertEquals(
+      faviconIndex < headCloseIndex,
+      true,
+      "collected head elements must close the head",
+    );
+  } finally {
+    await cleanupProject(projectDir);
+  }
 });
 
-Deno.test({
-  name:
-    "server/build-app-route-renderer omits hydration data and the client bootstrap for a server-only route",
-  async fn() {
+it(
+  "server/build-app-route-renderer omits hydration data and the client bootstrap for a server-only route",
+  async () => {
     const { projectDir, pageFile } = await makeServerOnlyProject();
 
     try {
@@ -779,7 +776,7 @@ Deno.test({
       await cleanupProject(projectDir);
     }
   },
-});
+);
 
 Deno.test({
   name: "server/build-app-route-renderer discovers and unwraps JavaScript document layouts",
