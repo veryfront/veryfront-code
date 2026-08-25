@@ -51,12 +51,21 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
-  it("skips exports that cannot be rendered", () => {
+  it("skips named exports that cannot be rendered", () => {
     const Named = () => null;
     assertEquals(
       extractComponent({ version: "1.0.0", count: 2, Named }, "meta.tsx"),
       Named,
       "primitive exports declared ahead of the component must not be mistaken for it",
+    );
+  });
+
+  it("prefers a function export over a data export such as App Router metadata", () => {
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, metadata: { title: "Home" }, Page }, "page.tsx"),
+      Page,
+      "a data object exported ahead of the component must not be mistaken for it",
     );
   });
 
@@ -69,12 +78,11 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
-  it("falls back to a named export when the default export cannot be rendered", () => {
-    const Named = () => null;
+  it("hands back a default export that is not renderable", () => {
     assertEquals(
-      extractComponent({ __esModule: true, default: true, Named }, "bad-default.tsx"),
-      Named,
-      "an unrenderable default must not shadow a usable named export",
+      extractComponent({ __esModule: true, default: 42 }, "bad-default.tsx") as unknown,
+      42,
+      "callers validate the default themselves so they can name the slot that is wrong, such as a layout",
     );
   });
 });

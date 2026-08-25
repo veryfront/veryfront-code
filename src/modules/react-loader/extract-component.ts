@@ -5,26 +5,34 @@ import { createError, toError } from "#veryfront/errors";
  * A React component is either a function (function or class component) or an
  * object, which is what `React.memo`, `React.forwardRef` and `React.lazy`
  * produce. Nothing else can be rendered.
- *
- * The check matters most for the `__esModule` marker. Transpilers place that
- * boolean first in the namespace they emit for a module with only named
- * exports, so selecting the first key blindly returns `true` instead of a
- * component, and the failure then surfaces during render rather than here.
  */
 function isRenderable(value: unknown): boolean {
   return typeof value === "function" || (typeof value === "object" && value !== null);
 }
 
-/** Picks the default export, else the first named export that can be rendered. */
-function selectComponent(moduleObj: Record<string, unknown>): unknown {
-  if (isRenderable(moduleObj.default)) return moduleObj.default;
+/**
+ * Picks the first named export that can be rendered.
+ *
+ * The `__esModule` marker is skipped explicitly. Transpilers place that boolean
+ * first in the namespace they emit for a module with only named exports, so
+ * taking the first key blindly yielded `true` instead of a component and the
+ * failure surfaced during render rather than here.
+ *
+ * Functions are preferred over objects so that a module pairing data with a
+ * component, such as an App Router page exporting `metadata` alongside its
+ * component, resolves to the component. Objects are still accepted, because
+ * `React.memo`, `React.forwardRef` and `React.lazy` all produce one.
+ */
+function firstRenderableExport(moduleObj: Record<string, unknown>): unknown {
+  let objectExport: unknown;
 
   for (const [key, value] of Object.entries(moduleObj)) {
-    if (key === "__esModule") continue;
-    if (isRenderable(value)) return value;
+    if (key === "default" || key === "__esModule") continue;
+    if (typeof value === "function") return value;
+    if (objectExport === undefined && isRenderable(value)) objectExport = value;
   }
 
-  return undefined;
+  return objectExport;
 }
 
 export function extractComponent(
@@ -42,7 +50,7 @@ export function extractComponent(
   }
 
   const moduleObj = mod as Record<string, unknown>;
-  const component = selectComponent(moduleObj);
+  const component = moduleObj.default ?? firstRenderableExport(moduleObj);
 
   if (!component) {
     throw toError(
