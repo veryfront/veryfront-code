@@ -1,4 +1,9 @@
-import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import process from "node:process";
 import {
@@ -105,7 +110,7 @@ describe("agent/abort-rejection-guard", () => {
 
   it("installs the guard on the default process target when none is supplied", async () => {
     const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
-    const before = process.listenerCount("unhandledRejection");
+    const beforeListeners = new Set(process.listeners("unhandledRejection"));
     const guard = installAbortRejectionGuard({
       eventTarget: null,
       loadLogger: () => ({
@@ -117,15 +122,17 @@ describe("agent/abort-rejection-guard", () => {
     try {
       assertEquals(
         process.listenerCount("unhandledRejection"),
-        before + 1,
+        beforeListeners.size + 1,
         "the default process target must receive the guard listener",
       );
 
-      process.emit(
-        "unhandledRejection",
-        new DOMException("stream cancelled", "AbortError"),
-        Promise.resolve(),
+      const installedListeners = process.listeners("unhandledRejection").filter(
+        (listener) => !beforeListeners.has(listener),
       );
+      assertEquals(installedListeners.length, 1);
+      const installedListener = installedListeners[0];
+      assertExists(installedListener);
+      installedListener(new DOMException("stream cancelled", "AbortError"), Promise.resolve());
       await Promise.resolve();
 
       assertEquals(
@@ -139,7 +146,7 @@ describe("agent/abort-rejection-guard", () => {
 
     assertEquals(
       process.listenerCount("unhandledRejection"),
-      before,
+      beforeListeners.size,
       "dispose must remove the default process listener",
     );
   });
