@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearRequestScopedFileCache,
@@ -96,11 +102,21 @@ describe("MultiProjectFSAdapter", () => {
 
     it("rejects a context-less read with an actionable initialization error", async () => {
       await withAdapterAsync(async (adapter) => {
-        await assertRejects(
+        const rejection = await assertRejects(
           () => adapter.readTextFile("a.ts"),
           Error,
           "Use runWithContext() to set project context before accessing files",
           "a read with neither a request context nor a default adapter must name runWithContext",
+        );
+        assertInstanceOf(
+          rejection,
+          Error,
+          "the context-less read must reject with an Error carrying a message",
+        );
+        assertStringIncludes(
+          rejection.message,
+          "[MultiProjectFSAdapter] No request context available.",
+          "the remedy must stay attached to the symptom that explains why the read failed",
         );
       });
     });
