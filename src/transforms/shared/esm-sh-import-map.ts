@@ -108,8 +108,20 @@ export function parseEsmShSpecifier(
   url: string,
 ): { packageName: string; subpath: string; version: string | null } | null {
   const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
-  const stripped = stripTrailingSlash(withoutBuildPrefix);
-  const hadTrailingSeparator = stripped !== withoutBuildPrefix;
+
+  // Normalise before reading the tail. `pkg@18/.` and `pkg@18/` are the same
+  // path, but only the normalised form ends in the separator, and the parser
+  // rejects the empty final segment the raw spelling leaves behind.
+  let normalized: string;
+  try {
+    normalized = new URL(withoutBuildPrefix).href;
+  } catch (_) {
+    /* expected: URL may be malformed */
+    return null;
+  }
+
+  const stripped = stripTrailingSlash(normalized);
+  const hadTrailingSeparator = stripped !== normalized;
 
   const coordinates = reservedNamePackage(stripped) ?? parseEsmShUrl(stripped);
   if (!coordinates) return null;

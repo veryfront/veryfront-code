@@ -237,4 +237,24 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "without a channel the collision stands and the mapping stays exact",
     );
   });
+
+  it("normalises dot segments before reading the trailing separator", () => {
+    // `pkg@18/.`, `pkg@18/./` and `pkg@18/%2e` are all the same path as
+    // `pkg@18/`, but only the normalised form ends in the separator.
+    for (const spelling of ["/.", "/./", "/%2e", "/"]) {
+      assertEquals(
+        resolve(`https://esm.sh/react@18${spelling}`, { react: "https://cdn.example/react" }),
+        "https://cdn.example/react/",
+        `${spelling} names the package root`,
+      );
+    }
+  });
+
+  it("normalises a dot segment after a subpath", () => {
+    assertEquals(
+      resolve("https://esm.sh/react@18/sub/.", { react: "https://cdn.example/react" }),
+      "https://cdn.example/react/sub/",
+      "the separator the dot segment normalises to belongs to the subpath",
+    );
+  });
 });
