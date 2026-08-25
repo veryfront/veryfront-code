@@ -2,12 +2,14 @@ import type * as React from "react";
 import { createError, toError } from "#veryfront/errors";
 
 /**
- * A React component is either a function (function or class component) or an
- * object, which is what `React.memo`, `React.forwardRef` and `React.lazy`
- * produce. Nothing else can be rendered.
+ * Detects the component objects `React.memo`, `React.forwardRef` and
+ * `React.lazy` produce. All of them carry a well-known symbol on `$$typeof`,
+ * which is what separates a component from an ordinary data export such as an
+ * App Router `metadata` object.
  */
-function isRenderable(value: unknown): boolean {
-  return typeof value === "function" || (typeof value === "object" && value !== null);
+function isReactComponentObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null &&
+    typeof (value as { $$typeof?: unknown }).$$typeof === "symbol";
 }
 
 /**
@@ -15,24 +17,28 @@ function isRenderable(value: unknown): boolean {
  *
  * The `__esModule` marker is skipped explicitly. Transpilers place that boolean
  * first in the namespace they emit for a module with only named exports, so
- * taking the first key blindly yielded `true` instead of a component and the
+ * taking the first key blindly yielded `true` instead of a component, and the
  * failure surfaced during render rather than here.
  *
- * Functions are preferred over objects so that a module pairing data with a
- * component, such as an App Router page exporting `metadata` alongside its
- * component, resolves to the component. Objects are still accepted, because
- * `React.memo`, `React.forwardRef` and `React.lazy` all produce one.
+ * Functions and React-tagged objects are both components, so declaration order
+ * decides between them: a module exporting `{ Page: memo(...), loader() {} }`
+ * resolves to `Page`. An untagged object is neither obviously a component nor
+ * obviously not one, so it is kept only as a last resort, which leaves a module
+ * exporting `metadata` alongside its component resolving to the component while
+ * still tolerating a component shape this function does not recognise.
  */
 function firstRenderableExport(moduleObj: Record<string, unknown>): unknown {
-  let objectExport: unknown;
+  let untaggedObject: unknown;
 
   for (const [key, value] of Object.entries(moduleObj)) {
     if (key === "default" || key === "__esModule") continue;
-    if (typeof value === "function") return value;
-    if (objectExport === undefined && isRenderable(value)) objectExport = value;
+    if (typeof value === "function" || isReactComponentObject(value)) return value;
+    if (untaggedObject === undefined && typeof value === "object" && value !== null) {
+      untaggedObject = value;
+    }
   }
 
-  return objectExport;
+  return untaggedObject;
 }
 
 export function extractComponent(

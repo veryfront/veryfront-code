@@ -69,6 +69,25 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("keeps a memo component that is declared before a helper function", () => {
+    const Page = { $$typeof: Symbol.for("react.memo"), type: () => null };
+    const loader = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Page, loader }, "memo-page.tsx"),
+      Page,
+      "a React-tagged object and a function are both components, so declaration order decides",
+    );
+  });
+
+  it("falls back to an untagged object when no function or tagged component exists", () => {
+    const Odd = { render: () => null };
+    assertEquals(
+      extractComponent({ __esModule: true, Odd }, "odd.tsx"),
+      Odd,
+      "an unrecognised component shape is still preferred over exporting nothing",
+    );
+  });
+
   it("accepts object components such as memo and forwardRef results", () => {
     const Memoized = { $$typeof: Symbol.for("react.memo"), type: () => null };
     assertEquals(
