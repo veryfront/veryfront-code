@@ -33,14 +33,41 @@ function stripTrailingSlash(url: string): string {
  * it is part of the subpath: `@scope/pkg@1/sub/` and `@scope/pkg@1/sub` address
  * different things once appended to a mapping.
  */
-function parseEsmShSpecifier(url: string) {
+/**
+ * Recovers a package whose name is itself `v` followed by digits.
+ *
+ * esm.sh reserves a leading `v<digits>` segment for its build prefix, and
+ * `parseEsmShUrl` rejects any specifier starting with one. A prefix always
+ * precedes a package, though, so a lone `v<digits>` with nothing after it names
+ * a package rather than a prefix, and `https://esm.sh/v8` must keep resolving.
+ */
+function bareVersionLikePackage(url: string): string | null {
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname.slice(1);
+  } catch (_) {
+    /* expected: URL may be malformed */
+    return null;
+  }
+
+  return /^v\d+$/.test(pathname) ? pathname : null;
+}
+
+function parseEsmShSpecifier(url: string): { packageName: string; subpath: string } | null {
   const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
   const stripped = stripTrailingSlash(withoutBuildPrefix);
+
+  const bareName = bareVersionLikePackage(stripped);
+  if (bareName) return { packageName: bareName, subpath: "" };
+
   const parsed = parseEsmShUrl(stripped);
+  if (!parsed) return null;
 
-  if (!parsed || stripped === withoutBuildPrefix || parsed.subpath === "") return parsed;
-
-  return { ...parsed, subpath: `${parsed.subpath}/` };
+  const keepsTrailingSeparator = stripped !== withoutBuildPrefix && parsed.subpath !== "";
+  return {
+    packageName: parsed.packageName,
+    subpath: keepsTrailingSeparator ? `${parsed.subpath}/` : parsed.subpath,
+  };
 }
 
 function extractEsmShPackage(url: string): string | null {

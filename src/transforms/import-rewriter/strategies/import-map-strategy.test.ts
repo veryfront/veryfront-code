@@ -310,6 +310,15 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("resolves a package whose name looks like a build prefix", () => {
+      const map: ImportMapConfig = { imports: { v8: "/local/v8.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/v8", map),
+        "/local/v8.js",
+        "a build prefix always precedes a package, so a lone v-number is a package name",
+      );
+    });
+
     it("resolves a legacy build-prefixed esm.sh URL", () => {
       const map: ImportMapConfig = { imports: { react: "/local/react.js" } };
       assertEquals(
