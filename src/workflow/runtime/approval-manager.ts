@@ -330,7 +330,8 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
-    await this.validateDecisionData(runId, approval, decision);
+    const publicApproval = projectPendingApproval(approval);
+    await this.validateDecisionData(runId, publicApproval, decision);
 
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another
