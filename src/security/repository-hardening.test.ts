@@ -142,15 +142,29 @@ describe("repository hardening", () => {
 
     assertEquals(publishScript.includes("NPM_TOKEN"), false);
     assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
+    // Every publish flows through one retry helper, so provenance and public
+    // access cannot be dropped at an individual call site. Collapse the
+    // `\`-continuations first so each call site reads as one line.
+    const flattenedPublishScript = publishScript.replace(/\\\n\s*/g, " ");
+    const publishInvocations = flattenedPublishScript.match(/npm publish "[^\n]*/g) ?? [];
+    assertEquals(publishInvocations.length, 1);
     assert(
-      publishScript.includes(
-        'npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc',
+      publishInvocations[0]?.includes('npm publish "${PUBLISH_SPEC}" "$@"'),
+    );
+
+    const retryCallSites = flattenedPublishScript.match(
+      /publish_npm_package_with_retry "\$\{PACKAGE_NAME\}".*/g,
+    ) ?? [];
+    assertEquals(retryCallSites.length, 2);
+    assert(
+      retryCallSites.every((callSite) =>
+        callSite.includes("--provenance") &&
+        callSite.includes("--access public")
       ),
     );
-    assert(
-      publishScript.includes(
-        'npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1',
-      ),
+    assertEquals(
+      retryCallSites.filter((callSite) => callSite.includes("--tag rc")).length,
+      1,
     );
   });
 
