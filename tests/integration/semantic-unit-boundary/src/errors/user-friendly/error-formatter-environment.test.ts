@@ -292,6 +292,26 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("withholds unbracketed IPv6 callable labels", async () => {
+    const error = new Error("unknown error unbracketed_ipv6_label_dev");
+    error.stack = [
+      "Error: unknown error unbracketed_ipv6_label_dev",
+      "    at 2001:db8::dead (file:///app/a.ts:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const result = formatUserError(error);
+
+      assert(result.includes("at <anonymous>"), "an unbracketed IPv6 label is withheld");
+      assertEquals(
+        result.includes("2001:db8::dead"),
+        false,
+        "an unbracketed IPv6 callable label must not reach user-facing output",
+      );
+      return Promise.resolve();
+    });
+  });
+
   it("withholds ambiguous hostnames and scoped bracketed IPv6 callable labels", async () => {
     const error = new Error("unknown error scoped_host_labels_dev");
     error.stack = [
@@ -713,6 +733,31 @@ describe("formatUserError environment gating", () => {
 
       assert(output.includes("publicHandler"));
       assertEquals(output.includes("live RegExp.test"), false);
+      return Promise.resolve();
+    });
+  });
+
+  it("does not call live String prototype hooks while sanitizing stacks", async () => {
+    const error = new Error("unknown error mutated_string_last_index_of");
+    error.stack = [
+      "Error: unknown error mutated_string_last_index_of",
+      "    at publicHandler (/srv/app.ts:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const originalLastIndexOf = String.prototype.lastIndexOf;
+      let output: string;
+      try {
+        String.prototype.lastIndexOf = () => {
+          throw new Error("live String.lastIndexOf must not run");
+        };
+        output = formatUserError(error);
+      } finally {
+        String.prototype.lastIndexOf = originalLastIndexOf;
+      }
+
+      assert(output.includes("publicHandler"));
+      assertEquals(output.includes("live String.lastIndexOf"), false);
       return Promise.resolve();
     });
   });

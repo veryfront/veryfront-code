@@ -15,6 +15,14 @@ const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
 const regExpPrototypeExec = RegExp.prototype.exec;
 const regExpPrototypeTest = RegExp.prototype.test;
+const stringPrototypeEndsWith = String.prototype.endsWith;
+const stringPrototypeIncludes = String.prototype.includes;
+const stringPrototypeIndexOf = String.prototype.indexOf;
+const stringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const stringPrototypeSlice = String.prototype.slice;
+const stringPrototypeSplit = String.prototype.split;
+const stringPrototypeStartsWith = String.prototype.startsWith;
+const stringPrototypeTrim = String.prototype.trim;
 
 function execRegExp(pattern: RegExp, value: string): RegExpExecArray | null {
   return reflectApply(regExpPrototypeExec, pattern, [value]);
@@ -22,6 +30,42 @@ function execRegExp(pattern: RegExp, value: string): RegExpExecArray | null {
 
 function testRegExp(pattern: RegExp, value: string): boolean {
   return reflectApply(regExpPrototypeTest, pattern, [value]);
+}
+
+function endsWithString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeEndsWith, value, [search]);
+}
+
+function includesString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeIncludes, value, [search]);
+}
+
+function indexOfString(value: string, search: string, position?: number): number {
+  return reflectApply(
+    stringPrototypeIndexOf,
+    value,
+    position === undefined ? [search] : [search, position],
+  );
+}
+
+function lastIndexOfString(value: string, search: string): number {
+  return reflectApply(stringPrototypeLastIndexOf, value, [search]);
+}
+
+function sliceString(value: string, start?: number, end?: number): string {
+  return reflectApply(stringPrototypeSlice, value, [start, end]);
+}
+
+function splitString(value: string, separator: string | RegExp): string[] {
+  return reflectApply(stringPrototypeSplit, value, [separator]);
+}
+
+function startsWithString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeStartsWith, value, [search]);
+}
+
+function trimString(value: string): string {
+  return reflectApply(stringPrototypeTrim, value, []);
 }
 
 function getSolution(errorKey: string): (typeof ERROR_SOLUTIONS)[string] | undefined {
@@ -96,6 +140,9 @@ const HOSTNAME_SHAPED_CALLABLE_LABEL =
 /** A bracketed IPv6 literal can be emitted as a custom callable label. */
 const BRACKETED_IPV6_CALLABLE_LABEL = /^\[[0-9a-f:.]*:[0-9a-f:.]*(?:%[a-z0-9._~-]+)?\]$/i;
 
+/** An unbracketed IPv6 literal can likewise be emitted as a callable label. */
+const UNBRACKETED_IPV6_CALLABLE_LABEL = /^(?=(?:[^:]*:){2})[0-9a-f:.]+(?:%[a-z0-9._~-]+)?$/i;
+
 /**
  * Preserve well-known built-in receiver method labels despite their DNS-like
  * shape. Only this fixed receiver set is exempt: DNS names are case-insensitive,
@@ -119,7 +166,7 @@ const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 
 /** Whether a frame's trailing segment is a source location rather than more label. */
 function isSourceLocationText(text: string): boolean {
-  const trimmed = text.trim();
+  const trimmed = trimString(text);
   return testRegExp(URI_SCHEME_LOCATION, trimmed) || testRegExp(PATH_SEPARATOR, trimmed) ||
     testRegExp(FILE_LINE_COLUMN_LOCATION, trimmed) ||
     testRegExp(SOURCE_FILE_BASENAME_LOCATION, trimmed);
@@ -130,6 +177,7 @@ function isRetainableCallableLabel(label: string): boolean {
   // label gets the same source-location validation as location text itself.
   return !!label && !isSourceLocationText(label) &&
     !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
+    !testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) &&
     (!testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
       testRegExp(SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL, label));
 }
@@ -147,15 +195,17 @@ function isRetainableCallableLabelTokens(label: string): boolean {
 
 /** Keep a frame's callable label only when the label itself carries no source location. */
 function retainCallableLabel(label: string): string {
-  const trimmed = label.trim();
+  const trimmed = trimString(label);
   const prefix = execRegExp(CALLABLE_LABEL_PREFIX, trimmed)?.[0] ?? "";
-  const callableLabel = prefix ? trimmed.slice(prefix.length).trim() : trimmed;
+  const callableLabel = prefix ? trimString(sliceString(trimmed, prefix.length)) : trimmed;
   const alias = execRegExp(CALLABLE_ALIAS_SUFFIX, callableLabel);
-  const aliasLabel = alias?.[2]?.trim();
+  const aliasLabel = alias?.[2] === undefined ? undefined : trimString(alias[2]);
   const aliasPrefix = aliasLabel ? execRegExp(CALLABLE_LABEL_PREFIX, aliasLabel)?.[0] : undefined;
-  const unprefixedAlias = aliasPrefix ? aliasLabel!.slice(aliasPrefix.length).trim() : aliasLabel;
+  const unprefixedAlias = aliasPrefix
+    ? trimString(sliceString(aliasLabel!, aliasPrefix.length))
+    : aliasLabel;
   const isSafe = alias
-    ? isRetainableCallableLabelTokens(alias[1]!.trim()) &&
+    ? isRetainableCallableLabelTokens(trimString(alias[1]!)) &&
       isRetainableCallableLabelTokens(unprefixedAlias ?? "")
     : isRetainableCallableLabelTokens(callableLabel);
   return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
@@ -163,10 +213,10 @@ function retainCallableLabel(label: string): string {
 
 /** Keep a development stack's callable label without exposing its source location. */
 function sanitizeUserFacingStackFrame(line: string): string {
-  const frame = sanitizeTerminalDiagnosticText(line).trim();
-  const locationStart = frame.lastIndexOf(" (");
-  if (frame.startsWith("at ") && locationStart > 3 && frame.endsWith(")")) {
-    return retainCallableLabel(frame.slice(3, locationStart));
+  const frame = trimString(sanitizeTerminalDiagnosticText(line));
+  const locationStart = lastIndexOfString(frame, " (");
+  if (startsWithString(frame, "at ") && locationStart > 3 && endsWithString(frame, ")")) {
+    return retainCallableLabel(sliceString(frame, 3, locationStart));
   }
   const locationOnly = execRegExp(LOCATION_ONLY_FRAME, frame);
   if (locationOnly) {
@@ -177,17 +227,17 @@ function sanitizeUserFacingStackFrame(line: string): string {
   // A callable label can itself contain "@" ("handler@alias@app.ts:2:2"), so
   // every delimiter is a candidate split until one exposes a real location.
   for (
-    let labelEnd = frame.indexOf("@");
+    let labelEnd = indexOfString(frame, "@");
     labelEnd !== -1;
-    labelEnd = frame.indexOf("@", labelEnd + 1)
+    labelEnd = indexOfString(frame, "@", labelEnd + 1)
   ) {
-    if (isSourceLocationText(frame.slice(labelEnd + 1))) {
-      return retainCallableLabel(frame.slice(0, labelEnd));
+    if (isSourceLocationText(sliceString(frame, labelEnd + 1))) {
+      return retainCallableLabel(sliceString(frame, 0, labelEnd));
     }
   }
   // A delimiter whose trailing text matches no known location shape still
   // marks a custom-formatted frame; fail closed instead of echoing it.
-  if (frame.includes("@") || isSourceLocationText(frame)) {
+  if (includesString(frame, "@") || isSourceLocationText(frame)) {
     return "at <anonymous>";
   }
   return retainCallableLabel(frame) === "at <anonymous>" ? "at <anonymous>" : frame;
@@ -248,7 +298,9 @@ export function formatUserError(error: Error): string {
   const stack = snapshotErrorForBoundary(stableError).stack;
   if (!isProduction() && stack) {
     output.push(yellow("Stack trace:"));
-    for (const line of stack.split(/\r\n?|\n/).slice(1, 4)) {
+    const stackLines = splitString(stack, /\r\n?|\n/);
+    for (let index = 1; index < stackLines.length && index < 4; index++) {
+      const line = stackLines[index]!;
       output.push(dim(`  ${sanitizeUserFacingStackFrame(line)}`));
     }
     output.push("");
