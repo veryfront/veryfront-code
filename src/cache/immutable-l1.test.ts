@@ -316,6 +316,47 @@ describe("createImmutableFileCacheL1", () => {
     assertEquals(store.size, 0, "a NaN TTL defeats the expiry comparison and must admit nothing");
   });
 
+  it("refuses admission when the backend read consumed the whole TTL", async () => {
+    // The TTL bounds staleness relative to a revocation or a publish, and both
+    // can land while the read is still in flight, so expiry is anchored to the
+    // read start the token recorded rather than to the response arrival.
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    const token = store.beginRead(RELEASE_KEY);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    store.admit("scope-a", RELEASE_KEY, "held", token, 1);
+
+    assertEquals(
+      store.size,
+      0,
+      "a read in flight past the whole TTL must admit nothing, or a slow read plus the TTL would exceed the documented staleness bound",
+    );
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "nothing may be served from a refused admission",
+    );
+  });
+
+  it("counts time the read spent in flight against the entry's lifetime", async () => {
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    const token = store.beginRead(RELEASE_KEY);
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    store.admit("scope-a", RELEASE_KEY, "held", token, HOUR_MS);
+
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY, 20),
+      null,
+      "a caller's maximum age must be measured from the read start, which is already past it",
+    );
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY, HOUR_MS),
+      "held",
+      "the entry still serves callers whose lifetime covers the in-flight time",
+    );
+  });
+
   it("enforces the caller's own maximum age at lookup", async () => {
     // The store is process-global while TTLs are configured per FileCache
     // instance, so a caller with a shorter lifetime than the admitting
@@ -586,6 +627,19 @@ describe("createImmutableFileCacheL1", () => {
       store.size,
       IMMUTABLE_L1_DEFAULT_MAX_ENTRIES,
       "an Infinity entry bound must fall back to the default instead of disabling eviction",
+    );
+  });
+
+  it("reports its entry ceiling for profiler stats", () => {
+    assertEquals(
+      createImmutableFileCacheL1({ maxEntries: 8 }).maxEntries,
+      8,
+      "the configured ceiling must be the one reported",
+    );
+    assertEquals(
+      createImmutableFileCacheL1().maxEntries,
+      IMMUTABLE_L1_DEFAULT_MAX_ENTRIES,
+      "an unconfigured store must report the default ceiling",
     );
   });
 

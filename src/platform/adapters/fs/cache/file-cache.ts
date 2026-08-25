@@ -60,6 +60,20 @@ const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
  */
 const immutableL1 = createImmutableFileCacheL1();
 
+// Registered as its own cache: the "file-cache" registration above reports the
+// distributed backend (size -1) and the fallback map's limits, while this tier
+// retains file content up to its own total-bytes ceiling. Without a separate
+// entry, /_debug/memory/caches and the high-memory topCaches log omit exactly
+// the store a warm release working set lives in, so operators could not
+// attribute the growth to it.
+registerCache("file-cache-immutable-l1", () => ({
+  name: "file-cache-immutable-l1",
+  entries: immutableL1.size,
+  maxEntries: immutableL1.maxEntries,
+  estimatedSizeBytes: immutableL1.retainedBytes,
+  backend: "memory",
+}));
+
 /** Process-wide default entry lifetime for that tier, overridable per instance. */
 const IMMUTABLE_L1_TTL_MS = resolveImmutableL1TtlMs();
 
@@ -162,6 +176,14 @@ export class FileCache {
     // does. Zero and negative values still disable the tier.
     if (!Number.isFinite(this.options.immutableL1Ttl)) {
       this.options.immutableL1Ttl = IMMUTABLE_L1_TTL_MS;
+    }
+    // The public filesystem config exposes `ttl` and not `immutableL1Ttl`, so
+    // `ttl` is where a caller states its whole freshness bound. A `ttl` below
+    // the tier's lifetime would otherwise be widened silently: the backend
+    // expires the entry on the configured schedule while the tier keeps
+    // serving it. The effective L1 lifetime is therefore capped at `ttl`.
+    if (Number.isFinite(this.options.ttl) && this.options.ttl < this.options.immutableL1Ttl) {
+      this.options.immutableL1Ttl = Math.max(0, this.options.ttl);
     }
     this.backendTtlSeconds = Math.max(1, Math.ceil(this.options.ttl / 1000));
 

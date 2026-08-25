@@ -237,7 +237,7 @@ interface ImmutableL1Entry {
   cacheKey: string;
   value: string;
   valueBytes: number;
-  admittedAtMs: number;
+  readStartedAtMs: number;
   expiresAtMs: number;
 }
 
@@ -246,14 +246,23 @@ interface ImmutableL1Entry {
  * invalidation touching that key in between makes the fetched value
  * unadmissible, so a read already in flight cannot reinstate what was just
  * invalidated.
+ *
+ * `startedAtMs` records when the backend read began. The TTL is a bound on how
+ * stale a served value can be relative to a revocation or a publish, and both
+ * can land while the read is still in flight, so the entry's lifetime is
+ * measured from this moment rather than from when the response arrived. A read
+ * slow enough to consume the whole TTL admits nothing.
  */
 export interface ImmutableL1ReadToken {
   readonly key: number;
   readonly sweep: number;
+  readonly startedAtMs: number;
 }
 
 export interface ImmutableFileCacheL1 {
   readonly size: number;
+  /** Entry-count ceiling in force, so profiler stats can report the bound. */
+  readonly maxEntries: number;
   /** Bytes currently charged against the total-bytes ceiling. */
   readonly retainedBytes: number;
   beginRead(cacheKey: string): ImmutableL1ReadToken;
@@ -261,11 +270,16 @@ export interface ImmutableFileCacheL1 {
    * `maxAgeMs` is the CALLER's entry lifetime. The store is process-global
    * while lifetimes are configured per `FileCache` instance, so an entry is
    * served only while it is younger than both the lifetime it was admitted
-   * with and the lifetime of the instance reading it. A non-finite
-   * `maxAgeMs` is ignored and the admission-time expiry alone governs.
+   * with and the lifetime of the instance reading it, each measured from the
+   * backend read start the entry's token recorded. A non-finite `maxAgeMs`
+   * is ignored and the admission-time expiry alone governs.
    */
   lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null;
-  /** A `ttlMs` at or below zero, or not finite, admits nothing. */
+  /**
+   * A `ttlMs` at or below zero, or not finite, admits nothing. Expiry is
+   * anchored to the token's read start, so a read that was in flight long
+   * enough to consume the whole TTL admits nothing either.
+   */
   admit(
     scope: string,
     cacheKey: string,
@@ -433,11 +447,14 @@ export function createImmutableFileCacheL1(
     get size(): number {
       return entries.size;
     },
+    get maxEntries(): number {
+      return maxEntries;
+    },
     get retainedBytes(): number {
       return retainedBytes;
     },
     beginRead(cacheKey: string): ImmutableL1ReadToken {
-      return { key: keyGenerations.get(cacheKey) ?? 0, sweep };
+      return { key: keyGenerations.get(cacheKey) ?? 0, sweep, startedAtMs: Date.now() };
     },
     lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null {
       const storeKey = scopedKey(scope, cacheKey);
@@ -454,10 +471,11 @@ export function createImmutableFileCacheL1(
       // FileCache instance, so a caller with a shorter lifetime than the
       // admitting instance must not be served past its own bound. The entry
       // itself stays: it is still valid under the policy it was admitted with,
-      // and callers whose lifetime allows it may keep reading it.
+      // and callers whose lifetime allows it may keep reading it. Age is
+      // measured from the backend read start, like the expiry above.
       if (
         maxAgeMs !== undefined && Number.isFinite(maxAgeMs) &&
-        now - entry.admittedAtMs >= maxAgeMs
+        now - entry.readStartedAtMs >= maxAgeMs
       ) {
         return null;
       }
@@ -489,6 +507,17 @@ export function createImmutableFileCacheL1(
       const valueBytes = value.length * BYTES_PER_VALUE_CHAR;
       if (valueBytes > maxValueBytes) return;
 
+      // Expiry is anchored to when the backend read STARTED, not to when its
+      // response arrived. The TTL is the documented bound on revocation lag
+      // and cross-pod publish-visibility lag, and both clocks start ticking
+      // while the read is still in flight: a read pending for the backend's
+      // full timeout and then stamped with a fresh TTL would be servable for
+      // timeout plus TTL after the revocation. A read that already consumed
+      // the whole TTL admits nothing.
+      const readStartedAtMs = token.startedAtMs;
+      const expiresAtMs = readStartedAtMs + ttlMs;
+      if (Date.now() >= expiresAtMs) return;
+
       // Expired entries are reclaimed on every admission, so dead weight is
       // never charged against the ceilings while a live entry gets evicted,
       // and an idle store still sheds what has expired the next time anything
@@ -497,13 +526,12 @@ export function createImmutableFileCacheL1(
 
       const storeKey = scopedKey(scope, cacheKey);
       removeEntry(storeKey);
-      const admittedAtMs = Date.now();
       entries.set(storeKey, {
         cacheKey,
         value,
         valueBytes,
-        admittedAtMs,
-        expiresAtMs: admittedAtMs + ttlMs,
+        readStartedAtMs,
+        expiresAtMs,
       });
       retainedBytes += valueBytes;
 

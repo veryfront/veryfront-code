@@ -7,6 +7,7 @@ import {
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
 import { CacheBackends } from "#veryfront/cache/backend.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
@@ -960,6 +961,115 @@ describe("Distributed cache functions", () => {
         harness.backendGets(),
         0,
         "a non-finite TTL must fall back to the finite process default rather than disable or unbound the tier",
+      );
+    });
+
+    it("caps the process-local lifetime at the configured cache ttl", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-ttl-cap");
+      // The public filesystem config exposes ttl and not immutableL1Ttl, so a
+      // caller that tightened ttl below the tier's default has stated its
+      // whole freshness bound there; the tier must not widen it.
+      const harness = await useCountingDistributedBackend(distributedModule, { ttl: 1 });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the value itself must still be readable through the backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a ttl below the tier default must bound the tier too, not only the backend entry",
+      );
+    });
+
+    it("caps an explicit per-instance lifetime at the configured cache ttl", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-ttl-cap-explicit");
+      // An immutableL1Ttl above ttl would serve values the backend cache has
+      // already expired, so the cap applies to an explicit lifetime as well.
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        ttl: 1,
+        immutableL1Ttl: 3_600_000,
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an explicit tier lifetime above ttl must still be capped at ttl",
+      );
+    });
+
+    it("reports the process-local tier to the memory profiler", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-profiler");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      const stats = getCacheStats().find((cache) => cache.name === "file-cache-immutable-l1");
+      assertExists(
+        stats,
+        "the tier must register with the memory profiler under its own name, or the memory it retains is unattributable",
+      );
+      assertEquals(
+        stats.entries,
+        1,
+        "the registration must report the tier's own entry count, not the backend's",
+      );
+      assertEquals(
+        (stats.estimatedSizeBytes ?? 0) > 0,
+        true,
+        "the registration must report the bytes the tier retains",
+      );
+      assertEquals(
+        (stats.maxEntries ?? 0) > 0,
+        true,
+        "the registration must report the tier's entry ceiling",
+      );
+    });
+
+    it("does not serve an entry whose backend read outlived the tier's lifetime", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-slow-read");
+      // A revocation or a publish can land while the backend read is still in
+      // flight, so a read pending past the whole TTL must not stamp a fresh
+      // lifetime when its stale response finally arrives.
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        immutableL1Ttl: 20,
+      });
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+
+      harness.holdReads();
+      const pending = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await harness.readStarted();
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      harness.releaseReads();
+      assertEquals(
+        await pending,
+        "page-source",
+        "the slow read itself must still return the backend value",
+      );
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "a later request must still read the value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a read that consumed the whole TTL in flight must not be admitted at completion",
       );
     });
 
