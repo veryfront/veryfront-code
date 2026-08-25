@@ -346,22 +346,79 @@ and that server-derived identity is what the workflow context persists. See
 
 ### Wait for events
 
-Pause until an external event arrives:
+Pause until an external event arrives, and deliver the event through the
+workflow client. The run resumes as soon as an event with the matching name
+reaches its mailbox:
 
 ```ts
-import { waitForEvent } from "veryfront/workflow";
+import { createWorkflowClient, step, waitForEvent, workflow } from "veryfront/workflow";
 
-waitForEvent("payment-confirmed", {
-  eventName: "payment.completed",
-  timeout: "1h",
-});
+const workflows = createWorkflowClient();
+
+workflows.register(workflow({
+  id: "order-fulfillment",
+  steps: [
+    waitForEvent("payment-confirmed", {
+      eventName: "payment.completed",
+      timeout: "1h",
+    }),
+    step("fulfill", { tool: "fulfillment" }),
+  ],
+}));
+
+const handle = await workflows.start("order-fulfillment", { orderId: "ord_1" });
+const runId = handle.runId;
+
+// Later - from a webhook handler or any process sharing the same backend:
+await workflows.publishEvent(runId, "payment.completed", { amount: 4200 });
 ```
 
-Event delivery is not wired into workflow execution yet. `waitForEvent` pauses
-the run, but nothing resumes it when the named event occurs. The workflow
-backend interface declares optional event delivery methods, but the built-in
-memory and Redis backends do not implement them, and the executor does not
-consume them from a backend that does.
+Events are buffered per run, so publishing before the node parks is safe: the
+wait consumes the buffered event as soon as it exists. `publishEvent` resolves
+to what it did with the event:
+
+| Outcome             | Meaning                                                                                                              |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `"delivered"`       | A wait matched, its node completed, and the run moved on.                                                            |
+| `"buffered"`        | No wait matched yet. The event is held until one does.                                                               |
+| `"run-terminal"`    | The run has already finished, so the event was discarded rather than buffered.                                       |
+| `"delivery-failed"` | A wait matched but delivery failed. Both were rolled back, so the run is still parked and a later publish can retry. |
+
+A run's mailbox holds a bounded number of unconsumed events. Because an event
+is removed only when a wait takes it, none of them can be dropped safely, so a
+publish past the bound rejects rather than silently discarding an event some
+wait has not parked for yet. Reaching that bound means events are being
+published to a run that never consumes them.
+
+The payload lands in the workflow context under the wait node's id, so later
+steps read `ctx["payment-confirmed"]` as `{ eventName, payload, receivedAt }`.
+
+Read what a run is parked on with `getPendingEventWaits(runId)`, which returns
+the node id, the event name, and the deadline derived from `timeout`.
+
+A `timeout` is enforced. When it elapses before the event arrives, the run
+fails with an error naming the node and the event it waited for. The deadline
+is measured from when the wait node started. Omit `timeout` to wait
+indefinitely. `delay(id, duration)` uses the same machinery and completes its
+node once the duration elapses. Cancelling a run resolves its pending event
+waits, so a cancelled run no longer reports itself as parked.
+
+Durable event waits require a backend that implements them. The built-in
+`MemoryBackend` does; `RedisBackend` does not yet, so a run on Redis still
+parks with nothing able to wake it. Use `hasEventWaitSupport(backend)` to check
+before relying on `waitForEvent` or `delay`.
+
+Two limitations are worth knowing before you rely on this:
+
+- **Nested waits are not recovery-safe yet.** A `waitForEvent`, `delay`, or
+  `waitForApproval` inside a `branch`, `parallel`, `loop`, `map`, or
+  `subWorkflow` surfaces to run control as a failed composite node, which it
+  cannot tell apart from a real failure. Publishing the event still wakes such
+  a run normally. What does not work is `resume(runId)` on a run parked on a
+  nested wait: it fails the run with a stalled-graph error even though the wait
+  is live. A wait directly in the workflow's own step list is unaffected. Keep
+  waits at the top level, or avoid bare `resume` on runs that use nested ones.
+- **`publishEvent` is run-scoped.** There is no broadcast by workflow id.
 
 ## Workflow configuration
 

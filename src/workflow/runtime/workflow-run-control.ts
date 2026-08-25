@@ -2,10 +2,12 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError, ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  hasEventWaitSupport,
   hasLockSupport,
   hasWorkerSupport,
   updateRunIfStatus,
   type WorkflowBackend,
+  type WorkflowRunUpdate,
 } from "../backends/types.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
 import type {
@@ -20,6 +22,7 @@ import {
   runWithWorkflowSourceIntegrationPolicy,
 } from "../source-integration-policy.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
+import type { DurableTimedWaitKind } from "../timed-wait-state.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -28,6 +31,21 @@ export interface WorkflowRunControlExecuteResult {
   waiting?: boolean;
   waitingNode?: string;
   waitingConfig?: WaitNodeConfig;
+  /**
+   * Every node that suspended in the settled batch, when more than one did.
+   * A batch of dependency-free waits parks them all at once, and each needs
+   * its own durable record; announcing only the first would leave the others
+   * parked with nothing able to wake them. `waitingNode` remains the first
+   * entry for compatibility.
+   */
+  waitingNodes?: ReadonlyArray<{ nodeId: string; waitConfig?: WaitNodeConfig }>;
+  /**
+   * Reported with `error` when the graph found nothing to schedule and every
+   * unfinished node is either this wait or blocked behind it. Whether that is a
+   * stall or a run still parked depends on the durable approval or event-wait
+   * record, which only this layer can read.
+   */
+  stalledWaitNode?: string;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -118,6 +136,19 @@ export interface WorkflowRunControlApprovalDecisionOperation {
   resume?(runId: string, expectedWorkerId?: string): Promise<void>;
 }
 
+export interface WorkflowRunControlEventDeliveryOperation {
+  type: "event-delivery";
+  runId: string;
+  waitId: string;
+  nodeId: string;
+  eventName: string;
+  waitKind: DurableTimedWaitKind;
+  payload?: unknown;
+  deliveredAt?: Date;
+  maxAttempts?: number;
+  resume?(runId: string, expectedWorkerId?: string): Promise<void>;
+}
+
 export interface WorkflowRunControlHydrateEnvOperation {
   type: "hydrate-env";
   run: WorkflowRun;
@@ -136,6 +167,7 @@ export interface WorkflowRunControlReconcileInput {
   backend: WorkflowBackend;
   operation:
     | WorkflowRunControlApprovalDecisionOperation
+    | WorkflowRunControlEventDeliveryOperation
     | WorkflowRunControlHydrateEnvOperation
     | WorkflowRunControlFailExecutionOperation;
 }
@@ -164,6 +196,8 @@ export async function reconcileWorkflowRunControl(
   switch (input.operation.type) {
     case "approval-decision":
       return await reconcileApprovalDecision(input.backend, input.operation);
+    case "event-delivery":
+      return await reconcileEventDelivery(input.backend, input.operation);
     case "hydrate-env":
       return await reconcileHydrateEnv(input.backend, input.operation);
     case "fail-execution":
@@ -284,88 +318,61 @@ export async function claimWorkflowRunControl(
   }
 }
 
-async function reconcileApprovalDecision(
+/**
+ * Write one already-durable node outcome onto whichever worker owns the run
+ * now, retrying if ownership changes between the read, the conditional patch,
+ * and the resume.
+ *
+ * The outcome (an approval decision, a delivered event) is durable before this
+ * runs. Without the retry loop it could be consumed while leaving the workflow
+ * permanently parked on the node it already resolved.
+ */
+async function reconcileNodeOutcome(
   backend: WorkflowBackend,
-  operation: WorkflowRunControlApprovalDecisionOperation,
+  input: {
+    runId: string;
+    maxAttempts: number;
+    buildPatch(run: WorkflowRun): WorkflowRunUpdate;
+    shouldResume: boolean;
+    resume?(runId: string, expectedWorkerId?: string): Promise<void>;
+    ownershipChurnDetail: string;
+  },
 ): Promise<WorkflowRunControlReconcileOutcome> {
-  const maxAttempts = operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS;
-  const decidedAt = operation.decidedAt ?? new Date();
-  const decisionContext = {
-    approved: operation.decision.approved,
-    approver: operation.decision.approver,
-    ...(operation.decision.comment === undefined ? {} : { comment: operation.decision.comment }),
-    ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
-    decidedAt: decidedAt.toISOString(),
-  };
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const run = await backend.getRun(operation.runId);
+  for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
+    const run = await backend.getRun(input.runId);
     if (!run) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${operation.runId}` });
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${input.runId}` });
     }
     if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
       return { status: "skipped-terminal", run };
     }
 
     const expectedWorkerId = run.workerId;
-    const runPatch: Partial<WorkflowRun> = {
-      context: {
-        ...run.context,
-        [operation.nodeId]: decisionContext,
-      },
-      nodeStates: {
-        ...run.nodeStates,
-        [operation.nodeId]: {
-          nodeId: operation.nodeId,
-          status: "completed",
-          output: {
-            approved: operation.decision.approved,
-            approver: operation.decision.approver,
-            ...(operation.decision.comment === undefined
-              ? {}
-              : { comment: operation.decision.comment }),
-            ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
-          },
-          attempt: 1,
-          completedAt: decidedAt,
-        },
-      },
-    };
-
     const updated = await updateRunIfStatus(
       backend,
-      operation.runId,
+      input.runId,
       ACTIVE_RECONCILE_STATUSES,
-      operation.decision.approved ? runPatch : {
-        ...runPatch,
-        status: "failed",
-        error: {
-          message: `Approval "${operation.approvalId}" was rejected${
-            operation.decision.comment ? `: ${operation.decision.comment}` : ""
-          }`,
-        },
-        completedAt: new Date(),
-      },
+      input.buildPatch(run),
       expectedWorkerId,
     );
     if (!updated) {
-      const latest = await backend.getRun(operation.runId);
+      const latest = await backend.getRun(input.runId);
       if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
         return { status: "skipped-terminal", run: latest ?? undefined };
       }
       continue;
     }
 
-    const reconciledRun = await backend.getRun(operation.runId);
-    if (!operation.decision.approved || !operation.resume) {
+    const reconciledRun = await backend.getRun(input.runId);
+    if (!input.shouldResume || !input.resume) {
       return { status: "reconciled", run: reconciledRun ?? undefined };
     }
 
     try {
-      await operation.resume(operation.runId, expectedWorkerId);
+      await input.resume(input.runId, expectedWorkerId);
       return { status: "reconciled", run: reconciledRun ?? undefined };
     } catch (error) {
-      const latestRun = await backend.getRun(operation.runId);
+      const latestRun = await backend.getRun(input.runId);
       if (
         latestRun && ACTIVE_RECONCILE_STATUSES.includes(latestRun.status) &&
         latestRun.workerId !== expectedWorkerId
@@ -376,9 +383,101 @@ async function reconcileApprovalDecision(
     }
   }
 
-  throw ORCHESTRATION_ERROR.create({
-    detail:
+  throw ORCHESTRATION_ERROR.create({ detail: input.ownershipChurnDetail });
+}
+
+function reconcileApprovalDecision(
+  backend: WorkflowBackend,
+  operation: WorkflowRunControlApprovalDecisionOperation,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  const decidedAt = operation.decidedAt ?? new Date();
+  const decisionContext = {
+    approved: operation.decision.approved,
+    approver: operation.decision.approver,
+    ...(operation.decision.comment === undefined ? {} : { comment: operation.decision.comment }),
+    ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
+    decidedAt: decidedAt.toISOString(),
+  };
+
+  return reconcileNodeOutcome(backend, {
+    runId: operation.runId,
+    maxAttempts: operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS,
+    shouldResume: operation.decision.approved,
+    resume: operation.resume,
+    ownershipChurnDetail:
       `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
+    buildPatch: (run) => {
+      const runPatch: WorkflowRunUpdate = {
+        context: {
+          ...run.context,
+          [operation.nodeId]: decisionContext,
+        },
+        nodeStates: {
+          ...run.nodeStates,
+          [operation.nodeId]: {
+            nodeId: operation.nodeId,
+            status: "completed",
+            output: {
+              approved: operation.decision.approved,
+              approver: operation.decision.approver,
+              ...(operation.decision.comment === undefined
+                ? {}
+                : { comment: operation.decision.comment }),
+              ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
+            },
+            attempt: 1,
+            completedAt: decidedAt,
+          },
+        },
+      };
+
+      return operation.decision.approved ? runPatch : {
+        ...runPatch,
+        status: "failed",
+        error: {
+          message: `Approval "${operation.approvalId}" was rejected${
+            operation.decision.comment ? `: ${operation.decision.comment}` : ""
+          }`,
+        },
+        completedAt: new Date(),
+      };
+    },
+  });
+}
+
+function reconcileEventDelivery(
+  backend: WorkflowBackend,
+  operation: WorkflowRunControlEventDeliveryOperation,
+): Promise<WorkflowRunControlReconcileOutcome> {
+  const deliveredAt = operation.deliveredAt ?? new Date();
+  const outcome = operation.waitKind === "delay" ? { delayed: true } : {
+    eventName: operation.eventName,
+    ...(operation.payload === undefined ? {} : { payload: operation.payload }),
+  };
+
+  return reconcileNodeOutcome(backend, {
+    runId: operation.runId,
+    maxAttempts: operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS,
+    shouldResume: true,
+    resume: operation.resume,
+    ownershipChurnDetail:
+      `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,
+    buildPatch: (run) => ({
+      context: {
+        ...run.context,
+        [operation.nodeId]: { ...outcome, receivedAt: deliveredAt.toISOString() },
+      },
+      nodeStates: {
+        ...run.nodeStates,
+        [operation.nodeId]: {
+          nodeId: operation.nodeId,
+          status: "completed",
+          output: outcome,
+          attempt: 1,
+          completedAt: deliveredAt,
+        },
+      },
+    }),
   });
 }
 
@@ -683,7 +782,15 @@ export async function executeWorkflowRunControl(
     }
 
     if (result.waiting) {
-      const paused = await pauseRun(input, executionController, result);
+      // Every wait the settled batch parked, not just the first: each needs
+      // its own durable record or the others park with nothing to wake them.
+      const waitingNodes = result.waitingNodes && result.waitingNodes.length > 0
+        ? result.waitingNodes
+        : [{ nodeId: result.waitingNode!, waitConfig: result.waitingConfig }];
+
+      const paused = await pauseRun(input, executionController, result, {
+        currentNodes: waitingNodes.map((waiting) => waiting.nodeId),
+      });
       if (!paused) return { status: "ownership-lost" };
       pausedForWaiting = true;
 
@@ -701,8 +808,92 @@ export async function executeWorkflowRunControl(
           run: pausedRun ?? undefined,
         };
       }
-      await input.onWaiting?.(pausedRun, result.waitingNode!, result.waitingConfig);
+      for (const waiting of waitingNodes) {
+        await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+      }
       return { status: "waiting", run: pausedRun };
+    }
+
+    // A graph that found nothing to schedule behind a parked wait is not
+    // stalled while that wait's durable record is still live: the decision or
+    // event can still arrive. Failing here would let a resume that simply came
+    // too early destroy a healthy run, which is the only nudge callers have.
+    if (result.stalledWaitNode !== undefined) {
+      const stalledWaitNode = result.stalledWaitNode;
+      const stillParked: WorkflowRunControlExecuteResult = {
+        ...result,
+        waiting: true,
+        waitingNode: stalledWaitNode,
+        error: undefined,
+      };
+      // Park with a status-only patch. The durable node states were persisted
+      // when the run first parked; rewriting them from this re-execution's
+      // stale copy would overwrite a delivery or approval decision that landed
+      // between the durable-record check below and this write, leaving the run
+      // waiting on a node whose outcome was just destroyed.
+      const paused = await pauseRun(input, executionController, stillParked, {
+        statusOnly: true,
+      });
+      if (!paused) return { status: "ownership-lost" };
+      pausedForWaiting = true;
+
+      await releaseWaitingLock();
+
+      const pausedRun = await backend.getRun(runId);
+      if (
+        !pausedRun || pausedRun.status !== "waiting" ||
+        executionController.signal.aborted ||
+        !input.isCurrentExecution(runId, executionController) ||
+        (expectedWorkerId !== undefined && pausedRun.workerId !== expectedWorkerId)
+      ) {
+        return {
+          status: pausedRun?.status === "cancelled" ? "cancelled" : "skipped",
+          run: pausedRun ?? undefined,
+        };
+      }
+
+      if (await hasLiveNodeWait(backend, runId, stalledWaitNode)) {
+        // The wait was announced when the run first parked. Announcing it
+        // again would raise a duplicate approval or event wait for the same
+        // node, so this path deliberately does not call onWaiting.
+        return { status: "waiting", run: pausedRun };
+      }
+
+      // No live record, but the node may not be stuck: a worker that died
+      // between committing the parked status and persisting the record, or
+      // between resolving a record and completing its node, leaves exactly
+      // this shape. If its outcome already landed, the run moved on and there
+      // is nothing to do; otherwise re-announce the wait so a record is
+      // reconstructed from the registered definition and the run stays
+      // wakeable instead of being failed while merely parked.
+      if (pausedRun.nodeStates[stalledWaitNode]?.status === "running") {
+        await input.onWaiting?.(pausedRun, stalledWaitNode, undefined);
+        const latestRun = await backend.getRun(runId);
+        if (
+          latestRun && (
+            await hasLiveNodeWait(backend, runId, stalledWaitNode) ||
+            latestRun.nodeStates[stalledWaitNode]?.status !== "running" ||
+            latestRun.status !== "waiting"
+          )
+        ) {
+          return { status: "waiting", run: latestRun };
+        }
+      }
+
+      // Nothing durable could be re-established: the graph really is stuck.
+      const stalledError = ORCHESTRATION_ERROR.create({
+        detail: result.error || "Unknown error",
+      });
+      const failedStalled = await failRun(
+        input,
+        executionController,
+        stalledError,
+        result,
+        ["waiting"],
+      );
+      if (!failedStalled) return { status: "ownership-lost" };
+      await input.onError?.(run, stalledError, result.context);
+      return { status: "failed" };
     }
 
     const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
@@ -849,10 +1040,40 @@ async function failRun(
   );
 }
 
+/**
+ * Whether a durable record still exists for what this node is parked on.
+ *
+ * This is the fact that separates a parked run from a stuck one, and it lives
+ * only in the backend. A node whose approval was decided, or whose event wait
+ * was delivered or expired, has no live record and the graph really is stuck.
+ */
+async function hasLiveNodeWait(
+  backend: WorkflowBackend,
+  runId: string,
+  nodeId: string,
+): Promise<boolean> {
+  const approvals = await backend.getPendingApprovals(runId);
+  if (approvals.some((approval) => approval.nodeId === nodeId)) return true;
+  if (!hasEventWaitSupport(backend)) return false;
+  const waits = await backend.getPendingEventWaits(runId);
+  return waits.some((wait) => wait.nodeId === nodeId);
+}
+
 async function pauseRun(
   input: WorkflowRunControlExecuteInput,
   executionController: AbortController,
   result: WorkflowRunControlExecuteResult,
+  options?: {
+    /** Top-level nodes the paused run is parked on; defaults to the waiting node. */
+    currentNodes?: string[];
+    /**
+     * Write only the status transition, keeping the persisted context and node
+     * states. A re-park of an already-parked run has nothing new to record,
+     * and rewriting durable state from a re-execution's copy would clobber a
+     * concurrently delivered outcome.
+     */
+    statusOnly?: boolean;
+  },
 ): Promise<boolean> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
@@ -870,9 +1091,11 @@ async function pauseRun(
     ["running"],
     {
       status: "waiting",
-      currentNodes: [result.waitingNode!],
-      context: publicContext,
-      nodeStates: result.nodeStates,
+      currentNodes: options?.currentNodes ?? [result.waitingNode!],
+      ...(options?.statusOnly ? {} : {
+        context: publicContext,
+        nodeStates: result.nodeStates,
+      }),
     },
     expectedWorkerId,
   );

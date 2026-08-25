@@ -52,6 +52,29 @@ function waitingResult(
   return { waiting: true, waitingNode: "review", context, nodeStates };
 }
 
+/**
+ * What the DAG returns when it found nothing to schedule and every unfinished
+ * node is a wait, or is blocked behind one. That is the shape run control has
+ * to tell apart from a genuine stall by consulting the durable record.
+ */
+function stalledWaitResult(
+  waitNodeId: string,
+  context: WorkflowContext = { input: {} },
+): WorkflowRunControlExecuteResult {
+  return {
+    completed: false,
+    waiting: false,
+    stalledWaitNode: waitNodeId,
+    context,
+    nodeStates: {
+      [waitNodeId]: { nodeId: waitNodeId, status: "running", attempt: 1 },
+      after: { nodeId: "after", status: "pending", attempt: 0 },
+    },
+    error: `Workflow run ${JSON.stringify("stalled-run")} stalled in the root graph; ` +
+      `unfinished nodes: ${JSON.stringify(waitNodeId)} (running), "after" (pending)`,
+  };
+}
+
 async function execute(
   backend: MemoryBackend,
   run: WorkflowRun,
@@ -642,6 +665,150 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       env: { PUBLIC_VALUE: "kept" },
       finish: { ok: true },
     });
+  });
+
+  it("re-parks a stalled wait node that still holds a durable event-wait record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-live-event-wait"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-live",
+      runId: run.id,
+      nodeId: "await-payment",
+      eventName: "payment.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    let announced = 0;
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"), {
+      onWaiting: () => {
+        announced++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a graph parked behind a live event wait must go back to waiting, not fail",
+    );
+    const persisted = await backend.getRun(run.id);
+    assertEquals(
+      persisted?.status,
+      "waiting",
+      "the persisted run must be waiting while its event wait is still pending",
+    );
+    assertEquals(
+      persisted?.error,
+      undefined,
+      "re-parking must not leave a stalled-graph error on a healthy run",
+    );
+    assertEquals(
+      announced,
+      0,
+      "the wait was announced when the run first parked; announcing it again would " +
+        "raise a duplicate event wait for the same node",
+    );
+  });
+
+  it("re-parks a stalled wait node that still holds a durable approval record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-live-approval"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingApproval(run.id, {
+      id: "apr-live",
+      nodeId: "review",
+      message: "Please review",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("review"));
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a graph parked behind a live approval must go back to waiting, not fail",
+    );
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("fails a stalled wait node whose durable record is already resolved", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-resolved-event-wait"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-resolved",
+      runId: run.id,
+      nodeId: "await-payment",
+      eventName: "payment.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    assertEquals(
+      await backend.resolvePendingEventWait(run.id, "evw-resolved", "delivered"),
+      true,
+      "the record must be resolved for this run to count as genuinely stuck",
+    );
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "failed",
+      "a graph whose wait record is gone really is stuck and must fail",
+    );
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(
+      persisted?.error?.message.includes("stalled in the root graph"),
+      true,
+      `the stalled-graph diagnostic must survive the gate, got: ${persisted?.error?.message}`,
+    );
+  });
+
+  it("fails a stalled wait node that never had a durable record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-no-record"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "failed",
+      "nothing durable is parked on this node, so the run must fail rather than re-park",
+    );
+    assertEquals(
+      (await backend.getRun(run.id))?.error?.message.includes("stalled in the root graph"),
+      true,
+    );
+  });
+
+  it("fails a stalled wait node whose live record belongs to a different node", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-other-node-record"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-other-node",
+      runId: run.id,
+      nodeId: "await-shipping",
+      eventName: "shipping.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "failed",
+      "a wait live on another node says nothing about the node the graph stalled on",
+    );
   });
 });
 

@@ -23,7 +23,7 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import { hasEventWaitSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -772,7 +772,10 @@ export class WorkflowExecutor {
           completedAt: new Date(),
         },
       );
-      if (cancelled) return;
+      if (cancelled) {
+        await this.clearPendingEventWaits(runId);
+        return;
+      }
 
       const current = await this.config.backend.getRun(runId);
       if (!current) {
@@ -801,6 +804,27 @@ export class WorkflowExecutor {
 
   private async waitForCancellationUpdate(runId: string): Promise<void> {
     await this.cancellationUpdates.get(runId);
+  }
+
+  /**
+   * Resolve the event waits of a run that was just cancelled.
+   *
+   * A cancelled run will never consume an event, so a wait left pending —
+   * above all one without a deadline — would report the terminal run as
+   * parked forever and be enumerated by every expiration sweep. Cleanup is
+   * best-effort: the cancellation itself already committed, and the sweep
+   * resolves any record this pass could not.
+   */
+  private async clearPendingEventWaits(runId: string): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    try {
+      for (const wait of await backend.getPendingEventWaits(runId)) {
+        await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+      }
+    } catch (error) {
+      logger.warn(`Failed to clear pending event waits for cancelled run ${runId}:`, error);
+    }
   }
 
   /**

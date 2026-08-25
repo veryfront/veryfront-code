@@ -8,6 +8,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
   PendingApproval,
+  PendingEventWait,
   RunFilter,
   WaitNodeConfig,
   WorkflowDefinition,
@@ -24,6 +25,13 @@ import {
   type WorkflowHandle,
 } from "../executor/workflow-executor.ts";
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
+import {
+  EventWaitManager,
+  type EventWaitManagerConfig,
+  type PublishEventOutcome,
+} from "../runtime/event-wait-manager.ts";
+
+export type { PublishEventOutcome };
 import type { Workflow } from "../dsl/workflow.ts";
 import {
   getPendingApprovalResponseSchemaId,
@@ -60,6 +68,8 @@ export interface WorkflowClientConfig {
   executor?: Partial<WorkflowExecutorConfig>;
   /** Approval manager configuration */
   approval?: Partial<ApprovalManagerConfig>;
+  /** Event wait manager configuration */
+  eventWait?: Partial<Omit<EventWaitManagerConfig, "backend" | "executor">>;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -74,6 +84,7 @@ export class WorkflowClient {
   private backend: WorkflowBackend;
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
+  private eventWaitManager: EventWaitManager;
   private debug: boolean;
   /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
@@ -99,6 +110,29 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
+          await userOnWaiting?.(run, nodeId, activeWaitConfig);
+          return;
+        }
+
+        if (input.type === "event") {
+          // The persisted node state carries only the wait type, never the
+          // event name, so the durable record has to be built from the runtime
+          // config (or the registered definition as a restart fallback). A wait
+          // parked with neither is left alone: there is no name to match a
+          // later event against.
+          const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+          const eventConfig = activeWaitConfig ?? registeredEventConfig;
+          if (eventConfig?.waitType === "event") {
+            try {
+              await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
+              logger.debug("Created event wait for node", { nodeId });
+            } catch (error) {
+              logger.error("Failed to create event wait", error);
+              throw error;
+            }
+          } else {
+            logger.warn("No event wait config found for node", { runId: run.id, nodeId });
+          }
           await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
@@ -146,6 +180,13 @@ export class WorkflowClient {
 
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
+    });
+
+    this.eventWaitManager = new EventWaitManager({
+      backend: this.backend,
+      executor: this.executor,
+      debug: this.debug,
+      ...config.eventWait,
     });
 
     this.approvalManager = new ApprovalManager({
@@ -377,6 +418,34 @@ export class WorkflowClient {
     return await this.approvalManager.reject(runId, approvalId, approver, comment, data);
   }
 
+  /**
+   * Deliver an event to one run, releasing any `waitForEvent` node parked on
+   * that name.
+   *
+   * The event is buffered durably for the run first, so publishing before the
+   * node parks is safe: the wait consumes it as soon as it exists. The outcome
+   * says which of the four things happened, because "no wait was released"
+   * covers cases a caller has to react to differently: `"delivered"`,
+   * `"buffered"`, `"run-terminal"` (the run is over and the event was
+   * discarded), or `"delivery-failed"` (a wait matched, delivery failed, and
+   * both were rolled back so a later publish can retry).
+   *
+   * Rejects when the run's mailbox is full of events no wait has claimed, in
+   * preference to dropping one of them.
+   */
+  publishEvent(
+    runId: string,
+    eventName: string,
+    payload?: unknown,
+  ): Promise<PublishEventOutcome> {
+    return this.eventWaitManager.publishEvent(runId, eventName, payload);
+  }
+
+  /** Read the event waits a run is currently parked on. */
+  getPendingEventWaits(runId: string): Promise<PendingEventWait[]> {
+    return this.eventWaitManager.getPendingEventWaits(runId);
+  }
+
   listAllPendingApprovals(filter?: {
     workflowId?: string;
     approver?: string;
@@ -414,8 +483,13 @@ export class WorkflowClient {
     return this.approvalManager;
   }
 
+  getEventWaitManager(): EventWaitManager {
+    return this.eventWaitManager;
+  }
+
   async destroy(): Promise<void> {
     this.approvalManager.stop();
+    this.eventWaitManager.stop();
     await this.backend.destroy();
     logger.debug("Destroyed");
   }

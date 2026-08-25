@@ -3,6 +3,12 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
+import type { PersistedPendingEventWait } from "./types.ts";
+import {
+  MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOXES,
+} from "../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
@@ -691,6 +697,367 @@ describe("MemoryBackend", () => {
       const run = await backend.getRun("run-claim");
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
+    });
+  });
+
+  describe("Durable event waits", () => {
+    function createEventWait(
+      id: string,
+      overrides: Partial<PersistedPendingEventWait> = {},
+    ): PersistedPendingEventWait {
+      return {
+        id,
+        runId: "run-events",
+        nodeId: "await-payment",
+        eventName: "payment.confirmed",
+        waitKind: "event",
+        requestedAt: new Date(),
+        status: "pending",
+        ...overrides,
+      };
+    }
+
+    beforeEach(async () => {
+      await backend.createRun(createTestRun("run-events", { status: "waiting" }));
+    });
+
+    it("returns a saved wait as pending for its run", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+
+      const waits = await backend.getPendingEventWaits("run-events");
+      assertEquals(waits.length, 1, "the saved wait must be readable back as pending");
+      assertEquals(waits[0]?.eventName, "payment.confirmed", "the event name must round-trip");
+    });
+
+    it("takes a buffered event only for the matching event name, oldest first", async () => {
+      await backend.appendRunEvent("run-events", {
+        id: "evt-1",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-2",
+        eventName: "other.event",
+        payload: { seq: 2 },
+        publishedAt: new Date(),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-3",
+        eventName: "payment.confirmed",
+        payload: { seq: 3 },
+        publishedAt: new Date(),
+      });
+
+      const first = await backend.takeRunEvent("run-events", "payment.confirmed");
+      assertEquals(first?.payload, { seq: 1 }, "the oldest matching event must be taken first");
+
+      const second = await backend.takeRunEvent("run-events", "payment.confirmed");
+      assertEquals(second?.payload, { seq: 3 }, "the next matching event must be taken next");
+
+      assertEquals(
+        await backend.takeRunEvent("run-events", "payment.confirmed"),
+        null,
+        "an exhausted mailbox must report no matching event",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "other.event"))?.payload,
+        { seq: 2 },
+        "a non-matching event must stay buffered for its own name",
+      );
+    });
+
+    it("refuses a wait append that would drop a still-pending wait", async () => {
+      for (let index = 0; index < MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES; index++) {
+        await backend.savePendingEventWait("run-events", createEventWait(`evw-${index}`));
+      }
+
+      await assertRejects(
+        () => backend.savePendingEventWait("run-events", createEventWait("evw-overflow")),
+        Error,
+        "Event wait list full",
+      );
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).length,
+        MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
+        "a refused append must leave existing waits untouched",
+      );
+    });
+
+    it("refuses a publish at the mailbox bound instead of dropping a buffered event", async () => {
+      for (let index = 0; index < MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES; index++) {
+        await backend.appendRunEvent("run-events", {
+          id: "evt-4",
+          eventName: "payment.confirmed",
+          payload: { seq: index },
+          publishedAt: new Date(),
+        });
+      }
+
+      await assertRejects(
+        () =>
+          backend.appendRunEvent("run-events", {
+            id: "evt-5",
+            eventName: "payment.confirmed",
+            payload: { seq: MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES },
+            publishedAt: new Date(),
+          }),
+        Error,
+        "Run event mailbox full",
+      );
+
+      const oldestRetained = await backend.takeRunEvent("run-events", "payment.confirmed");
+      assertEquals(
+        oldestRetained?.payload,
+        { seq: 0 },
+        "a refused publish must leave the oldest buffered event in place, since a wait " +
+          "that has not parked yet may still claim it",
+      );
+    });
+
+    it("drops orphan mailboxes past the bound but keeps one whose run exists", async () => {
+      await backend.appendRunEvent("run-events", {
+        id: "evt-6",
+        eventName: "payment.confirmed",
+        payload: { kept: true },
+        publishedAt: new Date(),
+      });
+      for (let index = 0; index <= MAX_WORKFLOW_RUN_EVENT_MAILBOXES; index++) {
+        await backend.appendRunEvent(`run-never-started-${index}`, {
+          id: "evt-7",
+          eventName: "payment.confirmed",
+          payload: { index },
+          publishedAt: new Date(),
+        });
+      }
+
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.payload,
+        { kept: true },
+        "a mailbox whose run exists must survive orphan eviction",
+      );
+      assertEquals(
+        await backend.takeRunEvent("run-never-started-0", "payment.confirmed"),
+        null,
+        "the oldest mailbox belonging to no run must be evicted at the bound",
+      );
+    });
+
+    it("clears waits and buffered events when the run is deleted", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.appendRunEvent("run-events", {
+        id: "evt-8",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: new Date(),
+      });
+
+      await backend.deleteRun("run-events");
+
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).length,
+        0,
+        "deleting a run must drop its pending event waits",
+      );
+      assertEquals(
+        await backend.takeRunEvent("run-events", "payment.confirmed"),
+        null,
+        "deleting a run must drop its buffered events",
+      );
+    });
+
+    it("lets exactly one caller resolve a pending wait", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "delivered"),
+        true,
+        "the first resolver must win",
+      );
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "evw-1", "expired"),
+        false,
+        "a second resolver must lose rather than resolve the wait twice",
+      );
+    });
+
+    it("returns a delivered wait to pending so a failed delivery can be retried", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.resolvePendingEventWait("run-events", "evw-1", "delivered");
+
+      assertEquals(
+        await backend.restorePendingEventWait("run-events", "evw-1"),
+        true,
+        "a delivery claim must be givable back when the delivery itself failed",
+      );
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map((wait) => wait.id),
+        ["evw-1"],
+        "a restored wait must be pending again, or nothing can wake the run",
+      );
+    });
+
+    it("refuses to reopen a wait that was never claimed", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+
+      assertEquals(
+        await backend.restorePendingEventWait("run-events", "evw-1"),
+        false,
+        "a wait nobody claimed has nothing to give back",
+      );
+      assertEquals(
+        await backend.restorePendingEventWait("run-events", "evw-missing"),
+        false,
+        "a wait id that does not exist must report that rather than throw",
+      );
+
+      await backend.resolvePendingEventWait("run-events", "evw-1", "cancelled");
+      assertEquals(
+        await backend.restorePendingEventWait("run-events", "evw-1"),
+        false,
+        "a cancelled wait belongs to a terminal run and must not be resurrected",
+      );
+    });
+
+    it("returns an expired wait to pending so a lost run failure can be replayed", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.resolvePendingEventWait("run-events", "evw-1", "expired");
+
+      assertEquals(
+        await backend.restorePendingEventWait("run-events", "evw-1"),
+        true,
+        "an expired claim whose run failure did not commit must stay replayable",
+      );
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map((wait) => wait.id),
+        ["evw-1"],
+        "the restored wait must be pending again so the sweep can expire it again",
+      );
+    });
+
+    it("claims an event and resolves its wait as one step, or does nothing at all", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+
+      assertEquals(
+        await backend.claimRunEventForWait("run-events", "evw-1", "payment.confirmed"),
+        null,
+        "an empty mailbox must leave the wait pending rather than half-claim it",
+      );
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).length,
+        1,
+        "a claim that found no event must not resolve the wait",
+      );
+
+      await backend.appendRunEvent("run-events", {
+        id: "evt-claim",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      const claimed = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      assertEquals(claimed?.id, "evt-claim", "the claim must return the taken envelope");
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).length,
+        0,
+        "the claim must resolve the wait in the same step that took the event",
+      );
+      assertEquals(
+        await backend.takeRunEvent("run-events", "payment.confirmed"),
+        null,
+        "the claimed event must be out of the mailbox",
+      );
+
+      await backend.appendRunEvent("run-events", {
+        id: "evt-after",
+        eventName: "payment.confirmed",
+        payload: { seq: 2 },
+        publishedAt: new Date(),
+      });
+      assertEquals(
+        await backend.claimRunEventForWait("run-events", "evw-1", "payment.confirmed"),
+        null,
+        "a wait no longer pending must not claim anything",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-after",
+        "a refused claim must leave the event buffered",
+      );
+    });
+
+    it("restores a claimed event at the head so mailbox order survives a rollback", async () => {
+      await backend.appendRunEvent("run-events", {
+        id: "evt-old",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-new",
+        eventName: "payment.confirmed",
+        payload: { seq: 2 },
+        publishedAt: new Date(),
+      });
+
+      const taken = await backend.takeRunEvent("run-events", "payment.confirmed");
+      assertEquals(taken?.id, "evt-old");
+      await backend.restoreRunEvent("run-events", taken!);
+
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-old",
+        "a restored event must be consumed before events published after it, or a " +
+          "transient delivery failure reorders the run's mail",
+      );
+    });
+
+    it("reclaims a run's mailbox when the run reaches a terminal status", async () => {
+      await backend.appendRunEvent("run-events", {
+        id: "evt-terminal",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: new Date(),
+      });
+
+      await backend.updateRun("run-events", { status: "cancelled", completedAt: new Date() });
+
+      assertEquals(
+        await backend.takeRunEvent("run-events", "payment.confirmed"),
+        null,
+        "a terminal run can never consume its mail, so the transition must reclaim it",
+      );
+    });
+
+    it("evicts a terminal run's mailbox past the bound like an orphan's", async () => {
+      await backend.createRun(createTestRun("run-finished", { status: "waiting" }));
+      // Written after the terminal transition, so only eviction can reclaim it.
+      await backend.updateRun("run-finished", { status: "completed", completedAt: new Date() });
+      await backend.appendRunEvent("run-finished", {
+        id: "evt-finished",
+        eventName: "payment.confirmed",
+        payload: {},
+        publishedAt: new Date(),
+      });
+
+      for (let index = 0; index <= MAX_WORKFLOW_RUN_EVENT_MAILBOXES; index++) {
+        await backend.appendRunEvent(`run-overflow-${index}`, {
+          id: `evt-overflow-${index}`,
+          eventName: "payment.confirmed",
+          payload: { index },
+          publishedAt: new Date(),
+        });
+      }
+
+      assertEquals(
+        await backend.takeRunEvent("run-finished", "payment.confirmed"),
+        null,
+        "a mailbox pinned by a terminal run must not be exempt from the global bound",
+      );
     });
   });
 

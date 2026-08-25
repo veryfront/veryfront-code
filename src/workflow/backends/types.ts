@@ -2,6 +2,7 @@ import type {
   ApprovalDecision,
   Checkpoint,
   PendingApproval,
+  PendingEventWait,
   RunFilter,
   WorkflowQueueItem,
   WorkflowRun,
@@ -107,6 +108,25 @@ export interface PersistedPendingApproval extends PendingApproval {
   responseSchemaId?: string;
 }
 
+/** Event-wait record persisted by workflow backends, including worker ownership. */
+export interface PersistedPendingEventWait extends PendingEventWait {
+  /** Worker that owned the run when the wait was appended. */
+  workerId?: string;
+}
+
+/** One event durably buffered in a run's mailbox until a wait consumes it. */
+export interface RunEventEnvelope {
+  /**
+   * Identity of this one publish. Outcomes are attributed per envelope: with
+   * concurrent publishes a drain can consume an envelope another caller
+   * appended, and without identity that caller would report the wrong result.
+   */
+  id: string;
+  eventName: string;
+  payload: unknown;
+  publishedAt: Date;
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
@@ -201,11 +221,113 @@ export interface WorkflowBackend {
   /** Attempt to claim a stalled run for this worker (atomic compare-and-swap) */
   claimStalledRun?(runId: string, workerId: string, stalledThreshold: number): Promise<boolean>;
 
+  /**
+   * Append a record of a run parked on `waitForEvent` or `delay`.
+   *
+   * A backend that implements this group of methods can wake a parked run from
+   * any process: the record names what the run is waiting for, and the mailbox
+   * below holds the event until a wait claims it. A backend that implements
+   * none of them cannot, and `hasEventWaitSupport` reports that honestly rather
+   * than letting a run park on nothing.
+   */
+  savePendingEventWait?(runId: string, wait: PersistedPendingEventWait): Promise<void>;
+  /** Append an event wait only while the run status and worker owner match. */
+  savePendingEventWaitIfStatusAndWorker?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<boolean>;
+  getPendingEventWaits?(runId: string): Promise<PersistedPendingEventWait[]>;
+  /** Enumerate every still-pending wait, for expiry reconciliation across runs. */
+  listPendingEventWaits?(): Promise<
+    Array<{ runId: string; wait: PersistedPendingEventWait }>
+  >;
+  /**
+   * Resolve a wait atomically, but only while it is still pending. Exactly one
+   * caller wins: delivery, expiry, and cancellation race for the same record,
+   * and only one of them may act on it.
+   */
+  resolvePendingEventWait?(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean>;
+  /**
+   * Return a claimed wait to pending, after acting on the claim failed.
+   *
+   * Claiming a wait is what stops delivery and expiry acting on the same
+   * record, so it has to happen before the run is touched. When the touch then
+   * fails, the claim must be given back or the run is parked on a record that
+   * says it was already resolved and nothing will ever wake it. A `delivered`
+   * claim is reopened when the node completion failed; an `expired` claim is
+   * reopened when failing the run did not commit, so the deadline stays
+   * replayable until it does. A `cancelled` record is never reopened: its run
+   * is terminal.
+   */
+  restorePendingEventWait?(runId: string, waitId: string): Promise<boolean>;
+
+  /**
+   * Buffer one event in a run's durable mailbox.
+   *
+   * Buffering rather than broadcasting is what makes delivery independent of
+   * timing: an event published before its node parks, or while no process holds
+   * the run, waits in the mailbox instead of being dropped.
+   */
+  appendRunEvent?(runId: string, event: RunEventEnvelope): Promise<void>;
+  /**
+   * Atomically remove and return the oldest buffered event with this name, or
+   * null when the mailbox holds none. Removing and returning must be one step
+   * so two waits cannot consume the same event.
+   */
+  takeRunEvent?(runId: string, eventName: string): Promise<RunEventEnvelope | null>;
+  /**
+   * Atomically claim the oldest buffered event with this name for one pending
+   * wait: remove the event AND mark the wait `delivered` as a single step,
+   * returning the claimed envelope, or null (changing nothing) when the wait
+   * is no longer pending or no event with that name is buffered.
+   *
+   * This compound operation exists because performing it as separate take and
+   * resolve calls opens a crash window in which the event has left the mailbox
+   * while the wait is still pending, losing the event forever. A durable
+   * backend must implement it as one atomic operation (a transaction or
+   * script), never as a take followed by a resolve.
+   */
+  claimRunEventForWait?(
+    runId: string,
+    waitId: string,
+    eventName: string,
+  ): Promise<RunEventEnvelope | null>;
+  /**
+   * Return a claimed event to the mailbox after its delivery failed, at the
+   * head of the mailbox rather than the tail.
+   *
+   * The claimed event was the oldest with its name, and waits consume matching
+   * events oldest-first; re-appending it at the tail would let an event
+   * published later be delivered before it after a transient failure. The
+   * restore must succeed even when the mailbox is at its bound: the event
+   * already held a place there when it was claimed.
+   */
+  restoreRunEvent?(runId: string, event: RunEventEnvelope): Promise<void>;
+
+  /**
+   * @deprecated Never implemented by any built-in backend and never called by
+   * the framework; superseded by the durable event-wait method group above
+   * (`appendRunEvent`/`claimRunEventForWait` and the pending-wait records).
+   * Retained as an optional declaration so third-party backends that declared
+   * it keep typechecking.
+   */
   publishEvent?(
     eventName: string,
     payload: unknown,
     options?: { runId?: string; workflowId?: string },
   ): Promise<void>;
+  /**
+   * @deprecated Never implemented by any built-in backend and never called by
+   * the framework; superseded by the durable event-wait method group above.
+   * Retained as an optional declaration so third-party backends that declared
+   * it keep typechecking.
+   */
   subscribeEvents?(runId: string): AsyncIterable<{
     eventName: string;
     payload: unknown;
@@ -287,6 +409,55 @@ export function hasRunObservationSupport(
   backend: WorkflowBackend,
 ): backend is WithRunObservationSupport {
   return typeof backend.openRunObservation === "function";
+}
+
+type WithEventWaitSupport =
+  & WorkflowBackend
+  & Required<
+    Pick<
+      WorkflowBackend,
+      | "savePendingEventWait"
+      | "getPendingEventWaits"
+      | "listPendingEventWaits"
+      | "resolvePendingEventWait"
+      | "restorePendingEventWait"
+      | "appendRunEvent"
+      | "takeRunEvent"
+      | "claimRunEventForWait"
+      | "restoreRunEvent"
+    >
+  >;
+
+/**
+ * Check whether durable event waits are available.
+ *
+ * The whole group is required, not any single method: a backend that could
+ * record a wait but not buffer an event, or buffer an event but not resolve a
+ * wait, would park runs that nothing can ever wake. `restorePendingEventWait`
+ * and `restoreRunEvent` are part of the group for the same reason: without
+ * them a delivery that fails halfway leaves the run parked on a wait already
+ * marked delivered, or re-orders its mailbox.
+ *
+ * A backend that also supports worker execution ownership must implement
+ * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
+ * run a worker owner on such a backend, and persisting a wait for an owned run
+ * requires the owner-fenced append; without it every wait creation would throw
+ * after this guard reported support.
+ */
+export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEventWaitSupport {
+  return (
+    typeof backend.savePendingEventWait === "function" &&
+    typeof backend.getPendingEventWaits === "function" &&
+    typeof backend.listPendingEventWaits === "function" &&
+    typeof backend.resolvePendingEventWait === "function" &&
+    typeof backend.restorePendingEventWait === "function" &&
+    typeof backend.appendRunEvent === "function" &&
+    typeof backend.takeRunEvent === "function" &&
+    typeof backend.claimRunEventForWait === "function" &&
+    typeof backend.restoreRunEvent === "function" &&
+    (!hasWorkerSupport(backend) ||
+      typeof backend.savePendingEventWaitIfStatusAndWorker === "function")
+  );
 }
 
 type WithWorkerSupport =

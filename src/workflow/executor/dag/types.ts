@@ -85,6 +85,22 @@ export interface DAGExecutionResult {
   waitingNode?: string;
   /** Exact config of the node that suspended this execution. */
   waitingConfig?: WaitNodeConfig;
+  /**
+   * Every node the settled batch parked, in index order, when the graph is
+   * waiting. Dependency-free waits suspend together in one batch, and each
+   * needs its own durable record; `waitingNode` is always the first entry.
+   */
+  waitingNodes?: ReadonlyArray<{ nodeId: string; waitConfig?: WaitNodeConfig }>;
+  /**
+   * The wait node this graph found nothing to schedule behind, when every other
+   * unfinished node is merely blocked on it.
+   *
+   * Set alongside `error`, because the graph alone cannot tell a run parked on
+   * a decision that can still arrive from one whose decision was lost: both
+   * look like a wait recorded `running`. A caller that can read the durable
+   * approval or event-wait record decides which it is.
+   */
+  stalledWaitNode?: string;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;

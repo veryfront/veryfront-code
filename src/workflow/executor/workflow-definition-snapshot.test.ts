@@ -181,9 +181,14 @@ describe("workflow definition snapshot", () => {
     );
   });
 
-  it("marks raw events using the legacy delay transport name as explicit events", () => {
+  it("marks an unmarked wait on the reserved delay name as a delay", () => {
+    // `delay()` itself emits exactly this shape — the reserved event name and
+    // no marker (src/workflow/dsl/wait.ts) — and the uncaptured path already
+    // classifies it as a delay via the legacy name fallback. Capturing it as
+    // an explicit event would make a registered or discovered `delay()` time
+    // out and fail its run instead of completing the node.
     const captured = captureWorkflowDefinition(workflowWith({
-      id: "not-a-delay",
+      id: "captured-delay",
       config: {
         type: "wait",
         waitType: "event",
@@ -196,6 +201,24 @@ describe("workflow definition snapshot", () => {
     const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
 
     assertEquals(config.eventName, "__delay__");
+    assertEquals(config._waitKind, "delay");
+  });
+
+  it("preserves an explicit event marker on the reserved delay name", () => {
+    const captured = captureWorkflowDefinition(workflowWith({
+      id: "explicit-event-on-reserved-name",
+      config: {
+        type: "wait",
+        waitType: "event",
+        eventName: "__delay__",
+        _waitKind: "event",
+        timeout: 5,
+        checkpoint: true,
+      } as unknown as WaitNodeConfig,
+    }));
+    assert(Array.isArray(captured.steps));
+    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
+
     assertEquals(config._waitKind, "event");
   });
 

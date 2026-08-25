@@ -98,6 +98,16 @@ describe("waitForEvent()", () => {
       );
     }
   });
+
+  it("rejects the reserved delay event name", () => {
+    assertThrows(
+      () => waitForEvent("not-a-delay", { eventName: INTERNAL_DELAY_EVENT_NAME }),
+      VeryfrontError,
+      "reserved",
+      "a wait on the reserved delay name would never be released by a published " +
+        "event and its timeout would complete the node instead of failing the run",
+    );
+  });
 });
 
 describe("delay()", () => {
@@ -126,5 +136,14 @@ describe("delay()", () => {
 
     const config = expectWaitConfig(node);
     assertEquals(config.timeout, 3000);
+  });
+
+  it("carries an explicit delay marker rather than leaning on the reserved name", () => {
+    const config = expectWaitConfig(delay("cool-down", "5m"));
+    assertEquals(
+      (config as WaitNodeConfig & { _waitKind?: string })._waitKind,
+      "delay",
+      "the marker keeps a delay a delay through definition capture and persistence",
+    );
   });
 });

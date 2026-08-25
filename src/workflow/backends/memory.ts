@@ -17,6 +17,8 @@ import {
   assertWorkflowRunUpdate,
   type BackendConfig,
   type PersistedPendingApproval,
+  type PersistedPendingEventWait,
+  type RunEventEnvelope,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -28,6 +30,13 @@ import {
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { appendRetainedPendingApproval } from "./approval-retention.ts";
+import {
+  appendRetainedPendingEventWait,
+  appendRetainedRunEvent,
+  restoreRetainedRunEvent,
+  takeRetainedRunEvent,
+} from "./event-wait-retention.ts";
+import { MAX_WORKFLOW_RUN_EVENT_MAILBOXES } from "../limits.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
@@ -113,6 +122,8 @@ export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
   private approvals = new Map<string, PersistedPendingApproval[]>();
+  private eventWaits = new Map<string, PersistedPendingEventWait[]>();
+  private runEvents = new Map<string, RunEventEnvelope[]>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
@@ -187,6 +198,15 @@ export class MemoryBackend implements WorkflowBackend {
       this.stalledClaims.delete(runId);
     }
 
+    // A terminal run will never park on a wait again, so nothing can ever
+    // claim its buffered events: reclaim the mailbox with the transition
+    // rather than letting terminal runs pin mailboxes past the global bound.
+    if (
+      patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled"
+    ) {
+      this.runEvents.delete(runId);
+    }
+
     return Promise.resolve();
   }
 
@@ -228,6 +248,8 @@ export class MemoryBackend implements WorkflowBackend {
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
+    this.eventWaits.delete(runId);
+    this.runEvents.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
     return Promise.resolve();
@@ -602,6 +624,162 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   // =========================================================================
+  // Durable event waits
+  // =========================================================================
+
+  savePendingEventWait(runId: string, wait: PersistedPendingEventWait): Promise<void> {
+    logger.debug("Saving event wait", { waitId: wait.id, runId });
+    const waits = this.eventWaits.get(runId) ?? [];
+    try {
+      appendRetainedPendingEventWait(waits, wait);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.eventWaits.set(runId, waits);
+    return Promise.resolve();
+  }
+
+  savePendingEventWaitIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+    return this.savePendingEventWait(runId, wait).then(() => true);
+  }
+
+  getPendingEventWaits(runId: string): Promise<PersistedPendingEventWait[]> {
+    const waits = this.eventWaits.get(runId) ?? [];
+    return Promise.resolve(
+      waits.filter((wait) => wait.status === "pending").map((wait) => structuredClone(wait)),
+    );
+  }
+
+  listPendingEventWaits(): Promise<Array<{ runId: string; wait: PersistedPendingEventWait }>> {
+    const result: Array<{ runId: string; wait: PersistedPendingEventWait }> = [];
+    for (const [runId, waits] of this.eventWaits) {
+      if (!this.runs.has(runId)) continue;
+      for (const wait of waits) {
+        if (wait.status !== "pending") continue;
+        result.push({ runId, wait: structuredClone(wait) });
+      }
+    }
+    return Promise.resolve(result);
+  }
+
+  resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    // Pending-precondition gate: delivery, expiry, and cancellation race for
+    // the same record, and only the winner may act on the run.
+    if (!wait || wait.status !== "pending") return Promise.resolve(false);
+    wait.status = status;
+    return Promise.resolve(true);
+  }
+
+  restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    // Only a claim is given back: a delivered claim whose node completion
+    // failed, or an expired claim whose run failure did not commit. A record
+    // still pending was never claimed by anyone, and a cancelled record
+    // belongs to a terminal run.
+    if (!wait || (wait.status !== "delivered" && wait.status !== "expired")) {
+      return Promise.resolve(false);
+    }
+    wait.status = "pending";
+    return Promise.resolve(true);
+  }
+
+  appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    const mailbox = this.runEvents.get(runId) ?? [];
+    try {
+      appendRetainedRunEvent(mailbox, event);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.runEvents.set(runId, mailbox);
+    this.evictOrphanRunEventMailboxes();
+    return Promise.resolve();
+  }
+
+  /**
+   * Drop the oldest mailboxes that no wait can ever claim from again, once the
+   * mailbox count is over its bound. Publishing to a run id before the run
+   * exists is supported, so a caller publishing to ids that never become runs
+   * would otherwise accumulate mailboxes forever — and a run that reached a
+   * terminal status will never park on anything again, so its buffered events
+   * are equally unclaimable. A mailbox whose run is still active is kept: a
+   * parked wait may still claim its events.
+   */
+  private evictOrphanRunEventMailboxes(): void {
+    let overflow = this.runEvents.size - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
+    if (overflow <= 0) return;
+    const activeStatuses: WorkflowRun["status"][] = ["pending", "running", "waiting"];
+    for (const mailboxRunId of this.runEvents.keys()) {
+      if (overflow <= 0) return;
+      const run = this.runs.get(mailboxRunId);
+      if (run && activeStatuses.includes(run.status)) continue;
+      this.runEvents.delete(mailboxRunId);
+      overflow--;
+    }
+  }
+
+  takeRunEvent(runId: string, eventName: string): Promise<RunEventEnvelope | null> {
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(null);
+    // Taking mutates synchronously before returning, so removal and return are
+    // one atomic step for this in-memory backend.
+    const taken = takeRetainedRunEvent(mailbox, eventName);
+    if (mailbox.length === 0) this.runEvents.delete(runId);
+    return Promise.resolve(taken);
+  }
+
+  /**
+   * Claim the oldest matching event for one pending wait.
+   *
+   * Composed from this backend's own take/resolve/restore so that subclassed
+   * fakes keep observing the same primitives; every mutation is synchronous
+   * in-memory state, so the composition cannot be interrupted by a crash the
+   * way two separate network round-trips to a durable backend can. A durable
+   * backend must implement this as a single atomic operation instead.
+   */
+  async claimRunEventForWait(
+    runId: string,
+    waitId: string,
+    eventName: string,
+  ): Promise<RunEventEnvelope | null> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (!wait || wait.status !== "pending") return null;
+    const taken = await this.takeRunEvent(runId, eventName);
+    if (!taken) return null;
+    const claimed = await this.resolvePendingEventWait(runId, waitId, "delivered");
+    if (!claimed) {
+      // The wait was resolved by another actor between the read and the claim.
+      // The event goes back where it was taken from, order preserved.
+      await this.restoreRunEvent(runId, taken);
+      return null;
+    }
+    return taken;
+  }
+
+  restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    const mailbox = this.runEvents.get(runId) ?? [];
+    restoreRetainedRunEvent(mailbox, event);
+    this.runEvents.set(runId, mailbox);
+    return Promise.resolve();
+  }
+
+  // =========================================================================
   // Queue Operations
   // =========================================================================
 
@@ -792,6 +970,8 @@ export class MemoryBackend implements WorkflowBackend {
     this.runs.clear();
     this.checkpoints.clear();
     this.approvals.clear();
+    this.eventWaits.clear();
+    this.runEvents.clear();
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();

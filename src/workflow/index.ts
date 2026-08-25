@@ -43,6 +43,7 @@
 // =============================================================================
 export type {
   CapturedTenantContext,
+  PendingEventWait,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
@@ -96,12 +97,17 @@ export type {
 // =============================================================================
 export type {
   BackendConfig,
+  RunEventEnvelope,
   WorkflowBackend,
   WorkflowRunObservation,
   WorkflowRunObservedState,
   WorkflowRunUpdate,
 } from "./backends/types.ts";
-export { hasRunObservationSupport, hasWorkerSupport } from "./backends/types.ts";
+export {
+  hasEventWaitSupport,
+  hasRunObservationSupport,
+  hasWorkerSupport,
+} from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
@@ -122,7 +128,11 @@ export type { NodeInfo, WorkflowMetadata } from "./registry.ts";
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
-export type { WorkflowClientConfig, WorkflowRunEventsResult } from "./api/index.ts";
+export type {
+  PublishEventOutcome,
+  WorkflowClientConfig,
+  WorkflowRunEventsResult,
+} from "./api/index.ts";
 
 // =============================================================================
 // React Hooks (re-exported for convenience)

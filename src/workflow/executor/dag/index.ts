@@ -336,6 +336,11 @@ export class DAGExecutor {
           error?: string;
         }
         | undefined;
+      // Every node the settled batch parked, in index order. Dependency-free
+      // waits run in one batch and all suspend; reporting only the first
+      // would persist a durable record for it alone, leaving the others
+      // parked with nothing able to wake them.
+      const waitingNodes: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
       const checkpointNodes: string[] = [];
 
       for (let i = 0; i < batch.length; i++) {
@@ -390,6 +395,10 @@ export class DAGExecutor {
         if (nodeResult.waiting) {
           // A composite reports the child that actually suspended. Falling back
           // to this node covers a top-level wait, which is its own waiting node.
+          waitingNodes.push({
+            nodeId: nodeResult.waitingNode ?? nodeId,
+            waitConfig: nodeResult.waitingConfig,
+          });
           if (!outcome) {
             outcome = {
               kind: "waiting",
@@ -446,6 +455,7 @@ export class DAGExecutor {
           waiting: true,
           waitingNode: outcome.nodeId,
           waitingConfig: outcome.waitConfig,
+          waitingNodes,
           context,
           nodeStates,
           contextPatch,
@@ -486,12 +496,24 @@ export class DAGExecutor {
         .map(({ nodeId, status }) => `${JSON.stringify(nodeId)} (${status})`)
         .join(", ");
       const omitted = unfinished.length - MAX_STALLED_GRAPH_NODE_DETAILS;
+      // Nothing was schedulable, and every unfinished node is either a wait
+      // recorded running or blocked behind one. From here that is
+      // indistinguishable from a run legitimately parked on a decision that has
+      // not arrived yet, so name the wait and let the caller check the durable
+      // record before treating this as terminal.
+      const stalledWaitNode = unfinished.every(({ nodeId, status }) =>
+          status === "pending" ||
+          (status === "running" && nodeMap.get(nodeId)?.config.type === "wait")
+        )
+        ? unfinished.find(({ status }) => status === "running")?.nodeId
+        : undefined;
       return {
         completed: false,
         waiting: false,
         context,
         nodeStates,
         contextPatch,
+        ...(stalledWaitNode === undefined ? {} : { stalledWaitNode }),
         error: `Workflow run ${JSON.stringify(scope.rootRunId)} stalled in ${graph}; ` +
           `unfinished nodes: ${details}${omitted > 0 ? `, and ${omitted} more` : ""}`,
       };
