@@ -91,7 +91,6 @@ export function matchesReviewWakeupPullRequest(
     pullRequest?.state === "open" &&
     pullRequest?.head?.ref === signal?.headBranch &&
     typeof pullRequest?.head?.sha === "string" &&
-    pullRequest.head.sha.toLowerCase() === signal?.headSha &&
     pullRequest?.head?.repo?.id === signal?.headRepositoryId &&
     typeof pullRequest?.base?.ref === "string" &&
     pullRequest.base.ref.length > 0 &&

@@ -1459,13 +1459,6 @@ describe("review wakeup identity", () => {
         pullRequest({
           head: {
             ref: "contributor-branch",
-            sha: OTHER_HEAD,
-            repo: { id: 77 },
-          },
-        }),
-        pullRequest({
-          head: {
-            ref: "contributor-branch",
             sha: 123,
             repo: { id: 77 },
           },
@@ -1485,6 +1478,14 @@ describe("review wakeup identity", () => {
         !matchesReviewWakeupPullRequest(signal, candidate, repository),
       );
     }
+  });
+
+  it("accepts a synthetic wakeup SHA for the current source branch", () => {
+    const signal = parseReviewWakeupRun(
+      wakeupRun({ head_sha: OTHER_HEAD }),
+    );
+    assert(signal);
+    assert(matchesReviewWakeupPullRequest(signal, pullRequest(), repository));
   });
 });
 
