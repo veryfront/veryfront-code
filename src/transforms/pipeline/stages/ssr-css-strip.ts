@@ -616,11 +616,48 @@ function occupiedCodePoints(code: string): Set<number> {
   const occupied = new Set(Array.from(code, (char) => char.codePointAt(0)!));
   const unicodeEscape = /\\u\{([\da-f]{1,6})\}|\\u([\da-f]{4})/gi;
   let previousHighSurrogate: { codeUnit: number; end: number } | undefined;
+  let cursor = 0;
+
+  const recordSurrogateCodeUnit = (codeUnit: number, start: number, end: number): void => {
+    if (
+      codeUnit >= 0xdc00 && codeUnit <= 0xdfff && previousHighSurrogate &&
+      STRING_LINE_CONTINUATIONS.test(
+        code.slice(previousHighSurrogate.end, start),
+      )
+    ) {
+      occupied.add(
+        0x10000 + ((previousHighSurrogate.codeUnit - 0xd800) << 10) +
+          (codeUnit - 0xdc00),
+      );
+    }
+    previousHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff
+      ? { codeUnit, end }
+      : undefined;
+  };
+
+  const recordLiteralSurrogates = (end: number): void => {
+    while (cursor < end) {
+      if (code[cursor] === "\\") {
+        const continuation = /^(?:\\(?:\r\n|[\n\r\u2028\u2029]))/.exec(
+          code.slice(cursor, end),
+        );
+        if (continuation) {
+          cursor += continuation[0].length;
+          continue;
+        }
+      }
+      const codeUnit = code.charCodeAt(cursor);
+      recordSurrogateCodeUnit(codeUnit, cursor, cursor + 1);
+      cursor++;
+    }
+  };
 
   for (const match of code.matchAll(unicodeEscape)) {
+    recordLiteralSurrogates(match.index);
     const escapedValue = Number.parseInt(match[1] ?? match[2]!, 16);
     if (escapedValue > 0x10ffff) {
       previousHighSurrogate = undefined;
+      cursor = match.index + match[0].length;
       continue;
     }
 
@@ -631,25 +668,18 @@ function occupiedCodePoints(code: string): Set<number> {
     // supplementary character before sentinel allocation.
     if (escapedValue > 0xffff) {
       previousHighSurrogate = undefined;
+      cursor = match.index + match[0].length;
       continue;
     }
 
-    const codeUnit = escapedValue;
-    if (
-      codeUnit >= 0xdc00 && codeUnit <= 0xdfff && previousHighSurrogate &&
-      STRING_LINE_CONTINUATIONS.test(
-        code.slice(previousHighSurrogate.end, match.index),
-      )
-    ) {
-      occupied.add(
-        0x10000 + ((previousHighSurrogate.codeUnit - 0xd800) << 10) +
-          (codeUnit - 0xdc00),
-      );
-    }
-    previousHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff
-      ? { codeUnit, end: match.index + match[0].length }
-      : undefined;
+    recordSurrogateCodeUnit(
+      escapedValue,
+      match.index,
+      match.index + match[0].length,
+    );
+    cursor = match.index + match[0].length;
   }
+  recordLiteralSurrogates(code.length);
 
   return occupied;
 }
@@ -1171,7 +1201,9 @@ class CommentQuoteMasker {
   private scanNestedTemplateBrace(char: string, context: TokenContext): boolean {
     if (char !== "{" || this.templateExpressionDepths.length === 0) return false;
     const depthIndex = this.templateExpressionDepths.length - 1;
-    const pendingBody = this.takePendingBody();
+    const pendingBody = this.startsClassHeritageObject(context)
+      ? undefined
+      : this.takePendingBody();
     const braceKind = classifyBraceKind(context, pendingBody?.kind);
     this.append(char);
     this.templateExpressionDepths[depthIndex] = this.templateExpressionDepths[depthIndex]! + 1;
@@ -1536,7 +1568,9 @@ class CommentQuoteMasker {
   }
 
   private recordOpeningBrace(context: TokenContext): void {
-    const pendingBody = this.takePendingBody();
+    const pendingBody = this.startsClassHeritageObject(context)
+      ? undefined
+      : this.takePendingBody();
     const braceKind = classifyBraceKind(context, pendingBody?.kind);
     this.braceKinds.push(braceKind);
     if (pendingBody?.syntax === "class") {
@@ -1545,6 +1579,16 @@ class CommentQuoteMasker {
     if (braceKind === "module-attributes") this.pendingModuleAttributes = false;
     if (braceKind === "module-specifiers") this.pendingImportSpecifiers = false;
     this.canStartDeclaration = braceKind !== "operand" && braceKind !== "module-specifiers";
+  }
+
+  private startsClassHeritageObject(context: TokenContext): boolean {
+    const pendingBody = this.pendingBodies.at(-1);
+    return pendingBody?.syntax === "class" && context.precedingToken === "extends" &&
+      pendingBody.parametersClosed &&
+      this.parenthesisKinds.length === pendingBody.parenthesisDepth &&
+      this.bracketDepth === pendingBody.bracketDepth &&
+      this.braceKinds.length === pendingBody.braceDepth &&
+      this.templateExpressionDepths.length === pendingBody.templateExpressionDepth;
   }
 
   private recordSwitchConditional(optionalChainQuestion: boolean): boolean {

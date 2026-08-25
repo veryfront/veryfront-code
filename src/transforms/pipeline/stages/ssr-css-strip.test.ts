@@ -1347,6 +1347,23 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("does not consume object-literal heritage as a class body", () => {
+    const { masked } = __maskCommentQuotesForModuleLexer(
+      `const value = '"'; class C extends { constructor: Object }.constructor { method() {} } /["]/u.test(value); import styles /* from "./decoy.module.css" */ from "./Button.module.css";`,
+    );
+
+    assertStringIncludes(
+      masked,
+      `class C extends { constructor: Object }.constructor { method() {} }`,
+      "object-literal heritage must not consume the pending class body",
+    );
+    assertEquals(
+      masked.includes('/* from "./decoy.module.css" */'),
+      false,
+      "the scanner must still mask comment quotes after the real class body",
+    );
+  });
+
   it("masks comment quotes after division following a function expression", () => {
     const { masked } = __maskCommentQuotesForModuleLexer(
       `const ratio = function() {} / 2; import styles /* from "./decoy.module.css" */ from "./Button.module.css";`,
@@ -1646,6 +1663,43 @@ describe("css-strip plugin", () => {
       `as "\u{F0000}"`,
       "adjacent braced surrogate escapes must reserve their combined code point",
     );
+  });
+
+  it("reserves surrogate pairs split between source text and escapes", async () => {
+    const bmpPrivateUse = Array.from(
+      { length: 0xf8ff - 0xe000 + 1 },
+      (_, offset) => String.fromCodePoint(0xe000 + offset),
+    ).join("");
+    const high = String.fromCharCode(0xdb80);
+    const low = String.fromCharCode(0xdc00);
+
+    for (
+      const { exportName, label } of [
+        {
+          exportName: `${high}\\uDC00`,
+          label: "literal high surrogate plus escaped low surrogate",
+        },
+        {
+          exportName: `\\uDB80${low}`,
+          label: "escaped high surrogate plus literal low surrogate",
+        },
+      ] as const
+    ) {
+      const ctx = createContext(
+        `const filler = ${
+          JSON.stringify(bmpPrivateUse)
+        }; export { "${exportName}" } /* from "./decoy.module.css" */ from "./Button.module.css"; export { filler };`,
+      );
+
+      const result = await cssStripPlugin.transform(ctx);
+
+      assertStringIncludes(
+        result,
+        `as "\u{F0000}"`,
+        `${label} must not be borrowed as a quote sentinel`,
+      );
+      assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+    }
   });
 
   it("treats a leading hashbang as a line comment while masking comments", async () => {
