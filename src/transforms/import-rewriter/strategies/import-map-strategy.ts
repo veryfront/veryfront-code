@@ -11,30 +11,47 @@ import { isEsmShUrl } from "../url-builder.ts";
  * Splits an esm.sh path into its package name and subpath.
  *
  * esm.sh serves two specifier shapes, `pkg[@version][/subpath]` and
- * `@scope/pkg[@version][/subpath]`. The version is optional and never contains
- * a slash, so taking it off first leaves the subpath as the remainder in both
- * shapes. Parsing the two shapes separately is what previously let them drift:
- * the scoped branch consumed the version as part of the package name and then
- * looked for it again, so every scoped subpath was dropped.
+ * `@scope/pkg[@version][/subpath]`. Parsing them with separate rules is what
+ * previously let them drift: the scoped branch consumed the version as part of
+ * the package name and then looked for it again, so every scoped subpath was
+ * dropped. One parse keeps the two shapes in step.
+ *
+ * The scan is written with indexOf rather than a regular expression because the
+ * optional version and the optional subpath would otherwise both be able to
+ * match the same trailing characters, which backtracks super-linearly.
  *
  * The subpath is multi-segment for esm.sh build targets such as
  * `@scope/pkg@1.0/es2022/pkg.mjs`, so the whole remainder is kept.
  */
-const ESM_SH_SPECIFIER = /^(@[^/]+\/[^/@]+|[^/@]+)(?:@[^/]+)?(.*)$/;
-
 function parseEsmShSpecifier(url: string): { pkg: string; subpath: string } | null {
+  let pathname: string;
   try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
-    const match = pathname.match(ESM_SH_SPECIFIER);
-    if (!match?.[1]) return null;
-
-    const remainder = match[2] ?? "";
-    return { pkg: match[1], subpath: remainder.startsWith("/") ? remainder : "" };
+    pathname = new URL(url).pathname.slice(1).replace(/^v\d+\//, "");
   } catch (_) {
     /* expected: URL may be malformed */
     return null;
   }
+
+  // The package name spans one segment, or two when it carries a scope.
+  let nameEnd: number;
+  if (pathname.startsWith("@")) {
+    const scopeEnd = pathname.indexOf("/");
+    if (scopeEnd <= 1) return null;
+    nameEnd = pathname.indexOf("/", scopeEnd + 1);
+  } else {
+    nameEnd = pathname.indexOf("/");
+  }
+
+  const head = nameEnd === -1 ? pathname : pathname.slice(0, nameEnd);
+  const subpath = nameEnd === -1 ? "" : pathname.slice(nameEnd);
+
+  // Any "@" after the first character starts the version, whatever it contains,
+  // so non-numeric tags such as "@beta" are stripped along with "@1.0".
+  const versionAt = head.indexOf("@", 1);
+  const pkg = versionAt === -1 ? head : head.slice(0, versionAt);
+  if (!pkg || pkg.endsWith("/")) return null;
+
+  return { pkg, subpath };
 }
 
 function extractEsmShPackage(url: string): string | null {
@@ -44,6 +61,21 @@ function extractEsmShPackage(url: string): string | null {
 
 function extractEsmShSubpath(url: string): string {
   return parseEsmShSpecifier(url)?.subpath ?? "";
+}
+
+/**
+ * Appends a subpath to a mapping, keeping it inside the path component.
+ *
+ * esm.sh mappings routinely carry a query, as in
+ * `https://esm.sh/@scope/pkg@2?target=es2022`. Concatenating the subpath onto
+ * the whole string would fold it into the last parameter value and request the
+ * package root, so the subpath goes in ahead of the query or fragment.
+ */
+function appendSubpath(mapping: string, subpath: string): string {
+  const boundary = mapping.search(/[?#]/);
+  if (boundary === -1) return mapping + subpath;
+
+  return mapping.slice(0, boundary) + subpath + mapping.slice(boundary);
 }
 
 export function resolveImportWithMap(
@@ -79,7 +111,7 @@ export function resolveImportWithMap(
           !mapping.startsWith("npm:");
         if (isFilePath) return mapping;
 
-        return mapping + subpath;
+        return appendSubpath(mapping, subpath);
       }
     }
   }

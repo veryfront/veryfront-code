@@ -207,6 +207,37 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("inserts a scoped subpath before a mapping's query string", () => {
+      const map: ImportMapConfig = {
+        imports: { "@scope/pkg": "https://esm.sh/@scope/pkg@2?target=es2022" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://esm.sh/@scope/pkg@2/sub?target=es2022",
+        "appending after the query would fold the subpath into the target parameter",
+      );
+    });
+
+    it("inserts an unscoped subpath before a mapping's query string", () => {
+      const map: ImportMapConfig = {
+        imports: { lodash: "https://cdn.example/lodash?target=es2022" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "https://cdn.example/lodash/fp?target=es2022",
+        "the query boundary applies to unscoped packages too",
+      );
+    });
+
+    it("inserts a subpath before a mapping's fragment", () => {
+      const map: ImportMapConfig = { imports: { lodash: "https://cdn.example/lodash#frag" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp", map),
+        "https://cdn.example/lodash/fp#frag",
+        "a fragment ends the path just as a query does",
+      );
+    });
+
     it("resolves a scoped package carrying a non-numeric version tag", () => {
       const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
       assertEquals(
