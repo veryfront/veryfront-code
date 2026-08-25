@@ -42,7 +42,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { __registerLogRecordEmitter, logger } from "#veryfront/utils";
+import { __registerLogRecordEmitter, logger } from "#veryfront/utils/logger/logger.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   getEnvSource,

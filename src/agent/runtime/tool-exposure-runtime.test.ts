@@ -6,7 +6,7 @@ import { tool } from "#veryfront/tool";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig } from "../types.ts";
 import { type ScriptedModel, scriptedModel } from "./model-runtime.test-helpers.ts";
