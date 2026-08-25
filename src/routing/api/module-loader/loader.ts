@@ -12,6 +12,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import {
   restrictedRuntimeModuleReason,
+  type ValidatedModuleScan,
   validateHTTPImports,
   validateModuleSpecifierHosts,
 } from "./http-validator.ts";
@@ -568,6 +569,7 @@ async function canDirectImportModuleGraph(args: {
       (scan.requiresBundling && !scan.parserBacked)
     ) {
       canDirectImport = false;
+      continue;
     }
 
     // A worker's entry is executed by the worker's own loader, which neither
@@ -669,12 +671,23 @@ function resolveContainedLocalModule(
  * the walk has to look for the file under that name and not the whole URL.
  */
 function modulePathOfSpecifier(specifier: string): string {
-  const suffix = specifier.search(/[?#]/);
-  return suffix === -1 ? specifier : specifier.slice(0, suffix);
+  return splitModuleSpecifier(specifier).modulePath;
 }
 
 function moduleSuffixOfSpecifier(specifier: string): string {
-  return specifier.slice(modulePathOfSpecifier(specifier).length);
+  return splitModuleSpecifier(specifier).suffix;
+}
+
+function splitModuleSpecifier(specifier: string): { modulePath: string; suffix: string } {
+  const suffixStart = specifier.search(/[?#]/);
+  const rawModulePath = suffixStart === -1 ? specifier : specifier.slice(0, suffixStart);
+  const suffix = suffixStart === -1 ? "" : specifier.slice(suffixStart);
+  if (!rawModulePath.includes("%")) return { modulePath: rawModulePath, suffix };
+  try {
+    return { modulePath: decodeURIComponent(rawModulePath), suffix };
+  } catch {
+    return { modulePath: rawModulePath, suffix };
+  }
 }
 
 /** Whether the runtime loads this path as JSON data rather than as a module it executes. */
@@ -1025,8 +1038,10 @@ async function loadValidatedJSModule(
 function createImportMapPlugin(
   projectDir: string,
   sourceSnapshot: ProjectSourceSnapshot,
+  routeModulePath: string,
   allowedHosts: string[],
   denoImports: DenoImportMap,
+  workerImportMap: DenoImportMap | null,
   config?: VeryfrontConfig,
 ): Plugin {
   // A project's own veryfront config wins over its Deno config for the same
@@ -1124,8 +1139,10 @@ function createImportMapPlugin(
         createNamespaceOnLoadHandler({
           sourceSnapshot,
           projectDir,
+          routeModulePath,
           errorLabel: "file via import map",
           allowedHosts,
+          workerImportMap,
         }),
       );
     },
@@ -1135,10 +1152,19 @@ function createImportMapPlugin(
 function createNamespaceOnLoadHandler(options: {
   sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
+  routeModulePath: string;
   errorLabel: string;
   allowedHosts: string[];
+  workerImportMap: DenoImportMap | null;
 }) {
-  const { sourceSnapshot, projectDir, errorLabel, allowedHosts } = options;
+  const {
+    sourceSnapshot,
+    projectDir,
+    routeModulePath,
+    errorLabel,
+    allowedHosts,
+    workerImportMap,
+  } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
@@ -1151,7 +1177,17 @@ function createNamespaceOnLoadHandler(options: {
       // A `.json` module is data the bundler parses as JSON, so it can neither
       // execute nor name an import. Scanning it as JavaScript would reject an
       // ordinary value such as `{ "label": "Function" }`.
-      if (!isJSONModulePath(filePath)) await validateHTTPImports(contents, allowedHosts);
+      if (!isJSONModulePath(filePath)) {
+        const scan = await validateHTTPImports(contents, allowedHosts);
+        await validateBundledLocalWorkerEntries({
+          sourceSnapshot,
+          projectDir,
+          routeModulePath,
+          scan,
+          allowedHosts,
+          importMap: workerImportMap,
+        });
+      }
 
       return {
         contents,
@@ -1166,11 +1202,154 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
+async function validateBundledLocalWorkerEntries(options: {
+  sourceSnapshot: ProjectSourceSnapshot;
+  projectDir: string;
+  routeModulePath: string;
+  scan: ValidatedModuleScan;
+  allowedHosts: string[];
+  importMap: DenoImportMap | null;
+}): Promise<void> {
+  const {
+    sourceSnapshot,
+    projectDir,
+    routeModulePath,
+    scan,
+    allowedHosts,
+    importMap,
+  } = options;
+  const visited = new Set<string>();
+  for (const workerSpecifier of scan.localWorkerSpecifiers) {
+    const workerPath = resolveContainedLocalModule(projectDir, routeModulePath, workerSpecifier);
+    await validateBundledLocalWorkerGraph({
+      sourceSnapshot,
+      projectDir,
+      entryPath: workerPath,
+      allowedHosts,
+      importMap,
+      visited,
+    });
+  }
+}
+
+async function validateBundledLocalWorkerGraph(options: {
+  sourceSnapshot: ProjectSourceSnapshot;
+  projectDir: string;
+  entryPath: string;
+  allowedHosts: string[];
+  importMap: DenoImportMap | null;
+  visited: Set<string>;
+}): Promise<void> {
+  const { sourceSnapshot, projectDir, entryPath, allowedHosts, importMap, visited } = options;
+  const pending = [entryPath];
+
+  while (pending.length > 0) {
+    const nextPath = pending.pop() as string;
+    const { filePath, contents } = await readFileWithExtensions(
+      sourceSnapshot,
+      nextPath,
+      FILE_EXTENSIONS,
+      projectDir,
+    );
+    if (visited.has(filePath)) continue;
+    visited.add(filePath);
+
+    if (isJSONModulePath(filePath)) continue;
+
+    const scan = await validateHTTPImports(contents, allowedHosts);
+    for (const specifier of scan.specifiers) {
+      const localTarget = bundledWorkerImportTarget({
+        specifier,
+        filePath,
+        projectDir,
+        allowedHosts,
+        importMap,
+      });
+      if (localTarget !== null) pending.push(localTarget);
+    }
+
+    for (const workerSpecifier of scan.localWorkerSpecifiers) {
+      pending.push(resolveContainedLocalModule(projectDir, filePath, workerSpecifier));
+    }
+  }
+}
+
+function bundledWorkerImportTarget(options: {
+  specifier: string;
+  filePath: string;
+  projectDir: string;
+  allowedHosts: string[];
+  importMap: DenoImportMap | null;
+}): string | null {
+  const { specifier, filePath, projectDir, allowedHosts, importMap } = options;
+  const mappedTarget = importMap === null
+    ? null
+    : lookupImportMapEntry(importMap, specifier, filePath);
+  if (mappedTarget !== null) {
+    return validatedWorkerImportTarget({
+      originalSpecifier: specifier,
+      target: mappedTarget,
+      filePath,
+      projectDir,
+      allowedHosts,
+    });
+  }
+
+  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    return resolveContainedLocalModule(projectDir, filePath, specifier);
+  }
+  if (canDirectImportSpecifier(specifier)) return null;
+  if (isBareModuleSpecifier(specifier)) {
+    if (importMap === null) rejectUnvalidatedWorkerImport(specifier);
+    return null;
+  }
+  if (REMOTE_URL_SPECIFIER.test(specifier)) return null;
+  return rejectUnvalidatedWorkerImport(specifier);
+}
+
+function validatedWorkerImportTarget(options: {
+  originalSpecifier: string;
+  target: string;
+  filePath: string;
+  projectDir: string;
+  allowedHosts: string[];
+}): string | null {
+  const { originalSpecifier, target, filePath, projectDir, allowedHosts } = options;
+  const restrictedReason = restrictedRuntimeModuleReason(target);
+  if (restrictedReason !== null) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] handler build failed: ${restrictedReason}.`,
+      }),
+    );
+  }
+  if (pathHelper.isAbsolute(modulePathOfSpecifier(target))) {
+    return resolveContainedLocalModule(projectDir, filePath, target);
+  }
+  if (canDirectImportSpecifier(target)) return null;
+  validateModuleSpecifierHosts([target], allowedHosts);
+  if (REMOTE_URL_SPECIFIER.test(target)) return null;
+  return rejectUnvalidatedWorkerImport(originalSpecifier);
+}
+
+function rejectUnvalidatedWorkerImport(specifier: string): never {
+  throw toError(
+    createError({
+      type: "api",
+      message:
+        `[API] handler build failed: Worker import cannot be validated against the remote import allow-list: ${specifier}`,
+    }),
+  );
+}
+
 /** Resolves the framework's built-in @/ project alias through the runtime adapter. */
 function createProjectAliasPlugin(
   sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
+  routeModulePath: string,
   allowedHosts: string[],
+  workerImportMap: DenoImportMap | null,
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
 
@@ -1199,8 +1378,10 @@ function createProjectAliasPlugin(
         createNamespaceOnLoadHandler({
           sourceSnapshot,
           projectDir,
+          routeModulePath,
           errorLabel: "via project alias",
           allowedHosts,
+          workerImportMap,
         }),
       );
     },
@@ -1211,7 +1392,9 @@ function createProjectAliasPlugin(
 function createAdapterResolvePlugin(
   sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
+  routeModulePath: string,
   allowedHosts: string[],
+  workerImportMap: DenoImportMap | null,
 ): Plugin {
   return {
     name: "vf-adapter-resolve",
@@ -1256,8 +1439,10 @@ function createAdapterResolvePlugin(
         createNamespaceOnLoadHandler({
           sourceSnapshot,
           projectDir,
+          routeModulePath,
           errorLabel: "via adapter",
           allowedHosts,
+          workerImportMap,
         }),
       );
     },
@@ -1289,7 +1474,10 @@ function projectBoundaryError(path: string): { errors: Array<{ text: string }> }
 
 function createProjectBoundaryPlugin(
   sourceSnapshot: ProjectSourceSnapshot,
+  projectDir: string,
+  routeModulePath: string,
   allowedHosts: string[],
+  workerImportMap: DenoImportMap | null,
 ): Plugin {
   return {
     name: "vf-project-boundary",
@@ -1299,7 +1487,15 @@ function createProjectBoundaryPlugin(
           const source = await sourceSnapshot.read(args.path);
           // JSON is parsed as data, never executed; see the note above.
           if (!isJSONModulePath(source.logicalPath)) {
-            await validateHTTPImports(source.contents, allowedHosts);
+            const scan = await validateHTTPImports(source.contents, allowedHosts);
+            await validateBundledLocalWorkerEntries({
+              sourceSnapshot,
+              projectDir,
+              routeModulePath,
+              scan,
+              allowedHosts,
+              importMap: workerImportMap,
+            });
           }
           return {
             contents: source.contents,
@@ -1371,13 +1567,22 @@ function buildTranspiledModuleSource(
       const loader = getEsbuildLoader(resolvedPath);
 
       const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
-      await validateHTTPImports(source, allowedHosts);
+      const workerImportMap = await readDenoImportMap(sourceSnapshot, projectDir);
+      const sourceScan = await validateHTTPImports(source, allowedHosts);
+      await validateBundledLocalWorkerEntries({
+        sourceSnapshot,
+        projectDir,
+        routeModulePath: resolvedPath,
+        scan: sourceScan,
+        allowedHosts,
+        importMap: workerImportMap,
+      });
 
       // Read through the project snapshot, so an adapter-backed project's own
       // config is visible: the host filesystem cannot see one. An undecidable
       // config contributes nothing: those specifiers resolve exactly as they
       // did before the map was consulted.
-      const denoImports = await readDenoImportMap(sourceSnapshot, projectDir) ?? {
+      const denoImports = workerImportMap ?? {
         imports: {},
         scopes: {},
       };
@@ -1436,6 +1641,15 @@ function buildTranspiledModuleSource(
           'import { createRequire as __vf_createRequire } from "node:module";',
           `var require = __vf_createRequire(${safeProjectDir});`,
         ].join("\n");
+      const routeSourceUrl = JSON.stringify(pathHelper.toFileUrl(resolvedPath).href);
+      const workerShim = [
+        `const __vf_routeSourceUrl = ${routeSourceUrl};`,
+        `var Worker = typeof globalThis.Worker === "function" ? class extends globalThis.Worker {`,
+        `  constructor(specifier, options) {`,
+        `    super(typeof specifier === "string" && (specifier.startsWith("./") || specifier.startsWith("../")) ? new URL(specifier, __vf_routeSourceUrl) : specifier, options);`,
+        `  }`,
+        `} : globalThis.Worker;`,
+      ].join("\n");
 
       const result: BuildResult = await build({
         bundle: true,
@@ -1446,7 +1660,10 @@ function buildTranspiledModuleSource(
         jsx: "automatic",
         jsxImportSource: "react",
         resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-        banner: { js: requireShim },
+        banner: { js: `${requireShim}\n${workerShim}` },
+        define: {
+          "import.meta.url": routeSourceUrl,
+        },
         external: [
           "zod",
           "node:*",
@@ -1463,11 +1680,37 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, sourceSnapshot, allowedHosts, denoImports, config),
-          createProjectAliasPlugin(sourceSnapshot, projectDir, allowedHosts),
-          createAdapterResolvePlugin(sourceSnapshot, projectDir, allowedHosts),
+          createImportMapPlugin(
+            projectDir,
+            sourceSnapshot,
+            resolvedPath,
+            allowedHosts,
+            denoImports,
+            workerImportMap,
+            config,
+          ),
+          createProjectAliasPlugin(
+            sourceSnapshot,
+            projectDir,
+            resolvedPath,
+            allowedHosts,
+            workerImportMap,
+          ),
+          createAdapterResolvePlugin(
+            sourceSnapshot,
+            projectDir,
+            resolvedPath,
+            allowedHosts,
+            workerImportMap,
+          ),
           createHTTPPlugin({ allowedHosts, projectDir }),
-          createProjectBoundaryPlugin(sourceSnapshot, allowedHosts),
+          createProjectBoundaryPlugin(
+            sourceSnapshot,
+            projectDir,
+            resolvedPath,
+            allowedHosts,
+            workerImportMap,
+          ),
         ],
         // Only the opt-in decorator transform needs a working directory: adding
         // it unconditionally would change how the default esbuild path reports
