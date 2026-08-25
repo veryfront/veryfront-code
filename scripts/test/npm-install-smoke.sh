@@ -96,7 +96,7 @@ if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
 else
   if [ -n "${VF_NPM_PACK_DIR:-}" ]; then
     [ -d "$VF_NPM_PACK_DIR" ] || fail "canonical npm artifact directory missing"
-    deno run --config="$ROOT_DIR/scripts/test.deno.json" --allow-read \
+    deno run --config="$ROOT_DIR/scripts/test.deno.json" --allow-read --allow-run=tar \
       "$ROOT_DIR/scripts/ci/npm-compatibility-artifact.ts" verify "$VF_NPM_PACK_DIR" ||
       fail "canonical npm artifact verification failed"
     cp "$VF_NPM_PACK_DIR"/*.tgz "$WORKDIR"/

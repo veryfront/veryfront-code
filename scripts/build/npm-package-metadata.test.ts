@@ -715,6 +715,7 @@ describe("npm supply-chain policy", () => {
 
   it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
     const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
+    assertStringIncludes(source, "--allow-run=tar");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
