@@ -24,6 +24,13 @@ artifact, and release jobs publish its verified tarballs directly. Veryfront
 retains the canonical artifact for 30 days so production approval can publish
 the exact tested package set.
 
+For pull requests and merge queue runs, `quality gate (artifact)` is a separate
+stable required check from `quality gate (merge)`. Runtime compatibility lanes
+are aggregated only by the artifact gate, so `quality-gate-merge` does not
+duplicate them. The workflow exposes both stable check names for repository
+rules to require. Those external branch protection or ruleset settings are not
+configured or asserted by this document.
+
 Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
 [artifact contract](../tests/integration/ci/npm-compatibility-artifact.test.ts),
 and [workflow contract](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts).

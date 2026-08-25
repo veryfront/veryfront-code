@@ -80,7 +80,7 @@ if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
 
   while IFS= read -r PACKAGE_NAME; do
     [ -n "$PACKAGE_NAME" ] || continue
-    [[ "$PACKAGE_NAME" =~ ^(veryfront|@veryfront/[a-z0-9][a-z0-9._-]*)$ ]] ||
+    [[ "${#PACKAGE_NAME}" -le 214 && "$PACKAGE_NAME" =~ ^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$ ]] ||
       fail "registry package list contains an invalid package name"
     PACKAGE_SPEC="${PACKAGE_NAME}@${VF_NPM_REGISTRY_VERSION}"
     if [ "$PACKAGE_NAME" = "@veryfront/ext-auth-jwt" ]; then
