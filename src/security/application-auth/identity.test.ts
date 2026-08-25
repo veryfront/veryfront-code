@@ -3,6 +3,19 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createApplicationIdentity } from "./identity.ts";
 
+const nativeObjectFreeze = Object.freeze;
+const nativeObjectIsFrozen = Object.isFrozen;
+const nativeSetHas = Set.prototype.has;
+const nativeSetAdd = Set.prototype.add;
+const nativeArrayPush = Array.prototype.push;
+
+function restoreIdentityPrimordials(): void {
+  Object.freeze = nativeObjectFreeze;
+  Set.prototype.has = nativeSetHas;
+  Set.prototype.add = nativeSetAdd;
+  Array.prototype.push = nativeArrayPush;
+}
+
 describe("security/application-auth/identity", () => {
   it("requires the exact configured issuer and a non-empty subject", () => {
     assertThrows(
@@ -161,6 +174,51 @@ describe("security/application-auth/identity", () => {
     assertThrows(() => {
       (identity.roles as string[]).push("owner");
     }, TypeError);
+  });
+
+  it("deep-freezes identity data after Object.freeze and collection prototype tampering", () => {
+    try {
+      Object.freeze = ((value: unknown) => value) as typeof Object.freeze;
+      Set.prototype.has = (() => false) as typeof Set.prototype.has;
+      Set.prototype.add = function (): Set<unknown> {
+        return this;
+      } as typeof Set.prototype.add;
+      Array.prototype.push = function (): number {
+        return this.length;
+      } as typeof Array.prototype.push;
+
+      const identity = createApplicationIdentity({
+        issuer: "https://issuer.example.com",
+        expectedIssuer: "https://issuer.example.com",
+        subject: "user-123",
+        claims: {
+          profile: { tags: ["alpha"] },
+          groups: ["admin", "admin", "editor"],
+          roles: ["owner", "owner"],
+        },
+        claimNames: {
+          groups: "groups",
+          roles: "roles",
+        },
+      });
+
+      Object.freeze = nativeObjectFreeze;
+      assertEquals(identity.groups, ["admin", "editor"]);
+      assertEquals(identity.roles, ["owner"]);
+      assertEquals(nativeObjectIsFrozen(identity), true);
+      assertEquals(nativeObjectIsFrozen(identity.claims), true);
+      assertEquals(nativeObjectIsFrozen(identity.groups), true);
+      assertEquals(nativeObjectIsFrozen(identity.roles), true);
+      assertEquals(nativeObjectIsFrozen(identity.claims.profile), true);
+      assertEquals(
+        nativeObjectIsFrozen(
+          (identity.claims.profile as { readonly tags: readonly string[] }).tags,
+        ),
+        true,
+      );
+    } finally {
+      restoreIdentityPrimordials();
+    }
   });
 
   it("preserves own __proto__ root claims as frozen JSON-safe data", () => {

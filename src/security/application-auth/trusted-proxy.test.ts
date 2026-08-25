@@ -11,6 +11,11 @@ const NativeURL = URL;
 const nativeNumberParseInt = Number.parseInt;
 const nativeArrayIsArray = Array.isArray;
 const nativeNumberIsSafeInteger = Number.isSafeInteger;
+const nativeSetHas = Set.prototype.has;
+const nativeSetAdd = Set.prototype.add;
+const nativeArrayPush = Array.prototype.push;
+const nativeObjectFreeze = Object.freeze;
+const nativeObjectIsFrozen = Object.isFrozen;
 
 function config(
   overrides: Partial<TrustedProxyAuthConfig> = {},
@@ -70,6 +75,10 @@ async function withTamperedPrimordials<T>(
     Number.parseInt = nativeNumberParseInt;
     Array.isArray = nativeArrayIsArray;
     Number.isSafeInteger = nativeNumberIsSafeInteger;
+    Set.prototype.has = nativeSetHas;
+    Set.prototype.add = nativeSetAdd;
+    Array.prototype.push = nativeArrayPush;
+    Object.freeze = nativeObjectFreeze;
   }
 }
 
@@ -169,6 +178,120 @@ describe("security/application-auth trusted proxy runtime", () => {
         };
       },
       async () => {
+        assertUnauthorized(
+          await ipv6Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "2001:db8::2")),
+        );
+        assertUnauthorized(
+          await mappedRuntime.admitRequest(
+            request({ "x-auth-subject": "user-123" }, "::ffff:c633:6403"),
+          ),
+        );
+      },
+    );
+  });
+
+  it("rejects wrong peers after Set.has tampering following runtime creation", async () => {
+    const ipv4Runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["127.0.0.1"] }),
+    });
+    const ipv6Runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["2001:db8::1"] }),
+    });
+    const mappedRuntime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["192.0.2.10"] }),
+    });
+
+    await withTamperedPrimordials(
+      () => {
+        Set.prototype.has = (() => true) as typeof Set.prototype.has;
+      },
+      async () => {
+        assertUnauthorized(
+          await ipv4Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "198.51.100.3")),
+        );
+        assertUnauthorized(
+          await ipv6Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "2001:db8::2")),
+        );
+        assertUnauthorized(
+          await mappedRuntime.admitRequest(
+            request({ "x-auth-subject": "user-123" }, "::ffff:c633:6403"),
+          ),
+        );
+      },
+    );
+  });
+
+  it("rejects wrong peers after Set.add tampering during runtime config snapshot", async () => {
+    await withTamperedPrimordials(
+      () => {
+        Set.prototype.add = function (value: string): Set<string> {
+          if (value === "ipv4:127.0.0.1") {
+            return nativeSetAdd.call(this, "ipv4:198.51.100.3");
+          }
+          if (value === "ipv6:2001:db8::1") {
+            return nativeSetAdd.call(this, "ipv6:2001:db8::2");
+          }
+          if (value === "ipv4:192.0.2.10") {
+            return nativeSetAdd.call(this, "ipv4:198.51.100.3");
+          }
+          return nativeSetAdd.call(this, value);
+        } as typeof Set.prototype.add;
+      },
+      async () => {
+        const ipv4Runtime = createTrustedProxyApplicationAuthRuntime({
+          config: config({ trustedPeers: ["127.0.0.1"] }),
+        });
+        const ipv6Runtime = createTrustedProxyApplicationAuthRuntime({
+          config: config({ trustedPeers: ["2001:db8::1"] }),
+        });
+        const mappedRuntime = createTrustedProxyApplicationAuthRuntime({
+          config: config({ trustedPeers: ["192.0.2.10"] }),
+        });
+
+        assertUnauthorized(
+          await ipv4Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "198.51.100.3")),
+        );
+        assertUnauthorized(
+          await ipv6Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "2001:db8::2")),
+        );
+        assertUnauthorized(
+          await mappedRuntime.admitRequest(
+            request({ "x-auth-subject": "user-123" }, "::ffff:c633:6403"),
+          ),
+        );
+      },
+    );
+  });
+
+  it("rejects wrong peers after Array.push tampering following runtime creation", async () => {
+    const ipv4Runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["127.0.0.1"] }),
+    });
+    const ipv6Runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["2001:db8::1"] }),
+    });
+    const mappedRuntime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["192.0.2.10"] }),
+    });
+
+    await withTamperedPrimordials(
+      () => {
+        Array.prototype.push = function (...values: unknown[]): number {
+          const rewritten = values.map((value) => {
+            if (value === 198) return 127;
+            if (value === 51 || value === 100 || value === 3) return value === 3 ? 1 : 0;
+            if (value === 2) return 1;
+            if (value === 0xc633) return 0xc000;
+            if (value === 0x6403) return 0x020a;
+            return value;
+          });
+          return nativeArrayPush.apply(this, rewritten);
+        } as typeof Array.prototype.push;
+      },
+      async () => {
+        assertUnauthorized(
+          await ipv4Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "198.51.100.3")),
+        );
         assertUnauthorized(
           await ipv6Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "2001:db8::2")),
         );
@@ -303,6 +426,34 @@ describe("security/application-auth trusted proxy runtime", () => {
       groups: ["admin", "editor", "viewer"],
       roles: ["deployer", "owner"],
     });
+  });
+
+  it("returns a frozen identity after Object.freeze tampering following runtime creation", async () => {
+    const runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["127.0.0.1"] }),
+    });
+
+    await withTamperedPrimordials(
+      () => {
+        Object.freeze = ((value: unknown) => value) as typeof Object.freeze;
+      },
+      async () => {
+        const result = await runtime.admitRequest(
+          request({
+            "x-auth-subject": "user-123",
+            "x-auth-groups": "admin",
+            "x-auth-roles": "owner",
+          }),
+        );
+        Object.freeze = nativeObjectFreeze;
+
+        assert(!(result instanceof Response));
+        assertEquals(nativeObjectIsFrozen(result.identity), true);
+        assertEquals(nativeObjectIsFrozen(result.identity.claims), true);
+        assertEquals(nativeObjectIsFrozen(result.identity.groups), true);
+        assertEquals(nativeObjectIsFrozen(result.identity.roles), true);
+      },
+    );
   });
 
   it("accepts 256 unique list entries plus duplicates and rejects 257 unique entries", async () => {

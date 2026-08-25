@@ -17,10 +17,12 @@ const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const getOwnPropertySymbols = Object.getOwnPropertySymbols;
 const headersAppend = NativeHeaders.prototype.append;
 const headersForEach = NativeHeaders.prototype.forEach;
-const numberIsSafeInteger = Number.isSafeInteger;
+const numberIsSafeInteger = NativeNumber.isSafeInteger;
 const objectKeys = Object.keys;
 const regexpTest = RegExp.prototype.test;
 const requestClone = NativeRequest.prototype.clone;
+const setAdd = NativeSet.prototype.add;
+const setHas = NativeSet.prototype.has;
 const requestHeadersGetter = getOwnPropertyDescriptor(
   NativeRequest.prototype,
   "headers",
@@ -34,6 +36,14 @@ const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
 
 if (typeof requestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
+}
+
+function setContains<T>(set: ReadonlySet<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function setInsert<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
 }
 
 export function isInfrastructureOnlyRequestHeader(name: string): boolean {
@@ -104,7 +114,7 @@ function normalizeDynamicDenyHeaders(
       ) {
         return null;
       }
-      denylist.add(apply(stringToLowerCase, name, []) as string);
+      setInsert(denylist, apply(stringToLowerCase, name, []) as string);
     }
 
     const keys = objectKeys(descriptors);
@@ -142,7 +152,9 @@ export function createApplicationRequestHeaders(
   apply(headersForEach, headers, [
     (value: string, name: string) => {
       const normalized = apply(stringToLowerCase, name, []) as string;
-      if (!dynamicDenyHeaders.has(normalized) && !isInfrastructureOnlyRequestHeader(name)) {
+      if (
+        !setContains(dynamicDenyHeaders, normalized) && !isInfrastructureOnlyRequestHeader(name)
+      ) {
         apply(headersAppend, applicationHeaders, [name, value]);
       }
     },

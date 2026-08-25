@@ -10,6 +10,36 @@ const MAX_ISSUER_LENGTH = 2_048;
 const MAX_SUBJECT_LENGTH = 1_024;
 const MAX_PROFILE_CLAIM_LENGTH = 512;
 const MAX_GROUP_OR_ROLE_LENGTH = 256;
+const ARRAY_INDEX_PATTERN = /^(?:0|[1-9][0-9]*)$/;
+
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const arrayPush = Array.prototype.push;
+const NativeJSON = JSON;
+const NativeNumber = Number;
+const NativeObject = Object;
+const NativeSet = Set;
+const NativeTextEncoder = TextEncoder;
+const NativeWeakSet = WeakSet;
+const jsonStringify = NativeJSON.stringify;
+const numberIsFinite = NativeNumber.isFinite;
+const objectCreate = NativeObject.create;
+const objectDefineProperty = NativeObject.defineProperty;
+const objectFreeze = NativeObject.freeze;
+const objectGetOwnPropertyDescriptors = NativeObject.getOwnPropertyDescriptors;
+const objectGetOwnPropertySymbols = NativeObject.getOwnPropertySymbols;
+const objectGetPrototypeOf = NativeObject.getPrototypeOf;
+const objectKeys = NativeObject.keys;
+const objectPrototype = NativeObject.prototype;
+const objectValues = NativeObject.values;
+const regexpTest = RegExp.prototype.test;
+const setAdd = NativeSet.prototype.add;
+const setHas = NativeSet.prototype.has;
+const stringTrim = String.prototype.trim;
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const weakSetAdd = NativeWeakSet.prototype.add;
+const weakSetDelete = NativeWeakSet.prototype.delete;
+const weakSetHas = NativeWeakSet.prototype.has;
 
 export interface ApplicationIdentityClaimNames {
   readonly email?: string;
@@ -35,6 +65,34 @@ interface ParseState {
   totalValues: number;
 }
 
+function arrayAppend<T>(array: T[], value: T): void {
+  apply(arrayPush, array, [value]);
+}
+
+function freeze<T>(value: T): Readonly<T> {
+  return apply(objectFreeze, NativeObject, [value]) as Readonly<T>;
+}
+
+function setContains<T>(set: ReadonlySet<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function setInsert<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
+}
+
+function weakSetContains(set: WeakSet<object>, value: object): boolean {
+  return apply(weakSetHas, set, [value]) as boolean;
+}
+
+function weakSetInsert(set: WeakSet<object>, value: object): void {
+  apply(weakSetAdd, set, [value]);
+}
+
+function weakSetRemove(set: WeakSet<object>, value: object): void {
+  apply(weakSetDelete, set, [value]);
+}
+
 export function createApplicationIdentity(
   options: CreateApplicationIdentityOptions,
 ): ApplicationIdentity {
@@ -53,7 +111,7 @@ export function createApplicationIdentity(
     claims,
   };
 
-  return Object.freeze(identity);
+  return freeze(identity) as ApplicationIdentity;
 }
 
 function parseIssuer(value: unknown, expectedIssuer: string): string {
@@ -75,12 +133,14 @@ function parseSubject(value: unknown): string {
 
 function parseClaimSnapshot(value: unknown): SerializedAuthClaims {
   const state: ParseState = {
-    seen: new WeakSet<object>(),
+    seen: new NativeWeakSet<object>(),
     totalValues: 0,
   };
   const snapshot = parseClaimObject(value, state, 0, "claims");
-  const json = JSON.stringify(snapshot);
-  if (new TextEncoder().encode(json).byteLength > MAX_CLAIMS_JSON_BYTES) {
+  const json = apply(jsonStringify, NativeJSON, [snapshot]) as string;
+  const encoder = new NativeTextEncoder();
+  const bytes = apply(textEncoderEncode, encoder, [json]) as Uint8Array;
+  if (bytes.byteLength > MAX_CLAIMS_JSON_BYTES) {
     throw new TypeError("Application identity claims exceed the serialized size limit");
   }
   return deepFreeze(snapshot);
@@ -95,40 +155,43 @@ function parseClaimObject(
   if (!isPlainObject(value)) {
     throw new TypeError(`${path} must be a plain object`);
   }
-  if (state.seen.has(value)) {
+  if (weakSetContains(state.seen, value)) {
     throw new TypeError(`${path} contains a cycle`);
   }
   if (depth >= MAX_CONTAINER_DEPTH) {
     throw new TypeError(`${path} exceeds the nested container depth limit`);
   }
-  state.seen.add(value);
+  weakSetInsert(state.seen, value);
   countValue(state, path);
 
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const symbolKeys = Object.getOwnPropertySymbols(value);
+  const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
+    value,
+  ]) as unknown as PropertyDescriptorMap;
+  const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
   if (symbolKeys.length > 0) {
     throw new TypeError(`${path} contains a non-JSON-safe symbol key`);
   }
 
-  const keys = Object.keys(descriptors);
+  const keys = apply(objectKeys, NativeObject, [descriptors]) as string[];
   if (keys.length > MAX_OBJECT_KEYS) {
     throw new TypeError(`${path} exceeds the object key limit`);
   }
 
-  const output: MutableAuthClaimRecord = Object.create(null);
-  for (const key of keys) {
+  const output = apply(objectCreate, NativeObject, [null]) as MutableAuthClaimRecord;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
     const descriptor = descriptors[key];
     if (!descriptor || !("value" in descriptor)) {
       throw new TypeError(`${path}.${key} contains an accessor property`);
     }
-    Object.defineProperty(output, key, {
+    apply(objectDefineProperty, NativeObject, [output, key, {
       value: parseClaimValue(descriptor.value, state, depth + 1, `${path}.${key}`),
       enumerable: true,
       configurable: true,
       writable: true,
-    });
+    }]);
   }
-  state.seen.delete(value);
+  weakSetRemove(state.seen, value);
   return output;
 }
 
@@ -138,7 +201,7 @@ function parseClaimArray(
   depth: number,
   path: string,
 ): MutableAuthClaimArray {
-  if (state.seen.has(value)) {
+  if (weakSetContains(state.seen, value)) {
     throw new TypeError(`${path} contains a cycle`);
   }
   if (depth >= MAX_CONTAINER_DEPTH) {
@@ -147,11 +210,13 @@ function parseClaimArray(
   if (value.length > MAX_ARRAY_ENTRIES) {
     throw new TypeError(`${path} exceeds the array entry limit`);
   }
-  state.seen.add(value);
+  weakSetInsert(state.seen, value);
   countValue(state, path);
 
-  const descriptors = Object.getOwnPropertyDescriptors(value);
-  const symbolKeys = Object.getOwnPropertySymbols(value);
+  const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
+    value,
+  ]) as unknown as PropertyDescriptorMap;
+  const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
   if (symbolKeys.length > 0) {
     throw new TypeError(`${path} contains a non-JSON-safe symbol key`);
   }
@@ -165,13 +230,15 @@ function parseClaimArray(
     if (!("value" in descriptor)) {
       throw new TypeError(`${path}.${index} contains an accessor property`);
     }
-    output.push(parseClaimValue(descriptor.value, state, depth + 1, `${path}.${index}`));
+    arrayAppend(output, parseClaimValue(descriptor.value, state, depth + 1, `${path}.${index}`));
   }
-  for (const key of Object.keys(descriptors)) {
-    if (/^(?:0|[1-9][0-9]*)$/.test(key) || key === "length") continue;
+  const keys = apply(objectKeys, NativeObject, [descriptors]) as string[];
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
+    if ((apply(regexpTest, ARRAY_INDEX_PATTERN, [key]) as boolean) || key === "length") continue;
     throw new TypeError(`${path} contains a non-JSON-safe array property`);
   }
-  state.seen.delete(value);
+  weakSetRemove(state.seen, value);
   return output;
 }
 
@@ -196,13 +263,13 @@ function parseClaimValue(
 
   if (typeof value === "number") {
     countValue(state, path);
-    if (!Number.isFinite(value)) {
+    if (!numberIsFinite(value)) {
       throw new TypeError(`${path} contains a non-JSON-safe number`);
     }
     return value;
   }
 
-  if (Array.isArray(value)) {
+  if (arrayIsArray(value)) {
     return parseClaimArray(value, state, depth, path);
   }
 
@@ -255,7 +322,7 @@ function parseOptionalStringClaim(
   if (typeof value !== "string") {
     throw new TypeError(`Application identity ${fieldName} claim must be a string`);
   }
-  const normalized = value.trim();
+  const normalized = apply(stringTrim, value, []) as string;
   if (normalized.length === 0) return undefined;
   if (normalized.length > maxLength) {
     throw new TypeError(`Application identity ${fieldName} claim exceeds the length limit`);
@@ -271,27 +338,28 @@ function parseStringListClaim(
   if (claimName === undefined) return [];
   const value = claims[claimName];
   if (value === undefined) return [];
-  if (!Array.isArray(value)) {
+  if (!arrayIsArray(value)) {
     throw new TypeError(`Application identity ${fieldName} claim must be an array of strings`);
   }
 
-  const seen = new Set<string>();
+  const seen = new NativeSet<string>();
   const output: string[] = [];
-  for (const entry of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const entry = value[index];
     if (typeof entry !== "string") {
       throw new TypeError(`Application identity ${fieldName} claim must contain only strings`);
     }
-    const normalized = entry.trim();
+    const normalized = apply(stringTrim, entry, []) as string;
     if (normalized.length === 0) continue;
     if (normalized.length > MAX_GROUP_OR_ROLE_LENGTH) {
       throw new TypeError(`Application identity ${fieldName} claim entry exceeds the length limit`);
     }
-    if (seen.has(normalized)) continue;
+    if (setContains(seen, normalized)) continue;
     if (output.length >= MAX_ARRAY_ENTRIES) {
       throw new TypeError(`Application identity ${fieldName} claim exceeds the entry limit`);
     }
-    seen.add(normalized);
-    output.push(normalized);
+    setInsert(seen, normalized);
+    arrayAppend(output, normalized);
   }
   return output;
 }
@@ -310,32 +378,37 @@ function hasMicrosoftGroupOverage(claims: SerializedAuthClaims): boolean {
 }
 
 function isClaimRecord(value: AuthClaimValue | undefined): value is SerializedAuthClaims {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !arrayIsArray(value);
 }
 
 function isPlainObject(value: unknown): value is UnknownRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (typeof value !== "object" || value === null || arrayIsArray(value)) return false;
+  const prototype = apply(objectGetPrototypeOf, NativeObject, [value]) as object | null;
+  return prototype === objectPrototype || prototype === null;
 }
 
 function deepFreeze<T extends AuthClaimValue>(value: T): T {
   if (typeof value !== "object" || value === null) return value;
-  Object.freeze(value);
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      deepFreeze(entry);
+  freeze(value);
+  if (arrayIsArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      deepFreeze(value[index]!);
     }
     return value;
   }
   if (isClaimRecord(value)) {
-    for (const entry of Object.values(value)) {
-      deepFreeze(entry);
+    const values = apply(objectValues, NativeObject, [value]) as AuthClaimValue[];
+    for (let index = 0; index < values.length; index += 1) {
+      deepFreeze(values[index]!);
     }
   }
   return value;
 }
 
 function freezeArray(values: readonly string[]): readonly string[] {
-  return Object.freeze([...values]);
+  const output: string[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    arrayAppend(output, values[index]!);
+  }
+  return freeze(output) as readonly string[];
 }

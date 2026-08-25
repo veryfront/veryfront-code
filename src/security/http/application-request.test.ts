@@ -6,6 +6,14 @@ import {
   createApplicationRequestHeaders,
 } from "./application-request.ts";
 
+const nativeSetHas = Set.prototype.has;
+const nativeSetAdd = Set.prototype.add;
+
+function restoreSetPrimordials(): void {
+  Set.prototype.has = nativeSetHas;
+  Set.prototype.add = nativeSetAdd;
+}
+
 describe("security/http/application-request", () => {
   it("retains application credentials and withholds infrastructure metadata", () => {
     const application = createApplicationRequest(
@@ -153,6 +161,42 @@ describe("security/http/application-request", () => {
     for (const denyHeaders of [accessor, proxy, sparse, symbol, malformedLength]) {
       const headers = createApplicationRequestHeaders(source, { denyHeaders });
       assertEquals(headers.get("x-application-role"), null);
+    }
+  });
+
+  it("removes configured identity headers after Set.has tampering", () => {
+    try {
+      Set.prototype.has = (() => false) as typeof Set.prototype.has;
+      const headers = createApplicationRequestHeaders(
+        new Headers({
+          "x-auth-subject": "user-123",
+          "x-application-role": "editor",
+        }),
+        { denyHeaders: ["x-auth-subject"] },
+      );
+
+      assertEquals(headers.get("x-auth-subject"), null);
+    } finally {
+      restoreSetPrimordials();
+    }
+  });
+
+  it("removes configured identity headers after Set.add tampering", () => {
+    try {
+      Set.prototype.add = function (): Set<unknown> {
+        return this;
+      } as typeof Set.prototype.add;
+      const headers = createApplicationRequestHeaders(
+        new Headers({
+          "x-auth-subject": "user-123",
+          "x-application-role": "editor",
+        }),
+        { denyHeaders: ["x-auth-subject"] },
+      );
+
+      assertEquals(headers.get("x-auth-subject"), null);
+    } finally {
+      restoreSetPrimordials();
     }
   });
 });

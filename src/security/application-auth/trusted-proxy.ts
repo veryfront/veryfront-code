@@ -17,6 +17,7 @@ const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
+const arrayPush = Array.prototype.push;
 const NativeNumber = Number;
 const NativeResponse = Response;
 const NativeSet = Set;
@@ -28,13 +29,16 @@ const getOwnPropertySymbols = Object.getOwnPropertySymbols;
 const getPrototypeOf = Object.getPrototypeOf;
 const objectFreeze = Object.freeze;
 const objectKeys = Object.keys;
+const objectPrototype = Object.prototype;
 const headersGet = NativeHeaders.prototype.get;
 const numberIsSafeInteger = NativeNumber.isSafeInteger;
 const numberParseInt = NativeNumber.parseInt;
 const numberToString = NativeNumber.prototype.toString;
 const regexpExec = RegExp.prototype.exec;
 const regexpTest = RegExp.prototype.test;
-const rawRequestHeadersGetter = Object.getOwnPropertyDescriptor(
+const setAdd = NativeSet.prototype.add;
+const setHas = NativeSet.prototype.has;
+const rawRequestHeadersGetter = getOwnPropertyDescriptor(
   NativeRequest.prototype,
   "headers",
 )?.get;
@@ -50,6 +54,18 @@ if (typeof rawRequestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
 }
 const requestHeadersGetter = rawRequestHeadersGetter;
+
+function arrayAppend<T>(array: T[], value: T): void {
+  apply(arrayPush, array, [value]);
+}
+
+function setContains<T>(set: ReadonlySet<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function setInsert<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
+}
 
 export interface TrustedProxyAdmission {
   readonly identity: ApplicationIdentity;
@@ -87,7 +103,7 @@ export function createTrustedProxyApplicationAuthRuntime(
 
       const peer = getRequestPeerProvenance(request);
       const canonicalPeer = peer === undefined ? null : canonicalizePeerAddress(peer.hostname);
-      if (canonicalPeer === null || !snapshot.trustedPeers.has(canonicalPeer)) {
+      if (canonicalPeer === null || !setContains(snapshot.trustedPeers, canonicalPeer)) {
         return unauthorized();
       }
 
@@ -162,7 +178,7 @@ function snapshotConfig(config: TrustedProxyAuthConfig): TrustedProxyConfigSnaps
 function readPlainObjectDescriptors(value: unknown): PropertyDescriptorMap | null {
   if (typeof value !== "object" || value === null || arrayIsArray(value)) return null;
   const prototype = getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return null;
+  if (prototype !== objectPrototype && prototype !== null) return null;
   if (getOwnPropertySymbols(value).length > 0) return null;
   return getOwnPropertyDescriptors(value);
 }
@@ -196,8 +212,8 @@ function snapshotTrustedPeers(value: readonly unknown[]): ReadonlySet<string> | 
       return null;
     }
     const canonical = canonicalizePeerAddress(descriptor.value);
-    if (canonical === null || peers.has(canonical)) return null;
-    peers.add(canonical);
+    if (canonical === null || setContains(peers, canonical)) return null;
+    setInsert(peers, canonical);
   }
 
   const keys = objectKeys(descriptors);
@@ -250,9 +266,9 @@ function freezeUniqueHeaderNames(
   const output: string[] = [];
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === undefined || seen.has(value)) continue;
-    seen.add(value);
-    output.push(value);
+    if (value === undefined || setContains(seen, value)) continue;
+    setInsert(seen, value);
+    arrayAppend(output, value);
   }
   return objectFreeze(output);
 }
@@ -329,12 +345,12 @@ function readOptionalListHeader(headers: Headers, name: string): readonly string
     const entry = apply(stringTrim, parts[index]!, []) as string;
     if (entry.length === 0) continue;
     validateIdentityValue(entry, MAX_LIST_ENTRY_LENGTH, true);
-    if (!unique.has(entry) && unique.size >= MAX_LIST_ENTRIES) {
+    if (!setContains(unique, entry) && unique.size >= MAX_LIST_ENTRIES) {
       throw new TypeError("trusted-proxy identity list exceeds the entry limit");
     }
-    if (unique.has(entry)) continue;
-    unique.add(entry);
-    output.push(entry);
+    if (setContains(unique, entry)) continue;
+    setInsert(unique, entry);
+    arrayAppend(output, entry);
   }
   return output;
 }
@@ -401,7 +417,7 @@ function parseCanonicalIpv4(hostname: string): string | null {
     if (!(apply(regexpTest, DECIMAL_OCTET_PATTERN, [octet]) as boolean)) return null;
     const value = apply(NativeNumber, undefined, [octet]) as number;
     if (value > 255) return null;
-    parsed.push(value);
+    arrayAppend(parsed, value);
   }
   return `${parsed[0]}.${parsed[1]}.${parsed[2]}.${parsed[3]}`;
 }
@@ -437,9 +453,9 @@ function parseIpv6Words(hostname: string): readonly number[] | null {
   if (missing < 1) return null;
 
   const words: number[] = [];
-  for (let index = 0; index < left.length; index += 1) words.push(left[index]!);
-  for (let index = 0; index < missing; index += 1) words.push(0);
-  for (let index = 0; index < right.length; index += 1) words.push(right[index]!);
+  for (let index = 0; index < left.length; index += 1) arrayAppend(words, left[index]!);
+  for (let index = 0; index < missing; index += 1) arrayAppend(words, 0);
+  for (let index = 0; index < right.length; index += 1) arrayAppend(words, right[index]!);
   return words;
 }
 
@@ -453,7 +469,7 @@ function parseIpv6WordSide(value: string): number[] | null {
     if (!(apply(regexpTest, /^[0-9a-fA-F]{1,4}$/, [rawWord]) as boolean)) return null;
     const word = apply(numberParseInt, NativeNumber, [rawWord, 16]) as number;
     if (!numberIsSafeInteger(word) || word < 0 || word > 0xffff) return null;
-    words.push(word);
+    arrayAppend(words, word);
   }
   return words;
 }
