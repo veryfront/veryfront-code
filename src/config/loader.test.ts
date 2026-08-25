@@ -820,11 +820,17 @@ export default config as const;
         // before throwing. The cause-chain cycle guard must not construct the
         // project's replacement, or the classification would be lost to that
         // constructor's exception.
-        const error = await loadFailure(
-          "vf-config-poisoned-set-",
-          'globalThis.Set = function () { throw new Error("poisoned Set"); };\n' +
-            `throw new Error("Cannot find package 'left-pad' imported from /app/veryfront.config.ts");\n`,
-        );
+        const originalSet = globalThis.Set;
+        let error: VeryfrontError;
+        try {
+          error = await loadFailure(
+            "vf-config-poisoned-set-",
+            'globalThis.Set = function () { throw new Error("poisoned Set"); };\n' +
+              `throw new Error("Cannot find package 'left-pad' imported from /app/veryfront.config.ts");\n`,
+          );
+        } finally {
+          globalThis.Set = originalSet;
+        }
 
         assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
         assert(
