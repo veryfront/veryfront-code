@@ -2191,6 +2191,73 @@ describe("merge queue review propagation", () => {
       [],
       "the workflow fallback must handle a failure that could not be published safely",
     );
+    assertEquals(fixture.refReads, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+    }]);
+  });
+
+  it("skips an unpublished failure after its queue ref moves", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefHeads: [NEW_HEAD],
+    });
+
+    assertEquals(
+      await reconcileActiveMergeGroupReviewStatuses({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+        baseRef: BASE_REF,
+      }),
+      [],
+    );
+    assertEquals(fixture.published, []);
+  });
+
+  it("propagates a queue ref outage while rechecking an unpublished failure", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${QUEUE_BASE}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref unavailable"), {
+        status: 503,
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        reconcileActiveMergeGroupReviewStatuses({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+          baseRef: BASE_REF,
+        }),
+      Error,
+      "queue ref unavailable",
+    );
+    assertEquals(fixture.published, []);
   });
 
   it("rechecks source proof immediately before publishing queue success", async () => {

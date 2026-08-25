@@ -1384,6 +1384,19 @@ export async function reconcileActiveMergeGroupReviewStatuses({
       mergeGroupSha,
     });
     if (result.state === "failure" && !result.published) {
+      // A failed binding check could not safely replace any prior success on
+      // the synthetic commit. Skip only when the exact queue ref has
+      // demonstrably moved or disappeared. A still-live entry, malformed
+      // response, or operational lookup failure must keep reconciliation red.
+      const ref = queueRef.ref.startsWith("refs/")
+        ? queueRef.ref.slice("refs/".length)
+        : queueRef.ref;
+      const liveTarget = await resolveQueueRefTarget(
+        github,
+        { owner, repo },
+        ref,
+      );
+      if (liveTarget?.toLowerCase() !== mergeGroupSha.toLowerCase()) continue;
       throw result.failure ??
         new Error("Could not publish the merge queue review failure");
     }
