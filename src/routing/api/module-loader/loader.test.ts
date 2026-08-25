@@ -2799,6 +2799,46 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("applies import maps to remote specifiers before the HTTP bundler", async () => {
+    const tmpDir = await makeTempDir();
+    const originalUrl = "https://esm.sh/vf-loader-original@1";
+    const mappedUrl = "https://esm.sh/vf-loader-mapped@1";
+    const modulePath = join(tmpDir, "mapped-remote-route.ts");
+
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({ imports: { [originalUrl]: mappedUrl } }),
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "${originalUrl}";`,
+        `export const GET = () => new Response(value);`,
+      ].join("\n"),
+    );
+
+    const serveModule: typeof globalThis.fetch = (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      const value = url.startsWith(mappedUrl) ? "mapped" : "original";
+      return Promise.resolve(
+        new Response(`export const value = "${value}";`, {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    };
+
+    await withMockFetch(serveModule, async () => {
+      const route = await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+      assertEquals(await getText(route), "mapped");
+    });
+  });
+
   it("refuses to direct-import a route whose graph uses a root-absolute specifier", async () => {
     // A root-absolute specifier resolves from the filesystem root, outside the
     // project boundary, so the walk must refuse the graph rather than hand it
