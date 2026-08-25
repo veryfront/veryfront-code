@@ -13,6 +13,7 @@ interface CreateAuthCookieOptions {
   readonly payload: AuthCookiePayload;
   readonly maxAgeSeconds: number;
   readonly now: number;
+  readonly cookieName?: string;
   readonly requestUrl?: string;
   readonly randomBytes?: (length: number) => Uint8Array;
 }
@@ -26,6 +27,7 @@ interface ReadSessionCookieOptions {
   readonly cookieHeader: string | null | undefined;
   readonly now: number;
   readonly maxLifetimeSeconds: number;
+  readonly cookieName?: string;
 }
 
 interface ReadTransactionCookieOptions extends ReadSessionCookieOptions {
@@ -36,7 +38,7 @@ export async function createSessionCookie(options: CreateAuthCookieOptions): Pro
   return await createCookie({
     ...options,
     purpose: "session",
-    cookieName: SESSION_COOKIE_NAME,
+    cookieName: validateSessionCookieName(options.cookieName ?? SESSION_COOKIE_NAME),
   });
 }
 
@@ -56,7 +58,7 @@ export async function readSessionCookie(
   return await readCookie({
     ...options,
     purpose: "session",
-    cookieName: SESSION_COOKIE_NAME,
+    cookieName: validateSessionCookieName(options.cookieName ?? SESSION_COOKIE_NAME),
   });
 }
 
@@ -70,8 +72,8 @@ export async function readTransactionCookie(
   });
 }
 
-export function clearSessionCookie(): string {
-  return clearCookie(SESSION_COOKIE_NAME);
+export function clearSessionCookie(cookieName = SESSION_COOKIE_NAME): string {
+  return clearCookie(validateSessionCookieName(cookieName));
 }
 
 export function clearTransactionCookie(state: string): string {
@@ -140,13 +142,15 @@ function getCookieValue(
     return null;
   }
   const prefix = `${cookieName}=`;
+  let value: string | null = null;
   for (const part of cookieHeader.split(";")) {
     const trimmed = part.trim();
     if (trimmed.startsWith(prefix)) {
-      return trimmed.slice(prefix.length);
+      if (value !== null) return null;
+      value = trimmed.slice(prefix.length);
     }
   }
-  return null;
+  return value;
 }
 
 function clearCookie(cookieName: string): string {
@@ -157,4 +161,17 @@ function validateMaxAge(value: number): void {
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError("Auth cookie Max-Age must be a positive integer");
   }
+}
+
+function validateSessionCookieName(value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length < "__Host-".length + 1 ||
+    value.length > 128 ||
+    !value.startsWith("__Host-") ||
+    !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)
+  ) {
+    throw new TypeError("Auth session cookie name must be a bounded __Host- HTTP token");
+  }
+  return value;
 }

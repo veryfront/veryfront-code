@@ -5,6 +5,7 @@ import {
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
 import { BaseHandler } from "./base-handler.ts";
+import { isApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/oidc-runtime.ts";
 import type {
   HandlerContext,
   HandlerMetadata,
@@ -40,11 +41,15 @@ type ResolvedAuth =
     token: string;
   }>
   | Readonly<{
+    kind: "oidc";
+  }>
+  | Readonly<{
     kind: "invalid";
   }>;
 
 const INVALID_AUTH = Object.freeze({ kind: "invalid" } as const);
-const AUTH_CONFIG_KEYS = new Set(["basic", "bearer"]);
+const OIDC_AUTH = Object.freeze({ kind: "oidc" } as const);
+const AUTH_CONFIG_KEYS = new Set(["basic", "bearer", "oidc"]);
 const BASIC_AUTH_CONFIG_KEYS = new Set(["username", "password", "realm"]);
 const BEARER_AUTH_CONFIG_KEYS = new Set(["token"]);
 
@@ -121,7 +126,8 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
 
   const hasBasic = Object.hasOwn(auth, "basic");
   const hasBearer = Object.hasOwn(auth, "bearer");
-  if (hasBasic === hasBearer) return INVALID_AUTH;
+  const hasOidc = Object.hasOwn(auth, "oidc");
+  if ([hasBasic, hasBearer, hasOidc].filter(Boolean).length !== 1) return INVALID_AUTH;
 
   if (hasBasic) {
     const basic = snapshotOwnDataRecord(auth.basic, BASIC_AUTH_CONFIG_KEYS);
@@ -143,6 +149,10 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
       password: basic.password,
       realm: sanitizeRealm(basic.realm || "Secure Area"),
     });
+  }
+
+  if (hasOidc) {
+    return OIDC_AUTH;
   }
 
   const bearer = snapshotOwnDataRecord(auth.bearer, BEARER_AUTH_CONFIG_KEYS);
@@ -244,6 +254,10 @@ export class AuthHandler extends BaseHandler {
     if (auth.kind === "bearer") {
       return Promise.resolve(this.checkBearerAuth(req, ctx, auth));
     }
+    if (auth.kind === "oidc") {
+      if (isApplicationAuthAdmittedRequest(req)) return Promise.resolve(this.continue());
+      return Promise.resolve(this.rejectOidcAuth(req, ctx));
+    }
     return Promise.resolve(this.rejectInvalidAuth(req, ctx));
   }
 
@@ -341,6 +355,16 @@ export class AuthHandler extends BaseHandler {
         .withHeaders({
           "WWW-Authenticate": 'Basic realm="Secure Area", Bearer',
         })
+        .text("Unauthorized", 401),
+    );
+  }
+
+  private rejectOidcAuth(req: Request, ctx: HandlerContext): HandlerResult {
+    return this.respond(
+      this.createResponseBuilder(ctx)
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
         .text("Unauthorized", 401),
     );
   }

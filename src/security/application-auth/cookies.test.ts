@@ -418,4 +418,44 @@ describe("security/application-auth cookie serialization", () => {
       null,
     );
   });
+
+  it("honors bounded custom session cookie names and rejects duplicate target cookies", async () => {
+    const cookieName = "__Host-custom_session";
+    const setCookie = await createSessionCookie({
+      secret: SESSION_SECRET,
+      payload: { subject: "user-123" },
+      maxAgeSeconds: 300,
+      now: NOW,
+      cookieName,
+      randomBytes: fixedRandom,
+    });
+    const pair = cookiePair(setCookie);
+
+    assertEquals(setCookie.startsWith(`${cookieName}=`), true);
+    assertEquals(
+      await readSessionCookie({
+        secret: SESSION_SECRET,
+        cookieHeader: pair,
+        now: NOW,
+        maxLifetimeSeconds: 300,
+        cookieName,
+      }),
+      { subject: "user-123" },
+    );
+    assertEquals(
+      await readSessionCookie({
+        secret: SESSION_SECRET,
+        cookieHeader: `${pair}; ${pair}`,
+        now: NOW,
+        maxLifetimeSeconds: 300,
+        cookieName,
+      }),
+      null,
+    );
+    assertThrows(
+      () => clearSessionCookie("vf_session"),
+      TypeError,
+      "__Host-",
+    );
+  });
 });
