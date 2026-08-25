@@ -684,6 +684,15 @@ export interface WebSocketHandlerConfig {
   debug?: boolean;
 }
 
+function releaseUnpublishedRun(
+  registry: AgentControllerRegistry,
+  registration: AgentControllerRegistration,
+): void {
+  if (registry.getPublisher(registration.runId) === undefined) {
+    registry.releaseRun(registration.run);
+  }
+}
+
 /** Create a WebSocket handler for HTTP upgrade requests. */
 export function createWebSocketHandler(
   config: WebSocketHandlerConfig,
@@ -754,9 +763,7 @@ export function createWebSocketHandler(
           });
           try {
             if (registry.detach(registration)) {
-              if (registry.getPublisher(runId) === undefined) {
-                registry.releaseRun(registration.run);
-              }
+              releaseUnpublishedRun(registry, registration);
             } else {
               publisher.close();
             }
@@ -779,9 +786,9 @@ export function createWebSocketHandler(
           });
         }
         if (!detached) return;
-        if (!config.retainRunOnClose && registry.getPublisher(runId) === undefined) {
+        if (!config.retainRunOnClose) {
           try {
-            registry.releaseRun(registration.run);
+            releaseUnpublishedRun(registry, registration);
           } catch (error) {
             logger.error("WebSocket run release failed", {
               runId,

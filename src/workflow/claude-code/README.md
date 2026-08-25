@@ -568,6 +568,7 @@ WebSocket (Bidirectional):
 // app/api/agent/ws/route.ts
 import {
   AgentControllerRegistry,
+  type AgentControllerRunRegistration,
   createWebSocketHandler,
   RedisEventPublisher,
   streamingClaudeCodeAgent,
@@ -582,12 +583,15 @@ const redisPublisher = new RedisEventPublisher({
   url: Deno.env.get("REDIS_URL")!,
 });
 const eventSubscriptions = new WeakMap<object, () => void>();
+const retainedRuns = new Map<string, AgentControllerRunRegistration>();
 
 export const GET = createWebSocketHandler({
   getRunId: (req) => new URL(req.url).searchParams.get("runId"),
   registry,
+  retainRunOnClose: true,
 
   onConnection: async ({ publisher, run }) => {
+    retainedRuns.set(run.runId, run);
     const unsubscribe = await redisPublisher.subscribe(run.runId, (event) => {
       publisher.send(event);
     });
@@ -597,11 +601,23 @@ export const GET = createWebSocketHandler({
   onClose: ({ publisher, run }) => {
     eventSubscriptions.get(publisher)?.();
     eventSubscriptions.delete(publisher);
-    // The default close path also releases the run registry entry.
+    // Run state remains available for a later reconnect.
     console.log(`Client disconnected: ${run.runId}`);
   },
 });
+
+export function releaseAgentRun(runId: string): void {
+  const run = retainedRuns.get(runId);
+  if (!run) return;
+  retainedRuns.delete(runId);
+  registry.releaseRun(run);
+}
 ```
+
+`retainRunOnClose` defaults to `false`, which releases registry state when a
+socket closes. Enable it only when the application can call `releaseAgentRun`
+for every terminal workflow run. This preserves pending approvals across a
+reconnect without retaining completed or abandoned runs indefinitely.
 
 #### 2. Consume in React with Bidirectional Hook
 
