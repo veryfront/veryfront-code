@@ -1,5 +1,13 @@
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
-import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
+import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import {
+  guardedExactHttpLoopbackOutboundFetch,
+  guardedOutboundFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  hasProxyForwardingHeaders,
+  hasTrustedLocalControlAuthority,
+} from "#veryfront/security/http/local-control-request.ts";
 import type { OidcAuthConfig } from "#veryfront/security/http/middleware/types.ts";
 import { encodeAuthBase64Url } from "./base64url.ts";
 import {
@@ -109,6 +117,9 @@ export function createOidcApplicationAuthRuntime(
       ) {
         return null;
       }
+      const allowedMethod = allowedMethodForAuthPath(url.pathname);
+      if (request.method !== allowedMethod) return methodNotAllowed(allowedMethod);
+
       let runtime: RuntimeConfig;
       try {
         runtime = await resolve(request);
@@ -118,14 +129,11 @@ export function createOidcApplicationAuthRuntime(
       }
 
       if (url.pathname === LOGIN_PATH) {
-        if (request.method !== "GET") return methodNotAllowed("GET");
         return await startLogin(request, runtime);
       }
       if (url.pathname === CALLBACK_PATH) {
-        if (request.method !== "GET") return methodNotAllowed("GET");
         return await finishCallback(request, runtime);
       }
-      if (request.method !== "POST") return methodNotAllowed("POST");
       return logout(request, runtime);
     },
 
@@ -394,8 +402,12 @@ async function exchangeCode(options: {
     body.set("code", options.code);
     body.set("redirect_uri", options.redirectUri);
     body.set("code_verifier", options.verifier);
-    const response = await guardedOutboundFetch(
-      options.tokenEndpoint,
+    const tokenEndpoint = new URL(options.tokenEndpoint);
+    const fetcher = options.allowInsecureLoopback && isLoopbackHttpUrl(tokenEndpoint)
+      ? guardedExactHttpLoopbackOutboundFetch
+      : guardedOutboundFetch;
+    const response = await fetcher(
+      tokenEndpoint,
       {
         method: "POST",
         headers: {
@@ -414,7 +426,6 @@ async function exchangeCode(options: {
         authorizeUrl(url) {
           authorizeProviderEndpoint(url, options);
         },
-        allowInternalEgress: options.allowInsecureLoopback,
       },
     );
     if (!response.ok) {
@@ -614,7 +625,7 @@ async function resolveRuntimeConfig(
     scopes: parseScopes(config.scopes),
     sessionTtlSeconds: parseSessionTtl(config.sessionTtlSeconds),
     cookieName: config.cookieName,
-    allowInsecureLoopback: appOrigin.startsWith("http://") && isTrustedLocalControlRequest(request),
+    allowInsecureLoopback: appOrigin.startsWith("http://") && isTrustedOidcLoopbackRequest(request),
   });
 }
 
@@ -632,7 +643,7 @@ function readRequiredEnv(env: ApplicationAuthEnvironmentReader, name: string): s
 function resolveAppOrigin(env: ApplicationAuthEnvironmentReader, request: Request): string {
   const value = env.get(APP_URL_ENV);
   if (value !== undefined) return parseAppUrl(value);
-  if (isTrustedLocalControlRequest(request)) {
+  if (isTrustedOidcLoopbackRequest(request)) {
     const url = new URL(request.url);
     if ((url.protocol === "http:" || url.protocol === "https:") && isLoopbackHost(url.hostname)) {
       return url.origin;
@@ -698,6 +709,20 @@ function isLoopbackHost(hostname: string): boolean {
     hostname === "[::1]";
 }
 
+function isLoopbackHttpUrl(url: URL): boolean {
+  return url.protocol === "http:" && isLoopbackHost(url.hostname);
+}
+
+function isTrustedOidcLoopbackRequest(request: Request): boolean {
+  if (isProxyTopologyTrusted() || hasProxyForwardingHeaders(request)) return false;
+  if (!isRequestFromLoopbackPeer(request) || !hasTrustedLocalControlAuthority(request)) {
+    return false;
+  }
+  const url = new URL(request.url);
+  return (url.protocol === "http:" || url.protocol === "https:") &&
+    isLoopbackHost(url.hostname);
+}
+
 function randomBase64Url(randomBytes: ((length: number) => Uint8Array) | undefined): string {
   const bytes = randomBytes === undefined
     ? crypto.getRandomValues(new Uint8Array(RANDOM_BYTES))
@@ -756,6 +781,11 @@ function callbackUri(runtime: RuntimeConfig): string {
 
 function methodNotAllowed(allow: string): Response {
   return hardenedText("Method not allowed", 405, { Allow: allow });
+}
+
+function allowedMethodForAuthPath(pathname: string): "GET" | "POST" {
+  if (pathname === LOGOUT_PATH) return "POST";
+  return "GET";
 }
 
 function redirectResponse(location: string, status: 302 | 303): Response {

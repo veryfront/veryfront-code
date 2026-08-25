@@ -66,6 +66,7 @@ function createRuntimeAt(
     OIDC_CLIENT_SECRET: CLIENT_SECRET,
     OIDC_SESSION_SECRET: SESSION_SECRET,
   },
+  configOverrides: Partial<Parameters<typeof createOidcApplicationAuthRuntime>[0]["config"]> = {},
 ) {
   return createOidcApplicationAuthRuntime({
     config: {
@@ -74,6 +75,7 @@ function createRuntimeAt(
       clientSecretEnvVar: "OIDC_CLIENT_SECRET",
       sessionSecretEnvVar: "OIDC_SESSION_SECRET",
       scopes: ["openid"],
+      ...configOverrides,
     },
     env: env(values),
     now: () => currentTime,
@@ -220,9 +222,12 @@ async function assertGenericFailure(response: Response, forbidden: readonly stri
   }
 }
 
-function loopbackRequest(path: string): Request {
+function loopbackRequest(path: string, init: RequestInit = {}): Request {
+  const headers = new Headers(init.headers);
+  headers.set("host", "127.0.0.1:8787");
   const request = new Request(`http://127.0.0.1:8787${path}`, {
-    headers: { host: "127.0.0.1:8787" },
+    ...init,
+    headers,
   });
   recordRequestPeerFromTransport(request, {
     runtime: "deno",
@@ -814,6 +819,181 @@ describe("security/application-auth OIDC runtime", () => {
       loopbackRedirect.searchParams.get("redirect_uri"),
       "http://127.0.0.1:8787/_veryfront/auth/callback",
     );
+    const loopbackState = loopbackRedirect.searchParams.get("state");
+    const loopbackNonce = loopbackRedirect.searchParams.get("nonce");
+    assert(loopbackState);
+    assert(loopbackNonce);
+    const loopbackCookie = transactionCookie(loopbackLogin, loopbackState);
+    const loopbackToken = await createSignedIdToken({
+      iss: loopbackIssuer,
+      sub: "loopback-subject",
+      aud: "client-id",
+      nonce: loopbackNonce,
+      iat: NOW,
+      exp: NOW + 300,
+    });
+    const loopbackCallback = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url === `${loopbackIssuer}/.well-known/openid-configuration`) {
+          return Promise.resolve(
+            oidcMetadata({
+              issuer: loopbackIssuer,
+              authorization_endpoint: `${loopbackIssuer}/authorize`,
+              token_endpoint: `${loopbackIssuer}/token`,
+              jwks_uri: `${loopbackIssuer}/jwks`,
+            }),
+          );
+        }
+        if (url === `${loopbackIssuer}/token`) {
+          return Promise.resolve(Response.json({ id_token: loopbackToken.token }));
+        }
+        if (url === `${loopbackIssuer}/jwks`) {
+          return Promise.resolve(Response.json({ keys: [loopbackToken.jwk] }));
+        }
+        return Promise.reject(new Error("unexpected loopback callback fetch"));
+      },
+      () =>
+        loopbackRuntime.handleAuthRoute(
+          loopbackRequest(`/_veryfront/auth/callback?state=${loopbackState}&code=ok`, {
+            headers: {
+              cookie: loopbackCookie,
+              "sec-fetch-site": "cross-site",
+            },
+          }),
+        ),
+    );
+    assert(loopbackCallback);
+    assertEquals(loopbackCallback.status, 303);
+
+    const trustedHttpsOrigin = "https://127.0.0.1:8788";
+    const internalHttpsRuntime = createRuntimeAt(
+      NOW,
+      {
+        OIDC_ISSUER: loopbackIssuer,
+        OIDC_CLIENT_ID: "client-id",
+        OIDC_CLIENT_SECRET: CLIENT_SECRET,
+        OIDC_SESSION_SECRET: SESSION_SECRET,
+      },
+      { trustedEndpointOrigins: [trustedHttpsOrigin] },
+    );
+    const internalLogin = await withMockFetch(
+      () =>
+        Promise.resolve(
+          oidcMetadata({
+            issuer: loopbackIssuer,
+            authorization_endpoint: `${loopbackIssuer}/authorize`,
+            token_endpoint: `${trustedHttpsOrigin}/token`,
+            jwks_uri: `${loopbackIssuer}/jwks`,
+          }),
+        ),
+      () => internalHttpsRuntime.handleAuthRoute(loopbackRequest("/_veryfront/auth/login")),
+    );
+    assert(internalLogin);
+    const internalRedirect = new URL(internalLogin.headers.get("Location") ?? "");
+    const internalState = internalRedirect.searchParams.get("state");
+    const internalNonce = internalRedirect.searchParams.get("nonce");
+    assert(internalState);
+    assert(internalNonce);
+    const internalCookie = transactionCookie(internalLogin, internalState);
+    let internalTokenCalls = 0;
+    const blockedToken = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url === `${loopbackIssuer}/.well-known/openid-configuration`) {
+          return Promise.resolve(
+            oidcMetadata({
+              issuer: loopbackIssuer,
+              authorization_endpoint: `${loopbackIssuer}/authorize`,
+              token_endpoint: `${trustedHttpsOrigin}/token`,
+              jwks_uri: `${loopbackIssuer}/jwks`,
+            }),
+          );
+        }
+        if (url === `${trustedHttpsOrigin}/token`) {
+          internalTokenCalls += 1;
+          return Promise.resolve(Response.json({ id_token: "unexpected" }));
+        }
+        return Promise.reject(new Error("unexpected internal-token fetch"));
+      },
+      () =>
+        internalHttpsRuntime.handleAuthRoute(
+          loopbackRequest(`/_veryfront/auth/callback?state=${internalState}&code=ok`, {
+            headers: { cookie: internalCookie },
+          }),
+        ),
+    );
+    assert(blockedToken);
+    assertEquals(blockedToken.status, 400);
+    assertEquals(internalTokenCalls, 0);
+    assertEquals(
+      (blockedToken.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
+
+    const internalJwksLogin = await withMockFetch(
+      () =>
+        Promise.resolve(
+          oidcMetadata({
+            issuer: loopbackIssuer,
+            authorization_endpoint: `${loopbackIssuer}/authorize`,
+            token_endpoint: `${loopbackIssuer}/token`,
+            jwks_uri: `${trustedHttpsOrigin}/jwks`,
+          }),
+        ),
+      () => internalHttpsRuntime.handleAuthRoute(loopbackRequest("/_veryfront/auth/login")),
+    );
+    assert(internalJwksLogin);
+    const internalJwksRedirect = new URL(internalJwksLogin.headers.get("Location") ?? "");
+    const internalJwksState = internalJwksRedirect.searchParams.get("state");
+    const internalJwksNonce = internalJwksRedirect.searchParams.get("nonce");
+    assert(internalJwksState);
+    assert(internalJwksNonce);
+    const internalJwksToken = await createSignedIdToken({
+      iss: loopbackIssuer,
+      sub: "loopback-subject",
+      aud: "client-id",
+      nonce: internalJwksNonce,
+      iat: NOW,
+      exp: NOW + 300,
+    });
+    let internalJwksCalls = 0;
+    const blockedJwks = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url === `${loopbackIssuer}/.well-known/openid-configuration`) {
+          return Promise.resolve(
+            oidcMetadata({
+              issuer: loopbackIssuer,
+              authorization_endpoint: `${loopbackIssuer}/authorize`,
+              token_endpoint: `${loopbackIssuer}/token`,
+              jwks_uri: `${trustedHttpsOrigin}/jwks`,
+            }),
+          );
+        }
+        if (url === `${loopbackIssuer}/token`) {
+          return Promise.resolve(Response.json({ id_token: internalJwksToken.token }));
+        }
+        if (url === `${trustedHttpsOrigin}/jwks`) {
+          internalJwksCalls += 1;
+          return Promise.resolve(Response.json({ keys: [internalJwksToken.jwk] }));
+        }
+        return Promise.reject(new Error("unexpected internal-jwks fetch"));
+      },
+      () =>
+        internalHttpsRuntime.handleAuthRoute(
+          loopbackRequest(`/_veryfront/auth/callback?state=${internalJwksState}&code=ok`, {
+            headers: { cookie: transactionCookie(internalJwksLogin, internalJwksState) },
+          }),
+        ),
+    );
+    assert(blockedJwks);
+    assertEquals(blockedJwks.status, 400);
+    assertEquals(internalJwksCalls, 0);
+    assertEquals(
+      (blockedJwks.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
 
     for (const returnTo of ["https://attacker.example.test/", "//attacker.example.test/"]) {
       const unsafe = await createRuntime().handleAuthRoute(
@@ -836,6 +1016,12 @@ describe("security/application-auth OIDC runtime", () => {
     assert(postCallback);
     assertEquals(postCallback.status, 405);
     assertEquals(postCallback.headers.get("Allow"), "GET");
+    const missingEnvMethod = await createRuntimeWith({
+      APP_URL: APP_ORIGIN,
+    }).handleAuthRoute(new Request(`${APP_ORIGIN}/_veryfront/auth/login`, { method: "POST" }));
+    assert(missingEnvMethod);
+    assertEquals(missingEnvMethod.status, 405);
+    assertEquals(missingEnvMethod.headers.get("Allow"), "GET");
 
     const parallelRuntime = createRuntime();
     const first = await startTransaction(parallelRuntime);

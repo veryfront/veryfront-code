@@ -138,7 +138,7 @@ async function fetchJwks(
     url,
     maxBytes: MAX_JWKS_BYTES,
     timeoutMs,
-    allowInternalEgress: options.allowInsecureLoopback,
+    allowExactHttpLoopbackEgress: options.allowInsecureLoopback,
     kind: "JWKS",
     authorizeUrl(candidate) {
       validateJwksUrl(candidate, options.allowInsecureLoopback);

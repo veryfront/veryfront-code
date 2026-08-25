@@ -1,4 +1,7 @@
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  guardedExactHttpLoopbackOutboundFetch,
+  guardedOutboundFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 const MAX_ISSUER_LENGTH = 2_048;
 const MAX_METADATA_BYTES = 256 * 1024;
@@ -63,7 +66,7 @@ export async function fetchOidcMetadata(
     url: discoveryUrl,
     maxBytes: MAX_METADATA_BYTES,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    allowInternalEgress: issuer.allowHttpIssuerOrigin,
+    allowExactHttpLoopbackEgress: issuer.allowHttpIssuerOrigin,
     authorizeUrl(url) {
       validateFetchUrl(url, issuer, trustedOrigins);
     },
@@ -322,7 +325,7 @@ export interface FetchJsonObjectOptions {
   readonly url: URL;
   readonly maxBytes: number;
   readonly timeoutMs: number;
-  readonly allowInternalEgress?: boolean;
+  readonly allowExactHttpLoopbackEgress?: boolean;
   readonly authorizeUrl: (url: URL) => void;
   readonly kind: string;
 }
@@ -331,7 +334,11 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
-    const response = await guardedOutboundFetch(
+    const fetcher = options.allowExactHttpLoopbackEgress === true &&
+        isLoopbackHttpUrl(options.url)
+      ? guardedExactHttpLoopbackOutboundFetch
+      : guardedOutboundFetch;
+    const response = await fetcher(
       options.url,
       {
         headers: { accept: "application/json" },
@@ -341,7 +348,6 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
       },
       {
         authorizeUrl: options.authorizeUrl,
-        allowInternalEgress: options.allowInternalEgress === true,
       },
     );
     if (response.status >= 300 && response.status < 400) {
@@ -379,6 +385,10 @@ function isJsonContentType(value: string | null): boolean {
   const mediaType = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   return mediaType === "application/json" ||
     (mediaType.startsWith("application/") && mediaType.endsWith("+json"));
+}
+
+function isLoopbackHttpUrl(url: URL): boolean {
+  return url.protocol === "http:" && isLoopbackHostname(url.hostname);
 }
 
 async function readBoundedText(

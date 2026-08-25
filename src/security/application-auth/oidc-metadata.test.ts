@@ -160,6 +160,26 @@ describe("security/application-auth OIDC metadata", () => {
     }
 
     assertEquals(result.issuer, loopback);
+
+    let internalHttpsCalls = 0;
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => {
+            internalHttpsCalls += 1;
+            return Promise.resolve(jsonResponse(metadataFor("https://127.0.0.1:8787")));
+          },
+          () =>
+            fetchOidcMetadata({
+              issuer: "https://127.0.0.1:8787",
+              allowInsecureLoopback: true,
+            }),
+        ),
+      TypeError,
+      "request failed",
+    );
+    assertEquals(internalHttpsCalls, 0);
+
     await assertRejects(
       () =>
         withMockFetch(

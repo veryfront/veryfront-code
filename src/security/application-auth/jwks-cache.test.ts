@@ -146,6 +146,27 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(allowed.kid, "rsa-1");
     assertEquals(calls, 1);
 
+    let internalHttpsCalls = 0;
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => {
+            internalHttpsCalls += 1;
+            return Promise.resolve(jsonResponse(jwks([RSA_KEY])));
+          },
+          () =>
+            createJwksCache().getKey({
+              jwksUri: "https://127.0.0.1:8787/jwks.json",
+              kid: "rsa-1",
+              alg: "RS256",
+              allowInsecureLoopback: true,
+            }),
+        ),
+      TypeError,
+      "request failed",
+    );
+    assertEquals(internalHttpsCalls, 0);
+
     await assertRejects(
       () =>
         withMockFetch(

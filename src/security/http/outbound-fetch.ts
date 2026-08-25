@@ -28,11 +28,6 @@ export class OutboundRequestBlockedError extends Error {
 export interface GuardedOutboundFetchOptions {
   /** Additional operator-owned URL policy, applied to every redirect hop. */
   authorizeUrl?: (url: URL) => void | Promise<void>;
-  /**
-   * Permit internal destinations after the caller's URL policy has explicitly
-   * admitted them. Default host fetches keep internal egress denied.
-   */
-  allowInternalEgress?: boolean;
   /** Observe each redirect after its guarded destination request succeeds. */
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
 }
@@ -102,7 +97,6 @@ async function fetchWithHostTransport(
     onRedirect: options.onRedirect,
     options: {
       allowInternalEgress: allowInternalEgress ||
-        options.allowInternalEgress === true ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
       resolveHost: transport.resolveHost,
     },
@@ -318,10 +312,61 @@ export async function guardedOutboundFetch(
 }
 
 /**
+ * Fetch a caller-validated HTTP loopback development endpoint.
+ *
+ * This is deliberately not a flag on `guardedOutboundFetch`: generic callers
+ * cannot self-authorize internal egress by adding an untyped option. The helper
+ * admits only exact HTTP loopback URLs and applies the same restriction to
+ * every redirect hop before it enables the host egress override.
+ *
+ * @internal Application-auth development loopback support only.
+ */
+export async function guardedExactHttpLoopbackOutboundFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: GuardedOutboundFetchOptions = {},
+): Promise<Response> {
+  const target = requestUrl(input);
+  requireExactHttpLoopbackUrl(target);
+  return await fetchWithBoundaryErrors(
+    input,
+    init,
+    {
+      authorizeUrl: async (url) => {
+        requireExactHttpLoopbackUrl(url);
+        await options.authorizeUrl?.(url);
+      },
+      onRedirect: options.onRedirect,
+    },
+    getTrustedHostTransport(),
+    true,
+  );
+}
+
+/**
  * Create a credential-safe provider transport bound to one configured origin.
  * Redirects are rejected rather than followed so provider-specific credential
  * headers (for example `x-api-key`) can never cross an origin boundary.
  */
 export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport());
+}
+
+function requestUrl(input: RequestInfo | URL): URL {
+  if (input instanceof Request) return new URL(input.url);
+  if (input instanceof URL) return input;
+  return new URL(input);
+}
+
+function requireExactHttpLoopbackUrl(url: URL): void {
+  if (url.protocol !== "http:" || !isExactLoopbackHostname(url.hostname)) {
+    throw new OutboundRequestBlockedError(
+      "Outbound loopback request requires an exact HTTP loopback host",
+    );
+  }
+}
+
+function isExactLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ||
+    hostname === "[::1]";
 }
