@@ -11,6 +11,7 @@ import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
@@ -590,28 +591,29 @@ describe(
       });
 
       it("rejects a legacy function-body bundle with a migration error", async () => {
-        await assertRejects(
-          () =>
-            applyLayoutsFunctionBody(
-              React.createElement("p", { id: "page-body" }, "Text"),
-              {
-                compiledCode: "return { default: function Layout() { return null; } };",
-              } as MdxBundle,
-              [],
-              {},
-              createLayoutComponentCache(),
-              "/project",
-              createMockAdapter(),
-              undefined,
-              "project-fb-legacy-bundle",
-              "project-slug",
-              "content-source-id",
-              PRODUCTION_MODES,
-            ),
-          Error,
-          "legacy function-body layout bundle",
-          "a top-level-return bundle must fail with migration guidance, not an opaque ESM syntax error",
+        const error = await assertRejects(() =>
+          applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "return { default: function Layout() { return null; } };",
+            } as MdxBundle,
+            [],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-fb-legacy-bundle",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          )
         );
+
+        assertEquals(isVeryfrontError(error), true);
+        if (!isVeryfrontError(error)) throw error;
+        assertEquals(error.slug, "compilation-error");
+        assertEquals(error.message.includes("legacy function-body layout bundle"), true);
       });
 
       it("redacts nested layout paths from legacy-bundle migration errors", async () => {

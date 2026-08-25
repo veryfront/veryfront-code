@@ -10,6 +10,7 @@ import type { LayoutComponentCache } from "./component-loader.ts";
 import { applyMDXLayout, applyTSXLayout } from "./component-loader.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -182,12 +183,12 @@ export function applyLayoutsESM(
 function assertESMLayoutBundle(compiledCode: string | undefined, source: string): void {
   if (!compiledCode) return;
   if (/\bexport\b/.test(compiledCode) || !/\breturn\b/.test(compiledCode)) return;
-  throw new Error(
-    `applyLayoutsFunctionBody received a legacy function-body layout bundle (${source}). ` +
+  throw COMPILATION_ERROR.create({
+    detail: `applyLayoutsFunctionBody received a legacy function-body layout bundle (${source}). ` +
       "Compiled layout code must be an ES module (e.g. `export default Layout`); " +
       "the synchronous function-body evaluator was removed for security reasons. " +
       "Recompile the layout with the current MDX pipeline, or migrate to applyLayoutsESM.",
-  );
+  });
 }
 
 /**
