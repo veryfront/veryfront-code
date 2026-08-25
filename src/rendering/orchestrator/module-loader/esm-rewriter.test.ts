@@ -302,6 +302,134 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       }
     });
 
+    it("fails the load when an unlexable module keeps an unrewritable specifier", async () => {
+      // Leaving `./dep.js` verbatim would make the runtime resolve it inside
+      // `tmpDir`, so a "successful" fetch would hand back an artifact that
+      // cannot load. Failing is the only honest outcome.
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode = `/* reject-configured-lexer */ import { a } from "./dep.js";`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
+          Error,
+          "./dep.js",
+          "a relative specifier the lexer could not rewrite must fail the load",
+        );
+        assertEquals(
+          files.size,
+          0,
+          "no artifact may be written for a module whose relative specifier stayed unrewritten",
+        );
+        assertEquals(
+          esmCache.size,
+          0,
+          "a failed load must not publish a cache entry",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
+    });
+
+    it("still accepts an unlexable module whose specifiers are all absolute", async () => {
+      // The companion to the case above: a lexer failure is not fatal by
+      // itself, only a lexer failure that leaves a specifier resolving against
+      // the temp directory.
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode =
+        `/* reject-configured-lexer */ import { a } from "/_vf_modules/local.js";\nimport "react";`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      try {
+        const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
+        assertEquals(
+          files.get(result),
+          rootCode,
+          "a locally served path and a bare specifier are both safe to leave verbatim",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
+    });
+
+    it("resolves relative specifiers against the URL the response came from", async () => {
+      // esm.sh answers a bare or versionless path with a redirect to the
+      // canonical build directory. The relative specifiers in that body belong
+      // to the final directory, so resolving them against the requested URL
+      // would fetch an unrelated chunk — or none at all.
+      const esmCache = new Map<string, string>();
+      const requestedUrl = "https://esm.sh/pkg";
+      const finalUrl = "https://esm.sh/v135/pkg@1.0.0/es2022/pkg.mjs";
+      const chunkUrl = "https://esm.sh/v135/pkg@1.0.0/es2022/chunk.mjs";
+      const requested: string[] = [];
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        requested.push(url);
+        if (url === requestedUrl) {
+          const redirected = jsonResponse(`export { c } from "./chunk.mjs";`);
+          // `Response.url` is read-only, and a synthetic response reports "";
+          // defining it is how a followed redirect is simulated here.
+          Object.defineProperty(redirected, "url", { value: finalUrl });
+          return Promise.resolve(redirected);
+        }
+        if (url === chunkUrl) return Promise.resolve(jsonResponse(`export const c = 1;`));
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      }) as typeof fetch;
+
+      const result = await fetchEsmModule(requestedUrl, tmpDir, localAdapter, esmCache);
+
+      assertEquals(
+        requested.includes(chunkUrl),
+        true,
+        "the relative specifier must be resolved against the final response URL",
+      );
+      assertEquals(
+        requested.includes("https://esm.sh/chunk.mjs"),
+        false,
+        "the requested URL's directory must not be used as the base after a redirect",
+      );
+      assertMatch(
+        files.get(result) ?? "",
+        /^export \{ c \} from "file:\/\/\/tmp\/esm-rewriter-test\/esm-[a-f0-9]+\.js";$/,
+        "the redirected module's chunk must be substituted with its local artifact",
+      );
+      assertEquals(
+        esmCache.get(requestedUrl),
+        result,
+        "the cache stays keyed by the requested URL, not the redirect target",
+      );
+    });
+
     it("prefetches successful template-literal dynamic imports", async () => {
       const esmCache = new Map<string, string>();
       globalThis.fetch = ((input: RequestInfo | URL) => {

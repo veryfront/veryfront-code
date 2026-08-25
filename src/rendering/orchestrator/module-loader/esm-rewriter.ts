@@ -29,33 +29,61 @@ async function staticImportSpecifiers(code: string): Promise<Set<string>> {
 }
 
 /**
+ * Whether the esm.sh rewrite has to redirect `specifier`, i.e. whether leaving
+ * it verbatim would make it resolve against wherever the artifact is written
+ * rather than against its esm.sh origin.
+ */
+function needsEsmRewrite(specifier: string): boolean {
+  if (specifier.startsWith("./") || specifier.startsWith("../")) return true;
+  if (!specifier.startsWith("/")) return false;
+  // veryfront module paths are served locally, not via esm.sh.
+  return !specifier.startsWith("/_vf_modules/") && !specifier.startsWith("/_veryfront/");
+}
+
+/**
  * Point an esm.sh bundle's server-absolute and relative specifiers at absolute
  * esm.sh URLs, so the module still resolves once it is written to a temp file.
  *
  * The rewrite is driven by the module lexer rather than by pattern matching:
  * only a position the lexer reports as a specifier is edited, so ordinary
  * string data that happens to read like an import statement — say
- * `const help = 'from "/v135/help"'` — is left alone. A bundle the lexer
- * cannot read keeps its specifiers verbatim; guessing with a regex there would
- * reintroduce exactly the string-versus-specifier confusion this avoids.
+ * `const help = 'from "/v135/help"'` — is left alone. Guessing with a regex
+ * would reintroduce exactly the string-versus-specifier confusion this avoids.
+ *
+ * A bundle the lexer cannot read keeps its specifiers verbatim, which is only
+ * sound while every one of them is already absolute. A surviving relative or
+ * server-absolute specifier would be resolved against the temp directory the
+ * artifact is written to, so the caller would be handed a module that loads the
+ * wrong file or none at all; such a bundle fails the load instead.
  */
 export async function rewriteEsmPaths(code: string, urlBase: string): Promise<string> {
   try {
     return await replaceSpecifiers(code, (specifier) => {
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        return new URL(specifier, urlBase).href;
-      }
-      if (!specifier.startsWith("/")) return null;
-      // veryfront module paths are served locally, not via esm.sh.
-      if (specifier.startsWith("/_vf_modules/") || specifier.startsWith("/_veryfront/")) {
-        return null;
-      }
-      return `https://esm.sh${specifier}`;
+      if (!needsEsmRewrite(specifier)) return null;
+      if (specifier.startsWith("/")) return `https://esm.sh${specifier}`;
+      return new URL(specifier, urlBase).href;
     });
   } catch (error) {
     logger.debug("Could not lex a fetched module; leaving its specifiers unrewritten", {
       error: error instanceof Error ? error.message : String(error),
     });
+    // Only reachable once the lexer has already refused the source, so the scan
+    // is deliberately coarse: a string that merely reads like an import costs a
+    // failed load here, never a silently unloadable artifact. Declared inside
+    // the handler so its `lastIndex` cannot leak between calls.
+    const importLikeSpecifier = /(?:\bfrom|\bimport)\s*\(?\s*(["'])([^"'\n]+)\1/g;
+    for (
+      let match = importLikeSpecifier.exec(code);
+      match;
+      match = importLikeSpecifier.exec(code)
+    ) {
+      const specifier = match[2];
+      if (specifier === undefined || !needsEsmRewrite(specifier)) continue;
+      throw MODULE_NOT_FOUND.create({
+        detail: `Cannot rewrite ${specifier} in an unlexable module from ${urlBase}: leaving it ` +
+          `verbatim would resolve it against the temp directory instead of esm.sh`,
+      });
+    }
     return code;
   }
 }
@@ -317,7 +345,13 @@ async function materializeEsmModuleWithin(
 
   let code = await response.text();
 
-  const urlBase = url.substring(0, url.lastIndexOf("/") + 1);
+  // esm.sh canonicalises bare and versionless paths by redirecting, so the URL
+  // the response actually came from is the only correct base for the module's
+  // relative specifiers; resolving them against the requested URL would fetch a
+  // chunk from the wrong directory. A synthetic response carries an empty
+  // `url`, so the requested URL stays the fallback.
+  const responseUrl = response.url || url;
+  const urlBase = responseUrl.substring(0, responseUrl.lastIndexOf("/") + 1);
   code = await rewriteEsmPaths(code, urlBase);
 
   const allEsmUrls = new Set<string>();
