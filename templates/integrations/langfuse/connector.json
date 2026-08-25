@@ -258,7 +258,7 @@
       {
         "step": 1,
         "title": "Create a Langfuse account",
-        "description": "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US) — the free Hobby plan is enough for testing. Self-hosting is also supported."
+        "description": "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US). The free Hobby plan is enough for testing. Self-hosting is also supported."
       },
       {
         "step": 2,
@@ -277,7 +277,7 @@
       }
     ],
     "notes": [
-      "API keys are project-scoped — create separate keys per project/environment",
+      "API keys are project-scoped; create separate keys per project/environment",
       "All tools send their requests to the host set in the LANGFUSE_HOST environment variable (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain"
     ],
     "documentation": "https://api.reference.langfuse.com"

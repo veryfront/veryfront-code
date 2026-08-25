@@ -65,7 +65,7 @@
     {
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
-      "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
+      "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore, including nearText/nearVector search)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -193,7 +193,7 @@
       {
         "step": 1,
         "title": "Create a Weaviate Cloud account",
-        "description": "Sign up at https://console.weaviate.cloud — free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too."
+        "description": "Sign up at https://console.weaviate.cloud. Free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too."
       },
       {
         "step": 2,
@@ -212,7 +212,7 @@
       }
     ],
     "notes": [
-      "Every tool needs the WEAVIATE_CLUSTER_HOST environment variable — there is no global Weaviate API host",
+      "Every tool needs the WEAVIATE_CLUSTER_HOST environment variable; there is no global Weaviate API host",
       "nearText GraphQL queries require a vectorizer module configured on the collection (and possibly a model-provider API key set on the cluster)",
       "Admin keys can read and write; read-only keys will get 403 on Create Object"
     ],

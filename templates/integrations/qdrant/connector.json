@@ -190,17 +190,17 @@
       {
         "step": 1,
         "title": "Create a Qdrant Cloud account",
-        "description": "Sign up at https://cloud.qdrant.io — the free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured)."
+        "description": "Sign up at https://cloud.qdrant.io. The free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured)."
       },
       {
         "step": 2,
         "title": "Create a cluster and API key",
-        "description": "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately — it is only shown once."
+        "description": "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately: it is only shown once."
       },
       {
         "step": 3,
         "title": "Store the key and note your endpoint",
-        "description": "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details — tools take it as the QDRANT_CLUSTER_HOST environment variable without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333."
+        "description": "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details; tools take it as the QDRANT_CLUSTER_HOST environment variable without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333."
       },
       {
         "step": 4,
@@ -210,8 +210,8 @@
     ],
     "notes": [
       "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
-      "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333) — there is no global Qdrant API host",
-      "Migrating from earlier versions: tools no longer accept a clusterHost parameter — set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
+      "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333); there is no global Qdrant API host",
+      "Migrating from earlier versions: tools no longer accept a clusterHost parameter; set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
       "QDRANT_CLUSTER_HOST is treated as sensitive because the cluster hostname identifies your private deployment; the CLI masks it in prompts and output",
       "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)"
     ],

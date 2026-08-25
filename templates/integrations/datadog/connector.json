@@ -39,7 +39,7 @@
     },
     {
       "name": "DD_SITE",
-      "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, or us3.datadoghq.com — API requests go to api.<site>.",
+      "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, or us3.datadoghq.com. API requests go to api.<site>.",
       "required": false,
       "sensitive": false,
       "default": "datadoghq.com"
@@ -300,7 +300,7 @@
       }
     ],
     "notes": [
-      "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY — both env vars are required",
+      "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY, so both env vars are required",
       "If your org is not on datadoghq.com, set your site (e.g. datadoghq.eu) as the DD_SITE environment variable"
     ],
     "documentation": "https://docs.datadoghq.com/api/latest/"

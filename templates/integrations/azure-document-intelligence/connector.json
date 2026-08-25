@@ -26,7 +26,7 @@
     },
     {
       "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
-      "description": "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com — all tools send their requests to this host.",
+      "description": "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com. All tools send their requests to this host.",
       "required": true,
       "sensitive": true,
       "docsUrl": "https://portal.azure.com"
@@ -36,7 +36,7 @@
     {
       "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
-      "description": "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID to fetch the extracted fields.",
+      "description": "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID to fetch the extracted fields.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -68,7 +68,7 @@
     {
       "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
-      "description": "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "description": "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -100,7 +100,7 @@
     {
       "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
-      "description": "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "description": "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -156,7 +156,7 @@
     {
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
-      "description": "Start pure OCR text extraction with the prebuilt-read model — the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+      "description": "Start pure OCR text extraction with the prebuilt-read model, the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -188,7 +188,7 @@
     {
       "id": "azure-document-intelligence__list_document_models",
       "name": "List Document Models",
-      "description": "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions — use this to discover valid model IDs",
+      "description": "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions; use this to discover valid model IDs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -252,10 +252,10 @@
       }
     ],
     "notes": [
-      "Analysis is asynchronous: analyze calls return 202 with no body — the result ID must be read from the Operation-Location response header",
+      "Analysis is asynchronous: analyze calls return 202 with no body; the result ID must be read from the Operation-Location response header",
       "Analyze results are retained for 24 hours, after which the result ID expires",
       "All tools pin api-version 2024-11-30 (GA v4.0); region availability and model versions are listed in the Azure docs",
-      "Either urlSource or base64Source must be set on analyze calls — never both"
+      "Either urlSource or base64Source must be set on analyze calls, never both"
     ],
     "documentation": "https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/"
   }

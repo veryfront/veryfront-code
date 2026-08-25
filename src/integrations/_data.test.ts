@@ -1461,6 +1461,46 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("routes Algolia writes to the indexing host and reads to the DSN host", () => {
+    // Algolia reserves <appId>-dsn.algolia.net for distributed read traffic;
+    // indexing operations must target <appId>.algolia.net.
+    assertEquals(
+      getTool("algolia", "save_objects").endpoint?.url,
+      "https://{{env.ALGOLIA_APP_ID}}.algolia.net/1/indexes/{indexName}/batch",
+    );
+    for (const toolId of ["list_indices", "search_index", "browse_index", "get_object"]) {
+      const url = getTool("algolia", toolId).endpoint?.url ?? "";
+      assert(
+        url.startsWith("https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/"),
+        `Expected algolia:${toolId} to read from the DSN host, got ${url}`,
+      );
+    }
+  });
+
+  it("routes DocuSign account tools through per-call hosts pinned to docusign.net", () => {
+    // /oauth/userinfo pairs each account with its own base_uri, so account
+    // routing must stay per call instead of collapsing onto one configured
+    // host.
+    const docusign = getConnector("docusign");
+    assertEquals(
+      docusign.envVars?.some((envVar) => envVar.name === "DOCUSIGN_ACCOUNT_HOST"),
+      false,
+    );
+    for (const tool of docusign.tools) {
+      if (!tool.endpoint) continue;
+      if (tool.id === "docusign__get_user_info") {
+        assertEquals(tool.endpoint.url, "https://account.docusign.com/oauth/userinfo");
+        continue;
+      }
+      assert(
+        tool.endpoint.url.startsWith("https://{accountHostPrefix}.docusign.net/restapi/v2.1/"),
+        `Expected ${tool.id} to route via accountHostPrefix, got ${tool.endpoint.url}`,
+      );
+      assertEquals(tool.endpoint.params?.accountHostPrefix?.in, "path");
+      assertEquals(tool.endpoint.params?.accountHostPrefix?.required, true);
+    }
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);

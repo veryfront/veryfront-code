@@ -140,7 +140,7 @@
     {
       "id": "klarna__release_remaining_authorization",
       "name": "Release Remaining Authorization",
-      "description": "Release the remaining (uncaptured) authorized amount of an order after the final partial capture — the standard end-of-fulfillment step that frees the customer's remaining authorization",
+      "description": "Release the remaining (uncaptured) authorized amount of an order after the final partial capture: the standard end-of-fulfillment step that frees the customer's remaining authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -219,7 +219,7 @@
       {
         "step": 2,
         "title": "Create API credentials",
-        "description": "In the Merchant Portal, go to Settings > API credentials and generate a new credential. You get a username (a UID linked to your merchant ID) and a password/API key — the password is shown only once, so store it immediately."
+        "description": "In the Merchant Portal, go to Settings > API credentials and generate a new credential. You get a username (a UID linked to your merchant ID) and a password/API key. The password is shown only once, so store it immediately."
       },
       {
         "step": 3,
@@ -233,7 +233,7 @@
       }
     ],
     "notes": [
-      "Playground (test) credentials only work against the playground hosts (api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com) and production credentials only against production hosts — set KLARNA_API_HOST accordingly.",
+      "Playground (test) credentials only work against the playground hosts (api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com) and production credentials only against production hosts, so set KLARNA_API_HOST accordingly.",
       "All amounts are in minor units of the order currency (e.g. 1050 = 10.50 EUR).",
       "Refunds require a prior capture; cancel only works on orders that have not been captured."
     ],

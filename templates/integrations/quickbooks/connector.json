@@ -70,7 +70,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -150,7 +150,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -184,7 +184,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -218,7 +218,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -246,7 +246,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -288,7 +288,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -365,7 +365,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -393,7 +393,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -401,7 +401,7 @@
         "body": {
           "bill": {
             "type": "object",
-            "description": "Bill payload — VendorRef and Line are required, e.g. { \"VendorRef\": { \"value\": \"56\" }, \"Line\": [{ \"DetailType\": \"AccountBasedExpenseLineDetail\", \"Amount\": 200, \"AccountBasedExpenseLineDetail\": { \"AccountRef\": { \"value\": \"7\" } } }], \"DueDate\": \"2026-07-01\" }",
+            "description": "Bill payload: VendorRef and Line are required, e.g. { \"VendorRef\": { \"value\": \"56\" }, \"Line\": [{ \"DetailType\": \"AccountBasedExpenseLineDetail\", \"Amount\": 200, \"AccountBasedExpenseLineDetail\": { \"AccountRef\": { \"value\": \"7\" } } }], \"DueDate\": \"2026-07-01\" }",
             "required": true
           }
         },
@@ -429,7 +429,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -437,7 +437,7 @@
         "body": {
           "purchase": {
             "type": "object",
-            "description": "Purchase payload — PaymentType (Cash, Check, or CreditCard), AccountRef (the bank/credit account paid from), and Line are required, e.g. { \"PaymentType\": \"Cash\", \"AccountRef\": { \"value\": \"35\" }, \"Line\": [{ \"DetailType\": \"AccountBasedExpenseLineDetail\", \"Amount\": 25.5, \"AccountBasedExpenseLineDetail\": { \"AccountRef\": { \"value\": \"7\" } } }] }",
+            "description": "Purchase payload: PaymentType (Cash, Check, or CreditCard), AccountRef (the bank/credit account paid from), and Line are required, e.g. { \"PaymentType\": \"Cash\", \"AccountRef\": { \"value\": \"35\" }, \"Line\": [{ \"DetailType\": \"AccountBasedExpenseLineDetail\", \"Amount\": 25.5, \"AccountBasedExpenseLineDetail\": { \"AccountRef\": { \"value\": \"7\" } } }] }",
             "required": true
           }
         },
@@ -466,7 +466,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -517,7 +517,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -529,7 +529,7 @@
     {
       "id": "quickbooks__list_vendors",
       "name": "List Vendors",
-      "description": "List vendors in a QuickBooks Online company — use this to find the VendorRef IDs that Create Bill requires",
+      "description": "List vendors in a QuickBooks Online company; use this to find the VendorRef IDs that Create Bill requires",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -551,7 +551,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -599,7 +599,7 @@
     {
       "id": "quickbooks__list_purchases",
       "name": "List Purchases",
-      "description": "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company — the read counterpart to Create Purchase",
+      "description": "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company, the read counterpart to Create Purchase",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -621,7 +621,7 @@
             "type": "string",
             "in": "header",
             "headerName": "Accept",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json"
           }
         },
@@ -699,7 +699,7 @@
       {
         "step": 1,
         "title": "Create an Intuit developer account",
-        "description": "Sign up at https://developer.intuit.com/ — creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing."
+        "description": "Sign up at https://developer.intuit.com/. Creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing."
       },
       {
         "step": 2,
@@ -714,7 +714,7 @@
       {
         "step": 4,
         "title": "Note your realm ID",
-        "description": "The OAuth callback includes a realmId query parameter identifying the connected company — save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon → Additional Info in QuickBooks Online."
+        "description": "The OAuth callback includes a realmId query parameter identifying the connected company. Save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon > Additional Info in QuickBooks Online."
       },
       {
         "step": 5,
@@ -725,7 +725,7 @@
     "notes": [
       "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
       "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
-      "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
+      "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response; it must be saved and passed to every tool",
       "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
       "Sandbox companies use the sandbox-quickbooks.api.intuit.com host"
     ],

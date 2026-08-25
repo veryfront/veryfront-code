@@ -605,6 +605,95 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(transportCalls, 0);
   });
 
+  it("fails as credential-unavailable when the host provider throws instead of using the default", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["langfuse__list_traces"],
+        credentialProvider: (name) => {
+          if (name === "LANGFUSE_HOST") throw new Error("transient provider failure");
+          return "langfuse-key";
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ data: [] }));
+      },
+    );
+
+    // A provider failure must not fall back to the catalog default host: a
+    // configured US Langfuse project would silently route to the EU host.
+    const error = await assertRejects(
+      () => source.executeTool("langfuse__list_traces", {}),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-credential-unavailable");
+    assert(error.message.includes("LANGFUSE_HOST"), error.message);
+    assertEquals(transportCalls, 0);
+  });
+
+  it("accepts a configured path prefix when the template host precedes the path", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      assertEquals(request.url.origin, request.allowedOrigin);
+      return Promise.resolve(Response.json({ paymentMethods: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["adyen__list_payment_methods"],
+        credentialProvider: (name) =>
+          name === "ADYEN_CHECKOUT_HOST"
+            ? "1797a841fbb37ca7-adyendemo-checkout-live.adyenpayments.com/checkout"
+            : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    await source.executeTool("adyen__list_payment_methods", { merchantAccount: "TestMerchant" });
+    assertEquals(requests, [
+      "https://1797a841fbb37ca7-adyendemo-checkout-live.adyenpayments.com/checkout/v71/paymentMethods",
+    ]);
+  });
+
+  it("rejects path-prefixed host values that could escape the resolved URL", async () => {
+    for (
+      const hostile of [
+        "attacker.example?query",
+        "attacker.example#fragment",
+        "user@attacker.example/checkout",
+        "attacker.example//checkout",
+        "attacker.example/checkout/",
+        "/checkout",
+        "attacker.example/check out",
+        "attacker.example/{token}",
+        "attacker.example/%2e%2e",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["adyen__list_payment_methods"],
+          credentialProvider: (name) => name === "ADYEN_CHECKOUT_HOST" ? hostile : TEST_CREDENTIAL,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("adyen__list_payment_methods", { merchantAccount: "M" }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+      assert(error.message.includes("ADYEN_CHECKOUT_HOST"), error.message);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
   it("rejects configured host values that could escape the URL authority", async () => {
     for (
       const hostile of [

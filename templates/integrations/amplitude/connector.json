@@ -207,7 +207,7 @@
         "body": {
           "api_key": {
             "type": "string",
-            "description": "Amplitude project API key — pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
+            "description": "Amplitude project API key: pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
             "required": true
           },
           "events": {
@@ -251,7 +251,7 @@
       {
         "step": 2,
         "title": "Store the keys",
-        "description": "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... — both are required because the analytics APIs use HTTP basic auth (api_key:secret_key)."
+        "description": "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... Both are required because the analytics APIs use HTTP basic auth (api_key:secret_key)."
       },
       {
         "step": 3,
@@ -265,9 +265,9 @@
       }
     ],
     "notes": [
-      "Keys are per-project — use a test project's keys when experimenting, since Track Event writes real analytics data",
+      "Keys are per-project, so use a test project's keys when experimenting, since Track Event writes real analytics data",
       "The HTTP V2 ingestion API authenticates with the project API key inside the request body, so Track Event asks for api_key as a body field (same value as AMPLITUDE_API_KEY; the secret key is never sent)",
-      "Dashboard REST API endpoints are rate limited per project — keep date ranges modest"
+      "Dashboard REST API endpoints are rate limited per project, so keep date ranges modest"
     ],
     "documentation": "https://amplitude.com/docs/apis/analytics/dashboard-rest"
   }

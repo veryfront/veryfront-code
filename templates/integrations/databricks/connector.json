@@ -2,7 +2,7 @@
   "name": "databricks",
   "displayName": "Databricks",
   "icon": "databricks.svg",
-  "description": "Query Databricks workspace compute, jobs, and SQL warehouses — list clusters and jobs, trigger job runs, and execute SQL statements",
+  "description": "Query Databricks workspace compute, jobs, and SQL warehouses: list clusters and jobs, trigger job runs, and execute SQL statements",
   "category": "data",
   "auth": {
     "type": "api-key",
@@ -434,10 +434,10 @@
       }
     ],
     "notes": [
-      "Personal access tokens are workspace-scoped — the token only works against the workspace host where it was created",
+      "Personal access tokens are workspace-scoped: the token only works against the workspace host where it was created",
       "Executing SQL requires a running (or auto-starting) SQL warehouse; the first query may take a minute while the warehouse starts",
       "Databricks recommends OAuth over PATs for production use; PATs are the simplest option for getting started",
-      "Tokens can expire — if calls suddenly return 403, regenerate the token"
+      "Tokens can expire; if calls suddenly return 403, regenerate the token"
     ],
     "documentation": "https://docs.databricks.com/api/workspace/introduction"
   }

@@ -341,7 +341,7 @@
       {
         "step": 2,
         "title": "Create a Public API token",
-        "description": "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once."
+        "description": "Open Workspace Settings > Access Management > Tokens and select Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token immediately: it is shown only once."
       },
       {
         "step": 3,
@@ -351,7 +351,7 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call."
+        "description": "Run List Sources. EU-hosted workspaces must set SEGMENT_API_HOST=eu1.api.segmentapis.com in .env first; US workspaces can keep the default api.segmentapis.com."
       }
     ],
     "notes": [

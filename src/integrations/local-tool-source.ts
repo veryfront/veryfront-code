@@ -19,6 +19,7 @@ import {
   snapshotLocalIntegrationEndpointArguments,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
+  LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   LOCAL_INTEGRATION_CREDENTIALS_MISSING,
   LOCAL_INTEGRATION_REQUEST_INVALID,
   localIntegrationConfigurationError,
@@ -108,6 +109,14 @@ interface EnvironmentHostBinding {
   readonly variableName: string;
   /** Catalog-declared fallback host used when the variable is unset. */
   readonly defaultValue: string | undefined;
+  /**
+   * Whether the configured value may append a path prefix after the host.
+   * Granted only when the token spans the whole URL authority, so the prefix
+   * lands ahead of the catalog path instead of inside the authority (for
+   * example Adyen's live host, which requires a "/checkout" path segment the
+   * test host does not use).
+   */
+  readonly allowsPathPrefix: boolean;
 }
 
 type LocalCatalogConnector = Pick<IntegrationConfig, "auth" | "envVars" | "name">;
@@ -348,17 +357,24 @@ function isEnvironmentVariableName(value: string): boolean {
 }
 
 /**
- * Accepts only a bare hostname with an optional numeric port. Anything that
- * could break out of the URL authority once substituted — a scheme, userinfo,
- * a path separator, a query, or whitespace — is rejected before the value
- * reaches the endpoint template.
+ * Accepts only a bare hostname with an optional numeric port and, when
+ * `allowPathPrefix` is set, an optional path prefix of plain segments.
+ * Anything that could break out of the URL authority or path once substituted
+ * (a scheme, userinfo, a query, a fragment, an empty segment, or whitespace)
+ * is rejected before the value reaches the endpoint template.
  */
-function isHostWithOptionalPort(value: string): boolean {
+function isHostWithOptionalPort(value: string, allowPathPrefix: boolean): boolean {
   if (value.length === 0 || value.length > 255) return false;
   let sawColon = false;
   let portDigits = 0;
+  let pathStart = -1;
   for (let index = 0; index < value.length; index++) {
     const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code === 47) {
+      if (!allowPathPrefix || index === 0 || (sawColon && portDigits === 0)) return false;
+      pathStart = index;
+      break;
+    }
     if (code === 58) {
       if (sawColon || index === 0) return false;
       sawColon = true;
@@ -373,7 +389,23 @@ function isHostWithOptionalPort(value: string): boolean {
       (code >= 97 && code <= 122) || code === 45 || code === 46;
     if (!allowed) return false;
   }
-  return !sawColon || (portDigits > 0 && portDigits <= 5);
+  if (sawColon && (portDigits === 0 || portDigits > 5)) return false;
+  if (pathStart === -1) return true;
+  let segmentLength = 0;
+  for (let index = pathStart + 1; index < value.length; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code === 47) {
+      if (segmentLength === 0) return false;
+      segmentLength = 0;
+      continue;
+    }
+    const allowed = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) || code === 45 || code === 46 || code === 95 ||
+      code === 126;
+    if (!allowed) return false;
+    segmentLength += 1;
+  }
+  return segmentLength > 0;
 }
 
 /**
@@ -426,8 +458,13 @@ function environmentHostBinding(
         `environment variable "${variableName}"`,
     );
   }
+  // A configured path prefix is only meaningful when the token spans the
+  // whole URL authority: substituted anywhere else it would corrupt the
+  // authority instead of extending the path.
+  const allowsPathPrefix = tokenStart === "https://".length &&
+    (tokenEnd + 2 === url.length || pathStart === tokenEnd + 2);
   const defaultValue = typeof declared.default === "string" ? declared.default : undefined;
-  if (defaultValue !== undefined && !isHostWithOptionalPort(defaultValue)) {
+  if (defaultValue !== undefined && !isHostWithOptionalPort(defaultValue, allowsPathPrefix)) {
     unsupportedTemplate();
   }
 
@@ -439,7 +476,7 @@ function environmentHostBinding(
     apply(stringReplace, url, [token, ENVIRONMENT_HOST_PROBE]) as string,
     `Local integration tool "${toolId}" endpoint`,
   );
-  return freeze({ token, variableName, defaultValue });
+  return freeze({ token, variableName, defaultValue, allowsPathPrefix });
 }
 
 /** Resolve and validate the host an environment-bound endpoint targets. */
@@ -451,7 +488,13 @@ async function resolveEnvironmentHost(
   try {
     provided = await apply(credentialProvider, undefined, [binding.variableName]);
   } catch {
-    provided = undefined;
+    // A provider failure is not evidence the variable is unset: falling back
+    // to the catalog default here could silently route a credentialed request
+    // to the wrong environment (for example a configured US host failing over
+    // to the default EU host).
+    throw LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE.create({
+      detail: `The credential provider could not read ${binding.variableName}`,
+    });
   }
   let value = typeof provided === "string" && provided.length > 0 ? provided : undefined;
   value ??= binding.defaultValue;
@@ -460,10 +503,12 @@ async function resolveEnvironmentHost(
       detail: `Set local integration host variables: ${binding.variableName}`,
     });
   }
-  if (!isHostWithOptionalPort(value)) {
+  if (!isHostWithOptionalPort(value, binding.allowsPathPrefix)) {
     configurationError(
       `Local integration host variable ${binding.variableName} must be a bare ` +
-        "hostname with an optional port",
+        (binding.allowsPathPrefix
+          ? "hostname with an optional port and path prefix"
+          : "hostname with an optional port"),
     );
   }
   return value;
@@ -515,7 +560,7 @@ function isTenantHostLabelSequence(value: string): boolean {
  * `{param}` placeholder followed by a fixed registrable domain (for example
  * `https://{indexHostPrefix}.pinecone.io/query`). The placeholder must be a
  * whole leading label sequence, must be backed by a required path parameter,
- * and everything after it — including the registrable domain — must be
+ * and everything after it (including the registrable domain) must be
  * literal, so tool input can pick a provider tenant but never another
  * registrable domain. The template is validated here; the argument itself is
  * validated per execution, where the resolved origin is pinned.
@@ -551,7 +596,7 @@ function tenantHostBinding(
     unsupportedTemplate();
   }
   const fixedHost = apply(stringSlice, suffix, [1]) as string;
-  if (!isHostWithOptionalPort(fixedHost)) unsupportedTemplate();
+  if (!isHostWithOptionalPort(fixedHost, false)) unsupportedTemplate();
   const portStart = apply(stringIndexOf, fixedHost, [":"]) as number;
   const fixedLabels = portStart === -1
     ? fixedHost

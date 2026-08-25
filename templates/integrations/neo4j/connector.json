@@ -44,7 +44,7 @@
     {
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
-      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows — use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
+      "description": "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -60,7 +60,7 @@
         "body": {
           "statement": {
             "type": "string",
-            "description": "Cypher statement to execute, e.g. MATCH (n:Person {name: $name})-[:KNOWS]->(m) RETURN m.name — use $placeholders with the parameters field instead of inlining values",
+            "description": "Cypher statement to execute, e.g. MATCH (n:Person {name: $name})-[:KNOWS]->(m) RETURN m.name; use $placeholders with the parameters field instead of inlining values",
             "required": true
           },
           "parameters": {
@@ -92,7 +92,7 @@
         "body": {
           "statement": {
             "type": "string",
-            "description": "Cypher write statement, e.g. MERGE (n:Person {name: $name, age: $age}) RETURN n — use $placeholders with the parameters field instead of inlining values",
+            "description": "Cypher write statement, e.g. MERGE (n:Person {name: $name, age: $age}) RETURN n; use $placeholders with the parameters field instead of inlining values",
             "required": true
           },
           "parameters": {
@@ -134,12 +134,12 @@
       {
         "step": 1,
         "title": "Create a Neo4j Aura instance",
-        "description": "Sign up at https://console.neo4j.io and create an AuraDB Free instance (no credit card required). Download or copy the generated password — it is shown only once. Self-hosted Neo4j 5.19+ also exposes the Query API."
+        "description": "Sign up at https://console.neo4j.io and create an AuraDB Free instance (no credit card required). Download or copy the generated password: it is shown only once. Self-hosted Neo4j 5.19+ also exposes the Query API."
       },
       {
         "step": 2,
         "title": "Find your host",
-        "description": "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). Store the host part (xxxxxxxx.databases.neo4j.io) as NEO4J_HOST in your .env — every tool sends its requests to this host."
+        "description": "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). Store the host part (xxxxxxxx.databases.neo4j.io) as NEO4J_HOST in your .env. Every tool sends its requests to this host."
       },
       {
         "step": 3,
@@ -154,8 +154,8 @@
     ],
     "notes": [
       "The Query API requires Neo4j 5.19+ (all Aura instances qualify); on self-managed instances below 5.25 it is disabled by default and must be enabled in the server configuration. Aura serves it over HTTPS on port 443",
-      "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https:// — include the port in NEO4J_HOST, e.g. my-server:7473",
-      "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement — this enables plan caching and prevents Cypher injection",
+      "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https://. Include the port in NEO4J_HOST, e.g. my-server:7473",
+      "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement; this enables plan caching and prevents Cypher injection",
       "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
       "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee"
     ],

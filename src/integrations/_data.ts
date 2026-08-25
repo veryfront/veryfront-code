@@ -327,7 +327,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "ADYEN_CHECKOUT_HOST",
       "description":
-        "Adyen Checkout API host without scheme. Keep the default checkout-test.adyen.com for test; for live, use your prefixed live host from Developers > API URLs (e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com).",
+        "Adyen Checkout API URL prefix without scheme. Keep the default checkout-test.adyen.com for test. For live, use your prefixed live host from Developers > API URLs followed by /checkout, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout, because live Checkout endpoints sit under that extra path segment.",
       "required": false,
       "sensitive": false,
       "default": "checkout-test.adyen.com",
@@ -606,10 +606,10 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Going live",
         "description":
-          "Live mode needs a separate API key generated in the live Customer Area (https://ca-live.adyen.com), and live API calls use your unique live URL prefix. Find the prefix under Developers > API URLs in the live Customer Area.",
+          "Live mode needs a separate API key generated in the live Customer Area (https://ca-live.adyen.com), and live API calls use your unique live URL prefix. Find the prefix under Developers > API URLs in the live Customer Area, then set ADYEN_CHECKOUT_HOST to that host plus /checkout, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout. Live Checkout URLs use /checkout/v71/... while the test host uses /v71/... directly.",
       }],
       "notes": [
-        "Requests go to the host configured via the ADYEN_CHECKOUT_HOST environment variable. For test, keep the default checkout-test.adyen.com. For live, set your prefixed live host, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com (test and live URLs have different structures).",
+        "Requests go to the URL prefix configured via the ADYEN_CHECKOUT_HOST environment variable. For test, keep the default checkout-test.adyen.com. For live, set your prefixed live host plus the /checkout path segment, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout (live Checkout URLs require /checkout/v71/... while test uses /v71/...).",
         "Amounts are in minor units (e.g. value 1000 with currency EUR is EUR 10.00).",
         "Refund outcomes are asynchronous: the API acknowledges the request and the final result is delivered via a REFUND webhook.",
         "The Checkout API does not provide a payment listing endpoint; use get_session_result or webhooks to track payment outcomes.",
@@ -1037,7 +1037,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "ALGOLIA_APP_ID",
       "description":
-        "Algolia application ID (10-character uppercase ID shown next to your API keys); data-plane requests go to <application-id>-dsn.algolia.net",
+        "Algolia application ID (10-character uppercase ID shown next to your API keys); read requests go to <application-id>-dsn.algolia.net and writes go to <application-id>.algolia.net",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/",
@@ -1175,7 +1175,7 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/batch",
+        "url": "https://{{env.ALGOLIA_APP_ID}}.algolia.net/1/indexes/{indexName}/batch",
         "params": {
           "indexName": {
             "type": "string",
@@ -1219,12 +1219,12 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Copy your credentials",
         "description":
-          "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes — avoid the Admin API key.",
+          "In Settings > API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes. Avoid the Admin API key.",
       }, {
         "step": 3,
         "title": "Note your host",
         "description":
-          "Requests go to <ALGOLIA_APP_ID>-dsn.algolia.net, derived from the ALGOLIA_APP_ID environment variable — no host input is needed on tool calls.",
+          "Read tools query <ALGOLIA_APP_ID>-dsn.algolia.net and Save Objects writes to <ALGOLIA_APP_ID>.algolia.net. Both hosts derive from the ALGOLIA_APP_ID environment variable, so no host input is needed on tool calls.",
       }, {
         "step": 4,
         "title": "Verify access",
@@ -1232,7 +1232,7 @@ export const connectors: IntegrationConfig[] = [
           "Run the List Indices tool. A 403 usually means the API key lacks the required ACL or the host does not match your application ID.",
       }],
       "notes": [
-        "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id — both env vars are required",
+        "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id, so both env vars are required",
         "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
         "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side",
       ],
@@ -1600,7 +1600,7 @@ export const connectors: IntegrationConfig[] = [
           "api_key": {
             "type": "string",
             "description":
-              "Amplitude project API key — pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
+              "Amplitude project API key: pass the same value as the AMPLITUDE_API_KEY env var (the ingestion API reads it from the body, not headers)",
             "required": true,
           },
           "events": {
@@ -1639,7 +1639,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Store the keys",
         "description":
-          "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... — both are required because the analytics APIs use HTTP basic auth (api_key:secret_key).",
+          "Add them to your .env file as AMPLITUDE_API_KEY=... and AMPLITUDE_SECRET_KEY=... Both are required because the analytics APIs use HTTP basic auth (api_key:secret_key).",
       }, {
         "step": 3,
         "title": "Check your data residency",
@@ -1652,9 +1652,9 @@ export const connectors: IntegrationConfig[] = [
           "Run the List Events tool. A 401 means the key pair is wrong; a 403 can mean the keys belong to a different project or region.",
       }],
       "notes": [
-        "Keys are per-project — use a test project's keys when experimenting, since Track Event writes real analytics data",
+        "Keys are per-project, so use a test project's keys when experimenting, since Track Event writes real analytics data",
         "The HTTP V2 ingestion API authenticates with the project API key inside the request body, so Track Event asks for api_key as a body field (same value as AMPLITUDE_API_KEY; the secret key is never sent)",
-        "Dashboard REST API endpoints are rate limited per project — keep date ranges modest",
+        "Dashboard REST API endpoints are rate limited per project, so keep date ranges modest",
       ],
       "documentation": "https://amplitude.com/docs/apis/analytics/dashboard-rest",
     },
@@ -4741,7 +4741,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
       "description":
-        "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com — all tools send their requests to this host.",
+        "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com. All tools send their requests to this host.",
       "required": true,
       "sensitive": true,
       "docsUrl": "https://portal.azure.com",
@@ -4750,7 +4750,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "azure-document-intelligence__analyze_invoice",
       "name": "Analyze Invoice",
       "description":
-        "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID to fetch the extracted fields.",
+        "Start analysis of an invoice with the prebuilt-invoice model (vendor, customer, line items, totals, taxes, payment terms). Asynchronous: the API responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID to fetch the extracted fields.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4785,7 +4785,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "azure-document-intelligence__analyze_receipt",
       "name": "Analyze Receipt",
       "description":
-        "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+        "Start analysis of a sales receipt with the prebuilt-receipt model (merchant, transaction date/time, line items, tax, tip, total). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4820,7 +4820,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "azure-document-intelligence__analyze_layout",
       "name": "Analyze Layout",
       "description":
-        "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+        "Start analysis of any document with the prebuilt-layout model to extract text, tables, selection marks, and document structure (optionally as Markdown). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4882,7 +4882,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "azure-document-intelligence__analyze_read",
       "name": "Analyze Read (OCR)",
       "description":
-        "Start pure OCR text extraction with the prebuilt-read model — the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID — poll Get Analyze Result with that ID.",
+        "Start pure OCR text extraction with the prebuilt-read model, the cheapest option for plain scans where only the text matters (no tables or key-value pairs). Asynchronous: responds 202 Accepted with an Operation-Location header containing the result ID. Poll Get Analyze Result with that ID.",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -4917,7 +4917,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "azure-document-intelligence__list_document_models",
       "name": "List Document Models",
       "description":
-        "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions — use this to discover valid model IDs",
+        "List the document models available on the resource (prebuilt and custom) with their model IDs and descriptions; use this to discover valid model IDs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -4974,10 +4974,10 @@ export const connectors: IntegrationConfig[] = [
           "Call Get Analyze Result with the same modelId (prebuilt-invoice) and the result ID. Poll until status is 'succeeded', then read the extracted fields from analyzeResult.documents.",
       }],
       "notes": [
-        "Analysis is asynchronous: analyze calls return 202 with no body — the result ID must be read from the Operation-Location response header",
+        "Analysis is asynchronous: analyze calls return 202 with no body; the result ID must be read from the Operation-Location response header",
         "Analyze results are retained for 24 hours, after which the result ID expires",
         "All tools pin api-version 2024-11-30 (GA v4.0); region availability and model versions are listed in the Azure docs",
-        "Either urlSource or base64Source must be set on analyze calls — never both",
+        "Either urlSource or base64Source must be set on analyze calls, never both",
       ],
       "documentation": "https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/",
     },
@@ -12702,7 +12702,7 @@ export const connectors: IntegrationConfig[] = [
     "displayName": "Databricks",
     "icon": "databricks.svg",
     "description":
-      "Query Databricks workspace compute, jobs, and SQL warehouses — list clusters and jobs, trigger job runs, and execute SQL statements",
+      "Query Databricks workspace compute, jobs, and SQL warehouses: list clusters and jobs, trigger job runs, and execute SQL statements",
     "auth": {
       "type": "api-key",
       "requiredApis": [{
@@ -13053,10 +13053,10 @@ export const connectors: IntegrationConfig[] = [
           "Run the List SQL Warehouses tool. A 401/403 means the token is invalid or expired, or token-based auth is disabled by your workspace admin.",
       }],
       "notes": [
-        "Personal access tokens are workspace-scoped — the token only works against the workspace host where it was created",
+        "Personal access tokens are workspace-scoped: the token only works against the workspace host where it was created",
         "Executing SQL requires a running (or auto-starting) SQL warehouse; the first query may take a minute while the warehouse starts",
         "Databricks recommends OAuth over PATs for production use; PATs are the simplest option for getting started",
-        "Tokens can expire — if calls suddenly return 403, regenerate the token",
+        "Tokens can expire; if calls suddenly return 403, regenerate the token",
       ],
       "documentation": "https://docs.databricks.com/api/workspace/introduction",
     },
@@ -13095,7 +13095,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "DD_SITE",
       "description":
-        "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, or us3.datadoghq.com — API requests go to api.<site>.",
+        "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, or us3.datadoghq.com. API requests go to api.<site>.",
       "required": false,
       "sensitive": false,
       "default": "datadoghq.com",
@@ -13295,7 +13295,7 @@ export const connectors: IntegrationConfig[] = [
         "description": "Run the Validate API Key tool, then List Monitors.",
       }],
       "notes": [
-        "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY — both env vars are required",
+        "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY, so both env vars are required",
         "If your org is not on datadoghq.com, set your site (e.g. datadoghq.eu) as the DD_SITE environment variable",
       ],
       "documentation": "https://docs.datadoghq.com/api/latest/",
@@ -15263,18 +15263,12 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developers.docusign.com/platform/auth/authcode/",
-    }, {
-      "name": "DOCUSIGN_ACCOUNT_HOST",
-      "description":
-        "DocuSign account API host without scheme, from the base_uri returned by /oauth/userinfo — e.g. na3.docusign.net (production) or demo.docusign.net (developer).",
-      "required": true,
-      "sensitive": true,
     }],
     "tools": [{
       "id": "docusign__get_user_info",
       "name": "Get User Info",
       "description":
-        "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the DOCUSIGN_ACCOUNT_HOST (base_uri host) and accountId values every other tool needs",
+        "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountId and base_uri (accountHostPrefix) values every other tool needs",
       "requiresWrite": false,
       "endpoint": { "method": "GET", "url": "https://account.docusign.com/oauth/userinfo" },
     }, {
@@ -15285,8 +15279,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "url":
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15333,8 +15335,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "GET",
         "url":
-          "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15363,8 +15372,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "GET",
         "url":
-          "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/recipients",
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/recipients",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15392,8 +15408,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "url":
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15439,8 +15463,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "PUT",
         "url":
-          "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15472,8 +15503,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/templates",
+        "url":
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/templates",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15512,8 +15551,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "GET",
         "url":
-          "https://{{env.DOCUSIGN_ACCOUNT_HOST}}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/documents/combined",
+          "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/documents/combined",
         "params": {
+          "accountHostPrefix": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
+            "required": true,
+          },
           "accountId": {
             "type": "string",
             "in": "path",
@@ -15574,12 +15620,12 @@ export const connectors: IntegrationConfig[] = [
         "step": 3,
         "title": "Find your account server and account ID",
         "description":
-          "After connecting, call GET https://account.docusign.com/oauth/userinfo (or account-d.docusign.com for developer accounts) with your access token. The response lists your accounts, each with an account_id (GUID) and a base_uri such as https://na3.docusign.net. Set the base_uri host as the DOCUSIGN_ACCOUNT_HOST environment variable (e.g. na3.docusign.net, or demo.docusign.net for developer accounts) and pass account_id as accountId. Admins can also see the API Account ID under Settings, then Apps and Keys.",
+          "After connecting, call GET https://account.docusign.com/oauth/userinfo (or account-d.docusign.com for developer accounts) with your access token. The response lists your accounts, each with an account_id (GUID) and a base_uri such as https://na3.docusign.net. On each tool call, pass account_id as accountId and the base_uri host without .docusign.net as accountHostPrefix (e.g. na3, or demo for developer accounts). Keep both values from the same account entry so each account reaches its own host. Admins can also see the API Account ID under Settings, then Apps and Keys.",
       }, {
         "step": 4,
         "title": "Verify access",
         "description":
-          "With DOCUSIGN_ACCOUNT_HOST configured, run the List Envelopes tool with your accountId and a from_date such as the first day of last month.",
+          "Run the List Envelopes tool with your accountHostPrefix, accountId, and a from_date such as the first day of last month.",
       }, {
         "step": 5,
         "title": "Go live for production",
@@ -15587,7 +15633,8 @@ export const connectors: IntegrationConfig[] = [
           "Apps built in the developer sandbox must pass DocuSign's go-live review before they can use production accounts. Until then, keep using the developer environment.",
       }],
       "notes": [
-        "The eSignature REST base URL is account-specific: https://{base_uri host}/restapi/v2.1/accounts/{accountId}/... - both values come from /oauth/userinfo",
+        "The eSignature REST base URL is account-specific: https://<accountHostPrefix>.docusign.net/restapi/v2.1/accounts/<accountId>/... - both values come from the same /oauth/userinfo account entry, and tools accept only the host prefix so credentials stay pinned to docusign.net",
+        "Migrating from earlier versions: the accountServer parameter and the interim DOCUSIGN_ACCOUNT_HOST environment variable are gone. Pass the base_uri host without .docusign.net as the accountHostPrefix parameter on each call.",
         "The signature scope covers sending and tracking envelopes; the optional extended scope lets refresh tokens be renewed beyond 30 days",
         "List Envelopes requires from_date (or specific envelope IDs); Download Envelope Documents returns raw PDF bytes",
       ],
@@ -30825,7 +30872,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "klarna__release_remaining_authorization",
       "name": "Release Remaining Authorization",
       "description":
-        "Release the remaining (uncaptured) authorized amount of an order after the final partial capture — the standard end-of-fulfillment step that frees the customer's remaining authorization",
+        "Release the remaining (uncaptured) authorized amount of an order after the final partial capture: the standard end-of-fulfillment step that frees the customer's remaining authorization",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -30900,7 +30947,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Create API credentials",
         "description":
-          "In the Merchant Portal, go to Settings > API credentials and generate a new credential. You get a username (a UID linked to your merchant ID) and a password/API key — the password is shown only once, so store it immediately.",
+          "In the Merchant Portal, go to Settings > API credentials and generate a new credential. You get a username (a UID linked to your merchant ID) and a password/API key. The password is shown only once, so store it immediately.",
       }, {
         "step": 3,
         "title": "Set environment variables",
@@ -30913,7 +30960,7 @@ export const connectors: IntegrationConfig[] = [
           "All tools use the KLARNA_API_HOST environment variable (default api.klarna.com for Europe). Set api-na.klarna.com for North America or api-oc.klarna.com for Oceania. Run Get Order with a known order ID to verify access.",
       }],
       "notes": [
-        "Playground (test) credentials only work against the playground hosts (api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com) and production credentials only against production hosts — set KLARNA_API_HOST accordingly.",
+        "Playground (test) credentials only work against the playground hosts (api.playground.klarna.com, api-na.playground.klarna.com, api-oc.playground.klarna.com) and production credentials only against production hosts, so set KLARNA_API_HOST accordingly.",
         "All amounts are in minor units of the order currency (e.g. 1050 = 10.50 EUR).",
         "Refunds require a prior capture; cancel only works on orders that have not been captured.",
       ],
@@ -31400,7 +31447,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Langfuse account",
         "description":
-          "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US) — the free Hobby plan is enough for testing. Self-hosting is also supported.",
+          "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US). The free Hobby plan is enough for testing. Self-hosting is also supported.",
       }, {
         "step": 2,
         "title": "Create project API keys",
@@ -31418,7 +31465,7 @@ export const connectors: IntegrationConfig[] = [
           "Run the List Traces tool. If your project is in the US region, set LANGFUSE_HOST=us.cloud.langfuse.com in your .env; EU projects use the default cloud.langfuse.com.",
       }],
       "notes": [
-        "API keys are project-scoped — create separate keys per project/environment",
+        "API keys are project-scoped; create separate keys per project/environment",
         "All tools send their requests to the host set in the LANGFUSE_HOST environment variable (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain",
       ],
       "documentation": "https://api.reference.langfuse.com",
@@ -33976,7 +34023,7 @@ export const connectors: IntegrationConfig[] = [
       "steps": [{
         "title": "Setup guide",
         "description":
-          "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, set MIXPANEL_HOST and MIXPANEL_EXPORT_HOST to the matching hosts (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)",
+          "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file; query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN`; it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, set MIXPANEL_HOST and MIXPANEL_EXPORT_HOST to the matching hosts (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)",
       }],
     },
   },
@@ -35192,7 +35239,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "neo4j__run_cypher_query",
       "name": "Run Cypher Query",
       "description":
-        "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows — use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
+        "Execute a read-only Cypher query (MATCH ... RETURN) in an implicit transaction and get back fields and result rows; use for lookups, traversals, and GraphRAG retrieval. Note: the Query API does not enforce read-only access, so only submit read statements here (use a read-only database user to guarantee no writes)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -35209,7 +35256,7 @@ export const connectors: IntegrationConfig[] = [
           "statement": {
             "type": "string",
             "description":
-              "Cypher statement to execute, e.g. MATCH (n:Person {name: $name})-[:KNOWS]->(m) RETURN m.name — use $placeholders with the parameters field instead of inlining values",
+              "Cypher statement to execute, e.g. MATCH (n:Person {name: $name})-[:KNOWS]->(m) RETURN m.name; use $placeholders with the parameters field instead of inlining values",
             "required": true,
           },
           "parameters": {
@@ -35240,7 +35287,7 @@ export const connectors: IntegrationConfig[] = [
           "statement": {
             "type": "string",
             "description":
-              "Cypher write statement, e.g. MERGE (n:Person {name: $name, age: $age}) RETURN n — use $placeholders with the parameters field instead of inlining values",
+              "Cypher write statement, e.g. MERGE (n:Person {name: $name, age: $age}) RETURN n; use $placeholders with the parameters field instead of inlining values",
             "required": true,
           },
           "parameters": {
@@ -35278,12 +35325,12 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Neo4j Aura instance",
         "description":
-          "Sign up at https://console.neo4j.io and create an AuraDB Free instance (no credit card required). Download or copy the generated password — it is shown only once. Self-hosted Neo4j 5.19+ also exposes the Query API.",
+          "Sign up at https://console.neo4j.io and create an AuraDB Free instance (no credit card required). Download or copy the generated password: it is shown only once. Self-hosted Neo4j 5.19+ also exposes the Query API.",
       }, {
         "step": 2,
         "title": "Find your host",
         "description":
-          "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). Store the host part (xxxxxxxx.databases.neo4j.io) as NEO4J_HOST in your .env — every tool sends its requests to this host.",
+          "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). Store the host part (xxxxxxxx.databases.neo4j.io) as NEO4J_HOST in your .env. Every tool sends its requests to this host.",
       }, {
         "step": 3,
         "title": "Store credentials",
@@ -35297,8 +35344,8 @@ export const connectors: IntegrationConfig[] = [
       }],
       "notes": [
         "The Query API requires Neo4j 5.19+ (all Aura instances qualify); on self-managed instances below 5.25 it is disabled by default and must be enabled in the server configuration. Aura serves it over HTTPS on port 443",
-        "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https:// — include the port in NEO4J_HOST, e.g. my-server:7473",
-        "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement — this enables plan caching and prevents Cypher injection",
+        "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https://. Include the port in NEO4J_HOST, e.g. my-server:7473",
+        "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement; this enables plan caching and prevents Cypher injection",
         "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
         "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee",
       ],
@@ -41580,7 +41627,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "pinecone__upsert_vectors",
       "name": "Upsert Vectors",
       "description":
-        "Write vectors into a Pinecone index selected via indexHostPrefix — verify the prefix names the intended index before writing",
+        "Write vectors into a Pinecone index selected via indexHostPrefix; verify the prefix names the intended index before writing",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -41636,7 +41683,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Pinecone account",
         "description":
-          "Sign up at https://app.pinecone.io — the free Starter plan includes serverless indexes for testing.",
+          "Sign up at https://app.pinecone.io. The free Starter plan includes serverless indexes for testing.",
       }, {
         "step": 2,
         "title": "Create an API key",
@@ -41653,10 +41700,10 @@ export const connectors: IntegrationConfig[] = [
           "Run the List Indexes tool. To read or write vectors, first run Describe Index for the index you want, take the returned 'host' value, and pass it without the trailing '.pinecone.io' as the indexHostPrefix parameter of Query Vectors / Upsert Vectors.",
       }],
       "notes": [
-        "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while Query Vectors and Upsert Vectors target the index named by their indexHostPrefix parameter — each call may address a different index, and requests can only reach '<indexHostPrefix>.pinecone.io' hosts, never an arbitrary domain",
-        "Migrating from earlier versions: the old indexHost parameter (full host) and the interim PINECONE_INDEX_HOST environment variable are gone — pass the Describe Index host without its '.pinecone.io' suffix as indexHostPrefix instead",
+        "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while Query Vectors and Upsert Vectors target the index named by their indexHostPrefix parameter; each call may address a different index, and requests can only reach '<indexHostPrefix>.pinecone.io' hosts, never an arbitrary domain",
+        "Migrating from earlier versions: the old indexHost parameter (full host) and the interim PINECONE_INDEX_HOST environment variable are gone. Pass the Describe Index host without its '.pinecone.io' suffix as indexHostPrefix instead",
         "All requests send the X-Pinecone-API-Version header (default 2025-01)",
-        "Embeddings must be generated separately (e.g. with OpenAI) — vectors you query or upsert must match the index dimension",
+        "Embeddings must be generated separately (e.g. with OpenAI); vectors you query or upsert must match the index dimension",
       ],
       "documentation": "https://docs.pinecone.io/reference/api/introduction",
     },
@@ -43895,17 +43942,17 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Qdrant Cloud account",
         "description":
-          "Sign up at https://cloud.qdrant.io — the free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured).",
+          "Sign up at https://cloud.qdrant.io. The free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured).",
       }, {
         "step": 2,
         "title": "Create a cluster and API key",
         "description":
-          "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately — it is only shown once.",
+          "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately: it is only shown once.",
       }, {
         "step": 3,
         "title": "Store the key and note your endpoint",
         "description":
-          "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details — tools take it as the QDRANT_CLUSTER_HOST environment variable without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333.",
+          "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details; tools take it as the QDRANT_CLUSTER_HOST environment variable without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333.",
       }, {
         "step": 4,
         "title": "Verify access",
@@ -43913,8 +43960,8 @@ export const connectors: IntegrationConfig[] = [
       }],
       "notes": [
         "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
-        "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333) — there is no global Qdrant API host",
-        "Migrating from earlier versions: tools no longer accept a clusterHost parameter — set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
+        "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333); there is no global Qdrant API host",
+        "Migrating from earlier versions: tools no longer accept a clusterHost parameter; set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
         "QDRANT_CLUSTER_HOST is treated as sensitive because the cluster hostname identifies your private deployment; the CLI masks it in prompts and output",
         "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)",
       ],
@@ -44318,7 +44365,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44369,7 +44416,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44400,7 +44447,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44431,7 +44478,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44456,7 +44503,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44496,7 +44543,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44546,7 +44593,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44571,7 +44618,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44580,7 +44627,7 @@ export const connectors: IntegrationConfig[] = [
           "bill": {
             "type": "object",
             "description":
-              'Bill payload — VendorRef and Line are required, e.g. { "VendorRef": { "value": "56" }, "Line": [{ "DetailType": "AccountBasedExpenseLineDetail", "Amount": 200, "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "7" } } }], "DueDate": "2026-07-01" }',
+              'Bill payload: VendorRef and Line are required, e.g. { "VendorRef": { "value": "56" }, "Line": [{ "DetailType": "AccountBasedExpenseLineDetail", "Amount": 200, "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "7" } } }], "DueDate": "2026-07-01" }',
             "required": true,
           },
         },
@@ -44606,7 +44653,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44615,7 +44662,7 @@ export const connectors: IntegrationConfig[] = [
           "purchase": {
             "type": "object",
             "description":
-              'Purchase payload — PaymentType (Cash, Check, or CreditCard), AccountRef (the bank/credit account paid from), and Line are required, e.g. { "PaymentType": "Cash", "AccountRef": { "value": "35" }, "Line": [{ "DetailType": "AccountBasedExpenseLineDetail", "Amount": 25.5, "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "7" } } }] }',
+              'Purchase payload: PaymentType (Cash, Check, or CreditCard), AccountRef (the bank/credit account paid from), and Line are required, e.g. { "PaymentType": "Cash", "AccountRef": { "value": "35" }, "Line": [{ "DetailType": "AccountBasedExpenseLineDetail", "Amount": 25.5, "AccountBasedExpenseLineDetail": { "AccountRef": { "value": "7" } } }] }',
             "required": true,
           },
         },
@@ -44641,7 +44688,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44697,7 +44744,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44708,7 +44755,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "quickbooks__list_vendors",
       "name": "List Vendors",
       "description":
-        "List vendors in a QuickBooks Online company — use this to find the VendorRef IDs that Create Bill requires",
+        "List vendors in a QuickBooks Online company; use this to find the VendorRef IDs that Create Bill requires",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44730,7 +44777,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44754,7 +44801,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "quickbooks__list_purchases",
       "name": "List Purchases",
       "description":
-        "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company — the read counterpart to Create Purchase",
+        "List purchase transactions (cash, check, or credit card expenses) in a QuickBooks Online company, the read counterpart to Create Purchase",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -44775,7 +44822,7 @@ export const connectors: IntegrationConfig[] = [
           "accept": {
             "type": "string",
             "in": "header",
-            "description": "Response format — keep application/json (QuickBooks defaults to XML)",
+            "description": "Response format: keep application/json (QuickBooks defaults to XML)",
             "default": "application/json",
             "headerName": "Accept",
           },
@@ -44821,7 +44868,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create an Intuit developer account",
         "description":
-          "Sign up at https://developer.intuit.com/ — creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing.",
+          "Sign up at https://developer.intuit.com/. Creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing.",
       }, {
         "step": 2,
         "title": "Create an app",
@@ -44836,7 +44883,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Note your realm ID",
         "description":
-          "The OAuth callback includes a realmId query parameter identifying the connected company — save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon → Additional Info in QuickBooks Online.",
+          "The OAuth callback includes a realmId query parameter identifying the connected company. Save it; every QuickBooks tool requires it as the realmId parameter. You can also find it under the gear icon > Additional Info in QuickBooks Online.",
       }, {
         "step": 5,
         "title": "Verify access",
@@ -44846,7 +44893,7 @@ export const connectors: IntegrationConfig[] = [
       "notes": [
         "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
         "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
-        "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
+        "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response; it must be saved and passed to every tool",
         "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
         "Sandbox companies use the sandbox-quickbooks.api.intuit.com host",
       ],
@@ -47736,7 +47783,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 2,
         "title": "Create a Public API token",
         "description":
-          "Open Workspace Settings > Access Management > Tokens and click Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token — it is shown only once.",
+          "Open Workspace Settings > Access Management > Tokens and select Create Token. Choose the Public API token type (not the legacy Config API) and grant Workspace Member or Owner scope as needed. Copy the token immediately: it is shown only once.",
       }, {
         "step": 3,
         "title": "Set the environment variable",
@@ -47745,7 +47792,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Verify access",
         "description":
-          "Run List Sources. EU-hosted workspaces must pass host=eu1.api.segmentapis.com on each call.",
+          "Run List Sources. EU-hosted workspaces must set SEGMENT_API_HOST=eu1.api.segmentapis.com in .env first; US workspaces can keep the default api.segmentapis.com.",
       }],
       "notes": [
         "The Public API authenticates with 'Authorization: Bearer <token>'",
@@ -56653,7 +56700,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
       "description":
-        "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
+        "Run a GraphQL query against the cluster (Get, Aggregate, Explore, including nearText/nearVector search)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -56766,7 +56813,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Weaviate Cloud account",
         "description":
-          "Sign up at https://console.weaviate.cloud — free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too.",
+          "Sign up at https://console.weaviate.cloud. Free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too.",
       }, {
         "step": 2,
         "title": "Create a cluster and grab credentials",
@@ -56783,7 +56830,7 @@ export const connectors: IntegrationConfig[] = [
         "description": "With WEAVIATE_CLUSTER_HOST configured, run the Get Schema tool.",
       }],
       "notes": [
-        "Every tool needs the WEAVIATE_CLUSTER_HOST environment variable — there is no global Weaviate API host",
+        "Every tool needs the WEAVIATE_CLUSTER_HOST environment variable; there is no global Weaviate API host",
         "nearText GraphQL queries require a vectorizer module configured on the collection (and possibly a model-provider API key set on the cluster)",
         "Admin keys can read and write; read-only keys will get 403 on Create Object",
       ],
@@ -58725,7 +58772,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "xentral__get_customer",
       "name": "Get Customer",
       "description":
-        "Get a single customer record with full details including addresses (v2 API) — useful before creating a sales order",
+        "Get a single customer record with full details including addresses (v2 API); useful before creating a sales order",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -58769,7 +58816,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Get a Xentral instance",
         "description":
-          "Sign up for a Xentral trial at https://xentral.com. Your instance gets its own host like mycompany.xentral.biz — all API calls go to that host.",
+          "Sign up for a Xentral trial at https://xentral.com. Your instance gets its own host like mycompany.xentral.biz. All API calls go to that host.",
       }, {
         "step": 2,
         "title": "Create a Personal Access Token",
@@ -58787,7 +58834,7 @@ export const connectors: IntegrationConfig[] = [
           "Set XENTRAL_INSTANCE_HOST to your instance host (e.g. mycompany.xentral.biz), then run the List Sales Orders tool.",
       }],
       "notes": [
-        "Every tool sends its requests to the XENTRAL_INSTANCE_HOST environment variable — your instance subdomain such as mycompany.xentral.biz (custom domains are also supported)",
+        "Every tool sends its requests to the XENTRAL_INSTANCE_HOST environment variable: your instance subdomain such as mycompany.xentral.biz (custom domains are also supported)",
         "PAT scopes are granted per resource group (CRM, products, accounting, ...) with separate read/create/update/delete permissions",
         "Sales orders use the v1 API; products and customers use the newer v2 API endpoints",
         "List responses wrap results in a data array with pagination info in extra",
