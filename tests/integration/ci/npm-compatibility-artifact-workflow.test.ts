@@ -103,6 +103,11 @@ describe("canonical npm artifact workflow", () => {
     const buildScript = String(buildStep.run);
     assertStringIncludes(
       buildScript,
+      "--allow-run=npm,tar",
+      "The producer must allow tar inspection when validating packed metadata",
+    );
+    assertStringIncludes(
+      buildScript,
       'VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"',
     );
     assert(

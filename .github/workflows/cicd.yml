@@ -195,7 +195,7 @@ jobs:
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
           deno task build:npm
-          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm \
+          deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
             scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
           echo "build_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
       - name: Upload tested npm compatibility artifact
