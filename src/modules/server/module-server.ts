@@ -1646,13 +1646,24 @@ const COMPILED_TO_JS_EXTENSIONS = /\.(?:tsx?|jsx|mdx|md)$/;
  *
  * Exported for testing.
  */
+/**
+ * The source path a module request refers to.
+ *
+ * The import rewriter appends `.js` to any specifier whose extension it does
+ * not recognise, so `@/lib/data.json` arrives here as `lib/data.json.js` while
+ * the source file, and therefore the body, is still raw JSON.
+ *
+ * The content type and the error body must classify on the same path. They did
+ * not, so a failing `lib/data.json.js` was answered with a JavaScript `throw`
+ * body under `application/json`.
+ */
+function getModuleSourcePath(modulePath: string): string {
+  return modulePath.toLowerCase().replace(/\.(?:mjs|js)$/, "");
+}
+
 export function getDevModuleContentType(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
-  // The import rewriter appends `.js` to any specifier whose extension it does
-  // not recognise, so `@/lib/data.json` arrives here as `lib/data.json.js`
-  // while the source file, and therefore the body, is still raw JSON. Resolve
-  // the source extension the same way the module lookup does before deciding.
-  const sourcePath = normalizedPath.replace(/\.(?:mjs|js)$/, "");
+  const sourcePath = getModuleSourcePath(modulePath);
 
   if (sourcePath.endsWith(".map") || sourcePath.endsWith(".json")) {
     return "application/json; charset=utf-8";
@@ -1684,15 +1695,19 @@ function getClientModuleError(dev: boolean, errorMessage: string): string {
   return dev ? errorMessage : PRODUCTION_MODULE_ERROR;
 }
 
+/**
+ * The body served when a module fails to transform.
+ *
+ * There is no CSS arm. `findSourceFile` resolves only the extensions it can
+ * compile to JavaScript, so a `.css` request never reaches here in either the
+ * bare or the rewriter-appended form; both answer 404. Stylesheets are served
+ * by the dev styles handler instead. An arm here would be unreachable code
+ * implying support this server does not offer.
+ */
 function createModuleErrorBody(modulePath: string, errorMessage: string): string {
-  const normalizedPath = modulePath.toLowerCase();
+  const sourcePath = getModuleSourcePath(modulePath);
 
-  if (normalizedPath.endsWith(".css")) {
-    const sanitized = errorMessage.replace(/\*\//g, "*\\/");
-    return `/* Transform Error: ${sanitized} */`;
-  }
-
-  if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".map")) {
+  if (sourcePath.endsWith(".json") || sourcePath.endsWith(".map")) {
     return JSON.stringify({ error: errorMessage });
   }
 

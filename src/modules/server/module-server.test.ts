@@ -291,6 +291,56 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(defaultedBody.includes(secret), false);
   });
 
+  it("returns a JSON error body when the rewriter appended .js to a JSON module", async () => {
+    // The import rewriter appends `.js` to any specifier whose extension it
+    // does not recognise, so `@/lib/data.json` arrives as `lib/data.json.js`.
+    // The content type resolved that back to JSON while the error body did not,
+    // so the response carried a JavaScript `throw` under `application/json`.
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-error-json-rewritten";
+    const sourcePath = `${projectDir}/lib/data.json`;
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(sourcePath, `{ "value": 1 }`);
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === sourcePath) return Promise.reject(new Error("json transform failed"));
+      return originalReadFile(path, byteLimit);
+    };
+
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/lib/data.json.js"),
+      { projectId: "module-error-json-rewritten", projectDir, adapter, dev: true },
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assertEquals(
+      JSON.parse(await response.text()),
+      { error: "json transform failed" },
+      "the body must parse as the JSON its content type promises",
+    );
+  });
+
+  it("answers a stylesheet module request with 404 rather than a transform error", async () => {
+    // findSourceFile resolves only the extensions this server compiles to
+    // JavaScript, so a stylesheet never reaches the transform at all. The dev
+    // styles handler serves those. Pinning it keeps the error-body helper from
+    // regrowing a CSS arm that nothing can reach.
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-css-unreachable";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(`${projectDir}/styles/globals.css`, "body { color: red; }");
+
+    for (const requestPath of ["styles/globals.css", "styles/globals.css.js"]) {
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/${requestPath}`),
+        { projectId: "module-css-unreachable", projectDir, adapter, dev: true },
+      );
+
+      assertEquals(response.status, 404, `${requestPath} is not served by the module server`);
+    }
+  });
+
   it("returns a JSON error body when a JSON module fails to transform", async () => {
     const { serveModule } = await import("./module-server.ts");
     const projectDir = "/module-error-json";
