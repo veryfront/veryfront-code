@@ -1151,13 +1151,19 @@ describe("provider-http", () => {
       let abortListenersRemoved = 0;
       const originalAdd = signal.addEventListener.bind(signal);
       const originalRemove = signal.removeEventListener.bind(signal);
-      signal.addEventListener = ((type, listener, options) => {
+      signal.addEventListener = ((
+        ...args: Parameters<typeof signal.addEventListener>
+      ) => {
+        const [type] = args;
         if (type === "abort") abortListenersAdded++;
-        originalAdd(type, listener, options);
+        originalAdd(...args);
       }) as typeof signal.addEventListener;
-      signal.removeEventListener = ((type, listener, options) => {
+      signal.removeEventListener = ((
+        ...args: Parameters<typeof signal.removeEventListener>
+      ) => {
+        const [type] = args;
         if (type === "abort") abortListenersRemoved++;
-        originalRemove(type, listener, options);
+        originalRemove(...args);
       }) as typeof signal.removeEventListener;
 
       let requestInit: RequestInit | undefined;
