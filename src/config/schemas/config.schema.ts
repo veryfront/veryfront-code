@@ -81,6 +81,8 @@ const MAX_AUTH_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
 const MAX_TRUSTED_PROXY_PEERS = 32;
 const MAX_AUTH_MODE_COUNT = 4;
 const OIDC_SCOPE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+const NON_CONTROL_CLAIM_WHITESPACE_PATTERN =
+  /[ \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]/u;
 const OIDC_SIGNING_ALGORITHMS = [
   "RS256",
   "RS384",
@@ -310,7 +312,16 @@ function isValidClaimName(value: string): boolean {
   return value.length > 0 &&
     value.length <= MAX_AUTH_CLAIM_NAME_LENGTH &&
     value.trim() === value &&
-    !/[\u0000-\u001F\u007F\s]/.test(value);
+    !hasControlCodeUnit(value) &&
+    !NON_CONTROL_CLAIM_WHITESPACE_PATTERN.test(value);
+}
+
+function hasControlCodeUnit(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1F || codeUnit === 0x7F) return true;
+  }
+  return false;
 }
 
 function isValidAuthCookieName(value: string): boolean {

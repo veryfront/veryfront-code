@@ -412,6 +412,9 @@ describe("configSchema", () => {
     for (
       const [oidc, message] of [
         [{ claims: { email: "" } }, "security.auth.oidc.claims.email"],
+        [{ claims: { name: "user\u0000name" } }, "security.auth.oidc.claims.name"],
+        [{ claims: { groups: "group\u007Fname" } }, "security.auth.oidc.claims.groups"],
+        [{ claims: { roles: "roles\u00A0claim" } }, "security.auth.oidc.claims.roles"],
         [{ claims: { roles: "roles\nheader" } }, "security.auth.oidc.claims.roles"],
         [{ sessionTtlSeconds: 0 }, "security.auth.oidc.sessionTtlSeconds"],
         [{ discoveryCacheTtlSeconds: 0 }, "security.auth.oidc.discoveryCacheTtlSeconds"],
