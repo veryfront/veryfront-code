@@ -1235,6 +1235,15 @@ const CODE_EVALUATION_MODULES = new Set(["node:vm", "vm"]);
 const UNVALIDATED_LOADER_MODULES = new Set(["node:module", "module"]);
 
 /**
+ * Runtime worker modules load an entry in a separate module graph that this
+ * validator and its HTTP bundler plugin cannot inspect transitively.
+ */
+const UNVALIDATED_WORKER_LOADER_MODULES = new Set([
+  "node:worker_threads",
+  "worker_threads",
+]);
+
+/**
  * Why importing `specifier` cannot be checked against the allow-list, or null
  * when the module is not restricted. URL schemes are case-insensitive, so the
  * comparison is too.
@@ -1246,6 +1255,9 @@ export function restrictedRuntimeModuleReason(specifier: string): string | null 
   }
   if (UNVALIDATED_LOADER_MODULES.has(normalized)) {
     return `importing "${specifier}" enables module loading (createRequire) that cannot be checked against the remote import allow-list`;
+  }
+  if (UNVALIDATED_WORKER_LOADER_MODULES.has(normalized)) {
+    return `importing "${specifier}" enables Worker module loading that cannot be checked against the remote import allow-list`;
   }
   return null;
 }
