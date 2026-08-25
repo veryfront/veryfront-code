@@ -597,7 +597,7 @@ export const GET = createWebSocketHandler({
   onClose: ({ publisher, run }) => {
     eventSubscriptions.get(publisher)?.();
     eventSubscriptions.delete(publisher);
-    // The safe default also releases registry state after this callback.
+    // The safe default releases registry state when this socket closes.
     console.log(`Client disconnected: ${run.runId}`);
   },
 });
