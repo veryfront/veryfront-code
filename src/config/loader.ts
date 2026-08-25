@@ -1734,11 +1734,15 @@ const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
  */
 function unresolvedConfigDependency(error: unknown): string | undefined {
   let current: unknown = error;
-  const seen = new Set<unknown>();
+  // Captured WeakSet, like the rest of this module: a trusted config can replace
+  // `globalThis.Set` or poison its prototype before throwing, and a cycle guard
+  // that invoked project code would leak that exception in place of the
+  // classification. `current` is narrowed to Error above, so a WeakSet fits.
+  const seen = new IntrinsicWeakSet<object>();
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
     if (!(current instanceof Error)) return undefined;
-    if (seen.has(current)) return undefined;
-    seen.add(current);
+    if (weakSetHas(seen, current)) return undefined;
+    weakSetAdd(seen, current);
     let message: string | undefined;
     try {
       message = typeof current.message === "string" ? current.message : undefined;

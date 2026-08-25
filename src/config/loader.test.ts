@@ -815,6 +815,24 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("classifies even when the config replaces a built-in it walks with", async () => {
+        // A trusted config shares the host realm and can swap `globalThis.Set`
+        // before throwing. The cause-chain cycle guard must not construct the
+        // project's replacement, or the classification would be lost to that
+        // constructor's exception.
+        const error = await loadFailure(
+          "vf-config-poisoned-set-",
+          'globalThis.Set = function () { throw new Error("poisoned Set"); };\n' +
+            `throw new Error("Cannot find package 'left-pad' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.includes("left-pad"),
+          `error must still name the package, got: ${error.message}`,
+        );
+      });
+
       it("contains a cause getter that throws", async () => {
         // A trusted config runs in the shared host realm and can define `cause`
         // as a throwing accessor. Walking the chain must not let that escape in
