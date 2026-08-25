@@ -289,6 +289,23 @@ describe("scaffold engine", () => {
     });
   });
 
+  it("accepts Windows absolute plan paths inside the project root before opening", async () => {
+    const result = await scaffoldAuthFiles({
+      projectDir: String.raw`C:\projects\veryfront-app`,
+      preset: "oidc",
+      filesForTesting: [{
+        path: String.raw`C:\projects\veryfront-app\AUTH_SETUP.md`,
+        content: "first",
+      }],
+      beforeWriteForTesting: () => {
+        throw new Error("plan validation passed");
+      },
+    });
+
+    assertEquals(result.success, false);
+    assertStringIncludes(result.message, "Scaffold filesystem preflight failed");
+  });
+
   it("rejects unsafe multi-file plan paths before writing", async () => {
     await withTempProject(async (projectDir) => {
       for (
@@ -631,9 +648,7 @@ describe("scaffold engine", () => {
 
       assertEquals(result.success, false);
       assertStringIncludes(result.message, "filesystem write failed");
-      if (await exists(outsideTarget)) {
-        assertEquals(await Deno.readTextFile(outsideTarget), "");
-      }
+      assertEquals(await exists(outsideTarget), false);
     } finally {
       if (replacedRoot) await Deno.remove(projectDir);
       else await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);

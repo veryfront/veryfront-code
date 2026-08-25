@@ -361,17 +361,28 @@ async function writeGuardedMultiFilePlan(
   const defaultWriter = async (file: ScaffoldFilePlan) => {
     await assertRootIdentity(root, rootGuard, identity, realPath);
     await options.beforeOpen?.(file);
+    await assertRootIdentity(root, rootGuard, identity, realPath);
     const handle = await Deno.open(file.path, { write: true, createNew: true });
+    let closed = false;
     try {
       await options.afterOpen?.(file);
-      const opened = await verifyOpenedTarget(
-        root,
-        rootGuard,
-        file.path,
-        handle,
-        identity,
-        realPath,
-      );
+      let opened: OwnedPath;
+      try {
+        opened = await verifyOpenedTarget(
+          root,
+          rootGuard,
+          file.path,
+          handle,
+          identity,
+          realPath,
+        );
+      } catch (error) {
+        const handleIdentity = identity(await handle.stat());
+        handle.close();
+        closed = true;
+        await removeUnsafeOpenedTarget(file.path, handleIdentity, identity, removeCreatedPath);
+        throw error;
+      }
       const content = new TextEncoder().encode(file.content);
       createdFiles.push(opened);
       let offset = 0;
@@ -392,7 +403,7 @@ async function writeGuardedMultiFilePlan(
         }
       }
     } finally {
-      handle.close();
+      if (!closed) handle.close();
     }
   };
   const removeCreatedPath = options.remove ?? ((path: string) => Deno.remove(path));
@@ -534,16 +545,27 @@ function isSafeAuthTemplatePath(path: string): boolean {
 
 function isSafeAbsoluteTargetPath(path: string, root: string): boolean {
   if (!path || !isAbsolute(path)) return false;
-  const rootPrefix = root.endsWith("/") ? root : `${root}/`;
-  if (!path.startsWith(rootPrefix)) return false;
-
-  const relativePath = path.slice(rootPrefix.length);
-  if (!relativePath || relativePath.includes("\\")) return false;
-  return relativePath.split(/[\\/]/).every(isSafePathComponent);
+  const normalizedRoot = normalize(root);
+  const normalizedPath = normalize(path);
+  const lexicalRelativePath = lexicalRelativeChildPath(normalizedRoot, path);
+  if (lexicalRelativePath === null) return false;
+  if (!lexicalRelativePath.split(/[\\/]/).every(isSafePathComponent)) return false;
+  const relativePath = relative(normalizedRoot, normalizedPath);
+  if (!isContainedRelativePath(relativePath)) return false;
+  return pathParts(relativePath).every(isSafePathComponent);
 }
 
 function pathParts(path: string): string[] {
   return path.split(/[\\/]+/).filter((part) => part.length > 0);
+}
+
+function lexicalRelativeChildPath(root: string, path: string): string | null {
+  const portableRoot = root.replaceAll("\\", "/");
+  const portablePath = path.replaceAll("\\", "/");
+  const prefix = portableRoot.endsWith("/") ? portableRoot : `${portableRoot}/`;
+  if (!portablePath.startsWith(prefix)) return null;
+  const relativePath = portablePath.slice(prefix.length);
+  return relativePath.length === 0 ? null : relativePath;
 }
 
 function isSafePathComponent(part: string): boolean {
@@ -643,9 +665,31 @@ async function removeOwnedPath(
 
 function isRealPathInsideRoot(root: string, target: string): boolean {
   const relativePath = relative(root, target);
+  return isContainedRelativePath(relativePath);
+}
+
+function isContainedRelativePath(relativePath: string): boolean {
   if (relativePath === "." || isAbsolute(relativePath)) return false;
   const firstPart = pathParts(relativePath)[0];
   return firstPart !== undefined && firstPart !== "..";
+}
+
+async function removeUnsafeOpenedTarget(
+  path: string,
+  handleIdentity: FileIdentity,
+  identity: (info: Deno.FileInfo) => FileIdentity,
+  remove: (path: string) => Promise<void>,
+): Promise<void> {
+  if (handleIdentity === null) return;
+  let pathIdentity: FileIdentity;
+  try {
+    pathIdentity = identity(await Deno.lstat(path));
+  } catch {
+    return;
+  }
+  if (sameIdentity(handleIdentity, pathIdentity)) {
+    await remove(path);
+  }
 }
 
 async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {
