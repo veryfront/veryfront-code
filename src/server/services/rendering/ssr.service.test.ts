@@ -470,7 +470,7 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.etag, undefined);
       });
 
-      for (const sensitiveHeader of ["cookie", "authorization"] as const) {
+      for (const sensitiveHeader of ["cookie", "authorization", "x-api-key"] as const) {
         it(
           `forces no-cache and suppresses etags for requests with ${sensitiveHeader}`,
           async () => {
@@ -491,6 +491,23 @@ describe("server/services/rendering/ssr.service", () => {
           },
         );
       }
+
+      it("keeps the load-balancer cookie cache neutral", async () => {
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(),
+        });
+        const request = new Request("http://localhost/test-page", {
+          headers: { cookie: "lb=sticky-route" },
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ request, useNoCache: false }),
+        );
+
+        assertEquals(result.cacheStrategy, "short");
+        assertEquals(typeof result.etag, "string");
+      });
 
       it("requests buffered delivery when the response is cacheable", async () => {
         let delivery: unknown;

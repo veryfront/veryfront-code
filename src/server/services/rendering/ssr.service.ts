@@ -43,6 +43,7 @@ import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
+import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import {
   getAttachedDataResponseMetadata,
   mergeDataResponseMetadata,
@@ -234,8 +235,7 @@ export class SSRService implements SSRServiceLike {
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
-    const requestHasSensitiveState = request.headers.has("cookie") ||
-      request.headers.has("authorization");
+    const requestHasSensitiveState = requestHasCacheSensitiveState(request);
     const mustNotCache = useNoCache || requestHasSensitiveState;
 
     // Project source without an explicit host capability is not trusted to
