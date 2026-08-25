@@ -267,14 +267,20 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
     });
 
     it("keeps the regex fallback when final specifier substitution cannot lex", async () => {
+      // The initial rewrite must survive, or the load is refused before it ever
+      // reaches the discovery and substitution steps this covers. So the stub
+      // lexer serves the first parse of the root and rejects the later ones,
+      // which is exactly the shape of a lexer that chokes on rewritten source.
       const esmCache = new Map<string, string>();
       const originalLexer = resolve<ModuleLexer>("ModuleLexer");
       const rootCode = `/* reject-configured-lexer */ import { a } from "https://esm.sh/a";`;
+      let rootParses = 0;
       register<ModuleLexer>("ModuleLexer", {
         init: originalLexer.init?.bind(originalLexer),
         parse(code) {
           if (code.includes("reject-configured-lexer")) {
-            throw new Error("configured lexer rejected source");
+            rootParses++;
+            if (rootParses > 1) throw new Error("configured lexer rejected source");
           }
           return originalLexer.parse(code);
         },
@@ -303,15 +309,21 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
           rootCode,
           "a final lexer failure must retain the fetched source and its remote specifier",
         );
+        assertEquals(
+          rootParses > 1,
+          true,
+          "the case is only meaningful if a later parse of the root actually ran and failed",
+        );
       } finally {
         register("ModuleLexer", originalLexer);
       }
     });
 
-    it("fails the load when an unlexable module keeps an unrewritable specifier", async () => {
-      // Leaving `./dep.js` verbatim would make the runtime resolve it inside
-      // `tmpDir`, so a "successful" fetch would hand back an artifact that
-      // cannot load. Failing is the only honest outcome.
+    it("refuses a module the lexer cannot read instead of emitting it unrewritten", async () => {
+      // Emitting it verbatim would leave `./dep.js` resolving inside tmpDir, so
+      // the fetch would report success and hand back an unloadable artifact.
+      // Deciding which unreadable bundles are safe needs the lexer that just
+      // failed, so none of them are.
       const esmCache = new Map<string, string>();
       const originalLexer = resolve<ModuleLexer>("ModuleLexer");
       const rootCode = `/* reject-configured-lexer */ import { a } from "./dep.js";`;
@@ -337,199 +349,30 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         await assertRejects(
           () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
           Error,
-          "./dep.js",
-          "a relative specifier the lexer could not rewrite must fail the load",
+          "could not be lexed",
+          "an unreadable bundle must fail the load, not ship a verbatim artifact",
         );
         assertEquals(
           files.size,
           0,
-          "no artifact may be written for a module whose relative specifier stayed unrewritten",
+          "no artifact may be written for a module whose specifiers could not be rewritten",
         );
-        assertEquals(
-          esmCache.size,
-          0,
-          "a failed load must not publish a cache entry",
-        );
+        assertEquals(esmCache.size, 0, "a failed load must not publish a cache entry");
       } finally {
         register("ModuleLexer", originalLexer);
       }
     });
 
-    it("fails the load when an unlexable module keeps a template-literal path", async () => {
-      // esm.sh emits template-literal dynamic imports, so a fallback that only
-      // looked for single and double quotes would let `./chunk.js` through and
-      // write the same unloadable artifact the quoted case is rejected for.
+    it("refuses an unreadable bundle even when its specifiers are all absolute", async () => {
+      // The permissive reading - "verbatim is fine as long as nothing relative
+      // survives" - is what a regex scan would have to establish, and it cannot
+      // do so reliably: a quote inside a comment or a regular-expression
+      // literal desynchronises it, and an escaped specifier such as `.\/dep.js`
+      // does not compare equal to the path it denotes. Both read as "nothing to
+      // rewrite". There is deliberately no such escape hatch.
       const esmCache = new Map<string, string>();
       const originalLexer = resolve<ModuleLexer>("ModuleLexer");
-      const rootCode = `/* reject-configured-lexer */ const load = () => import(\`./chunk.js\`);`;
-      register<ModuleLexer>("ModuleLexer", {
-        init: originalLexer.init?.bind(originalLexer),
-        parse(code) {
-          if (code.includes("reject-configured-lexer")) {
-            throw new Error("configured lexer rejected source");
-          }
-          return originalLexer.parse(code);
-        },
-      });
-      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      installMockFetch(
-        ((input: RequestInfo | URL) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-          return Promise.resolve(new Response("not found", { status: 404 }));
-        }) as typeof fetch,
-      );
-
-      try {
-        await assertRejects(
-          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
-          Error,
-          "./chunk.js",
-          "a backtick-quoted relative specifier must fail the load like a quoted one",
-        );
-        assertEquals(
-          files.size,
-          0,
-          "no artifact may be written for a module whose template-literal path stayed unrewritten",
-        );
-      } finally {
-        register("ModuleLexer", originalLexer);
-      }
-    });
-
-    it("fails the load when a comment separates the keyword from a relative path", async () => {
-      // Anchoring the fallback on `import`/`from` would mean re-deriving JS
-      // syntax by regex: a comment in the middle is enough to hide the
-      // specifier and reinstate the unloadable artifact.
-      const esmCache = new Map<string, string>();
-      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
-      const rootCode = `/* reject-configured-lexer */ import /* generated */ "./dep.js";`;
-      register<ModuleLexer>("ModuleLexer", {
-        init: originalLexer.init?.bind(originalLexer),
-        parse(code) {
-          if (code.includes("reject-configured-lexer")) {
-            throw new Error("configured lexer rejected source");
-          }
-          return originalLexer.parse(code);
-        },
-      });
-      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      installMockFetch(
-        ((input: RequestInfo | URL) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-          return Promise.resolve(new Response("not found", { status: 404 }));
-        }) as typeof fetch,
-      );
-
-      try {
-        await assertRejects(
-          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
-          Error,
-          "./dep.js",
-          "a comment before the specifier must not hide it from the fallback",
-        );
-        assertEquals(
-          files.size,
-          0,
-          "no artifact may be written for a comment-separated relative specifier",
-        );
-      } finally {
-        register("ModuleLexer", originalLexer);
-      }
-    });
-
-    it("fails the load when an escaped quote precedes a relative path", async () => {
-      // A naive quoted-string scan pairs the escaped quote with the next real
-      // one, walks out of phase, and never sees the specifier that follows.
-      const esmCache = new Map<string, string>();
-      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
-      const rootCode = `/* reject-configured-lexer */ const s = "a\\"b"; import "./dep.js";`;
-      register<ModuleLexer>("ModuleLexer", {
-        init: originalLexer.init?.bind(originalLexer),
-        parse(code) {
-          if (code.includes("reject-configured-lexer")) {
-            throw new Error("configured lexer rejected source");
-          }
-          return originalLexer.parse(code);
-        },
-      });
-      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      installMockFetch(
-        ((input: RequestInfo | URL) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-          return Promise.resolve(new Response("not found", { status: 404 }));
-        }) as typeof fetch,
-      );
-
-      try {
-        await assertRejects(
-          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
-          Error,
-          "./dep.js",
-          "an escaped quote must not desynchronise the fallback scan",
-        );
-        assertEquals(
-          files.size,
-          0,
-          "no artifact may be written for a specifier hidden behind an escaped quote",
-        );
-      } finally {
-        register("ModuleLexer", originalLexer);
-      }
-    });
-
-    it("fails the load when a line continuation precedes a relative path", async () => {
-      // `\\.` cannot consume a backslash-newline pair, so an escape scan built
-      // on it would stop inside the first string and pair its closing quote
-      // with the import's opening one.
-      const esmCache = new Map<string, string>();
-      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
-      const rootCode = `/* reject-configured-lexer */ const s = "a\\\nb"; import "./dep.js";`;
-      register<ModuleLexer>("ModuleLexer", {
-        init: originalLexer.init?.bind(originalLexer),
-        parse(code) {
-          if (code.includes("reject-configured-lexer")) {
-            throw new Error("configured lexer rejected source");
-          }
-          return originalLexer.parse(code);
-        },
-      });
-      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      installMockFetch(
-        ((input: RequestInfo | URL) => {
-          const url = typeof input === "string" ? input : input.toString();
-          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-          return Promise.resolve(new Response("not found", { status: 404 }));
-        }) as typeof fetch,
-      );
-
-      try {
-        await assertRejects(
-          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
-          Error,
-          "./dep.js",
-          "a line continuation must not desynchronise the fallback scan",
-        );
-        assertEquals(
-          files.size,
-          0,
-          "no artifact may be written for a specifier hidden behind a line continuation",
-        );
-      } finally {
-        register("ModuleLexer", originalLexer);
-      }
-    });
-
-    it("still accepts an unlexable module whose specifiers are all absolute", async () => {
-      // The companion to the case above: a lexer failure is not fatal by
-      // itself, only a lexer failure that leaves a specifier resolving against
-      // the temp directory.
-      const esmCache = new Map<string, string>();
-      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
-      const rootCode =
-        `/* reject-configured-lexer */ import { a } from "/_vf_modules/local.js";\nimport "react";`;
+      const rootCode = `/* reject-configured-lexer */ const r = /"/; import "https://esm.sh/a";`;
       register<ModuleLexer>("ModuleLexer", {
         init: originalLexer.init?.bind(originalLexer),
         parse(code) {
@@ -548,12 +391,13 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
 
       try {
-        const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
-        assertEquals(
-          files.get(result),
-          rootCode,
-          "a locally served path and a bare specifier are both safe to leave verbatim",
+        await assertRejects(
+          () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
+          Error,
+          "could not be lexed",
+          "an all-absolute bundle is still refused, because proving it needs the failed lexer",
         );
+        assertEquals(files.size, 0, "no artifact may be written for an unreadable bundle");
       } finally {
         register("ModuleLexer", originalLexer);
       }

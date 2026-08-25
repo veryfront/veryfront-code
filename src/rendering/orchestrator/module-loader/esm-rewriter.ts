@@ -46,15 +46,22 @@ function needsEsmRewrite(specifier: string): boolean {
  *
  * The rewrite is driven by the module lexer rather than by pattern matching:
  * only a position the lexer reports as a specifier is edited, so ordinary
- * string data that happens to read like an import statement — say
- * `const help = 'from "/v135/help"'` — is left alone. Guessing with a regex
+ * string data that happens to read like an import statement - say
+ * `const help = 'from "/v135/help"'` - is left alone. Guessing with a regex
  * would reintroduce exactly the string-versus-specifier confusion this avoids.
  *
- * A bundle the lexer cannot read keeps its specifiers verbatim, which is only
- * sound while every one of them is already absolute. A surviving relative or
- * server-absolute specifier would be resolved against the temp directory the
- * artifact is written to, so the caller would be handed a module that loads the
- * wrong file or none at all; such a bundle fails the load instead.
+ * A bundle the lexer cannot read fails the load. Writing it out verbatim would
+ * be sound only if every specifier in it were already absolute, and deciding
+ * that without the lexer means re-deriving JS tokenisation from a regex:
+ * comments and regular-expression literals carrying a quote desynchronise the
+ * scan, escaped delimiters and line continuations hide the specifiers after
+ * them, and an escaped specifier such as `".\/dep.js"` does not compare equal
+ * to the path it denotes. Every one of those misses reads as "nothing to
+ * rewrite" and ships an artifact whose imports resolve against the temp
+ * directory rather than esm.sh - a broken module reported as a successful
+ * fetch. There is no partial answer worth having here, so an unreadable bundle
+ * is refused, the same way `staticImportSpecifiers` treats one as entirely
+ * static rather than quietly shipping a remote dependency.
  */
 export async function rewriteEsmPaths(code: string, urlBase: string): Promise<string> {
   try {
@@ -64,40 +71,15 @@ export async function rewriteEsmPaths(code: string, urlBase: string): Promise<st
       return new URL(specifier, urlBase).href;
     });
   } catch (error) {
-    logger.debug("Could not lex a fetched module; leaving its specifiers unrewritten", {
-      error: error instanceof Error ? error.message : String(error),
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.debug("Could not lex a fetched module; refusing to emit it unrewritten", {
+      error: detail,
     });
-    // Every string literal is examined, not just the ones in an import-looking
-    // position. Anchoring on `import`/`from` would mean re-implementing JS
-    // syntax with a regex - a comment between the keyword and the specifier, a
-    // line continuation, or an `export {a} from` form each need their own
-    // case, and a missed one silently reinstates the unloadable artifact this
-    // guards against. The lexer has already refused the source by this point,
-    // so the only safe direction to err in is refusing too much: a data string
-    // that merely looks like a path costs a failed load, never a broken
-    // module.
-    //
-    // The three alternatives are the three JS string forms, each matched
-    // escape-aware: an earlier `"a\"b"` would otherwise pair its escaped quote
-    // with the next real one and walk the scan out of phase, hiding every
-    // specifier after it. The escape pair is `\\[\s\S]` rather than `\\.` so that
-    // a line continuation - a backslash before a real newline - is consumed
-    // too; `.` stops at a newline and would desynchronise the scan the same
-    // way. An unescaped newline still terminates a quoted string, because the
-    // character class excludes it. Within each alternative that class and the
-    // escape pair are disjoint, so the scan cannot backtrack. Declared inside
-    // the handler so `lastIndex` cannot leak between calls.
-    const stringLiteral =
-      /"((?:[^"\\\n]|\\[\s\S])*)"|'((?:[^'\\\n]|\\[\s\S])*)'|`((?:[^`\\]|\\[\s\S])*)`/g;
-    for (let match = stringLiteral.exec(code); match; match = stringLiteral.exec(code)) {
-      const specifier = match[1] ?? match[2] ?? match[3];
-      if (specifier === undefined || !needsEsmRewrite(specifier)) continue;
-      throw MODULE_NOT_FOUND.create({
-        detail: `Cannot rewrite ${specifier} in an unlexable module from ${urlBase}: leaving it ` +
-          `verbatim would resolve it against the temp directory instead of esm.sh`,
-      });
-    }
-    return code;
+    throw MODULE_NOT_FOUND.create({
+      detail: `Cannot rewrite the module fetched from ${urlBase}: its source could not be ` +
+        `lexed (${detail}), and emitting it unrewritten would resolve its specifiers ` +
+        `against the temp directory instead of esm.sh`,
+    });
   }
 }
 
