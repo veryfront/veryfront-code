@@ -169,7 +169,7 @@ function coordinateSelectsExport(coordinate: string): boolean {
   if (firstSeparator === -1) return false;
   if (!coordinate.startsWith("@")) return true;
 
-  return coordinate.indexOf("/", firstSeparator + 1) !== -1;
+  return coordinate.includes("/", firstSeparator + 1);
 }
 
 function isSingleModuleMapping(mapping: string): boolean {
@@ -230,6 +230,31 @@ function appendSubpath(mapping: string, subpath: string): string {
 }
 
 /**
+ * Resolves a coordinate against one import table.
+ *
+ * An exact package-plus-subpath entry addresses the module directly, so it is
+ * consulted before the package entry. Reports null when the table has neither,
+ * which is what lets the caller move on to the next one.
+ */
+function resolveThroughTable(
+  imports: Record<string, string>,
+  packageName: string,
+  subpath: string,
+): string | null {
+  if (subpath) {
+    const exact = imports[packageName + subpath];
+    if (exact) return exact;
+  }
+
+  const mapping = imports[packageName];
+  if (!mapping) return null;
+  if (!subpath) return mapping;
+  if (isSingleModuleMapping(mapping)) return mapping;
+
+  return appendSubpath(mapping, subpath);
+}
+
+/**
  * Resolves an esm.sh specifier against an import map, or reports null when the
  * map has nothing for it.
  *
@@ -248,22 +273,11 @@ export function resolveEsmShThroughImportMap(
   const parsed = parseEsmShSpecifier(specifier);
   if (!parsed) return null;
 
-  const { packageName, subpath } = parsed;
-  const fullKey = subpath ? packageName + subpath : null;
-
   for (const imports of [scopedImports, globalImports]) {
     if (!imports) continue;
 
-    // An exact package-plus-subpath entry addresses the module directly.
-    const exact = fullKey ? imports[fullKey] : undefined;
-    if (exact) return exact;
-
-    const mapping = imports[packageName];
-    if (!mapping) continue;
-    if (!subpath) return mapping;
-    if (isSingleModuleMapping(mapping)) return mapping;
-
-    return appendSubpath(mapping, subpath);
+    const resolved = resolveThroughTable(imports, parsed.packageName, parsed.subpath);
+    if (resolved) return resolved;
   }
 
   return null;
