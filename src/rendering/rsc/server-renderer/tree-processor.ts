@@ -104,7 +104,7 @@ export async function processElement(
       return { type: "html", html };
     }
 
-    const attrs = renderAttributes(props);
+    const attrs = renderAttributes(props, type);
     const childrenHtml = await Promise.all(
       processedChildren.map((child) => treeToHTML(child, clientRefs, clientManifest)),
     );

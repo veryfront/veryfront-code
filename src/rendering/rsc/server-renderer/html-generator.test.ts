@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { renderAttributes } from "./html-generator.ts";
+import { renderAttributes, treeToHTML } from "./html-generator.ts";
 
 describe("rendering/rsc/server-renderer/html-generator", () => {
   describe("renderAttributes", () => {
@@ -90,6 +90,48 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       assertEquals(result.includes("htmlFor"), false, "the React prop name is not emitted");
       assertEquals(result.includes('aria-label="Field"'), true);
       assertEquals(result.includes('data-test-id="field"'), true);
+    });
+  });
+
+  describe("treeToHTML", () => {
+    it("preserves htmlFor on custom elements while mapping label htmlFor to for", async () => {
+      const html = await treeToHTML({
+        type: "fragment",
+        children: [
+          {
+            type: "server",
+            component: "label",
+            props: { htmlFor: "standard-field" },
+            children: [{ type: "html", text: "Standard" }],
+          },
+          {
+            type: "server",
+            component: "design-label",
+            props: { htmlFor: "custom-field" },
+            children: [{
+              type: "client",
+              component: "ClientBoundary",
+              props: { id: "custom-field" },
+            }],
+          },
+        ],
+      });
+
+      assertEquals(
+        html.includes('<label for="standard-field">Standard</label>'),
+        true,
+        "standard labels use the HTML for attribute",
+      );
+      assertEquals(
+        html.includes('<design-label htmlFor="custom-field">'),
+        true,
+        "custom elements preserve React-style htmlFor",
+      );
+      assertEquals(
+        html.includes('<design-label for="custom-field">'),
+        false,
+        "custom elements do not receive normalized for attributes",
+      );
     });
   });
 });

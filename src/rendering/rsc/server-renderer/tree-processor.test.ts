@@ -204,6 +204,38 @@ describe("rendering/rsc/server-renderer/tree-processor", () => {
         "a client component inside a fragment is registered in clientRefs",
       );
     });
+
+    it("preserves htmlFor on custom elements with nested client boundaries", async () => {
+      function ClientComp() {
+        return React.createElement("input", { id: "field" });
+      }
+      (ClientComp as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientComp", {
+        id: "ClientComp",
+        path: "./components/ClientComp.tsx",
+        exports: ["default"],
+      });
+
+      const clientRefs = new Map<string, string>();
+      const element = React.createElement(
+        "design-label",
+        { htmlFor: "field" },
+        React.createElement(ClientComp),
+      );
+
+      const result = await renderTree(element as any, {}, clientManifest, clientRefs);
+      assertEquals(result.type, "html");
+
+      const html = (result as { html: string }).html;
+      assertEquals(
+        html.includes('<design-label htmlFor="field">'),
+        true,
+        "custom-element attributes keep React prop spelling on the processor path",
+      );
+      assertEquals(html.includes('<design-label for="field">'), false);
+    });
   });
 
   describe("renderChildren", () => {

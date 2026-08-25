@@ -7,26 +7,24 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
-/**
- * React prop names that differ from the HTML attribute they render to.
- * `htmlFor` must become `for` or the label loses its input association and
- * React reports an attribute mismatch when it hydrates the same element.
- */
-const REACT_PROP_ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
-  className: "class",
-  htmlFor: "for",
-};
+function isCustomElementTag(tagName: string | undefined): boolean {
+  return tagName?.includes("-") === true;
+}
 
-export function renderAttributes(props: Record<string, unknown>): string {
+function renderAttributeName(key: string, tagName: string | undefined): string {
+  if (key === "className") return "class";
+  if (key === "htmlFor" && !isCustomElementTag(tagName)) return "for";
+  return key;
+}
+
+export function renderAttributes(props: Record<string, unknown>, tagName?: string): string {
   const attrs: string[] = [];
 
   for (const [key, value] of Object.entries(props)) {
     if (value == null || SKIP_PROPS.has(key)) continue;
     if (!isSafeSerializedPropName(key)) continue;
 
-    const attrName = Object.hasOwn(REACT_PROP_ATTRIBUTE_NAMES, key)
-      ? REACT_PROP_ATTRIBUTE_NAMES[key]!
-      : key;
+    const attrName = renderAttributeName(key, tagName);
 
     if (typeof value === "boolean") {
       if (value) attrs.push(attrName);
@@ -84,7 +82,7 @@ export async function treeToHTML(
 
       const tag = node.component;
       if (!/^[A-Za-z][A-Za-z0-9:_-]*$/.test(tag)) return "";
-      const attrs = renderAttributes(node.props ?? {});
+      const attrs = renderAttributes(node.props ?? {}, tag);
       const childrenHtml = await Promise.all(
         (node.children ?? []).map((child) => treeToHTML(child, clientRefs, clientManifest)),
       );
