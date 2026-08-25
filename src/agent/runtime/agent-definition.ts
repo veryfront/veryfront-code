@@ -74,6 +74,12 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     providerTools: v.array(v.string().min(1)).optional(),
     skills: v.union([v.literal(true), v.literal(false), v.array(v.string().min(1))]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    /**
+     * Tool names an agent author explicitly switched off with `false`. The
+     * positive `tools` selector cannot express a denial, so hosted preparation
+     * would otherwise re-add runtime-essential skill tools the author denied.
+     */
+    deniedTools: v.array(v.string().min(1)).optional(),
     delegates: v.array(v.string().min(1)).optional(),
     mcpServers: v.array(getRuntimeAgentMcpServerConfigSchema()).optional(),
   })

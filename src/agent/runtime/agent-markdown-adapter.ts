@@ -12,10 +12,22 @@ export function createRuntimeAgentFromMarkdownDefinition(
   // owner-aware resolver: `true` binds all visible tools; a list binds each
   // entry (own short name first, then exact global id). The factory adds the
   // scoped tools derived from `delegates` for both code and markdown agents.
-  const selectedTools: true | Record<string, true> | undefined = definition.tools === true
+  // `deniedTools` names rebuild as explicit `false` entries: the positive
+  // selector cannot express a denial, and dropping them would let the factory
+  // re-add runtime-essential skill tools the agent author switched off.
+  const deniedToolEntries: Array<[string, false]> = (definition.deniedTools ?? []).map(
+    (name) => [name, false as const],
+  );
+  const selectedToolMap: Record<string, boolean> = {
+    ...(definition.tools !== undefined && definition.tools !== true
+      ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
+      : {}),
+    ...Object.fromEntries(deniedToolEntries),
+  };
+  const selectedTools: true | Record<string, boolean> | undefined = definition.tools === true
     ? true
-    : definition.tools
-    ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
+    : Object.keys(selectedToolMap).length > 0
+    ? selectedToolMap
     : undefined;
 
   const runtimeAgent = agent({

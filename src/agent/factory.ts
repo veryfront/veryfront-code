@@ -349,7 +349,10 @@ function resolveToolsConfiguration(input: {
       }
 
       const configuredTool = configuredTools[registration.id];
-      if (typeof configuredTool === "object" && configuredTool !== null) {
+      if (
+        configuredTool === false ||
+        (typeof configuredTool === "object" && configuredTool !== null)
+      ) {
         continue;
       }
 
@@ -380,6 +383,21 @@ function resolveToolsConfiguration(input: {
 }
 
 /**
+ * Whether the resolved tool selection actually exposes the skill loader.
+ *
+ * The skill catalog block instructs the model to call `load_skill`, so it must
+ * only be rendered when the effective tool configuration can honour that call.
+ * An explicit `load_skill: false` denial, or a selection the loader was never
+ * merged into, means the catalog would advertise an unusable tool.
+ */
+function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
+  if (tools === true) return true;
+  if (!tools) return false;
+  const loader = tools["load_skill"];
+  return loader !== undefined && loader !== false;
+}
+
+/**
  * Build the system prompt lazily, per invocation.
  *
  * Assembled at call time rather than construction time so registry-backed
@@ -388,9 +406,10 @@ function resolveToolsConfiguration(input: {
  */
 function createAugmentedSystem(input: {
   config: AgentConfig;
+  skillLoaderExposed: boolean;
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<AgentSystem> {
-  const { config, resolveSkillSnapshot } = input;
+  const { config, skillLoaderExposed, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
   const augmentSystem = (
@@ -410,7 +429,9 @@ function createAugmentedSystem(input: {
       resolveModelProviderOptionKey(resolveRuntimeModel(config.model));
 
     const contextInput = {
-      ...(preassembledSkillContext
+      // A denied or absent loader suppresses the catalog: advertising skills
+      // the agent cannot load would only steer the model into blocked calls.
+      ...(preassembledSkillContext || !skillLoaderExposed
         ? {}
         : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
@@ -514,6 +535,7 @@ function createAgent<TOutput = never>(
 
   const augmentedSystem = createAugmentedSystem({
     config,
+    skillLoaderExposed: isSkillLoaderExposed(mergedToolsConfig),
     resolveSkillSnapshot,
   });
 

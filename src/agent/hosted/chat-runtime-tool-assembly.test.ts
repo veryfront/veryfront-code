@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertRejects,
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -343,6 +344,96 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
 
   assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill"]);
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit skill tool denials over runtime-essential preservation", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      load_skill_reference: localTool("Load skill reference"),
+      execute_skill_script: localTool("Execute skill script"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "sleep"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps denied skill tools out of config-derived empty tool runs", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      load_skill: localTool("Load skill"),
+      load_skill_reference: localTool("Load skill reference"),
+      execute_skill_script: localTool("Execute skill script"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: [],
+    deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, []);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to remote tool sources", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { sleep: localTool("Sleep") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["create_file"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  // A null allowlist disables name filtering, so the deny wrapper is the only
+  // guard: the denied remote tool is neither listed nor executable.
+  assertEquals(toolAssembly.remoteToolNames, []);
+  const [remoteToolSource] = toolAssembly.remoteToolSources;
+  assertExists(remoteToolSource);
+  await assertRejects(async () => await remoteToolSource.executeTool("create_file", {}));
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly removes skill infrastructure for known empty skill runs", async () => {

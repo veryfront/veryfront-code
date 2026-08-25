@@ -82,7 +82,24 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
 
   const names = Object.entries(tools)
     .flatMap(([name, value]) => value === false ? [] : [name])
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
+
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Explicit `false` entries carried separately so hosted preparation cannot
+ * re-add a tool the agent author denied by name (for example the
+ * runtime-essential skill loaders).
+ */
+function resolveAgentDeniedToolNames(tools: AgentConfig["tools"]): string[] | undefined {
+  if (!tools || tools === true) {
+    return undefined;
+  }
+
+  const names = Object.entries(tools)
+    .flatMap(([name, value]) => value === false ? [name] : [])
+    .sort((left, right) => left.localeCompare(right));
 
   return names.length > 0 ? names : undefined;
 }
@@ -191,6 +208,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
     return markdownDefinition;
   }
   const toolNames = resolveAgentToolNames(runtimeAgent.config.tools);
+  const deniedToolNames = resolveAgentDeniedToolNames(runtimeAgent.config.tools);
   const mcpServers = resolveSerializableMcpServers(runtimeAgent.config.mcpServers);
   const system = await resolveAgentSystem(runtimeAgent.config.system);
 
@@ -216,6 +234,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
       : {}),
     ...(runtimeAgent.config.skills === undefined ? {} : { skills: runtimeAgent.config.skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
+    ...(deniedToolNames === undefined ? {} : { deniedTools: deniedToolNames }),
     ...(runtimeAgent.config.delegates === undefined
       ? {}
       : { delegates: runtimeAgent.config.delegates }),

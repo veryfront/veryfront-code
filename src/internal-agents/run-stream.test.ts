@@ -35,6 +35,7 @@ import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   buildMergedTools,
   createRuntimeAgentStreamResponse,
+  getExplicitlyDeniedToolNames,
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
 } from "./run-stream.ts";
 
@@ -324,6 +325,62 @@ describe("internal-agents/run-stream", () => {
     } finally {
       toolRegistryInternal.delete("number-generator");
     }
+  });
+
+  it("keeps explicit false denials authoritative over request-injected tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runtimeAgent = {
+      id: "locked-down",
+      config: {
+        id: "locked-down",
+        system: "test",
+        tools: {
+          load_skill: false,
+          load_skill_reference: false,
+          execute_skill_script: false,
+        },
+      },
+    } as unknown as Agent;
+
+    const mergedTools = buildMergedTools(
+      runtimeAgent,
+      {
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [],
+        tools: [
+          { name: "load_skill", description: "Caller-supplied loader" },
+          { name: "execute_skill_script", description: "Caller-supplied executor" },
+          { name: "unrelated_tool", description: "Still injectable" },
+        ],
+        context: [],
+      } as Parameters<typeof buildMergedTools>[1],
+      sessionManager,
+    );
+
+    assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
+  });
+
+  it("collects only explicit false entries as denied tool names", () => {
+    const runtimeAgent = {
+      id: "denied-remote",
+      config: {
+        id: "denied-remote",
+        system: "test",
+        tools: {
+          create_file: false,
+          load_skill: false,
+          search_docs: true,
+          echo: { id: "echo", description: "Echo" },
+        },
+      },
+    } as unknown as Agent;
+
+    const deniedToolNames = [...getExplicitlyDeniedToolNames(runtimeAgent)]
+      .sort((left, right) => left.localeCompare(right));
+
+    assertEquals(deniedToolNames, ["create_file", "load_skill"]);
+    assertEquals(getExplicitlyDeniedToolNames({ config: {} } as unknown as Agent).size, 0);
   });
 
   it("keeps registry tools authoritative for server-resolved project tool names", () => {

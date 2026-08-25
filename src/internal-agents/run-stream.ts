@@ -102,6 +102,26 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
+/**
+ * Explicit `false` entries in the agent's tool map are authoritative denials.
+ * Remote grants and forwarded integration tool definitions are appended to
+ * the runtime tool surface independently of the merged tool map, so denied
+ * names must be subtracted from them too or a denied remote tool would stay
+ * discoverable and callable.
+ */
+export function getExplicitlyDeniedToolNames(agent: Agent): ReadonlySet<string> {
+  const configuredTools = agent.config.tools;
+  if (!configuredTools || configuredTools === true) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    Object.entries(configuredTools)
+      .filter(([, entry]) => entry === false)
+      .map(([toolName]) => toolName),
+  );
+}
+
 function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
   const merged = new Set<string>();
   for (const toolName of source) {
@@ -186,17 +206,20 @@ export function buildMergedTools(
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
-  const concreteSourceToolNames = agent.config.tools && agent.config.tools !== true
+  // Concrete source definitions stay authoritative, and so do explicit `false`
+  // denials: a request-injected tool must not resurrect a tool the agent
+  // author switched off by name (mirroring the AG-UI merge path).
+  const authoritativeSourceToolNames = agent.config.tools && agent.config.tools !== true
     ? new Set(
       Object.entries(agent.config.tools)
-        .filter(([, entry]) => entry && typeof entry === "object")
+        .filter(([, entry]) => (entry && typeof entry === "object") || entry === false)
         .map(([toolName]) => toolName),
     )
     : new Set<string>();
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
-        !concreteSourceToolNames.has(tool.name) &&
+        !authoritativeSourceToolNames.has(tool.name) &&
         !serverResolvedProjectToolNames.has(tool.name)
       )
       .map((tool) => [
@@ -743,9 +766,15 @@ export async function createRuntimeAgentStreamResponse(
         { runId: input.runId, agentId: agent.id },
       );
     }
-    const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(
+    const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+    const forwardedIntegrationToolDefsWithDenied = getForwardedIntegrationToolDefinitions(
       input.forwardedProps,
     );
+    const forwardedIntegrationToolDefs = explicitlyDeniedToolNames.size === 0
+      ? forwardedIntegrationToolDefsWithDenied
+      : forwardedIntegrationToolDefsWithDenied?.filter(
+        (tool) => !explicitlyDeniedToolNames.has(tool.name),
+      );
     const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
     // A restrictive toolAllowlist caps remote exposure too: it intersects the
     // tightest existing remote filter (forwarded grants, else the agent source's
@@ -766,9 +795,14 @@ export async function createRuntimeAgentStreamResponse(
       : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
         (toolName) => runtimeToolAllowlist.has(toolName),
       );
+    const denialFilteredRemoteToolNames = explicitlyDeniedToolNames.size === 0
+      ? runtimeAllowedRemoteToolNames
+      : runtimeAllowedRemoteToolNames?.filter(
+        (toolName) => !explicitlyDeniedToolNames.has(toolName),
+      );
     const allowedRemoteToolNames = input.allowDelegation === false
-      ? runtimeAllowedRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
-      : runtimeAllowedRemoteToolNames;
+      ? denialFilteredRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
+      : denialFilteredRemoteToolNames;
     const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
     closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
     const availableLocalTools = {

@@ -132,6 +132,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   maxOutputTokens?: number;
   allowedTools?: string[];
   /**
+   * Tool names the agent configuration denied explicitly (`false` entries).
+   * They must never be re-added by runtime-essential tool preservation.
+   */
+  deniedTools?: string[];
+  /**
    * Integration tools the control plane resolved for this run. Verified before
    * it reaches here, and used only to widen the Veryfront API MCP allowlist.
    */

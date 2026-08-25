@@ -449,6 +449,64 @@ description: Excluded skill
     assertEquals(assistant.config.skills, false);
   });
 
+  it("preserves explicit skill tool denials when skills are omitted", () => {
+    const assistant = agent({
+      id: "disabled-skill-tools",
+      system: "Do not use skill tools.",
+      tools: {
+        load_skill: false,
+        load_skill_reference: false,
+        execute_skill_script: false,
+      },
+    });
+
+    assertEquals(assistant.config.tools, {
+      load_skill: false,
+      load_skill_reference: false,
+      execute_skill_script: false,
+    });
+  });
+
+  it("does not advertise a skill catalog when the loader is explicitly denied", async () => {
+    registerSkill("support-triage", createSkill("support-triage", "Triage support requests"));
+
+    const assistant = agent({
+      id: "denied-loader-no-catalog",
+      system: "Do not use skill tools.",
+      tools: {
+        load_skill: false,
+        load_skill_reference: false,
+        execute_skill_script: false,
+      },
+    });
+
+    const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+    assertEquals(
+      prompt.includes("<available_skills>"),
+      false,
+      "a denied loader must not be advertised through the skill catalog",
+    );
+    assertEquals(prompt.includes("support-triage"), false);
+  });
+
+  it("still advertises the skill catalog when only the script tool is denied", async () => {
+    registerSkill(
+      "script-denied-skill",
+      createSkill("script-denied-skill", "Loadable without script execution"),
+    );
+
+    const assistant = agent({
+      id: "script-denied-prompt",
+      system: "Load skills, never run their scripts.",
+      tools: { execute_skill_script: false },
+    });
+
+    const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+
+    assertStringIncludes(prompt, "<available_skills>");
+    assertStringIncludes(prompt, "script-denied-skill");
+  });
+
   it("binds one scoped tool for each declared delegate", () => {
     const assistant = agent({
       id: "orchestrator",

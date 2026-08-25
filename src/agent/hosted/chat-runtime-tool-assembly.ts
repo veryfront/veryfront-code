@@ -25,6 +25,7 @@ import {
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
   type HostedProjectRemoteToolSourceRetryPolicy,
 } from "./project-remote-tool-source.ts";
+import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
@@ -107,6 +108,12 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   serverResolvedIntegrationToolNames?: readonly string[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
+  /**
+   * Tool names the agent configuration denied explicitly (`false` entries).
+   * Removed from the host tool set before runtime-essential preservation, so
+   * a denied skill loader cannot be re-added on the hosted path.
+   */
+  deniedToolNames?: readonly string[];
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
@@ -168,6 +175,39 @@ export function augmentVeryfrontApiMcpServerPolicy(
       toolPolicy: { ...server.toolPolicy, allow: [...allow] },
     };
   });
+}
+
+function withoutDeniedHostTools(
+  tools: HostToolSet,
+  deniedToolNames: readonly string[] | undefined,
+): HostToolSet {
+  if (!deniedToolNames?.length) {
+    return tools;
+  }
+  const denied = new Set(deniedToolNames);
+  return Object.fromEntries(
+    Object.entries(tools).filter(([toolName]) => !denied.has(toolName)),
+  );
+}
+
+/**
+ * Explicit denials must also hold on the remote path: `allowedToolNames` can
+ * be null (no filtering), so a denied MCP-backed tool would stay discoverable
+ * and executable. The deny wrapper filters listings and rejects execution.
+ */
+function withoutDeniedRemoteTools(
+  sources: RemoteToolSource[],
+  deniedToolNames: readonly string[] | undefined,
+): RemoteToolSource[] {
+  if (!deniedToolNames?.length) {
+    return sources;
+  }
+  const deny = [...deniedToolNames];
+  return sources.map((source) =>
+    wrapRemoteToolSourceWithMcpPolicy(source, { deny }, {
+      deniedDetail: (toolName) => `Tool "${toolName}" is denied by the agent configuration`,
+    })
+  );
 }
 
 function applyHostedHostToolPolicy(
@@ -301,9 +341,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
-  const authorizedLocalTools = applyHostedHostToolPolicy(
-    input.localTools,
-    input.hostToolPolicy,
+  const authorizedLocalTools = withoutDeniedHostTools(
+    applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
+    input.deniedToolNames,
   );
   const ownerScopedAllowedToolNames = resolveOwnerScopedToolNames({
     toolNames: input.allowedToolNames,
@@ -358,30 +398,33 @@ export async function prepareHostedChatRuntimeToolAssembly<
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;
 
-  const remoteToolSources = createHostedProjectRemoteToolSources({
-    authToken: input.taskContext.authToken,
-    apiMcpUrl: input.apiMcpUrl,
-    studioMcpUrl: input.studioMcpUrl,
-    mcpServers: augmentVeryfrontApiMcpServerPolicy(
-      input.mcpServers,
-      input.serverResolvedIntegrationToolNames,
-    ),
-    clientProfile: input.taskContext.clientProfile,
-    createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
-    defaultProjectId: () => activeProjectId(input.taskContext),
-    getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
-    getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
-    conversationId: input.conversationId,
-    allowedToolNames,
-    ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
-      ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
-      : {}),
-    projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
-    prepareToolInput: input.prepareRemoteToolInput,
-    shouldRetryWithTool: input.shouldRetryWithRemoteTool,
-    onSteeringMutation: input.onSteeringMutation,
-    onStudioProjectSwitch: input.onStudioProjectSwitch,
-  });
+  const remoteToolSources = withoutDeniedRemoteTools(
+    createHostedProjectRemoteToolSources({
+      authToken: input.taskContext.authToken,
+      apiMcpUrl: input.apiMcpUrl,
+      studioMcpUrl: input.studioMcpUrl,
+      mcpServers: augmentVeryfrontApiMcpServerPolicy(
+        input.mcpServers,
+        input.serverResolvedIntegrationToolNames,
+      ),
+      clientProfile: input.taskContext.clientProfile,
+      createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
+      defaultProjectId: () => activeProjectId(input.taskContext),
+      getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
+      getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
+      conversationId: input.conversationId,
+      allowedToolNames,
+      ...(input.toolDiscoveryContext?.activatedRemoteToolNames !== undefined
+        ? { activatedRemoteToolNames: input.toolDiscoveryContext.activatedRemoteToolNames }
+        : {}),
+      projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+      prepareToolInput: input.prepareRemoteToolInput,
+      shouldRetryWithTool: input.shouldRetryWithRemoteTool,
+      onSteeringMutation: input.onSteeringMutation,
+      onStudioProjectSwitch: input.onStudioProjectSwitch,
+    }),
+    input.deniedToolNames,
+  );
   const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,

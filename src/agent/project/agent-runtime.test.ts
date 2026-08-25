@@ -250,11 +250,47 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
     "get_file",
     "lookup_job",
   ]);
+  assertEquals(definition.deniedTools, ["skip_file"]);
   assertEquals(definition.delegates, ["specialist"]);
   assertEquals(definition.mcpServers, [{
     kind: "veryfront-api",
     toolPolicy: { allow: ["get_file"] },
   }]);
+});
+
+Deno.test("project agent runtime carries explicit skill tool denials into hosted definitions", async () => {
+  registerSkill("triage", {
+    id: "triage",
+    metadata: { name: "triage", description: "Triage requests" },
+    rootPath: "/test/skills/triage",
+  });
+
+  try {
+    const lockedDown = agent({
+      id: "locked-down-hosted",
+      system: "Do not use skill tools.",
+      tools: {
+        load_skill: false,
+        load_skill_reference: false,
+        execute_skill_script: false,
+      },
+    });
+
+    const definition = await createRuntimeAgentDefinitionFromAgent(lockedDown);
+
+    assertEquals(
+      definition.tools,
+      undefined,
+      "an all-denied map has no positive selector to serialize",
+    );
+    assertEquals(definition.deniedTools, [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  } finally {
+    skillRegistryInternal.clearAll();
+  }
 });
 
 Deno.test("project agent runtime serializes code agent thinking config", async () => {

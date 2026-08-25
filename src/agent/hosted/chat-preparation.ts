@@ -112,6 +112,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
     skills?: true | false | string[];
   };
   projectId: string | null;
@@ -241,6 +242,7 @@ export type HostedChatExecutionPreparationInput<
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -337,8 +339,9 @@ function resolveInitialModelVisibleToolNames(input: {
   const hostAllow = input.hostToolPolicy === undefined
     ? undefined
     : new Set(input.hostToolPolicy.allow);
+  const deniedToolNames = new Set(input.runtimeConfig.deniedToolNames ?? []);
   const isHostAllowed = (toolName: string): boolean =>
-    hostAllow === undefined || hostAllow.has(toolName);
+    (hostAllow === undefined || hostAllow.has(toolName)) && !deniedToolNames.has(toolName);
 
   if (input.runtimeConfig.requestedAllowedTools === undefined) {
     return [
@@ -425,6 +428,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.requestedAllowedTools !== undefined
         ? { allowedTools: runtimeConfig.requestedAllowedTools }
         : {}),
+      ...(runtimeConfig.deniedToolNames !== undefined
+        ? { deniedTools: runtimeConfig.deniedToolNames }
+        : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
       ...(input.serverResolvedToolExposureCheckpoint
@@ -495,6 +501,7 @@ export async function prepareHostedChatExecution<
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(

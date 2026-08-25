@@ -218,6 +218,9 @@ async function buildToolAssembly(
     mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
+    ...(input.options.deniedTools !== undefined
+      ? { deniedToolNames: input.options.deniedTools }
+      : {}),
     ...(input.options.serverResolvedIntegrationToolNames !== undefined
       ? {
         serverResolvedIntegrationToolNames: input.options.serverResolvedIntegrationToolNames,

@@ -179,6 +179,32 @@ Deno.test("resolveHostedRuntimeRequestConfig prefers request model over forwarde
   assertEquals(result.requestedModel, "veryfront-cloud/openai/gpt-5.2");
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig carries explicit tool denials through", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: { forwardedProps: {} },
+    agentConfig: createAgentConfig({
+      deniedTools: ["execute_skill_script", "load_skill", "load_skill_reference"],
+    }),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.deniedToolNames, [
+    "execute_skill_script",
+    "load_skill",
+    "load_skill_reference",
+  ]);
+});
+
+Deno.test("resolveHostedRuntimeRequestConfig resolves no denials when none are configured", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: { forwardedProps: {} },
+    agentConfig: createAgentConfig(),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.deniedToolNames, undefined);
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max steps, and client profile", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: {

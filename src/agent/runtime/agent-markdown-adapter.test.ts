@@ -20,6 +20,45 @@ it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", (
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
+it("createRuntimeAgentFromMarkdownDefinition restores explicit tool denials", () => {
+  toolRegistryInternal.clearAll();
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "locked-down-md",
+    name: "Locked Down",
+    description: "No skill tools",
+    instructions: "Do not use skill tools.",
+    deniedTools: ["execute_skill_script", "load_skill", "load_skill_reference"],
+  });
+
+  assertEquals(runtimeAgent.config.tools, {
+    execute_skill_script: false,
+    load_skill: false,
+    load_skill_reference: false,
+  });
+});
+
+it("createRuntimeAgentFromMarkdownDefinition merges denials with positive tool selections", () => {
+  toolRegistryInternal.clearAll();
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "partially-locked-md",
+    name: "Partially Locked",
+    description: "Files only",
+    instructions: "Use file tools, never skill scripts.",
+    tools: ["get_file"],
+    deniedTools: ["execute_skill_script"],
+  });
+
+  const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
+  assertEquals(tools?.get_file, true);
+  assertEquals(
+    tools?.execute_skill_script,
+    false,
+    "the denial survives next to the positive selector",
+  );
+});
+
 it("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () => {
   toolRegistryInternal.clearAll();
 

@@ -28,6 +28,7 @@ export type HostedRuntimeRequestConfigAgent = Pick<
   | "temperature"
   | "maxSteps"
   | "tools"
+  | "deniedTools"
   | "providerTools"
   | "delegates"
 >;
@@ -54,6 +55,8 @@ export type ResolvedHostedRuntimeRequestConfig = {
   requestedAllowedTools: string[] | undefined;
   requestedAllowedProviderTools: string[];
   includeRuntimeEssentialToolsWhenEmpty: boolean;
+  /** Tool names the agent config denied explicitly; never re-added downstream. */
+  deniedToolNames: string[] | undefined;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,5 +210,8 @@ export function resolveHostedRuntimeRequestConfig(
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     includeRuntimeEssentialToolsWhenEmpty: effectiveRuntimeOverrides?.allowedTools === undefined,
+    deniedToolNames: input.agentConfig.deniedTools?.length
+      ? [...input.agentConfig.deniedTools]
+      : undefined,
   };
 }
