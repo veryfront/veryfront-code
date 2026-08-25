@@ -15,6 +15,7 @@ import {
 import type {
   BlobResolver,
   StepBuilderContext,
+  WaitNodeConfig,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
@@ -46,6 +47,7 @@ import {
   executeWorkflowRunControl,
   toPersistedWorkflowContext,
 } from "../runtime/workflow-run-control.ts";
+import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -95,7 +97,11 @@ export interface WorkflowExecutorConfig {
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
   /** Callback when workflow is waiting */
-  onWaiting?: (run: WorkflowRun, nodeId: string) => void | Promise<void>;
+  onWaiting?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -527,7 +533,8 @@ export class WorkflowExecutor {
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },
-        onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+        onWaiting: (waitingRun, nodeId, waitConfig) =>
+          this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
       });
     }, {
       "workflow.id": run.workflowId,
@@ -690,7 +697,11 @@ export class WorkflowExecutor {
     return {
       runId,
       settled: () => settled,
-      status: () => this.config.backend.getRun(runId) as Promise<WorkflowRun>,
+      status: async () => {
+        const run = await this.config.backend.getRun(runId);
+        if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+        return projectRunPendingApprovals(run);
+      },
       result: () => this.waitForResult<TOutput>(runId),
       cancel: () => this.cancel(runId),
     };

@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ApprovalManager } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { PersistedPendingApproval } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type {
   ApprovalDecision,
@@ -14,6 +15,7 @@ import type {
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { FakeTime } from "#std/testing/time";
+import { getPendingApprovalResponseSchemaId } from "./pending-approval-metadata.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -272,11 +274,13 @@ describe("ApprovalManager", () => {
 
     it("isolates persisted approval identity and state from notifier mutation", async () => {
       let notifiedApprovalId: string | undefined;
+      let notifiedSchemaIdentity = false;
       manager = new ApprovalManager({
         backend,
         expirationCheckInterval: 0,
         notifier: (approval, notifiedRun) => {
           notifiedApprovalId = approval.id;
+          notifiedSchemaIdentity = Object.hasOwn(approval, "responseSchemaId");
           approval.id = "notifier-mutated-approval";
           approval.status = "approved";
           notifiedRun.id = "notifier-mutated-run";
@@ -291,12 +295,18 @@ describe("ApprovalManager", () => {
         "review-node",
         { type: "wait", waitType: "approval", message: "Please approve" },
         run.context,
+        { responseSchemaId: '["steps","review-node"]' },
       );
 
       assertEquals(request.runId, run.id);
       assertEquals(request.approvalId, notifiedApprovalId);
+      assertEquals(notifiedSchemaIdentity, false);
       const persisted = await backend.getPendingApproval(run.id, request.approvalId);
       assertExists(persisted);
+      assertEquals(
+        getPendingApprovalResponseSchemaId(persisted),
+        '["steps","review-node"]',
+      );
       assertEquals(persisted.id, request.approvalId);
       assertEquals(persisted.status, "pending");
       assertEquals(await backend.getPendingApprovals("notifier-mutated-run"), []);
@@ -765,6 +775,38 @@ describe("ApprovalManager", () => {
       const pending = await backend.getPendingApprovals(runId);
       assertEquals(pending.length, 1);
       assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("projects persisted approvals before invoking the response schema resolver", async () => {
+      let resolverSawPrivateSchemaId = false;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        responseSchemaResolver: ({ approval }) => {
+          resolverSawPrivateSchemaId = Object.hasOwn(approval, "responseSchemaId");
+          return defineSchema((v) => v.object({ confirmed: v.boolean() }))();
+        },
+      });
+      const runId = "run-direct-resolver-projection";
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(
+        runId,
+        {
+          id: "apr-direct-resolver-projection",
+          nodeId: "review",
+          message: "Please approve",
+          payload: {},
+          requestedAt: new Date(),
+          status: "pending",
+          responseSchemaId: '["steps","review"]',
+        } satisfies PersistedPendingApproval,
+      );
+
+      await manager.approve(runId, "apr-direct-resolver-projection", "reviewer", undefined, {
+        confirmed: true,
+      });
+
+      assertEquals(resolverSawPrivateSchemaId, false);
     });
 
     it("registers a direct approval schema before the persisted approval can be decided", async () => {
