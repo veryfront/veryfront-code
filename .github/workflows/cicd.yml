@@ -1144,6 +1144,8 @@ jobs:
           path: dist/npm-compatibility
 
       - name: Publish tested RC npm artifact
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm

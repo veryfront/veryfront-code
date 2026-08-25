@@ -76,6 +76,15 @@ describe("registry release workflow", () => {
         ),
         `${jobName} must publish npm packages`,
       );
+      const publishStep = namedStep(
+        job,
+        jobName === "prerelease" ? "Publish tested RC npm artifact" : "Build and publish",
+      );
+      assertEquals(
+        asRecord(publishStep.env, `${jobName} publish environment`).VERSION,
+        "${{ steps.version.outputs.version }}",
+        `${jobName} must pass the computed version to the publish script`,
+      );
       assertEquals(
         jobSteps.filter((step) => String(step.uses).startsWith("peter-evans/repository-dispatch@"))
           .length,
