@@ -207,16 +207,22 @@ describe("security/application-auth runtime integration", () => {
     assertEquals(result.response, undefined);
   });
 
-  it("does not let a cloned trusted-proxy request inherit application-auth proof", async () => {
+  it("does not let cloned or new trusted-proxy requests inherit application-auth proof", async () => {
     const request = trustedProxyRequest();
     const admission = await handleApplicationAuthRequest(request, createTrustedProxyCtx());
 
     assertEquals(admission?.continue, true);
 
-    const result = await new AuthHandler().handle(request.clone(), createTrustedProxyCtx());
+    const clonedResult = await new AuthHandler().handle(request.clone(), createTrustedProxyCtx());
+    const newRequestResult = await new AuthHandler().handle(
+      new Request(request),
+      createTrustedProxyCtx(),
+    );
 
-    assertEquals(result.continue, false);
-    assertEquals(result.response?.status, 401);
+    assertEquals(clonedResult.continue, false);
+    assertEquals(clonedResult.response?.status, 401);
+    assertEquals(newRequestResult.continue, false);
+    assertEquals(newRequestResult.response?.status, 401);
   });
 
   it("does not mark trusted-proxy requests after failed application-auth admission", async () => {
