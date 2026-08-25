@@ -42,7 +42,10 @@ function scopedCssModuleProxyExpression(moduleKey: string): string {
 
 type NamedImportBinding = { imported: string; local: string };
 
-function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
+function parseNamedImportBindings(
+  namedClause: string,
+  allowQuotedAlias = false,
+): NamedImportBinding[] {
   const bindings: NamedImportBinding[] = [];
 
   for (const rawPart of splitNamedImportBindings(namedClause)) {
@@ -50,12 +53,13 @@ function parseNamedImportBindings(namedClause: string): NamedImportBinding[] {
     if (!part) continue;
 
     const aliasMatch = part.match(
-      /^(?:([_$a-zA-Z][\w$-]*)|("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'))\s+as\s+([_$a-zA-Z][\w$]*)$/,
+      /^(?:([_$a-zA-Z][\w$-]*)|("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'))\s+as\s+(?:([_$a-zA-Z][\w$]*)|("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'))$/,
     );
     if (aliasMatch) {
       const imported = aliasMatch[1] ?? parseQuotedExportName(aliasMatch[2]);
-      const local = aliasMatch[3];
-      if (!imported || !local) continue;
+      const local = aliasMatch[3] ??
+        (allowQuotedAlias ? parseQuotedExportName(aliasMatch[4]) : undefined);
+      if (imported === undefined || local === undefined) continue;
       bindings.push({ imported, local });
       continue;
     }
@@ -223,8 +227,13 @@ function exportBindingStatement(
   value: string,
 ): string {
   if (exportName === "default") return `export default ${value};`;
-  const localName = `${localPrefix}${exportName}`;
-  return `const ${localName} = ${value}; export { ${localName} as ${exportName} };`;
+  const identifierName = /^[_$a-zA-Z][\w$]*$/.test(exportName);
+  const localSuffix = identifierName
+    ? exportName
+    : `$${Array.from(exportName, (char) => char.codePointAt(0)?.toString(16) ?? "").join("_")}`;
+  const exportedName = identifierName ? exportName : JSON.stringify(exportName);
+  const localName = `${localPrefix}${localSuffix}`;
+  return `const ${localName} = ${value}; export { ${localName} as ${exportedName} };`;
 }
 
 /**
@@ -306,7 +315,7 @@ function generateCSSReExportStub(
   const namedMatch = clause.match(/^\{([^}]*)\}$/);
   if (!namedMatch?.[1]) return stripped;
 
-  const bindings = parseNamedImportBindings(namedMatch[1]);
+  const bindings = parseNamedImportBindings(namedMatch[1], true);
   if (bindings.length === 0) return stripped;
 
   const statements = bindings.map((binding) =>

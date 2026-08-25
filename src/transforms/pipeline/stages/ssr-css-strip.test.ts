@@ -351,6 +351,22 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves quoted aliases on css re-exports", async () => {
+    const ctx = createContext(
+      `export { default as "styles-map" } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      (namespace["styles-map"] as Record<string, string>)?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "an arbitrary quoted export alias must remain linkable under that exact name",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("serializes decoded unscoped css binding names as valid string literals", async () => {
     const ctx = createContext(
       String
