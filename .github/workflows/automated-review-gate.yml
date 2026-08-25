@@ -35,7 +35,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      statuses: write
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -60,13 +59,11 @@ jobs:
             let matchesReviewWakeupPullRequest;
             let parseMergeQueuePullNumber;
             let parseReviewWakeupRun;
-            let publishReviewResolutionFailure;
             try {
               ({
                 matchesReviewWakeupPullRequest,
                 parseMergeQueuePullNumber,
                 parseReviewWakeupRun,
-                publishReviewResolutionFailure,
               } = await import(gateUrl));
             } catch (error) {
               core.setFailed(`Could not load the review target resolver: ${error}`);
@@ -130,15 +127,6 @@ jobs:
                   );
                 }
               }
-              if (/^[0-9a-f]{40}$/i.test(failureHeadSha ?? "")) {
-                await publishReviewResolutionFailure({
-                  github,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pullNumber,
-                  sourceHeadSha: failureHeadSha,
-                });
-              }
               core.setFailed(`Could not resolve the pull request head ref: ${error}`);
               return failureHeadSha ?? `run-${context.runId}`;
             }
@@ -157,13 +145,6 @@ jobs:
                 });
                 pullRequest = response.data;
               } catch (error) {
-                await publishReviewResolutionFailure({
-                  github,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pullNumber,
-                  sourceHeadSha: headSha,
-                });
                 core.setFailed(`Could not validate the review wakeup: ${error}`);
                 return headSha;
               }
@@ -174,13 +155,6 @@ jobs:
                   context.payload.repository,
                 )
               ) {
-                await publishReviewResolutionFailure({
-                  github,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pullNumber,
-                  sourceHeadSha: headSha,
-                });
                 core.setFailed(
                   "Review wakeup metadata does not match the pull request",
                 );
@@ -379,18 +353,27 @@ jobs:
     # A reconciliation event is consumed by the run that observes it. If the
     # resolver or the publisher cannot complete, the previous success stays on
     # the head and a later merge group reuses it, so a finding, a deleted
-    # verdict, or a dismissed approval is silently lost. Head and base changes
-    # do not need this: a new head has no status of its own, and a new base
-    # changes the base binding every reused status is checked against.
+    # verdict, or a dismissed approval is silently lost. A new head has no
+    # status of its own. A base edit does need this fallback because the source
+    # SHA is unchanged and its prior success can otherwise remain current.
     needs: [target, review]
     if: >-
       failure() &&
       (github.event_name == 'issue_comment' ||
-       github.event_name == 'workflow_run')
+       github.event_name == 'workflow_run' ||
+       (github.event_name == 'pull_request_target' &&
+        github.event.action == 'edited' &&
+        github.event.changes.base))
     permissions:
+      actions: read
       contents: read
       pull-requests: read
       statuses: write
+    concurrency:
+      # Share the source-head publisher lock so fallback failures cannot race
+      # successful source or merge-group status writes.
+      group: automated-review-${{ needs.target.outputs.key }}
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -411,7 +394,9 @@ jobs:
               invalidateReviewProof,
               parseReviewWakeupRun,
             } = await import(gateUrl);
-            const pullNumber = context.eventName === "issue_comment"
+            const pullNumber = context.eventName === "pull_request_target"
+              ? context.payload.pull_request?.number
+              : context.eventName === "issue_comment"
               ? (context.payload.issue?.pull_request
                 ? context.payload.issue?.number
                 : undefined)
@@ -422,16 +407,32 @@ jobs:
               );
               return;
             }
+            let reconciliationStartedAt;
+            try {
+              const workflowRun = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+              reconciliationStartedAt = workflowRun.data?.created_at;
+            } catch (error) {
+              core.warning(
+                `Could not timestamp fallback invalidation: ${error}`,
+              );
+            }
             const result = await invalidateReviewProof({
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
               pullNumber,
+              reconciliationStartedAt,
             });
             // Keep the run red: the revocation event was still dropped, and
             // the closed gate has to be looked at rather than waited out.
             core.setFailed(
-              `Closed the review gate on ${result.headSha.slice(0, 12)} after reconciliation failed.`,
+              result.skipped
+                ? `Skipped stale fallback invalidation for ${result.headSha.slice(0, 12)} after a later reconciliation succeeded.`
+                : `Closed the review gate on ${result.headSha.slice(0, 12)} after reconciliation failed.`,
             );
 
   merge_group:

@@ -526,6 +526,67 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("keeps exact-head approval valid when a normal request marker is posted later", async () => {
+    const approval = review({
+      id: 101,
+      user: { login: "trusted-maintainer", id: 7, type: "User" },
+      state: "APPROVED",
+      submitted_at: "2026-08-25T08:00:00Z",
+    });
+    const request = {
+      id: 102,
+      user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      body: `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
+      created_at: "2026-08-25T08:00:01Z",
+    };
+
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [approval],
+          comments: [request],
+          timeline: [
+            { event: "reviewed", id: 101 },
+            { event: "commented", id: request.id },
+          ],
+        },
+        HEAD,
+        undefined,
+        () => Promise.resolve(true),
+      ))?.source,
+      "human-approval",
+    );
+  });
+
+  it("uses the durable base reset instead of a later request marker as the boundary", async () => {
+    const resetAt = "2026-08-25T08:00:00Z";
+    const approval = review({
+      id: 101,
+      user: { login: "trusted-maintainer", id: 7, type: "User" },
+      state: "APPROVED",
+      submitted_at: "2026-08-25T08:00:01Z",
+    });
+    const request = reviewRequestComment("2026-08-25T08:00:02Z", 102);
+
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [approval],
+          comments: [request],
+          timeline: [
+            { event: "reviewed", id: 101 },
+            { event: "commented", id: request.id },
+          ],
+        },
+        HEAD,
+        undefined,
+        () => Promise.resolve(true),
+        Date.parse(resetAt),
+      ))?.source,
+      "human-approval",
+    );
+  });
+
   it("orders same-second evidence through the pull request timeline", async () => {
     const request = reviewRequestComment();
     const humanApprovalId = 101;
@@ -1012,6 +1073,60 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
+  it("records a durable base reset when the pull request is still draft", async () => {
+    const fixture = githubFixture({
+      draft: true,
+      pages: { comments: [[codexComment()]] },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "base-42",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(
+      fixture.published[0]?.description,
+      `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:088423c07825`,
+    );
+  });
+
+  it("does not mint a newer draft reset when the same base-edit run is retried", async () => {
+    const fixture = githubFixture({
+      draft: true,
+      pages: {
+        statuses: [[automatedReviewResetStatus(
+          "2026-08-25T08:00:00Z",
+          {
+            description: `PR#1 reset base:${
+              reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+            } key:088423c07825`,
+          },
+        )]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "base-42",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.description, "PR#1 draft waits for review");
+  });
+
   it("forces a fresh review after a base edit even when old proof exists", async () => {
     const fixture = githubFixture({
       pages: { comments: [[codexComment()]] },
@@ -1031,7 +1146,9 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
     assertEquals(
       fixture.published[0]?.description,
-      `PR#1 reset base:${reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)}`,
+      `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:088423c07825`,
     );
   });
 
@@ -1643,6 +1760,36 @@ describe("automated review request", () => {
 });
 
 describe("review proof invalidation", () => {
+  it("does not overwrite a trusted success published by a later reconciliation", async () => {
+    const fixture = githubFixture({
+      headResponses: [HEAD],
+      pages: {
+        statuses: [[automatedReviewStatus({
+          created_at: "2026-08-25T08:00:01Z",
+        })]],
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+    });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      reconciliationStartedAt: "2026-08-25T08:00:00Z",
+    });
+
+    assertEquals(result.skipped, true);
+    assertEquals(result.queueFailures, 0);
+    assertEquals(
+      fixture.published,
+      [],
+      "an older fallback must not replace a newer exact-head success",
+    );
+  });
+
   it("closes source and queued gates a dropped reconciliation left behind", async () => {
     const fixture = githubFixture({
       headResponses: [HEAD],
@@ -1954,7 +2101,6 @@ describe("automated review workflow", () => {
     assertEquals(record(targetJob.permissions, "target permissions"), {
       contents: "read",
       "pull-requests": "read",
-      statuses: "write",
     });
     assertEquals(
       record(targetJob.outputs, "target outputs").key,
@@ -1985,17 +2131,20 @@ describe("automated review workflow", () => {
         "parseReviewWakeupRun",
         "parseMergeQueuePullNumber",
         "matchesReviewWakeupPullRequest",
-        "publishReviewResolutionFailure",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
         'core.setOutput("pull-number"',
         "github.rest.git.getRef",
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
-        "publishReviewResolutionFailure({",
         "Could not resolve a valid review target commit",
       ]
     ) assert(targetScript.includes(required));
+    assert(
+      !targetScript.includes("publishReviewResolutionFailure") &&
+        !targetScript.includes("createCommitStatus"),
+      "the resolver must leave failure publication to the serialized invalidator",
+    );
     assert(
       !targetScript.includes("pull_request?.head.sha"),
       "queued pull request events must resolve the current head before choosing a lock",
@@ -2129,6 +2278,9 @@ describe("automated review workflow", () => {
         "failure()",
         "github.event_name == 'issue_comment'",
         "github.event_name == 'workflow_run'",
+        "github.event_name == 'pull_request_target'",
+        "github.event.action == 'edited'",
+        "github.event.changes.base",
       ]
     ) {
       assert(
@@ -2136,18 +2288,20 @@ describe("automated review workflow", () => {
         "a dropped revocation event must close the gate it could not reconcile",
       );
     }
-    assert(
-      !invalidateIf.includes("pull_request_target"),
-      "head and base changes already invalidate reused proof by their binding",
-    );
     assertEquals(
       record(invalidateJob.permissions, "invalidate permissions"),
       {
+        actions: "read",
         contents: "read",
         "pull-requests": "read",
         statuses: "write",
       },
-      "invalidation needs no scope beyond the commit status it closes",
+      "invalidation reads only its workflow timestamp plus PR and status evidence",
+    );
+    assertEquals(
+      record(invalidateJob.concurrency, "invalidate concurrency"),
+      publisherConcurrency,
+      "fallback invalidation must serialize with source and queue publication",
     );
     const invalidateSteps = invalidateJob.steps;
     assert(
@@ -2172,6 +2326,9 @@ describe("automated review workflow", () => {
       const required of [
         "invalidateReviewProof",
         "parseReviewWakeupRun",
+        "getWorkflowRun",
+        "reconciliationStartedAt",
+        "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
         "Number.isSafeInteger",
         "core.setFailed",

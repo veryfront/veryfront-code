@@ -129,6 +129,12 @@ function latestReviewRequest(comments, headSha) {
     ) continue;
     const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
     if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) continue;
+    // A normal synchronize request is only an idempotency marker. The head
+    // SHA already excludes proof for earlier commits, so treating the marker
+    // as a freshness boundary can erase a valid exact-head review that lands
+    // while the publisher is still running. Only keyed base-edit markers can
+    // establish a same-head reset boundary.
+    if (marker[2] === undefined) continue;
     const createdAt = Date.parse(comment?.created_at ?? "");
     if (!Number.isFinite(createdAt)) {
       return { time: Number.POSITIVE_INFINITY, id: undefined, index };
@@ -178,11 +184,10 @@ function evidenceFreshness(
   timeline,
 ) {
   const requestTime = request?.time;
-  const boundary = requestTime === undefined
-    ? reviewNotBefore
-    : reviewNotBefore === undefined
-    ? requestTime
-    : Math.max(requestTime, reviewNotBefore);
+  // The durable reset status is written before a keyed base-edit request.
+  // Once it exists, it is the authoritative epoch: using the later request
+  // comment would erase a valid review submitted between those two writes.
+  const boundary = reviewNotBefore ?? requestTime;
   if (boundary === undefined) return "newer";
   const evidenceTime = Date.parse(
     timelineEvent === "reviewed"
@@ -205,18 +210,39 @@ function evidenceFreshness(
   return evidencePosition > requestPosition ? "newer" : "older";
 }
 
-function reviewResetDescription(pullNumber, baseBinding) {
-  return `PR#${pullNumber} reset base:${baseBinding}`;
+function reviewResetDescription(pullNumber, baseBinding, requestKey) {
+  const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
+  return requestKey === undefined
+    ? prefix
+    : `${prefix} key:${
+      createHash("sha256").update(requestKey).digest("hex").slice(0, 12)
+    }`;
+}
+
+function hasReviewReset(statuses, pullNumber, baseBinding, requestKey) {
+  const description = reviewResetDescription(
+    pullNumber,
+    baseBinding,
+    requestKey,
+  );
+  return statuses.some((status) =>
+    status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    status?.state === "pending" &&
+    status?.description === description &&
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  );
 }
 
 function latestReviewResetTime(statuses, pullNumber, baseBinding) {
   let latest;
-  const description = reviewResetDescription(pullNumber, baseBinding);
+  const descriptionPrefix = reviewResetDescription(pullNumber, baseBinding);
   for (const status of statuses) {
     if (
       status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
       status?.state !== "pending" ||
-      status?.description !== description ||
+      typeof status?.description !== "string" ||
+      (status.description !== descriptionPrefix &&
+        !status.description.startsWith(`${descriptionPrefix} key:`)) ||
       !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
     ) continue;
     const createdAt = Date.parse(status?.created_at ?? "");
@@ -516,7 +542,7 @@ export async function publishAutomatedReviewStatus({
       failure = error instanceof Error ? error : new Error(String(error));
     }
   }
-  if (!failure && !isDraft) {
+  if (!failure) {
     try {
       const common = { owner, repo };
       const [reviews, comments, statuses, timeline] = await Promise.all([
@@ -546,8 +572,14 @@ export async function publishAutomatedReviewStatus({
         ),
       ]);
       resetPending = reviewResetKey !== undefined &&
-        !hasReviewRequest(comments, headSha, reviewResetKey);
-      if (!resetPending) {
+        !hasReviewRequest(comments, headSha, reviewResetKey) &&
+        !hasReviewReset(
+          statuses,
+          pullNumber,
+          baseBinding,
+          reviewResetKey,
+        );
+      if (!resetPending && !isDraft) {
         review = await findAutomatedReview(
           { reviews, comments, timeline },
           headSha,
@@ -600,7 +632,7 @@ export async function publishAutomatedReviewStatus({
   const description = failure
     ? `PR#${pullNumber} review status unavailable`
     : resetPending
-    ? reviewResetDescription(pullNumber, baseBinding)
+    ? reviewResetDescription(pullNumber, baseBinding, reviewResetKey)
     : review
     ? `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`
     : isDraft
@@ -634,6 +666,7 @@ export async function invalidateReviewProof({
   owner,
   repo,
   pullNumber,
+  reconciliationStartedAt = /** @type {string | undefined} */ (undefined),
 }) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Pull request number is invalid");
@@ -648,6 +681,33 @@ export async function invalidateReviewProof({
     throw new Error("Could not resolve the pull request head commit");
   }
   const description = `PR#${pullNumber} review status unavailable`;
+  const reconciliationStartedTime = Date.parse(reconciliationStartedAt ?? "");
+  if (Number.isFinite(reconciliationStartedTime)) {
+    const statuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: headSha },
+      "review statuses",
+    );
+    const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+    const latestStatusTime = Date.parse(latestStatus?.created_at ?? "");
+    if (
+      Number.isFinite(latestStatusTime) &&
+      latestStatusTime > reconciliationStartedTime &&
+      trustedReviewGateReviewer(
+          latestStatus,
+          pullNumber,
+          pullRequestBaseBinding(response?.data),
+        ) !== undefined
+    ) {
+      return {
+        headSha,
+        description,
+        queueFailures: 0,
+        skipped: true,
+      };
+    }
+  }
   const result = await publishReviewResolutionFailure({
     github,
     owner,
