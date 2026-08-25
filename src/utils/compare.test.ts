@@ -22,18 +22,17 @@ describe("compareStrings", () => {
     // swapping it in here would silently reorder cache keys and hashed manifests.
     const toolNames = ["Tool", "tool"];
     assertEquals(toolNames.toSorted(compareStrings), ["Tool", "tool"]);
-    assertEquals(toolNames.toSorted((left, right) => left.localeCompare(right)), [
-      "tool",
-      "Tool",
-    ]);
+    assertEquals(
+      toolNames.toSorted((left, right) => left.localeCompare(right, "en-US")),
+      ["tool", "Tool"],
+    );
 
     const accented = ["a", "\u00e4", "z"];
     assertEquals(accented.toSorted(compareStrings), ["a", "z", "\u00e4"]);
-    assertEquals(accented.toSorted((left, right) => left.localeCompare(right)), [
-      "a",
-      "\u00e4",
-      "z",
-    ]);
+    assertEquals(
+      accented.toSorted((left, right) => left.localeCompare(right, "en-US")),
+      ["a", "\u00e4", "z"],
+    );
   });
 
   it("returns 0 for equal values", () => {

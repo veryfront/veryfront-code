@@ -1,5 +1,6 @@
-/** Context for hosted child fork instructions. */
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+/** Context for hosted child fork instructions. */
 export type HostedChildForkInstructionsContext = {
   projectId?: string | null;
   branchId?: string | null;
