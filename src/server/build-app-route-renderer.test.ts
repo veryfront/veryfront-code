@@ -24,6 +24,7 @@ import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 // React's server scheduler owns one process-lifetime MessagePort. Initialize it
 // during module setup so per-test sanitizers only track resources each render owns.
@@ -32,7 +33,7 @@ await Promise.all([getProjectReact(), getReactDOMServer()]);
 async function makeProject(
   appDirectory = "app",
 ): Promise<{ projectDir: string; pageFile: string }> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-renderer-" });
+  const projectDir = await makeTempDir({ prefix: "vf-app-route-renderer-" });
 
   const appDir = join(projectDir, appDirectory);
   await Deno.mkdir(appDir, { recursive: true });
@@ -58,7 +59,7 @@ export default function Page() {
 }
 
 async function makeDocumentLayoutProject(): Promise<{ projectDir: string; pageFile: string }> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-document-layout-" });
+  const projectDir = await makeTempDir({ prefix: "vf-app-route-document-layout-" });
 
   const appDir = join(projectDir, "app");
   await Deno.mkdir(appDir, { recursive: true });
@@ -87,7 +88,7 @@ async function makeNestedPageIslandProject(): Promise<{
   projectDir: string;
   pageFile: string;
 }> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-page-island-" });
+  const projectDir = await makeTempDir({ prefix: "vf-app-route-page-island-" });
   const appDir = join(projectDir, "app");
   const sectionDir = join(appDir, "section");
   const reportsDir = join(sectionDir, "reports");
@@ -141,7 +142,7 @@ export default function Page() {
 }
 
 async function makeServerOnlyProject(): Promise<{ projectDir: string; pageFile: string }> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-server-only-" });
+  const projectDir = await makeTempDir({ prefix: "vf-app-route-server-only-" });
 
   const appDir = join(projectDir, "app");
   await Deno.mkdir(appDir, { recursive: true });
@@ -165,7 +166,7 @@ async function makeServerOnlyProject(): Promise<{ projectDir: string; pageFile: 
 }
 
 async function makeHeadLayoutProject(): Promise<{ projectDir: string; pageFile: string }> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-head-" });
+  const projectDir = await makeTempDir({ prefix: "vf-app-route-head-" });
   const appDir = join(projectDir, "app");
   const pageFile = join(appDir, "page.tsx");
 
@@ -571,7 +572,7 @@ Deno.test({
   name:
     "server/build-app-route-renderer discovers route-group and dynamic layouts from the page filesystem path",
   async fn() {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-filesystem-layouts-" });
+    const projectDir = await makeTempDir({ prefix: "vf-app-route-filesystem-layouts-" });
     const appDir = join(projectDir, "app");
     const groupDir = join(appDir, "(marketing)");
     const dynamicDir = join(groupDir, "[slug]");
@@ -783,7 +784,7 @@ Deno.test({
 Deno.test({
   name: "server/build-app-route-renderer discovers and unwraps JavaScript document layouts",
   async fn() {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-js-layout-" });
+    const projectDir = await makeTempDir({ prefix: "vf-app-route-js-layout-" });
     const appDir = join(projectDir, "app");
     const pageFile = join(appDir, "page.tsx");
 

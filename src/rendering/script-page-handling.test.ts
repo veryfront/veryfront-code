@@ -9,6 +9,7 @@ import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-bui
 import { FakeTime } from "#std/testing/time";
 import { PageRenderer } from "./page-renderer.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";
@@ -75,7 +76,7 @@ async function renderScriptPage(
     adapter?: RuntimeAdapter;
   } = {},
 ): Promise<Awaited<ReturnType<typeof handleScriptPage>>> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-render-" });
+  const projectDir = await makeTempDir({ prefix: "vf-script-page-render-" });
 
   try {
     const pagePath = `${projectDir}/page.js`;
@@ -458,7 +459,7 @@ export const generateMetadata = () => {
     });
 
     it("keeps wrapped script-page import maps and hydration on snapshot A after B", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-snapshot-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-snapshot-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -508,7 +509,7 @@ export const generateMetadata = () => {
     });
 
     it("injects snapshot A into non-client full-document RSC boot state", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-full-doc-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-full-doc-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -542,7 +543,7 @@ export const generateMetadata = () => {
     });
 
     it("keeps standalone production full documents on the RSC boot script", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-standalone-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-standalone-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -566,7 +567,7 @@ export const generateMetadata = () => {
 
     it("keeps wrapped script-page output byte-identical when pinning is off", async () => {
       using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-off-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-off-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -607,7 +608,7 @@ export const generateMetadata = () => {
     });
 
     it("uses the hydration runtime baked into an aged release", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-release-" });
       const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
 
       try {
@@ -638,7 +639,7 @@ export const generateMetadata = () => {
     });
 
     it("uses the hydration runtime baked into an aged release for full documents", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-full-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-release-full-" });
       const agedRuntimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
 
       try {
@@ -672,7 +673,7 @@ export const generateMetadata = () => {
     });
 
     it("forwards the request nonce when enhancing full HTML script pages", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
