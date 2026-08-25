@@ -240,6 +240,9 @@ function generateHMRClient(opts: HMRScriptOptions): string {
   const RELOAD_THROTTLE_MS = 2_000;
   const PING_INTERVAL_MS = 30_000;
   const PONG_TIMEOUT_MS = 90_000;
+  const reloadPage = typeof window.__veryfrontHMRReload === 'function'
+    ? window.__veryfrontHMRReload
+    : () => window.location.reload();
 
   let pingIntervalId = null;
   let lastPongAt = Date.now();
@@ -270,7 +273,7 @@ function generateHMRClient(opts: HMRScriptOptions): string {
 
     if (reason) dlog('${logPrefix} Reloading page:', reason);
     notifyStudio();
-    window.location.reload();
+    reloadPage();
   }
 
   function scheduleReconnect() {

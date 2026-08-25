@@ -20,13 +20,13 @@ interface HMRDom {
 }
 
 /**
- * Boots the HMR client inside a JSDOM window with a fake WebSocket.
- * jsdom's Location.reload is unforgeable, so reloads are observed through the
- * client's own "[HMR] Reloading page:" debug log line instead.
+ * Boots the HMR client inside a JSDOM window with a fake WebSocket and an
+ * injected reload operation so tests observe the user-visible action directly.
  */
 function createHMRDom(html: string): HMRDom {
   const sockets: FakeSocket[] = [];
   const logs: string[] = [];
+  let reloads = 0;
 
   class FakeWebSocket implements FakeSocket {
     static readonly OPEN = 1;
@@ -67,12 +67,18 @@ function createHMRDom(html: string): HMRDom {
     configurable: true,
     value: FakeWebSocket,
   });
+  Object.defineProperty(dom.window, "__veryfrontHMRReload", {
+    configurable: true,
+    value: () => {
+      reloads++;
+    },
+  });
 
   return {
     dom,
     sockets,
     logs,
-    reloadCount: () => logs.filter((line) => line.startsWith("[HMR] Reloading page:")).length,
+    reloadCount: () => reloads,
     send(message) {
       const socket = sockets[0];
       assertExists(socket, "the HMR client must open a WebSocket on boot");
