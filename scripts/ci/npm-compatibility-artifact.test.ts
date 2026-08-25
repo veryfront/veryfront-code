@@ -1,5 +1,10 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#std/path/join";
 import {
   createNpmCompatibilityArtifact,
@@ -19,13 +24,25 @@ async function writePackage(
   await Deno.writeTextFile(join(directory, "index.js"), "export {};\n");
 }
 
+function withTempDirs<T>(
+  prefixes: string[],
+  run: (directories: string[]) => Promise<T>,
+  directories: string[] = [],
+): Promise<T> {
+  const [prefix, ...remaining] = prefixes;
+  if (!prefix) return run(directories);
+  return withTempDir(
+    (directory) => withTempDirs(remaining, run, [...directories, directory]),
+    { prefix },
+  );
+}
+
 describe("npm compatibility artifact", () => {
   it("records package versions and SHA-256 digests for one packed package set", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-npm-artifact-source-" });
-    const destination = await Deno.makeTempDir({
-      prefix: "vf-npm-artifact-output-",
-    });
-    try {
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-output-",
+    ], async ([root, destination]) => {
       await writePackage(root, {
         name: "veryfront",
         version: "1.2.3",
@@ -72,18 +89,14 @@ describe("npm compatibility artifact", () => {
         ["@veryfront/ext-alpha", "@veryfront/ext-beta"],
       );
       assertEquals(/^[a-f0-9]{64}$/.test(loaded.manifestSha256), true);
-    } finally {
-      await Deno.remove(root, { recursive: true });
-      await Deno.remove(destination, { recursive: true });
-    }
+    });
   });
 
   it("rejects a package whose bytes do not match the canonical manifest", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-npm-artifact-source-" });
-    const destination = await Deno.makeTempDir({
-      prefix: "vf-npm-artifact-output-",
-    });
-    try {
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-output-",
+    ], async ([root, destination]) => {
       await writePackage(root, { name: "veryfront", version: "1.2.3" });
       const manifest = await createNpmCompatibilityArtifact(root, destination);
       await Deno.writeTextFile(
@@ -96,21 +109,15 @@ describe("npm compatibility artifact", () => {
         Error,
         "SHA-256 mismatch",
       );
-    } finally {
-      await Deno.remove(root, { recursive: true });
-      await Deno.remove(destination, { recursive: true });
-    }
+    });
   });
 
   it("materializes the verified root and extensions for existing npm output checks", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-npm-artifact-source-" });
-    const artifact = await Deno.makeTempDir({
-      prefix: "vf-npm-artifact-output-",
-    });
-    const destination = await Deno.makeTempDir({
-      prefix: "vf-npm-artifact-materialized-",
-    });
-    try {
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-output-",
+      "vf-npm-artifact-materialized-",
+    ], async ([root, artifact, destination]) => {
       await writePackage(root, {
         name: "veryfront",
         version: "1.2.3",
@@ -137,10 +144,6 @@ describe("npm compatibility artifact", () => {
         ).name,
         "@veryfront/ext-alpha",
       );
-    } finally {
-      await Deno.remove(root, { recursive: true });
-      await Deno.remove(artifact, { recursive: true });
-      await Deno.remove(destination, { recursive: true });
-    }
+    });
   });
 });

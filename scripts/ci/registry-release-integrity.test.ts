@@ -2,8 +2,8 @@ import {
   assertEquals,
   assertInstanceOf,
   assertStringIncludes,
-} from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   pollRegistryPackage,
   RegistryReleaseError,
@@ -96,6 +96,40 @@ describe("registry release integrity polling", () => {
       requestedUrl,
       `https://registry.example.test/npm/%40veryfront%2Fext-auth-jwt/${VERSION}`,
     );
+  });
+
+  it("retries exact-version metadata while gitHead and provenance propagate", async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+
+    const metadata = await pollRegistryPackage({
+      packageName: PACKAGE_NAME,
+      version: VERSION,
+      expectedGitHead: GIT_HEAD,
+      maxAttempts: 3,
+      retryDelayMs: 25,
+      requestTimeoutMs: 100,
+      fetcher: () => {
+        attempts++;
+        if (attempts === 1) {
+          return Promise.resolve(
+            Response.json(publishedPackage({ gitHead: undefined })),
+          );
+        }
+        if (attempts === 2) {
+          return Promise.resolve(Response.json(publishedPackage({ dist: {} })));
+        }
+        return Promise.resolve(Response.json(publishedPackage()));
+      },
+      delay: (milliseconds) => {
+        delays.push(milliseconds);
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(metadata.gitHead, GIT_HEAD);
+    assertEquals(attempts, 3);
+    assertEquals(delays, [25, 25]);
   });
 
   it("classifies an exact version that never propagates as missing-version", async () => {

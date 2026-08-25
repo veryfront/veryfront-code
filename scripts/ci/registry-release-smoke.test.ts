@@ -1,5 +1,9 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const wrapperPath = new URL("./registry-release-smoke.sh", import.meta.url)
   .pathname;
@@ -62,7 +66,7 @@ describe("exact-version registry smoke", () => {
   });
 
   it("passes the exact package list and registry URL to the install smoke", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-registry-wrapper-" });
+    const tempDir = await makeTempDir({ prefix: "vf-registry-wrapper-" });
     const binDir = `${tempDir}/bin`;
     const invocationLog = `${tempDir}/invocation.log`;
     await Deno.mkdir(binDir);
@@ -106,7 +110,7 @@ printf '%s' "\${VF_NPM_REGISTRY_PACKAGES:-}" >>"\$VF_INVOCATION_LOG"
   });
 
   it("installs registry packages and auth extension by exact spec without tarballs", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "vf-registry-install-" });
+    const tempDir = await makeTempDir({ prefix: "vf-registry-install-" });
     const binDir = `${tempDir}/bin`;
     const npmLog = `${tempDir}/npm.log`;
     const npmCount = `${tempDir}/npm.count`;

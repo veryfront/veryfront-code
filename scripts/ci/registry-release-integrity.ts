@@ -108,6 +108,32 @@ function validateMetadata(
   }
 }
 
+function incompleteMetadataError(
+  metadata: RegistryPackageMetadata,
+  options: PollRegistryPackageOptions,
+): RegistryReleaseError | undefined {
+  const spec = `${options.packageName}@${options.version}`;
+  if (metadata.version === undefined) {
+    return new RegistryReleaseError(
+      "missing-version",
+      `${spec} registry metadata does not include a version yet.`,
+    );
+  }
+  if (metadata.gitHead === undefined) {
+    return new RegistryReleaseError(
+      "provenance",
+      `${spec} registry metadata does not include gitHead yet.`,
+    );
+  }
+  if (metadata.dist?.attestations?.provenance?.predicateType === undefined) {
+    return new RegistryReleaseError(
+      "provenance",
+      `${spec} does not expose npm SLSA provenance yet.`,
+    );
+  }
+  return undefined;
+}
+
 function isTimeoutError(error: unknown): boolean {
   return error instanceof DOMException &&
     (error.name === "AbortError" || error.name === "TimeoutError");
@@ -119,7 +145,10 @@ export async function pollRegistryPackage(
   const fetcher = options.fetcher ?? fetch;
   const delay = options.delay ?? defaultDelay;
   const spec = `${options.packageName}@${options.version}`;
-  let lastFailure: "missing-version" | "timeout" = "missing-version";
+  let lastFailure: RegistryReleaseError | "timeout" = new RegistryReleaseError(
+    "missing-version",
+    `${spec} is not available yet.`,
+  );
 
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
     try {
@@ -132,7 +161,10 @@ export async function pollRegistryPackage(
         { signal: AbortSignal.timeout(options.requestTimeoutMs) },
       );
       if (response.status === 404) {
-        lastFailure = "missing-version";
+        lastFailure = new RegistryReleaseError(
+          "missing-version",
+          `${spec} is not available yet.`,
+        );
       } else if (!response.ok) {
         throw new RegistryReleaseError(
           "lookup",
@@ -140,8 +172,13 @@ export async function pollRegistryPackage(
         );
       } else {
         const metadata = await response.json() as RegistryPackageMetadata;
-        validateMetadata(metadata, options);
-        return metadata;
+        const incomplete = incompleteMetadataError(metadata, options);
+        if (incomplete) {
+          lastFailure = incomplete;
+        } else {
+          validateMetadata(metadata, options);
+          return metadata;
+        }
       }
     } catch (error) {
       if (error instanceof RegistryReleaseError) throw error;
@@ -171,8 +208,8 @@ export async function pollRegistryPackage(
     );
   }
   throw new RegistryReleaseError(
-    "missing-version",
-    `${spec} is still missing after ${options.maxAttempts} propagation attempts.`,
+    lastFailure.classification,
+    `${lastFailure.message} Still incomplete after ${options.maxAttempts} propagation attempts.`,
   );
 }
 

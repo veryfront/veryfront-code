@@ -1,5 +1,9 @@
-import { assert, assertEquals, assertStringIncludes } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
 type YamlRecord = Record<string, unknown>;
