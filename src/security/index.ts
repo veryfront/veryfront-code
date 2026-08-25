@@ -1,6 +1,7 @@
 /**
- * Security layer — input validation with size limits, CORS configuration,
- * CSP and security headers, path traversal prevention, and secure filesystem access.
+ * Security layer for input validation with size limits, application authentication,
+ * CORS configuration, CSP and security headers, path traversal prevention, and secure
+ * filesystem access.
  *
  * @module security
  *

@@ -120,6 +120,31 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "ReadableStream",
     ],
   },
+  "guides/application-auth.md": {
+    references: [
+      "./configuration.md",
+      "./middleware.md",
+      "./deploying.md",
+      "./self-hosting.md",
+      "./cloud-environment-access.md",
+    ],
+    snippets: [
+      "security.auth",
+      "Authelia",
+      "Microsoft Entra ID",
+      "AD FS",
+      "Active Directory",
+      "authorization code flow with PKCE",
+      "trustedEndpointOrigins",
+      'APP_URL="https://<APP_HOST>"',
+      "authorization, token, or JWKS endpoints",
+      "veryfront generate auth authelia",
+      "groupsComplete: false",
+      "session store. There is no",
+      "trustedProxy",
+      "Veryfront Cloud",
+    ],
+  },
   "guides/chat-hooks.md": {
     references: ["../api-reference/veryfront/chat.md"],
     snippets: [
@@ -281,6 +306,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "convention over configuration",
       "deviate from those conventions",
       "defineConfig",
+      "security.auth",
       "VERYFRONT_API_TOKEN",
       "getEnv",
     ],
@@ -305,6 +331,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "last verified Push receipt",
       "prints the environment URL",
       "veryfront open",
+      "`APP_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`",
+      "VERYFRONT_AUTH_SESSION_SECRET",
     ],
   },
   "guides/cloud-environment-access.md": {
@@ -312,6 +340,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "protected by default",
       "`authToken` cookie",
+      "security.auth.oidc",
       "VERYFRONT_API_TOKEN",
       "veryfront env token",
       "Public Environment",
@@ -332,6 +361,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Dockerfile",
       "Check capability support",
       "Integration tools",
+      "security.auth.trustedProxy",
       "createLocalIntegrationToolSource",
       "loadRemoteToolsFromSource",
       "Deploy to Kubernetes",
@@ -438,6 +468,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Guides are recipes for specific goals",
       "Start a project",
       "Build routes",
+      "Application authentication",
       "Add AI behavior",
       "Run background work",
       "Connect external systems",
@@ -696,7 +727,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/middleware.md": {
     references: ["../api-reference/veryfront/middleware.md"],
-    snippets: ["MiddlewarePipeline", "Authorization", "401"],
+    snippets: ["MiddlewarePipeline", "Application authorization", "401"],
   },
   "guides/multi-agent.md": {
     references: [
@@ -809,6 +840,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "veryfront init test-app",
       "npm create veryfront",
       "deno init --npm veryfront",
+      "veryfront generate auth <provider>",
       "veryfront dev",
       "ai-agent",
       "minimal",
