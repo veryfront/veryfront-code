@@ -43,7 +43,16 @@ export type {
 export { AuthHandler } from "./http/auth.ts";
 export { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
 export { setCors } from "./http/middleware/index.ts";
-export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/middleware/index.ts";
+export type {
+  AuthConfig,
+  BasicAuthConfig,
+  BearerAuthConfig,
+  CORSConfig,
+  CSPDirectives,
+  OidcAuthConfig,
+  SecurityConfig,
+  TrustedProxyAuthConfig,
+} from "./http/middleware/index.ts";
 
 export { CsrfHandler } from "./http/csrf/index.ts";
 export { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./csrf/index.ts";

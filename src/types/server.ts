@@ -4,19 +4,11 @@ import type { PreparedHostedConfigContext } from "../config/loader.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
 import type { ParsedDomain } from "../server/utils/domain-parser.ts";
+import type { AuthConfig } from "../security/http/middleware/types.ts";
 export type { ParsedDomain } from "../server/utils/domain-parser.ts";
 
 export interface SecurityConfig {
-  auth?: {
-    basic?: {
-      username: string;
-      password: string;
-      realm?: string;
-    };
-    bearer?: {
-      token: string;
-    };
-  };
+  auth?: AuthConfig;
   cors?:
     | boolean
     | {

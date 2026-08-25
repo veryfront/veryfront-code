@@ -19,10 +19,71 @@ export interface BearerAuthConfig {
   token: string;
 }
 
-export interface AuthConfig {
-  basic?: BasicAuthConfig;
-  bearer?: BearerAuthConfig;
+export interface OidcAuthConfig {
+  issuerEnvVar: string;
+  clientIdEnvVar: string;
+  clientSecretEnvVar: string;
+  sessionSecretEnvVar: string;
+  scopes: string[];
+  claims?: {
+    email?: string;
+    name?: string;
+    groups?: string;
+    roles?: string;
+  };
+  signingAlgorithms?: Array<
+    | "RS256"
+    | "RS384"
+    | "RS512"
+    | "PS256"
+    | "PS384"
+    | "PS512"
+    | "ES256"
+    | "ES384"
+    | "ES512"
+  >;
+  trustedEndpointOrigins?: string[];
+  sessionTtlSeconds?: number;
+  discoveryCacheTtlSeconds?: number;
+  cookieName?: string;
 }
+
+export interface TrustedProxyAuthConfig {
+  trustedPeers: string[];
+  headers: {
+    subject: string;
+    email?: string;
+    name?: string;
+    groups?: string;
+    roles?: string;
+  };
+}
+
+export type AuthConfig =
+  | {
+    basic: BasicAuthConfig;
+    bearer?: never;
+    oidc?: never;
+    trustedProxy?: never;
+  }
+  | {
+    basic?: never;
+    bearer: BearerAuthConfig;
+    oidc?: never;
+    trustedProxy?: never;
+  }
+  | {
+    basic?: never;
+    bearer?: never;
+    oidc: OidcAuthConfig;
+    trustedProxy?: never;
+  }
+  | {
+    basic?: never;
+    bearer?: never;
+    oidc?: never;
+    trustedProxy: TrustedProxyAuthConfig;
+  };
 
 export type { CsrfConfig } from "../../csrf/helpers.ts";
 

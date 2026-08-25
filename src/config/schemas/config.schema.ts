@@ -64,11 +64,34 @@ import {
   MAX_SERVER_EXTERNAL_PACKAGE_COUNT,
   MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH,
 } from "#veryfront/config/server-external-packages.ts";
+import { isValidOAuthEnvironmentVariableName } from "#veryfront/oauth/config-validation.ts";
+import {
+  MAX_OAUTH_SCOPE_COUNT,
+  MAX_OAUTH_SCOPE_TOKEN_LENGTH,
+  MAX_OAUTH_URL_LENGTH,
+} from "#veryfront/oauth/limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
 const MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH = 16_384;
 const CSRF_EXCLUDE_PATH_BASE_URL = "https://csrf-policy.invalid";
+const MAX_AUTH_CLAIM_NAME_LENGTH = 128;
+const MAX_AUTH_COOKIE_NAME_LENGTH = 128;
+const MAX_AUTH_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
+const MAX_TRUSTED_PROXY_PEERS = 32;
+const MAX_AUTH_MODE_COUNT = 4;
+const OIDC_SCOPE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+const OIDC_SIGNING_ALGORITHMS = [
+  "RS256",
+  "RS384",
+  "RS512",
+  "PS256",
+  "PS384",
+  "PS512",
+  "ES256",
+  "ES384",
+  "ES512",
+] as const;
 
 function isBoundedSourceIntegrationAllowlist(
   allow: Readonly<Record<string, SourceIntegrationRestriction>>,
@@ -256,6 +279,205 @@ const getBearerAuthSchema = defineSchema((v) =>
     token: v.string().min(1),
   }).strict()
 );
+
+function hasRequiredOpenidScope(scopes: readonly string[]): boolean {
+  return scopes.includes("openid");
+}
+
+function hasUniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+function isSafeOidcScope(value: string): boolean {
+  return OIDC_SCOPE_PATTERN.test(value);
+}
+
+function isSecureOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function isValidClaimName(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= MAX_AUTH_CLAIM_NAME_LENGTH &&
+    value.trim() === value &&
+    !/[\u0000-\u001F\u007F\s]/.test(value);
+}
+
+function isValidAuthCookieName(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= MAX_AUTH_COOKIE_NAME_LENGTH &&
+    value.startsWith("__Host-") &&
+    HTTP_TOKEN_PATTERN.test(value);
+}
+
+function isIPv4Address(value: string): boolean {
+  const parts = value.split(".");
+  if (parts.length !== 4) return false;
+  for (const part of parts) {
+    if (!/^(?:0|[1-9][0-9]{0,2})$/.test(part)) return false;
+    const octet = Number(part);
+    if (octet > 255) return false;
+  }
+  return true;
+}
+
+function isIPv6Address(value: string): boolean {
+  if (!value.includes(":") || value.includes("[") || value.includes("]")) return false;
+  try {
+    const url = new URL(`http://[${value}]/`);
+    return url.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedProxyPeerAddress(value: string): boolean {
+  return isIPv4Address(value) || isIPv6Address(value);
+}
+
+const getOidcClaimMappingSchema = defineSchema((v) =>
+  v.object({
+    email: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    name: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    groups: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    roles: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+  }).partial().strict()
+);
+
+const getOidcAuthSchema = defineSchema((v) =>
+  v.object({
+    issuerEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    clientIdEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    clientSecretEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    sessionSecretEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    scopes: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_OAUTH_SCOPE_TOKEN_LENGTH)
+          .refine(isSafeOidcScope, "Expected an OAuth scope token"),
+      )
+      .min(1)
+      .max(MAX_OAUTH_SCOPE_COUNT)
+      .refine(hasRequiredOpenidScope, "OIDC scopes must include openid")
+      .refine(hasUniqueStrings, "OIDC scopes must not contain duplicates"),
+    claims: getOidcClaimMappingSchema().optional(),
+    signingAlgorithms: v
+      .array(v.enum(OIDC_SIGNING_ALGORITHMS))
+      .min(1)
+      .max(OIDC_SIGNING_ALGORITHMS.length)
+      .refine(hasUniqueStrings, "OIDC signing algorithms must be unique")
+      .optional(),
+    trustedEndpointOrigins: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_OAUTH_URL_LENGTH)
+          .refine(isSecureOrigin, "Expected a canonical HTTPS origin"),
+      )
+      .min(1)
+      .max(MAX_REMOTE_HOST_COUNT)
+      .refine(hasUniqueStrings, "OIDC trusted endpoint origins must be unique")
+      .optional(),
+    sessionTtlSeconds: v.number().int().positive().max(MAX_AUTH_LIFETIME_SECONDS).optional(),
+    discoveryCacheTtlSeconds: v.number().int().positive().max(MAX_AUTH_LIFETIME_SECONDS)
+      .optional(),
+    cookieName: v.string().refine(
+      isValidAuthCookieName,
+      "Expected a __Host- HTTP cookie name",
+    ).optional(),
+  }).strict()
+);
+
+const getTrustedProxyHeadersSchema = defineSchema((v) =>
+  v.object({
+    subject: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
+      HTTP_TOKEN_PATTERN,
+      "Expected a valid HTTP header name",
+    ),
+    email: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
+      HTTP_TOKEN_PATTERN,
+      "Expected a valid HTTP header name",
+    ).optional(),
+    name: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
+      HTTP_TOKEN_PATTERN,
+      "Expected a valid HTTP header name",
+    ).optional(),
+    groups: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
+      HTTP_TOKEN_PATTERN,
+      "Expected a valid HTTP header name",
+    ).optional(),
+    roles: v.string().min(1).max(MAX_CSRF_NAME_LENGTH).regex(
+      HTTP_TOKEN_PATTERN,
+      "Expected a valid HTTP header name",
+    ).optional(),
+  }).strict()
+);
+
+const getTrustedProxyAuthSchema = defineSchema((v) =>
+  v.object({
+    trustedPeers: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_REMOTE_HOST_URL_LENGTH)
+          .refine(isTrustedProxyPeerAddress, "Expected an IP address"),
+      )
+      .min(1)
+      .max(MAX_TRUSTED_PROXY_PEERS)
+      .refine(hasUniqueStrings, "Trusted proxy peers must be unique"),
+    headers: getTrustedProxyHeadersSchema(),
+  }).strict()
+);
+
+function hasExactlyOneAuthMode(
+  auth: Partial<Record<"basic" | "bearer" | "oidc" | "trustedProxy", unknown>>,
+): boolean {
+  let count = 0;
+  if (auth.basic !== undefined) count += 1;
+  if (auth.bearer !== undefined) count += 1;
+  if (auth.oidc !== undefined) count += 1;
+  if (auth.trustedProxy !== undefined) count += 1;
+  return count === 1 && count <= MAX_AUTH_MODE_COUNT;
+}
 
 function defineFilesystemRetrySchema(maxConfiguredCount: number) {
   return defineSchema((v) =>
@@ -545,12 +767,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             .object({
               basic: getBasicAuthSchema().optional(),
               bearer: getBearerAuthSchema().optional(),
+              oidc: getOidcAuthSchema().optional(),
+              trustedProxy: getTrustedProxyAuthSchema().optional(),
             })
             .partial()
             .strict()
             .refine(
-              (auth) => !(auth.basic && auth.bearer),
-              "Configure either basic or bearer authentication, not both",
+              hasExactlyOneAuthMode,
+              "Configure exactly one authentication mode",
             )
             .optional(),
           /**

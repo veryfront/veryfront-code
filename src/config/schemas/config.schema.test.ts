@@ -22,12 +22,42 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import type { AuthConfig } from "#veryfront/security/http/middleware/types.ts";
 import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
 
 /** Derived from the schema so the test tracks it instead of restating the union. */
 type ImageFormat = NonNullable<
   NonNullable<NonNullable<VeryfrontConfig["assetPipeline"]>["images"]>["formats"]
 >[number];
+
+const VALID_OIDC_AUTH = {
+  oidc: {
+    issuerEnvVar: "OIDC_ISSUER",
+    clientIdEnvVar: "OIDC_CLIENT_ID",
+    clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+    sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
+    scopes: ["openid", "profile", "email", "groups"],
+    claims: {
+      email: "email",
+      name: "name",
+      groups: "groups",
+      roles: "roles",
+    },
+  },
+} as const;
+
+const VALID_TRUSTED_PROXY_AUTH = {
+  trustedProxy: {
+    trustedPeers: ["127.0.0.1", "::1"],
+    headers: {
+      subject: "x-auth-subject",
+      email: "x-auth-email",
+      name: "x-auth-name",
+      groups: "x-auth-groups",
+      roles: "x-auth-roles",
+    },
+  },
+} as const;
 
 describe("configSchema", () => {
   it("validates valid config", () => {
@@ -303,8 +333,205 @@ describe("configSchema", () => {
           },
         }),
       Error,
-      "Configure either basic or bearer authentication, not both",
+      "Configure exactly one authentication mode",
     );
+  });
+
+  it("accepts declarative OIDC authentication data", () => {
+    const config = validateVeryfrontConfig({
+      security: { auth: VALID_OIDC_AUTH },
+    });
+
+    assertEquals(config.security?.auth, VALID_OIDC_AUTH);
+  });
+
+  it("accepts self-host trusted-proxy authentication data in the config schema", () => {
+    const config = validateVeryfrontConfig({
+      security: { auth: VALID_TRUSTED_PROXY_AUTH },
+    });
+
+    assertEquals(config.security?.auth, VALID_TRUSTED_PROXY_AUTH);
+  });
+
+  it("rejects invalid OIDC environment variable names", () => {
+    for (
+      const [field, value] of [
+        ["issuerEnvVar", "OIDC-ISSUER"],
+        ["clientIdEnvVar", "1_OIDC_CLIENT_ID"],
+        ["clientSecretEnvVar", ""],
+        ["sessionSecretEnvVar", "VERYFRONT AUTH SESSION SECRET"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  [field]: value,
+                },
+              },
+            },
+          }),
+        Error,
+        `security.auth.oidc.${field}`,
+      );
+    }
+  });
+
+  it("requires exactly one OIDC openid scope and rejects unsafe scope tokens", () => {
+    for (
+      const [scopes, message] of [
+        [["profile", "email"], "OIDC scopes must include openid"],
+        [["openid", "openid"], "OIDC scopes must not contain duplicates"],
+        [["openid", ""], "security.auth.oidc.scopes.1"],
+        [["openid", "profile email"], "security.auth.oidc.scopes.1"],
+        [["openid", "profile\nemail"], "security.auth.oidc.scopes.1"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  scopes,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("bounds OIDC claim names, lifetimes, endpoint origins, and cookie names", () => {
+    for (
+      const [oidc, message] of [
+        [{ claims: { email: "" } }, "security.auth.oidc.claims.email"],
+        [{ claims: { roles: "roles\nheader" } }, "security.auth.oidc.claims.roles"],
+        [{ sessionTtlSeconds: 0 }, "security.auth.oidc.sessionTtlSeconds"],
+        [{ discoveryCacheTtlSeconds: 0 }, "security.auth.oidc.discoveryCacheTtlSeconds"],
+        [{ cookieName: "vf auth" }, "security.auth.oidc.cookieName"],
+        [{ trustedEndpointOrigins: [] }, "security.auth.oidc.trustedEndpointOrigins"],
+        [
+          { trustedEndpointOrigins: ["http://idp.example.com"] },
+          "security.auth.oidc.trustedEndpointOrigins.0",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  ...oidc,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("bounds trusted-proxy peer addresses and identity header names", () => {
+    for (
+      const [trustedProxy, message] of [
+        [{ trustedPeers: [] }, "security.auth.trustedProxy.trustedPeers"],
+        [{ trustedPeers: ["proxy.internal"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["127.0.0.1", "127.0.0.1"] }, "Trusted proxy peers must be unique"],
+        [
+          { headers: { ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers, subject: "" } },
+          "security.auth.trustedProxy.headers.subject",
+        ],
+        [
+          { headers: { ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers, roles: "x roles" } },
+          "security.auth.trustedProxy.headers.roles",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                trustedProxy: {
+                  ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+                  ...trustedProxy,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("rejects unknown authentication config keys", () => {
+    for (
+      const [auth, message] of [
+        [{ ...VALID_OIDC_AUTH, provider: "oidc" }, `Unrecognized key: "provider"`],
+        [
+          {
+            oidc: {
+              ...VALID_OIDC_AUTH.oidc,
+              providerFactory: "factory",
+            },
+          },
+          `Unrecognized key: "providerFactory"`,
+        ],
+        [
+          {
+            trustedProxy: {
+              ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+              factory: "headers",
+            },
+          },
+          `Unrecognized key: "factory"`,
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { auth } }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("rejects every combination of mutually exclusive auth modes", () => {
+    const modes = {
+      basic: { basic: { username: "user", password: "password" } },
+      bearer: { bearer: { token: "token" } },
+      oidc: VALID_OIDC_AUTH,
+      trustedProxy: VALID_TRUSTED_PROXY_AUTH,
+    } as const;
+    const combinations = [
+      [modes.basic, modes.bearer],
+      [modes.basic, modes.oidc],
+      [modes.basic, modes.trustedProxy],
+      [modes.bearer, modes.oidc],
+      [modes.bearer, modes.trustedProxy],
+      [modes.oidc, modes.trustedProxy],
+      [modes.basic, modes.bearer, modes.oidc, modes.trustedProxy],
+    ] as const;
+
+    for (const combination of combinations) {
+      const auth = Object.assign({}, ...combination);
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { auth } }),
+        Error,
+        "Configure exactly one authentication mode",
+      );
+    }
   });
 
   it("rejects filesystem options that do not match the selected backend", () => {
@@ -1118,3 +1345,32 @@ describe("configSchema", () => {
     );
   });
 });
+
+const legacyBasicAuthConfig: AuthConfig = {
+  basic: { username: "user", password: "password" },
+};
+const legacyBearerAuthConfig: AuthConfig = {
+  bearer: { token: "token" },
+};
+const oidcAuthConfig: AuthConfig = VALID_OIDC_AUTH;
+const trustedProxyAuthConfig: AuthConfig = VALID_TRUSTED_PROXY_AUTH;
+
+void legacyBasicAuthConfig;
+void legacyBearerAuthConfig;
+void oidcAuthConfig;
+void trustedProxyAuthConfig;
+
+// @ts-expect-error Auth modes must be mutually exclusive.
+const invalidBasicAndBearerAuthConfig: AuthConfig = {
+  basic: { username: "user", password: "password" },
+  bearer: { token: "token" },
+};
+
+// @ts-expect-error Auth modes must be mutually exclusive.
+const invalidOidcAndTrustedProxyAuthConfig: AuthConfig = {
+  oidc: VALID_OIDC_AUTH.oidc,
+  trustedProxy: VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+};
+
+void invalidBasicAndBearerAuthConfig;
+void invalidOidcAndTrustedProxyAuthConfig;
