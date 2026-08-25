@@ -133,14 +133,14 @@ export interface JwksKeySnapshot {
 type NativeJwksCache = JwksCache & {
   readonly [NATIVE_GET_KEY_WITH_FRESHNESS]: (
     options: GetJwksKeyOptions,
-    refreshIfCurrent?: object,
+    refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ) => Promise<JwksKeySnapshot>;
 };
 
 export async function getJwksKeyWithFreshness(
   cache: JwksCache,
   options: GetJwksKeyOptions,
-  refreshIfCurrent?: object,
+  refreshIfCurrent?: JwksKeySnapshot["freshness"],
 ): Promise<JwksKeySnapshot> {
   const native = ObjectGetOwnPropertyDescriptor(cache, NATIVE_GET_KEY_WITH_FRESHNESS)?.value;
   if (typeof native === "function") {
@@ -163,7 +163,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     },
     timeoutMs: number,
     refreshKind: RefreshKind,
-    refreshIfCurrent?: object,
+    refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ): Promise<JwksLoad> {
     const forceRefresh = refreshKind !== "none";
     const cacheKey = jwksCacheKey(fetchOptions, timeoutMs);
@@ -264,7 +264,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
 
   async function getKeyWithFreshness(
     keyOptions: GetJwksKeyOptions,
-    refreshIfCurrent?: object,
+    refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ): Promise<JwksKeySnapshot> {
     const kid = parseKid(keyOptions.kid);
     const alg = parseAlgorithm(keyOptions.alg);

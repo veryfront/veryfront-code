@@ -70,11 +70,12 @@ export interface CreateApplicationIdentityOptions {
 }
 
 type UnknownRecord = { readonly [key: string]: unknown };
+type ClaimContainer = UnknownRecord | readonly unknown[];
 type MutableAuthClaimArray = AuthClaimValue[];
 type MutableAuthClaimRecord = { [key: string]: AuthClaimValue };
 
 interface ParseState {
-  readonly seen: WeakSet<object>;
+  readonly seen: WeakSet<ClaimContainer>;
   totalValues: number;
 }
 
@@ -94,15 +95,15 @@ function setInsert<T>(set: Set<T>, value: T): void {
   apply(setAdd, set, [value]);
 }
 
-function weakSetContains(set: WeakSet<object>, value: object): boolean {
+function weakSetContains(set: WeakSet<ClaimContainer>, value: ClaimContainer): boolean {
   return apply(weakSetHas, set, [value]) as boolean;
 }
 
-function weakSetInsert(set: WeakSet<object>, value: object): void {
+function weakSetInsert(set: WeakSet<ClaimContainer>, value: ClaimContainer): void {
   apply(weakSetAdd, set, [value]);
 }
 
-function weakSetRemove(set: WeakSet<object>, value: object): void {
+function weakSetRemove(set: WeakSet<ClaimContainer>, value: ClaimContainer): void {
   apply(weakSetDelete, set, [value]);
 }
 
@@ -212,7 +213,7 @@ function parseIdentityRoot(value: unknown): UnknownRecord {
 
   const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
     value,
-  ]) as unknown as PropertyDescriptorMap;
+  ]);
   const output = apply(objectCreate, NativeObject, [null]) as UnknownRecord;
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index]!;
@@ -333,7 +334,7 @@ function parseSerializedStringList(
   }
   const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
     value,
-  ]) as unknown as PropertyDescriptorMap;
+  ]);
   const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
   if (symbolKeys.length > 0) {
     throw new TypeError(`Application identity ${fieldName} contains a non-JSON-safe symbol key`);
@@ -390,7 +391,7 @@ function parseSubject(value: unknown): string {
 
 function parseClaimSnapshot(value: unknown): SerializedAuthClaims {
   const state: ParseState = {
-    seen: new NativeWeakSet<object>(),
+    seen: new NativeWeakSet<ClaimContainer>(),
     totalValues: 0,
   };
   const snapshot = parseClaimObject(value, state, 0, "claims");
@@ -475,7 +476,7 @@ function parseClaimArray(
 
   const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
     value,
-  ]) as unknown as PropertyDescriptorMap;
+  ]);
   const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
   if (symbolKeys.length > 0) {
     throw new TypeError(`${path} contains a non-JSON-safe symbol key`);
