@@ -1596,7 +1596,7 @@ function restoreCommentMask(
 ): string {
   let restored = value.replaceAll(divisionMask, "/");
   const regexMaskPattern = new RegExp(
-    `;/\\*${markerSentinel}(?:f\\d+\\*/|\\d+\\*/0)`,
+    String.raw`;/\*${markerSentinel}(?:f\d+\*/|\d+\*/0)`,
     "g",
   );
   restored = restored.replace(
