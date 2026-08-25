@@ -393,7 +393,7 @@ describe("factory", () => {
       assertEquals(simple.steps, ["Check import path"]);
       assert(Object.isFrozen(simple));
       assert(Object.isFrozen(simple.steps));
-      expect(simple.docs).toBe("https://veryfront.com/docs/code/guides/errors#module-not-found");
+      assertEquals(simple.docs, "https://veryfront.com/docs/code/guides/errors#module-not-found");
     });
 
     it("should both functions generate correct docs URLs", () => {

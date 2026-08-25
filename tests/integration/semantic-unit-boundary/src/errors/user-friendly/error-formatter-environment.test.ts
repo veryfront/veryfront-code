@@ -660,7 +660,8 @@ describe("formatUserError environment gating", () => {
     error.stack = [
       "Error: unknown error accessor_alias_frame",
       "    at Object.publicAlias [as get private-control.example] (/srv/app.ts:1:1)",
-      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
+      "    at Object.publicAlias [as get private-control.example visibleAlias] (/srv/app.ts:2:1)",
+      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:3:1)",
     ].join("\n");
 
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
@@ -668,6 +669,7 @@ describe("formatUserError environment gating", () => {
 
       assertEquals(output.includes("private-control.example"), false);
       assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+      assertEquals(output.includes("get private-control.example visibleAlias"), false);
       return Promise.resolve();
     });
   });
