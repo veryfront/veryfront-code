@@ -221,7 +221,7 @@ describe("OAuth Client", () => {
       }
     });
 
-    it("bounds and sanitizes upstream error text", async () => {
+    it("bounds oversized upstream error text", async () => {
       const { fetchOAuthToken, OAuthTokenRequestError } = await import("./oauth-client.ts");
       const { server, port } = createMockServer(
         () =>
@@ -250,6 +250,86 @@ describe("OAuth Client", () => {
       }
     });
 
+    it("redacts credentials in a normal-sized upstream error body", async () => {
+      const { fetchOAuthToken, OAuthTokenRequestError } = await import("./oauth-client.ts");
+      const { server, port } = createMockServer(
+        () =>
+          new Response(
+            "client_secret=do-not-log https://user:password@example.test/path",
+            { status: 401 },
+          ),
+      );
+
+      try {
+        const error = await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: `http://127.0.0.1:${port}`,
+              apiClientId: "test",
+              apiClientSecret: "test",
+            }),
+          OAuthTokenRequestError,
+        );
+        if (!(error instanceof OAuthTokenRequestError)) {
+          throw new Error("Expected OAuthTokenRequestError");
+        }
+        assertEquals(
+          error.responseText,
+          "client_secret=[REDACTED] https://user:[REDACTED]@example.test/path",
+          "upstream error text must have URL credentials and client secrets redacted before it reaches the error message",
+        );
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("sends a client_credentials body bound to the configured project", async () => {
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const bodies: Array<Record<string, unknown>> = [];
+      const { server, port } = createMockServer(async (req: Request) => {
+        bodies.push(await req.json() as Record<string, unknown>);
+        return Response.json({
+          access_token: "test-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      });
+
+      try {
+        await fetchOAuthToken({
+          apiBaseUrl: `http://127.0.0.1:${port}`,
+          apiClientId: "test",
+          apiClientSecret: "test",
+          projectSlug: "demo-project",
+          customDomain: "demo.example",
+        });
+        assertEquals(
+          bodies[0],
+          {
+            grant_type: "client_credentials",
+            client_id: "test",
+            client_secret: "test",
+            project_slug: "demo-project",
+            custom_domain: "demo.example",
+          },
+          "the token request must carry the client_credentials grant and the project binding",
+        );
+
+        await fetchOAuthToken({
+          apiBaseUrl: `http://127.0.0.1:${port}`,
+          apiClientId: "test",
+          apiClientSecret: "test",
+        });
+        assertEquals(
+          "project_slug" in (bodies[1] ?? {}),
+          false,
+          "an unbound token request must omit project_slug",
+        );
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("rejects non-HTTP API bases and unsafe timeout policy", async () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
@@ -262,6 +342,26 @@ describe("OAuth Client", () => {
           }),
         TypeError,
         "HTTP(S)",
+      );
+      await assertRejects(
+        () =>
+          fetchOAuthToken({
+            apiBaseUrl: "https://user:pass@api.example.test",
+            apiClientId: "test",
+            apiClientSecret: "test",
+          }),
+        TypeError,
+        "without credentials",
+      );
+      await assertRejects(
+        () =>
+          fetchOAuthToken({
+            apiBaseUrl: "https://user@api.example.test",
+            apiClientId: "test",
+            apiClientSecret: "test",
+          }),
+        TypeError,
+        "without credentials",
       );
       await assertRejects(
         () =>
