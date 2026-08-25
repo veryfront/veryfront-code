@@ -13,6 +13,8 @@ const REQUIRED_DEPENDENCIES = [
   "unit-tests",
   "coverage",
   "tests",
+  "tests-node",
+  "tests-bun",
   "tests-binary-e2e",
   "tests-e2e-rsc-browser",
 ] as const;
@@ -21,6 +23,8 @@ const RESULT_ENV = {
   UNIT_TESTS_RESULT: "${{ needs.unit-tests.result }}",
   COVERAGE_RESULT: "${{ needs.coverage.result }}",
   INTEGRATION_TESTS_RESULT: "${{ needs.tests.result }}",
+  NODE_RUNTIME_TESTS_RESULT: "${{ needs.tests-node.result }}",
+  BUN_RUNTIME_TESTS_RESULT: "${{ needs.tests-bun.result }}",
   BINARY_E2E_RESULT: "${{ needs.tests-binary-e2e.result }}",
   RSC_BROWSER_E2E_RESULT: "${{ needs.tests-e2e-rsc-browser.result }}",
 } as const;

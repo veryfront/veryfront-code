@@ -641,6 +641,8 @@ jobs:
       - unit-tests
       - coverage
       - tests
+      - tests-node
+      - tests-bun
       - tests-binary-e2e
       - tests-e2e-rsc-browser
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
@@ -651,6 +653,8 @@ jobs:
           UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
+          NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
+          BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
           BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
           RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
         run: |
@@ -660,6 +664,8 @@ jobs:
             UNIT_TESTS_RESULT \
             COVERAGE_RESULT \
             INTEGRATION_TESTS_RESULT \
+            NODE_RUNTIME_TESTS_RESULT \
+            BUN_RUNTIME_TESTS_RESULT \
             BINARY_E2E_RESULT \
             RSC_BROWSER_E2E_RESULT
           do

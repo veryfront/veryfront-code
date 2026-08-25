@@ -8,11 +8,12 @@ protects a distinct delivery boundary.
 
 `quality gate (merge)` requires source checks, unit tests, the existing
 eight-shard coverage dependency with its 80 percent floor, integration tests,
-binary end-to-end tests, and RSC browser end-to-end tests to succeed for pull
-requests and merge queue runs. A failed, skipped, or cancelled dependency fails
-the aggregate check. The job is scoped to those two event types; it does not run
-on ordinary pushes. Fork pull requests skip protected dependency jobs and
-therefore fail this aggregate gate closed. Codecov reporting remains advisory.
+the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
+end-to-end tests to succeed for pull requests and merge queue runs. A failed,
+skipped, or cancelled dependency fails the aggregate check. The job is scoped
+to those two event types; it does not run on ordinary pushes. Fork pull
+requests skip protected dependency jobs and therefore fail this aggregate gate
+closed. Codecov reporting remains advisory.
 
 Evidence: [CI workflow](workflows/cicd.yml) and
 [merge gate contract](../tests/integration/ci/merge-quality-gate-workflow.test.ts).
