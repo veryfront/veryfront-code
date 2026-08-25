@@ -124,7 +124,7 @@ describe("filterHostedChatRuntimeLocalTools", () => {
   });
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skill tools under non-empty allowed tools", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without widening delegation", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -148,8 +148,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skil
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill", "sleep"]);
-  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "sleep"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools but keeps delegation after submitted form input", async () => {
@@ -361,6 +361,35 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
 
   assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill"]);
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps delegation for config-derived non-empty tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly removes skill infrastructure for known empty skill runs", async () => {

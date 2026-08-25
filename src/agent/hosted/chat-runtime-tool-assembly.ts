@@ -109,6 +109,12 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  /**
+   * Marks `allowedToolNames` as derived from the agent's own trusted config
+   * (no request-level override), preserving legacy runtime-essential tool
+   * inclusion for empty and non-empty configured sets alike. Request- or
+   * delegation-scoped callers must not set this.
+   */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -318,7 +324,10 @@ export async function prepareHostedChatRuntimeToolAssembly<
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
-    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
+    // The pipeline flag is set exactly when the selector came from the agent's
+    // own trusted config (no request-level allowedTools override), so it is
+    // the provenance signal for legacy runtime-essential inclusion.
+    configDerivedSelector: input.includeRuntimeEssentialToolsWhenEmpty,
   });
   const postFormInputLocalTools = filterPostFormInputLocalTools(
     authorizedLocalTools,

@@ -523,8 +523,17 @@ function applyRuntimeToolAllowlist(
   if (!allowedToolNames) {
     return mergedTools;
   }
+  // The shared resolver never appends delegation to a request-derived
+  // allowlist. Here `mergedTools` is the agent's own config-derived
+  // inventory, so preserving invoke_agent grants nothing beyond the trusted
+  // config (see the delegation-boundary note above); an empty allowlist
+  // stays deny-all and applyDelegationAuthority still strips delegation.
+  const preservesConfigDelegation = hasVisibleSkills && allowedToolNames.size > 0;
   return Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
+    Object.entries(mergedTools).filter(([toolName]) =>
+      allowedToolNames.has(toolName) ||
+      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID)
+    ),
   );
 }
 
