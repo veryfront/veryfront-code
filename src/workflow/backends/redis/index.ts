@@ -1637,6 +1637,7 @@ export class RedisBackend implements WorkflowBackend {
 
     let initialRevision: number;
     let initial: WorkflowRun;
+    let legacyDecidedApprovalIdsAtOpen = new Set<string>();
     try {
       initialRevision = Number(captured[0]);
       if (!Number.isSafeInteger(initialRevision) || initialRevision < 0) throw new Error();
@@ -1651,7 +1652,16 @@ export class RedisBackend implements WorkflowBackend {
       // and suppressed instead of reported twice. The reverse order would be
       // the real hazard (a snapshot older than the baseline revision misses
       // state), which is why the fetch must stay after the capture.
-      initial.pendingApprovals = await this.getPendingApprovals(runId);
+      const initialApprovalRecords = (await client.lrange(this.approvalsKey(runId), 0, -1))
+        .map((raw) => this.parseApproval(raw));
+      initial.pendingApprovals = initialApprovalRecords.filter((approval) =>
+        approval.status === "pending"
+      );
+      legacyDecidedApprovalIdsAtOpen = new Set(
+        initialApprovalRecords.filter((approval) => approval.status !== "pending").map((approval) =>
+          approval.id
+        ),
+      );
     } catch {
       throw new Error("Workflow run observation failed");
     }
@@ -1674,7 +1684,11 @@ export class RedisBackend implements WorkflowBackend {
     const approvalJournalKey = this.runObservationApprovalsKey(runId);
     const readLegacyApprovalProjection = async () => {
       const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
-      return projectObservableApprovals(rawList.map((raw) => this.parseApproval(raw)));
+      return projectObservableApprovals(
+        rawList.map((raw) => this.parseApproval(raw)).filter((approval) =>
+          approval.status === "pending" || !legacyDecidedApprovalIdsAtOpen.has(approval.id)
+        ),
+      );
     };
     const changes: AsyncIterable<WorkflowRunObservedState> = {
       [Symbol.asyncIterator]: async function* () {

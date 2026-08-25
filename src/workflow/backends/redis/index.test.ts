@@ -1041,6 +1041,51 @@ describe("RedisBackend", () => {
       }
     });
 
+    it("does not re-emit approvals decided before legacy observation began", async () => {
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-legacy-decided-baseline", { status: "waiting" });
+      await backend.createRun(run);
+      await mockRedis.rpush(
+        "test:schema-v1:approvals:run-legacy-decided-baseline",
+        JSON.stringify({
+          id: "apr-historical",
+          nodeId: "first-review",
+          message: "Historical review",
+          requestedAt: "2025-01-01T00:00:00.000Z",
+          status: "approved",
+          decidedAt: "2025-01-01T00:00:01.000Z",
+          decidedBy: "admin",
+        }),
+        JSON.stringify({
+          id: "apr-current",
+          nodeId: "second-review",
+          message: "Current review",
+          requestedAt: "2025-01-02T00:00:00.000Z",
+          status: "pending",
+        }),
+      );
+
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+      assertEquals(
+        observation.initial.pendingApprovals.map((approval) => approval.id),
+        ["apr-current"],
+      );
+      await backend.updateRun(run.id, { status: "completed" });
+
+      const events = deriveWorkflowRunEventObservation(observation).events[
+        Symbol.asyncIterator
+      ]();
+      try {
+        assertEquals(await events.next(), {
+          value: { type: "run.status", runId: run.id, status: "completed" },
+          done: false,
+        });
+      } finally {
+        await observation.close();
+      }
+    });
+
     it("journals owned approval appends only when ownership holds", async () => {
       const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
       await backend.createRun(run);
