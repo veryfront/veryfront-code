@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -26,7 +26,13 @@ describe("security/http/csrf/csrf-handler", () => {
 
       assertEquals(exampleStart >= 0 && exampleEnd > exampleStart, true);
       assertEquals(
-        example.includes('headers["x-veryfront-dependency-pins"] = pinKey;'),
+        example.includes(
+          'import { csrfMutationHeaders } from "veryfront/index.client";',
+        ),
+        true,
+      );
+      assertEquals(
+        example.includes('headers.set("x-veryfront-dependency-pins", pinKey);'),
         true,
       );
       assertEquals(example.includes('searchParams.set("pins"'), false);
@@ -288,6 +294,83 @@ describe("security/http/csrf/csrf-handler", () => {
   });
 
   describe("when CSRF is not configured", () => {
+    it("warns once per path in local development when production would reject", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/cases?attempt=1", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/cases?attempt=2", { method: "POST" }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/other", { method: "PUT" }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings.length, 2);
+      assertStringIncludes(warnings[0]!, "POST /api/cases");
+      assertStringIncludes(warnings[0]!, "csrfMutationHeaders");
+      assertStringIncludes(warnings[0]!, '"veryfront/index.client"');
+      assertStringIncludes(warnings[1]!, "PUT /api/other");
+    });
+
+    it("does not warn outside the absent-header local development case", async () => {
+      const localHandler = new CsrfHandler();
+      const localCtx = createCtx();
+      localCtx.securityConfig = {};
+      localCtx.isLocalProject = true;
+      const disabledCtx = createCtx(false);
+      disabledCtx.isLocalProject = true;
+      const nonLocalCtx = createCtx();
+      nonLocalCtx.securityConfig = {};
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/explicit-off", { method: "POST" }),
+          disabledCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/non-local", { method: "POST" }),
+          nonLocalCtx,
+        );
+        await localHandler.handle(new Request("http://localhost/safe"), localCtx);
+        await localHandler.handle(
+          new Request("http://localhost/header-present", {
+            method: "POST",
+            headers: { "x-csrf-token": "present" },
+          }),
+          localCtx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/control-plane/agents/list", {
+            method: "POST",
+            headers: { "x-veryfront-control-plane-jws": "header.payload.signature" },
+          }),
+          localCtx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(warnings, []);
+    });
+
     it("should pass through all requests when securityConfig is null", async () => {
       const ctx = createCtx();
       ctx.securityConfig = null;

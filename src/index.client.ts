@@ -73,3 +73,5 @@ export {
   sanitizeData,
 } from "#veryfront/security";
 export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
+
+export { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
