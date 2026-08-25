@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createElement } from "react";
+import { isValidElementType as isValidElementType18 } from "npm:react-is@18.3.1";
 import { isValidElementType, SuspenseList } from "npm:react-is@19.2.4";
 import { extractComponent } from "./extract-component.ts";
 
@@ -207,6 +208,38 @@ describe("modules/react-loader/extract-component", () => {
       extractComponent({ __esModule: true, Page, helper }, "client-ref.tsx") as unknown,
       Page,
       "a client reference is a component the RSC renderer resolves, not a data export",
+    );
+  });
+
+  it("keeps a React 18 Flight module reference declared before a helper", () => {
+    const Page = { $$typeof: Symbol.for("react.module.reference") };
+    const helper = () => null;
+
+    assertEquals(
+      isValidElementType18(Page),
+      true,
+      "React 18 accepts module references from every supported Flight configuration",
+    );
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "module-ref.tsx") as unknown,
+      Page,
+      "a valid React 18 Flight reference must retain declaration order against a helper",
+    );
+  });
+
+  it("keeps a getModuleId Flight reference declared before a helper", () => {
+    const Page = { getModuleId: () => "page#default" };
+    const helper = () => null;
+
+    assertEquals(
+      isValidElementType18(Page),
+      true,
+      "React 18 accepts Flight references identified through getModuleId",
+    );
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "get-module-id-ref.tsx") as unknown,
+      Page,
+      "a valid structural Flight reference must retain declaration order against a helper",
     );
   });
 

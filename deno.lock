@@ -84,6 +84,7 @@
     "npm:protobufjs@7.6.5": "7.6.5",
     "npm:purgecss@8.0.0": "8.0.0",
     "npm:react-dom@19.2.4": "19.2.4_react@19.2.4",
+    "npm:react-is@18.3.1": "18.3.1",
     "npm:react-is@19.2.4": "19.2.4",
     "npm:react@19.2.4": "19.2.4",
     "npm:redis@5.11.0": "5.11.0",
@@ -4816,6 +4817,9 @@
         "react",
         "scheduler"
       ]
+    },
+    "react-is@18.3.1": {
+      "integrity": "sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg=="
     },
     "react-is@19.2.4": {
       "integrity": "sha512-W+EWGn2v0ApPKgKKCy/7s7WHXkboGcsrXE+2joLyVxkbyVQfO3MUEaUQDHoSmb8TFFrSKYa9mw64WZHNHSDzYA=="

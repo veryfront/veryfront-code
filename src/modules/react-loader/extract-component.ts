@@ -12,6 +12,7 @@ const REACT_COMPONENT_OBJECT_TAGS: ReadonlySet<symbol> = new Set([
   // modules portable across the React versions Veryfront accepts.
   Symbol.for("react.provider"),
   Symbol.for("react.consumer"),
+  Symbol.for("react.module.reference"),
   Symbol.for("react.client.reference"),
 ]);
 
@@ -22,13 +23,16 @@ const REACT_COMPONENT_OBJECT_TAGS: ReadonlySet<symbol> = new Set([
  * The allowlist is deliberate: `Symbol.for("react.*")` is a public namespace,
  * not proof that an object is a renderable React type. React also uses it for
  * rendered nodes and internal markers, and applications can mint arbitrary
- * entries in the same registry.
+ * entries in the same registry. The structural `getModuleId` branch matches
+ * React-is's compatibility contract for Flight references without a tag.
  */
 function isReactComponentObject(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
 
-  const tag = (value as { $$typeof?: unknown }).$$typeof;
-  return typeof tag === "symbol" && REACT_COMPONENT_OBJECT_TAGS.has(tag);
+  const component = value as { $$typeof?: unknown; getModuleId?: unknown };
+  const tag = component.$$typeof;
+  return (typeof tag === "symbol" && REACT_COMPONENT_OBJECT_TAGS.has(tag)) ||
+    component.getModuleId !== undefined;
 }
 
 /** Reports whether an object carries a React-style symbol marker. */
