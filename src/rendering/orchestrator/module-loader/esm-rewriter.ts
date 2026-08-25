@@ -90,10 +90,20 @@ function unresolvedGraphDependencies(
   url: string,
   graph: GraphState,
   esmCache: Map<string, string>,
+  seen = new Set<string>(),
 ): string[] {
-  return [...(graph.unwritten.get(url) ?? [])].filter(
-    (dependency) => !graph.artifacts.has(dependency) && !esmCache.has(dependency),
-  );
+  if (seen.has(url)) return [];
+  seen.add(url);
+
+  const unresolved: string[] = [];
+  for (const dependency of graph.unwritten.get(url) ?? []) {
+    if (!graph.artifacts.has(dependency) && !esmCache.has(dependency)) {
+      unresolved.push(dependency);
+      continue;
+    }
+    unresolved.push(...unresolvedGraphDependencies(dependency, graph, esmCache, seen));
+  }
+  return unresolved;
 }
 
 export async function fetchEsmModule(

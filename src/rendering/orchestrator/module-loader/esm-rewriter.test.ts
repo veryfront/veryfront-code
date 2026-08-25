@@ -396,6 +396,70 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
+    it("rejects a poisoned root when an intermediate hides an unwritten owner", async () => {
+      const esmCache = new Map<string, string>();
+      const bWritten = Promise.withResolvers<void>();
+      const gatedAdapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            files.set(path, content);
+            if (content.includes("export const b = d")) bWritten.resolve();
+            return Promise.resolve();
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return jsonResponse(
+            `import { x } from "https://esm.sh/x";\n` +
+              `import("https://esm.sh/a");`,
+          );
+        }
+        if (url === "https://esm.sh/a") {
+          return jsonResponse(
+            `import { b } from "https://esm.sh/b";\n` +
+              `import { missing } from "https://esm.sh/broken";\n` +
+              `export const a = b;`,
+          );
+        }
+        if (url === "https://esm.sh/b") {
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\n` +
+              `import { a } from "https://esm.sh/a";\n` +
+              `export const b = d;`,
+          );
+        }
+        if (url === "https://esm.sh/d") {
+          return jsonResponse(
+            `import { b } from "https://esm.sh/b";\nexport const d = b;`,
+          );
+        }
+        if (url === "https://esm.sh/x") {
+          await bWritten.promise;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+          );
+        }
+        if (url === "https://esm.sh/broken") {
+          return new Response("upstream broken", { status: 500 });
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch;
+
+      await assertRejects(
+        () => fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
+        Error,
+      );
+      assertEquals(
+        esmCache.size,
+        0,
+        "a poisoned root whose static chain hides an unwritten cycle owner must not publish",
+      );
+    });
+
     it("reuses a materialized cycle descendant after an unrelated lazy failure", async () => {
       const esmCache = new Map<string, string>();
       const dWritten = Promise.withResolvers<void>();
