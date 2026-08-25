@@ -230,6 +230,50 @@ describe("server/services/static/static-file.service", () => {
         assertEquals(result.cacheStrategy, "medium");
       }
     });
+
+    it("returns immutable for unhashed platform assets served from dist", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("runtime");
+      const repo = createMockFsRepo(
+        new Map([["/project/dist/_veryfront/runtime.js", fileData]]),
+      );
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isPreviewMode: false, isLocalProject: false });
+
+      const result = await service.resolveFile("/_veryfront/runtime.js", options);
+      assertExists(result, "unhashed platform asset must resolve from dist");
+      assertEquals(
+        result.cacheStrategy,
+        "immutable",
+        "unhashed /_veryfront assets served from dist must stay immutable",
+      );
+    });
+
+    it("returns medium for a project-supplied /_veryfront file from public", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("runtime");
+      const repo = createMockFsRepo(
+        new Map([["/project/public/_veryfront/runtime.js", fileData]]),
+      );
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isPreviewMode: false, isLocalProject: false });
+
+      const result = await service.resolveFile("/_veryfront/runtime.js", options);
+      assertExists(result, "the public file must resolve");
+      assertEquals(
+        result.cacheStrategy,
+        "medium",
+        "a project-supplied /_veryfront file from public must not inherit immutable caching",
+      );
+    });
   });
 
   describe("manifest resolution", () => {
@@ -265,6 +309,74 @@ describe("server/services/static/static-file.service", () => {
         assertEquals(result.source, "manifest");
         assertEquals(result.data, fileData);
       }
+    });
+
+    it("reloads the manifest index when manifest.json changes on disk", async () => {
+      const buildManifest = (file: string) =>
+        new TextEncoder().encode(
+          JSON.stringify({
+            chunks: { chunks: { main: { file } }, shared: [] },
+            routes: [],
+          }),
+        );
+      const fileData = new TextEncoder().encode("app code");
+      const manifestPath = "/project/dist/_veryfront/manifest.json";
+      const files = new Map<string, Uint8Array>([
+        [manifestPath, buildManifest("old.js")],
+        ["/project/dist/_veryfront/old.js", fileData],
+        ["/project/dist/_veryfront/new.js", fileData],
+      ]);
+      let manifestMtime = 1_000;
+      const repo = {
+        readFile: async (path: string) => {
+          const data = files.get(path);
+          if (!data) throw createFsError("not found", "ENOENT");
+          return new TextDecoder().decode(data);
+        },
+        readFileBytes: async (path: string) => {
+          const data = files.get(path);
+          if (!data) throw createFsError("not found", "ENOENT");
+          return data;
+        },
+        stat: async (path: string) => {
+          if (!files.has(path)) throw createFsError("not found", "ENOENT");
+          return {
+            isFile: true,
+            isDirectory: false,
+            mtime: new Date(path === manifestPath ? manifestMtime : 0),
+          };
+        },
+      } as unknown as FileSystemRepository;
+
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const service = new StaticFileService(repo);
+      const options = makeOptions();
+
+      const first = await service.resolveFile("/_veryfront/old.js", options);
+      assertExists(first, "the initial manifest entry resolves");
+      assertEquals(first.source, "manifest");
+
+      files.set(manifestPath, buildManifest("new.js"));
+      manifestMtime = 2_000;
+
+      const updated = await service.resolveFile("/_veryfront/new.js", options);
+      assertExists(updated, "a rebuilt manifest.json must invalidate the stale manifest index");
+      assertEquals(
+        updated.source,
+        "manifest",
+        "the new chunk must be served from the reloaded manifest index",
+      );
+      const stale = await service.resolveFile("/_veryfront/old.js", options);
+      assertExists(stale, "the old chunk still exists on disk");
+      assertEquals(
+        stale.source,
+        "dist",
+        "the stale manifest entry must not survive a manifest.json rebuild",
+      );
     });
   });
 
@@ -338,6 +450,60 @@ describe("server/services/static/static-file.service", () => {
       const options = makeOptions();
       const result = await service.resolveFile("/nonexistent.txt", options);
       assertEquals(result, null);
+    });
+
+    it("rejects parent-segment requests that escape the dist root via the repository", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const enc = (text: string) => new TextEncoder().encode(text);
+      const repo = createMockFsRepo(
+        new Map([
+          ["/project/secret.txt", enc("secret")],
+          ["/etc/passwd", enc("root:x")],
+        ]),
+      );
+      const service = new StaticFileService(repo);
+
+      assertEquals(
+        await service.resolveFile("/../secret.txt", makeOptions()),
+        null,
+        "a parent-segment request must not escape the dist root",
+      );
+      assertEquals(
+        await service.resolveFile("/../../etc/passwd", makeOptions()),
+        null,
+        "a doubled parent-segment request must not escape the project root",
+      );
+    });
+
+    it("rejects parent-segment requests that escape the dist root via SecureFs", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const enc = (text: string) => new TextEncoder().encode(text);
+      const adapter = createNativeFsAdapter(
+        new Map([
+          ["/project/secret.txt", enc("secret")],
+          ["/etc/passwd", enc("root:x")],
+        ]),
+      );
+      const service = new StaticFileService();
+
+      assertEquals(
+        await service.resolveFile("/../secret.txt", makeOptions({ adapter })),
+        null,
+        "a parent-segment request must not escape the dist root",
+      );
+      assertEquals(
+        await service.resolveFile("/../../etc/passwd", makeOptions({ adapter })),
+        null,
+        "a doubled parent-segment request must not escape the project root",
+      );
     });
 
     it("should resolve file from injected FileSystemRepository", async () => {

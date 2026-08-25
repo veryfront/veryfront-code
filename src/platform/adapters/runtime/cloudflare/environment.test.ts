@@ -20,6 +20,17 @@ describe("CloudflareEnvironmentAdapter", () => {
     };
     const environment = new CloudflareEnvironmentAdapter(bindings);
 
+    assertEquals(
+      environment.get("FILES"),
+      undefined,
+      "object bindings must not enter the string environment",
+    );
+    assertEquals(
+      Object.hasOwn(environment.toObject(), "FILES"),
+      false,
+      "toObject must expose only string bindings",
+    );
+
     environment.set("API_URL", "https://override.example.com");
     environment.set("FILES", "request-local-shadow");
 

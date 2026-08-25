@@ -127,6 +127,12 @@ defineConfig({
 });
 ```
 
+The app wrapper must stay inside the project directory, both in its configured
+path and after symlinks are resolved. Absolute paths are supported only when
+they point inside the project. When upgrading an existing project that uses an
+external wrapper or an in-project symlink to an external file, move the wrapper
+into the project and update `app` to that project-local path.
+
 ### React version
 
 ```ts
@@ -147,6 +153,11 @@ defineConfig({
   },
 });
 ```
+
+Layout rendering now always uses the secure ESM path. If an existing
+configuration contains `experimental.esmLayouts: false`, remove that setting;
+the `false` value is no longer supported. `experimental.esmLayouts: true` may
+remain during migration, but is optional.
 
 ### AI discovery
 

@@ -12,9 +12,14 @@ describe("dev server cache context", () => {
     assertEquals(
       resolveDevServerCacheDir(projectDir, () => undefined),
       join(projectDir, ".cache"),
+      "the dev server cache defaults to the project cache dir",
     );
     await runWithDevServerCacheDir(projectDir, async () => {
-      assertEquals(getCacheBaseDir(), join(projectDir, ".cache"));
+      assertEquals(
+        getCacheBaseDir(),
+        join(projectDir, ".cache"),
+        "runWithDevServerCacheDir must scope the cache base dir to the project",
+      );
     }, () => undefined);
   });
 
@@ -25,6 +30,23 @@ describe("dev server cache context", () => {
         (key) => key === "VERYFRONT_CACHE_DIR" ? "/configured/cache" : undefined,
       ),
       "/configured/cache",
+      "VERYFRONT_CACHE_DIR is honoured",
+    );
+    assertEquals(
+      resolveDevServerCacheDir(
+        "/projects/selected",
+        (key) => key === "VF_CACHE_DIR" ? "/alias/cache" : undefined,
+      ),
+      "/alias/cache",
+      "the VF_CACHE_DIR alias is honoured",
+    );
+    assertEquals(
+      resolveDevServerCacheDir(
+        "/projects/selected",
+        (key) => key === "VERYFRONT_CACHE_DIR" ? "/configured/cache" : "/alias/cache",
+      ),
+      "/configured/cache",
+      "VERYFRONT_CACHE_DIR wins over the alias",
     );
   });
 });

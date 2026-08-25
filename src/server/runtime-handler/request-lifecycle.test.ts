@@ -55,18 +55,62 @@ describe("server/runtime-handler/request-lifecycle", () => {
         headers: { "x-request-id": "custom-id" },
       });
       const ctx = startRequestLifecycle(req, "/test", false);
-      // The requestId should incorporate the incoming id
-      assertEquals(typeof ctx.requestId, "string");
+      assertEquals(
+        ctx.requestId,
+        "custom-id",
+        "an incoming x-request-id must be carried into the request id",
+      );
+      ctx.stopTotal();
+    });
+
+    it("should mint a fresh id when no x-request-id header is present", () => {
+      const req = new Request("http://localhost/test");
+      const ctx = startRequestLifecycle(req, "/test", false);
+      assertEquals(
+        ctx.requestId !== "custom-id",
+        true,
+        "a missing header must not reuse a previous request id",
+      );
+      assertEquals(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-/u.test(ctx.requestId),
+        true,
+        "a missing x-request-id header must mint a fresh UUID",
+      );
       ctx.stopTotal();
     });
   });
 
   describe("endRequestLifecycle", () => {
-    it("should call stopTotal and handle perfRequestId", () => {
-      const req = new Request("http://localhost/test");
-      const ctx = startRequestLifecycle(req, "/test", false);
-      // Should not throw
+    it("should call stopTotal exactly once", () => {
+      let stops = 0;
+      const ctx = {
+        requestId: "lifecycle-end",
+        perfRequestId: undefined,
+        stopTotal: () => {
+          stops++;
+        },
+        shouldCheckIsolation: true,
+      };
       endRequestLifecycle(ctx);
+      assertEquals(stops, 1, "endRequestLifecycle must stop the total request timer exactly once");
+    });
+
+    it("should call stopTotal and handle perfRequestId", () => {
+      let stops = 0;
+      const ctx = {
+        requestId: "lifecycle-end-perf",
+        perfRequestId: "perf-1",
+        stopTotal: () => {
+          stops++;
+        },
+        shouldCheckIsolation: true,
+      };
+      endRequestLifecycle(ctx);
+      assertEquals(
+        stops,
+        1,
+        "endRequestLifecycle must stop the total request timer when a perf id is present",
+      );
     });
   });
 

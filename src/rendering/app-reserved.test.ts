@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectAncestorDirs,
@@ -9,8 +9,124 @@ import {
 } from "./app-reserved.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 
 describe("rendering/app-reserved", () => {
+  it("returns null when reserved component candidates are absent", async () => {
+    const adapter = {
+      fs: {
+        readFile: () =>
+          Promise.reject(
+            FILE_NOT_FOUND.create({
+              detail: "Reserved component not found",
+              context: { operation: "read" },
+            }),
+          ),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const result = await loadReservedWithPath(
+      ["/project/app"],
+      "loading",
+      "/project",
+      { compileMode: "production", environment: "production" },
+      adapter,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        loadComponentFromSource: () => {
+          throw new Error("component loader must not run for a missing file");
+        },
+      },
+    );
+
+    assertEquals(result, null);
+  });
+
+  it("sanitizes reserved component compilation failures", async () => {
+    const projectDir = "/<PROJECT_DIR>";
+    const privatePath = `${projectDir}/app/loading.tsx`;
+    const failure = new Error(`No component exported from ${privatePath}`);
+    const adapter = {
+      fs: {
+        readFile: (path: string) =>
+          path.endsWith("loading.tsx")
+            ? Promise.resolve("export default function Loading() { return null; }")
+            : Promise.reject(
+              FILE_NOT_FOUND.create({
+                detail: "Reserved component not found",
+                context: { operation: "read" },
+              }),
+            ),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const error = await assertRejects(() =>
+      loadReservedWithPath(
+        [`${projectDir}/app`],
+        "loading",
+        projectDir,
+        { compileMode: "production", environment: "production" },
+        adapter,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { loadComponentFromSource: () => Promise.reject(failure) },
+      )
+    );
+
+    assertEquals(isVeryfrontError(error), true);
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertEquals(error.message, "Reserved component could not be loaded");
+    assertEquals(error.message.includes(privatePath), false);
+    assertStrictEquals(error.cause, failure);
+  });
+
+  it("sanitizes reserved component read failures", async () => {
+    const projectDir = "/<PROJECT_DIR>";
+    const privatePath = `${projectDir}/app/loading.tsx`;
+    const failure = Object.assign(new Error(`EACCES: permission denied, open '${privatePath}'`), {
+      code: "EACCES",
+    });
+    const adapter = {
+      fs: {
+        readFile: () => Promise.reject(failure),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const error = await assertRejects(() =>
+      loadReservedWithPath(
+        [`${projectDir}/app`],
+        "loading",
+        projectDir,
+        { compileMode: "production", environment: "production" },
+        adapter,
+      )
+    );
+
+    assertEquals(isVeryfrontError(error), true);
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertEquals(error.message, "Reserved component could not be read");
+    assertEquals(error.message.includes(privatePath), false);
+    assertStrictEquals(error.cause, failure);
+  });
+
   it("does not search reserved component paths after request cancellation", async () => {
     let reads = 0;
     const adapter = {
@@ -134,6 +250,14 @@ describe("rendering/app-reserved", () => {
     it("should return empty array for path outside root", () => {
       const dirs = collectAncestorDirs("/other/path", "/app");
       assertEquals(dirs.length, 0);
+    });
+
+    it("should return empty array for a sibling that shares the root prefix", () => {
+      const dirs = collectAncestorDirs(
+        "/project/application/blog",
+        "/project/app",
+      );
+      assertEquals(dirs, []);
     });
 
     it("should handle identical segment and root", () => {

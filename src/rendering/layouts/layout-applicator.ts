@@ -12,7 +12,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
-import { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
+import { applyLayoutsESM } from "./utils/applicator.ts";
 import { resolveAppComponentPath } from "./utils/app-resolver.ts";
 import {
   collectAncestorDirs,
@@ -306,60 +306,34 @@ export class LayoutApplicator {
           hasLayoutBundle: !!layoutBundle,
         });
 
-        const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
-
-        if (useESMWrap) {
-          return await applyLayoutsESM(
-            pageElement,
-            layoutBundle,
-            nestedLayouts,
-            this.projectDir,
-            this.mergedComponents,
-            this.layoutCache,
-            this.adapter,
-            layoutDataMap,
-            this.projectId,
-            this.projectSlug,
-            this.contentSourceId,
-            this.renderModes,
-            this.preloadedImportMap ?? undefined,
-            reactVersion,
-            this.dependencyPinningCacheKey,
-            this.dependencyPinningDependencies,
-            this.dependencyPinningSource,
-            this.requestUrl?.origin,
-            this.config,
-            this.isLocalProject,
-            this.signal,
-          );
-        }
-
-        return await applyLayoutsFunctionBody(
+        return await applyLayoutsESM(
           pageElement,
           layoutBundle,
           nestedLayouts,
+          this.projectDir,
           this.mergedComponents,
           this.layoutCache,
-          this.projectDir,
           this.adapter,
           layoutDataMap,
           this.projectId,
           this.projectSlug,
           this.contentSourceId,
           this.renderModes,
+          this.preloadedImportMap ?? undefined,
           reactVersion,
           this.dependencyPinningCacheKey,
           this.dependencyPinningDependencies,
           this.dependencyPinningSource,
           this.requestUrl?.origin,
           this.config,
+          this.isLocalProject,
           this.signal,
         );
       },
       {
         "layout.nested_count": nestedLayouts.length,
         "layout.has_bundle": !!layoutBundle,
-        "layout.use_esm": Boolean(this.config?.experimental?.esmLayouts),
+        "layout.use_esm": true,
       },
     );
   }
@@ -622,7 +596,7 @@ export class LayoutApplicator {
           }
         } catch (error) {
           throwIfAborted(this.signal);
-          logger.warn("Failed applying reserved loading/error components", error);
+          throw error;
         }
 
         return pageElement;

@@ -104,6 +104,13 @@ describe("server/dev-server/route-discovery", () => {
     adapter.fs.files.set("/project/src/app/page.tsx", "export default () => null;");
     adapter.fs.files.set("/project/src/pages/about.tsx", "export default () => null;");
     adapter.fs.files.set("/project/src/pages/guide.md", "# Guide");
+    adapter.fs.files.set(
+      "/project/src/app/(marketing)/dashboard/page.tsx",
+      "export default () => null;",
+    );
+    adapter.fs.files.set("/project/src/app/@modal/settings/page.tsx", "export default () => null;");
+    adapter.fs.files.set("/project/src/app/_components/page.tsx", "export default () => null;");
+    adapter.fs.files.set("/project/src/pages/_document.tsx", "export default () => null;");
     const router = new ApiRouteMatcher();
     const discovery = new RouteDiscovery("/project", adapter, router, {
       directories: { app: "src/app", pages: "src/pages" },
@@ -114,6 +121,31 @@ describe("server/dev-server/route-discovery", () => {
     assertEquals(router.match("/")?.route.page, "src/app/page.tsx");
     assertEquals(router.match("/about")?.route.page, "src/pages/about.tsx");
     assertEquals(router.match("/guide")?.route.page, "src/pages/guide.md");
+    assertEquals(
+      router.match("/dashboard")?.route.page,
+      "src/app/(marketing)/dashboard/page.tsx",
+      "a route group contributes no URL segment",
+    );
+    assertEquals(
+      router.match("/settings")?.route.page,
+      "src/app/@modal/settings/page.tsx",
+      "a parallel-route slot contributes no URL segment",
+    );
+    assertEquals(
+      router.match("/(marketing)/dashboard"),
+      null,
+      "the group directory name must not be addressable",
+    );
+    assertEquals(
+      router.match("/_components"),
+      null,
+      "an underscore-prefixed app directory is private and must not be routable",
+    );
+    assertEquals(
+      router.match("/_document"),
+      null,
+      "an underscore-prefixed pages file is private and must not be routable",
+    );
   });
 
   it("uses configured relative directories with remote filesystem adapters", async () => {

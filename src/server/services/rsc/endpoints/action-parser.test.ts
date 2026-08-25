@@ -79,6 +79,17 @@ describe("server/services/rsc/endpoints/action-parser", () => {
         }),
         400,
       );
+
+      const atLimit = await parseActionBody({
+        id: "action",
+        args: Array.from({ length: RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS }, (_, i) => i),
+      });
+      const body = assertActionBody(atLimit);
+      assertEquals(
+        body.args.length,
+        RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS,
+        "exactly the documented maximum argument count must still be accepted",
+      );
     });
 
     it("rejects inherited and accessor-backed action fields", async () => {

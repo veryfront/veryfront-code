@@ -14,6 +14,7 @@ export interface CacheStore {
   keys(): Iterable<string>;
   size(): number;
   deleteWhere?(predicate: (key: string) => boolean): number;
+  keyBelongsToProject?(key: string, projectId: string): boolean;
 }
 
 function deleteWhereFromKeys(
@@ -36,6 +37,7 @@ export class MapCacheStore implements CacheStore {
   constructor(
     name: string,
     private readonly map: CacheStatsSource,
+    readonly keyBelongsToProject?: (key: string, projectId: string) => boolean,
   ) {
     this.name = name;
   }
@@ -138,7 +140,9 @@ class CacheRegistry {
     const result = new Map<string, string[]>();
 
     for (const [name, store] of this.stores) {
-      const matchingKeys = [...store.keys()].filter((key) => isKeyForProject(key, projectId));
+      const matchingKeys = [...store.keys()].filter((key) =>
+        keyBelongsToProject(store, key, projectId)
+      );
       if (matchingKeys.length) result.set(name, matchingKeys);
     }
 
@@ -149,7 +153,7 @@ class CacheRegistry {
     let count = 0;
     for (const store of this.stores.values()) {
       for (const key of store.keys()) {
-        if (isKeyForProject(key, projectId)) count++;
+        if (keyBelongsToProject(store, key, projectId)) count++;
       }
     }
     return count;
@@ -159,7 +163,7 @@ class CacheRegistry {
     let totalDeleted = 0;
 
     for (const store of this.stores.values()) {
-      totalDeleted += store.deleteWhere?.((key) => isKeyForProject(key, projectId)) ?? 0;
+      totalDeleted += store.deleteWhere?.((key) => keyBelongsToProject(store, key, projectId)) ?? 0;
     }
 
     return totalDeleted;
@@ -193,7 +197,8 @@ class CacheRegistry {
 
     for (const store of this.stores.values()) {
       totalDeleted += store.deleteWhere?.((key) =>
-        isKeyForProject(key, projectId) && isKeyForContentSource(key, projectId, contentSourceId)
+        keyBelongsToProject(store, key, projectId) &&
+        isKeyForContentSource(key, projectId, contentSourceId)
       ) ?? 0;
     }
 
@@ -417,6 +422,10 @@ class CacheRegistry {
   }
 }
 
+function keyBelongsToProject(store: CacheStore, key: string, projectId: string): boolean {
+  return store.keyBelongsToProject?.(key, projectId) ?? isKeyForProject(key, projectId);
+}
+
 export function isKeyForProject(key: string, projectId: string): boolean {
   const normalizedKey = stripRedisPrefix(key);
   const parts = normalizedKey.split(":");
@@ -589,8 +598,12 @@ function isKeyForContentSource(
 
 export const cacheRegistry = new CacheRegistry();
 
-export function registerMapCache(name: string, map: CacheStatsSource): void {
-  cacheRegistry.register(new MapCacheStore(name, map));
+export function registerMapCache(
+  name: string,
+  map: CacheStatsSource,
+  keyBelongsToProject?: (key: string, projectId: string) => boolean,
+): void {
+  cacheRegistry.register(new MapCacheStore(name, map, keyBelongsToProject));
 }
 
 export function registerLRUCache(name: string, cache: LRULike): void {

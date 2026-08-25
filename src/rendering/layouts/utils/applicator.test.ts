@@ -3,7 +3,7 @@ import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
 // Node position injection needs the babel CodeParser contract registered.
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -11,6 +11,7 @@ import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
@@ -43,6 +44,13 @@ const PREVIEW_MODES = {
   compileMode: "production",
   environment: "preview",
 } as const;
+
+/** Drain promise continuations without advancing timer-backed work. */
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 25; index += 1) {
+    await Promise.resolve();
+  }
+}
 
 /** Local development: dev compile, preview instrumentation. */
 const DEVELOPMENT_MODES = {
@@ -336,6 +344,14 @@ describe(
             "project-slug",
             "content-source-id",
             scenario.modes,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            scenario.name === "local development",
           );
 
           __injectReactDOMServerForTests(ReactDOMServer);
@@ -374,6 +390,52 @@ describe(
     });
 
     describe("applyLayoutsFunctionBody", () => {
+      it("uses secure ESM loading for MDX compatibility calls", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const originalRender = mdxRenderer.render;
+        const calls: string[] = [];
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+          render: typeof mdxRenderer.render;
+        };
+        mutableRenderer.loadModuleESM = () => {
+          calls.push("loadModuleESM");
+          return Promise.resolve({
+            default: ({ children }: { children?: React.ReactNode }) =>
+              React.createElement("section", { id: "mdx-layout" }, children),
+          });
+        };
+        mutableRenderer.render = () => {
+          calls.push("render");
+          return React.createElement("div", null, "Migration Required");
+        };
+
+        try {
+          const result = await applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-id",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          );
+
+          assertEquals(calls, ["loadModuleESM"]);
+          assertEquals(result.type instanceof Function, true);
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+          mutableRenderer.render = originalRender;
+        }
+      });
+
       it("uses the requested project React version", async () => {
         const loadedUrls: string[] = [];
         __setServerModuleLoaderForTests((url) => {
@@ -381,14 +443,17 @@ describe(
           return Promise.resolve({ default: React });
         });
 
+        const adapter = createMockAdapter();
+        adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE);
+
         await applyLayoutsFunctionBody(
           React.createElement("div"),
           undefined,
-          [],
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
           {},
           createLayoutComponentCache(),
           "/project",
-          createMockAdapter(),
+          adapter,
           undefined,
           "project-id",
           "project-slug",
@@ -523,6 +588,247 @@ describe(
           "layout read exploded",
           "applyLayoutsFunctionBody must propagate a broken layout rather than render without it",
         );
+      });
+
+      it("rejects a legacy function-body bundle with a migration error", async () => {
+        const error = await assertRejects(() =>
+          applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "return { default: function Layout() { return null; } };",
+            } as MdxBundle,
+            [],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            createMockAdapter(),
+            undefined,
+            "project-fb-legacy-bundle",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          )
+        );
+
+        assertEquals(isVeryfrontError(error), true);
+        if (!isVeryfrontError(error)) throw error;
+        assertEquals(error.slug, "compilation-error");
+        assertEquals(error.message.includes("legacy function-body layout bundle"), true);
+      });
+
+      it("redacts nested layout paths from legacy-bundle migration errors", async () => {
+        const projectDir = "/<PROJECT_DIR>";
+        const privatePath = `${projectDir}/app/blog/layout.mdx`;
+        const error = await assertRejects(() =>
+          applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            undefined,
+            [{
+              kind: "mdx",
+              path: privatePath,
+              bundle: {
+                compiledCode: "return { default: function Layout() { return null; } };",
+              } as MdxBundle,
+            } as LayoutItem],
+            {},
+            createLayoutComponentCache(),
+            projectDir,
+            createMockAdapter(),
+            undefined,
+            "project-fb-private-layout",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          )
+        );
+
+        if (!(error instanceof Error)) throw error;
+        assertEquals(error.message.includes("nested layout 1"), true);
+        assertEquals(error.message.includes(privatePath), false);
+      });
+    });
+
+    describe("request cancellation", () => {
+      it("stops an MDX layout load when the signal is already aborted", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let moduleLoads = 0;
+        mutableRenderer.loadModuleESM = () => {
+          moduleLoads++;
+          return Promise.resolve({ default: () => null });
+        };
+
+        const controller = new AbortController();
+        controller.abort(new Error("request canceled mid-render"));
+
+        try {
+          await assertRejects(
+            () =>
+              applyLayoutsESM(
+                React.createElement("p", { id: "page-body" }, "Text"),
+                {
+                  compiledCode: "export default function Layout() { return null; }",
+                } as MdxBundle,
+                [],
+                "/project",
+                {},
+                createLayoutComponentCache(),
+                createMockAdapter(),
+                undefined,
+                "project-esm-aborted",
+                "project-slug",
+                "content-source-id",
+                PRODUCTION_MODES,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                controller.signal,
+              ),
+            Error,
+            "request canceled mid-render",
+            "an aborted request must stop the MDX layout load instead of letting it run to completion",
+          );
+          assertEquals(moduleLoads, 0, "no module load may start after the request was aborted");
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
+
+      it("stops an MDX layout load when the signal aborts during module loading", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let resolveModule!: (module: { default: () => null }) => void;
+        const moduleLoad = new Promise<{ default: () => null }>((resolve) => {
+          resolveModule = resolve;
+        });
+        let markModuleLoadStarted!: () => void;
+        const moduleLoadStarted = new Promise<void>((resolve) => {
+          markModuleLoadStarted = resolve;
+        });
+        mutableRenderer.loadModuleESM = () => {
+          markModuleLoadStarted();
+          return moduleLoad;
+        };
+
+        const controller = new AbortController();
+
+        try {
+          const layoutResult = applyLayoutsESM(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            createMockAdapter(),
+            undefined,
+            "project-esm-aborted-during-load",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            controller.signal,
+          );
+
+          await moduleLoadStarted;
+          const reason = new Error("request canceled during module load");
+          controller.abort(reason);
+
+          const outcome = await Promise.race([
+            layoutResult.then((): unknown => "resolved", (error: unknown) => error),
+            flushMicrotasks().then((): unknown => "still pending"),
+          ]);
+
+          assertStrictEquals(
+            outcome,
+            reason,
+            "an abort must settle layout application without waiting for a stalled module loader",
+          );
+        } finally {
+          resolveModule({ default: () => null });
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
+      });
+
+      it("preserves cancellation when an aborted MDX module load later rejects", async () => {
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        let rejectModule!: (error: Error) => void;
+        const moduleLoad = new Promise<never>((_resolve, reject) => {
+          rejectModule = reject;
+        });
+        let markModuleLoadStarted!: () => void;
+        const moduleLoadStarted = new Promise<void>((resolve) => {
+          markModuleLoadStarted = resolve;
+        });
+        mutableRenderer.loadModuleESM = () => {
+          markModuleLoadStarted();
+          return moduleLoad;
+        };
+
+        const controller = new AbortController();
+        const cancellation = new Error("request canceled before module failure");
+
+        try {
+          const layoutResult = applyLayoutsESM(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            {
+              compiledCode: "export default function Layout() { return null; }",
+            } as MdxBundle,
+            [],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            createMockAdapter(),
+            undefined,
+            "project-esm-aborted-before-rejection",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            controller.signal,
+          );
+
+          await moduleLoadStarted;
+          controller.abort(cancellation);
+          rejectModule(new Error("module loader failed after cancellation"));
+
+          const error = await assertRejects(() => layoutResult);
+          assertStrictEquals(
+            error,
+            cancellation,
+            "request cancellation must take precedence over a later module-loader rejection",
+          );
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
       });
     });
   },

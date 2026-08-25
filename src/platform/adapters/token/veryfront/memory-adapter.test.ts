@@ -55,6 +55,40 @@ describe("platform/adapters/token/veryfront/memory-adapter", () => {
       assertThrows(() => adapter.set("", "value"), TypeError, "non-empty");
       assertThrows(() => adapter.delete(""), TypeError, "non-empty");
     });
+
+    it("rejects control characters, oversized identifiers, and non-string values", () => {
+      const adapter = createAdapter();
+      assertThrows(
+        () => adapter.get("user\u0000:gmail"),
+        TypeError,
+        "control characters",
+        "NUL in a key must be rejected",
+      );
+      assertThrows(
+        () => adapter.set("a\nb", "v"),
+        TypeError,
+        "control characters",
+        "CR/LF in a key must be rejected",
+      );
+      assertThrows(
+        () => adapter.get("a".repeat(4097)),
+        RangeError,
+        "code units",
+        "keys past 4096 code units must be rejected",
+      );
+      assertThrows(
+        () => adapter.list("user\u0007"),
+        TypeError,
+        "control characters",
+        "list prefixes are validated too",
+      );
+      assertThrows(
+        () => adapter.set("k", 42 as unknown as string),
+        TypeError,
+        "must be a string",
+        "non-string values must be rejected",
+      );
+    });
   });
 
   describe("delete", () => {

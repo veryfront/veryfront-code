@@ -995,11 +995,7 @@ describe("automated review workflow", () => {
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
       "workflow",
     );
-    const permissions = record(workflow.permissions, "permissions");
-    assertEquals(permissions.contents, "read");
-    assertEquals(permissions.issues, "read");
-    assertEquals(permissions["pull-requests"], "write");
-    assertEquals(permissions.statuses, "write");
+    assertEquals(record(workflow.permissions, "permissions"), {});
 
     assertEquals(workflow.concurrency, undefined);
 
@@ -1020,11 +1016,66 @@ describe("automated review workflow", () => {
     );
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
+    const targetJob = record(jobs.target, "target job");
+    const targetIf = String(targetJob.if);
+    for (
+      const condition of [
+        "github.event_name != 'status'",
+        "github.event.issue.pull_request",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.event_name == 'status'",
+        "github.event.context == 'CodeRabbit'",
+        "github.event.state == 'success'",
+        "github.event.description == 'Review completed'",
+      ]
+    ) {
+      assert(
+        targetIf.includes(condition),
+        "target resolution must skip events that no publisher job can use",
+      );
+    }
+    assertEquals(record(targetJob.permissions, "target permissions"), {
+      "pull-requests": "read",
+    });
+    assertEquals(
+      record(targetJob.outputs, "target outputs").key,
+      "${{ steps.resolve.outputs.result }}",
+    );
+    const targetSteps = targetJob.steps;
+    assert(Array.isArray(targetSteps));
+    const targetScript = String(
+      record(
+        record(targetSteps[0], "target resolver").with,
+        "target resolver inputs",
+      )
+        .script,
+    );
+    for (
+      const required of [
+        "context.payload.sha",
+        "context.payload.pull_request?.number",
+        "context.payload.issue?.pull_request",
+        "github.rest.pulls.get",
+        "Could not resolve a valid review target commit",
+      ]
+    ) assert(targetScript.includes(required));
+    assert(
+      !targetScript.includes("pull_request?.head.sha"),
+      "queued pull request events must resolve the current head before choosing a lock",
+    );
+
     const job = record(jobs.review, "review job");
+    assertEquals(record(job.permissions, "review permissions"), {
+      contents: "read",
+      issues: "write",
+      "pull-requests": "write",
+      statuses: "write",
+    });
     const publisherConcurrency = {
-      group: "automated-review-status-publishers",
+      group: "automated-review-${{ needs.target.outputs.key }}",
       queue: "max",
     };
+    assertEquals(job.needs, "target");
     assertEquals(record(job.concurrency, "review concurrency"), {
       ...publisherConcurrency,
     });
@@ -1051,8 +1102,18 @@ describe("automated review workflow", () => {
     );
     const gate = record(steps[1], "gate");
     const script = String(record(gate.with, "gate inputs").script);
+    assertEquals(
+      record(gate.env, "gate environment").TARGET_SHA,
+      "${{ needs.target.outputs.key }}",
+    );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
+    assert(script.includes("process.env.TARGET_SHA"));
+    assert(script.includes("pullRequest.head.sha !== headSha"));
+    assert(
+      !script.includes("const headSha = pullRequest.head.sha"),
+      "the publisher must use the same immutable SHA as its concurrency key",
+    );
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(
       script.includes("allowPullRequestReviews") &&
@@ -1104,20 +1165,24 @@ describe("automated review workflow", () => {
     );
 
     const statusJob = record(jobs.status_review, "status review job");
+    assertEquals(record(statusJob.permissions, "status review permissions"), {
+      contents: "read",
+      "pull-requests": "read",
+      statuses: "write",
+    });
+    assertEquals(statusJob.needs, "target");
     const statusIf = String(statusJob.if);
     for (
       const condition of [
         "github.event.context == 'CodeRabbit'",
         "github.event.state == 'success'",
         "github.event.description == 'Review completed'",
-        "github.event.sender.login == 'coderabbitai[bot]'",
-        "github.event.sender.id == 136622811",
-        "github.event.sender.type == 'Bot'",
       ]
     ) assert(statusIf.includes(condition));
     assert(
-      !statusIf.includes("github.event.creator"),
-      "the status payload has no creator field, so that condition never matches",
+      !statusIf.includes("github.event.sender") &&
+        !statusIf.includes("github.event.creator"),
+      "the webhook is only a wakeup; creator trust comes from REST status history",
     );
     assertEquals(record(statusJob.concurrency, "status concurrency"), {
       ...publisherConcurrency,

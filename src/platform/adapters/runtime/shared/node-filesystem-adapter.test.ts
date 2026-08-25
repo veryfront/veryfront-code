@@ -6,6 +6,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { constants as nodeFsConstants } from "node:fs";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import {
@@ -15,6 +16,7 @@ import {
   resolveNoFollowFlag,
 } from "./node-filesystem-adapter.ts";
 import { setupNodeFsWatcher } from "./shared-watcher.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type AdapterOptions = {
   noFollow?: number;
@@ -75,7 +77,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("reads empty and exact-limit snapshots and rejects invalid or oversized inputs", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-snapshot-" });
     try {
       const empty = `${root}/empty.bin`;
       const exact = `${root}/exact.bin`;
@@ -105,7 +107,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
 
   it("accepts a canonical candidate beneath a symlinked containment root", async () => {
     if (Deno.build.os === "windows") return;
-    const workspace = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-root-" });
+    const workspace = await makeTempDir({ prefix: "veryfront-node-snapshot-root-" });
     const physicalRoot = `${workspace}/physical`;
     const linkedRoot = `${workspace}/linked`;
     try {
@@ -175,6 +177,55 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       [4, 5, 6],
     );
     assertEquals(openedWith, ["r"]);
+  });
+
+  it("opens a POSIX snapshot with the runtime no-follow flag", async () => {
+    const source = new Uint8Array([7, 8, 9]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: BigInt(source.byteLength),
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const openedWith: Array<number | string> = [];
+    const operations = {
+      realpath: (path: string) => Promise.resolve(path),
+      lstat: () => Promise.resolve(stat),
+      open: (_path: string, flags: number | string) => {
+        openedWith.push(flags);
+        return Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array, offset: number, length: number, position: number) => {
+            buffer.set(source.subarray(position, position + length), offset);
+            return Promise.resolve({ bytesRead: length });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+        });
+      },
+    };
+    assertEquals(
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          operations,
+          "posix",
+          0x20000,
+          "/root/file.bin",
+          "/root",
+          3,
+        ),
+      ],
+      [7, 8, 9],
+      "a POSIX snapshot must read the exact admitted bytes",
+    );
+    assertEquals(
+      openedWith,
+      [nodeFsConstants.O_RDONLY | 0x20000],
+      "POSIX snapshot opens must carry O_NOFOLLOW",
+    );
   });
 
   it("rejects a Windows lexical containment escape before candidate filesystem access", async () => {
@@ -908,7 +959,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("creates byte files exclusively and never truncates colliding entries", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-exclusive-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-exclusive-" });
     try {
       const absent = `${root}/created.bin`;
       const existing = `${root}/existing.bin`;
@@ -929,32 +980,43 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("does not guess ownership by deleting a reserved path after write failure", async () => {
-    let closeCalls = 0;
-    let removeCalls = 0;
-    const failure = new Error("injected write failure");
-    const operations = {
-      open: () =>
-        Promise.resolve({
-          writeFile: () => Promise.reject(failure),
-          close: () => {
-            closeCalls++;
-            return Promise.resolve();
-          },
-        }),
-      remove: () => {
-        removeCalls++;
-        return Promise.resolve();
-      },
-    };
-    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { operations });
+    const root = await makeTempDir({ prefix: "veryfront-node-reserved-" });
+    try {
+      const target = `${root}/reserved.bin`;
+      await Deno.writeFile(target, new Uint8Array([9, 8, 7]));
+      let closeCalls = 0;
+      const failure = new Error("injected write failure");
+      const operations = {
+        open: () =>
+          Promise.resolve({
+            writeFile: () => Promise.reject(failure),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      };
+      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { operations });
 
-    const error = await assertRejects(
-      () => requireExclusiveCreator(adapter)("/reserved.bin", new Uint8Array([1])),
-      Error,
-    );
-    assertEquals(error, failure);
-    assertEquals(closeCalls, 1);
-    assertEquals(removeCalls, 0);
+      const error = await assertRejects(
+        () => requireExclusiveCreator(adapter)(target, new Uint8Array([1])),
+        Error,
+      );
+      assertEquals(error, failure);
+      assertEquals(closeCalls, 1);
+      assertEquals(
+        (await Deno.lstat(target)).isFile,
+        true,
+        "a failed exclusive write must not delete a path the adapter does not own",
+      );
+      assertEquals(
+        [...await Deno.readFile(target)],
+        [9, 8, 7],
+        "the pre-existing bytes must survive the failed write",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 
   it("preserves exclusive-create write and handle cleanup failures", async () => {
@@ -1047,7 +1109,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("provides consistent text, byte, metadata, and symlink operations", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-fs-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-fs-" });
     try {
       const adapter = new NodeCompatibleFileSystemAdapter();
       assertEquals(isNativeFileSystemAdapter(adapter), true);
@@ -1110,7 +1172,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("closes watcher resources when iteration returns", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-" });
     try {
       const watcher = new NodeCompatibleFileSystemAdapter().watch(root, {
         recursive: false,
@@ -1135,7 +1197,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("settles watcher shutdown when the caller aborts", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-abort-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-abort-" });
     try {
       const controller = new AbortController();
       const watcher = new NodeCompatibleFileSystemAdapter().watch(root, {
@@ -1155,7 +1217,7 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("rejects watcher readiness when the requested root cannot be acquired", async () => {
-    const root = await Deno.makeTempDir({ prefix: "veryfront-node-watch-missing-" });
+    const root = await makeTempDir({ prefix: "veryfront-node-watch-missing-" });
     const missingRoot = `${root}/missing`;
     const watcher = new NodeCompatibleFileSystemAdapter().watch(missingRoot, {
       recursive: true,

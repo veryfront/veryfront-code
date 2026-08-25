@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { LayoutOrchestrator } from "./layout.ts";
@@ -29,7 +29,86 @@ function createMissingFileAdapter(): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
+/** Drain promise continuations without advancing timer-backed work. */
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 25; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 describe("rendering/orchestrator/layout", () => {
+  it("cancels MDX preloading while its shared import map remains pending", async () => {
+    clearImportMapCache();
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    mutableRenderer.loadModuleESM = () => Promise.resolve({ default: () => null });
+
+    let resolveImportMapRead!: (source: string) => void;
+    const importMapRead = new Promise<string>((resolve) => {
+      resolveImportMapRead = resolve;
+    });
+    let markImportMapReadStarted!: () => void;
+    const importMapReadStarted = new Promise<void>((resolve) => {
+      markImportMapReadStarted = resolve;
+    });
+    const adapter = createMockAdapter();
+    adapter.fs.readFile = () => {
+      markImportMapReadStarted();
+      return importMapRead;
+    };
+    const orchestrator = new LayoutOrchestrator({
+      projectDir: "/pending-import-map-project",
+      projectId: "pending-import-map-project-id",
+      projectSlug: "pending-import-map-project",
+      contentSourceId: "pending-import-map-release",
+      adapter,
+      config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+      mode: "production",
+      environment: "production",
+      layoutCollector: {} as LayoutCollector,
+      layoutCompiler: {} as LayoutCompiler,
+      layoutCache: createLayoutComponentCache(),
+      componentRegistry: {},
+    });
+    const controller = new AbortController();
+    const cancellation = new Error("render canceled during import-map preload");
+    const preloadResult = orchestrator.preloadLayoutModules(
+      [{
+        kind: "mdx",
+        path: "/pending-import-map-project/layout.mdx",
+        bundle: { compiledCode: "export default function Layout() { return null; }" },
+      } as LayoutItem],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      controller.signal,
+    );
+
+    try {
+      await importMapReadStarted;
+      controller.abort(cancellation);
+
+      const outcome = await Promise.race([
+        preloadResult.then((): unknown => "resolved", (error: unknown) => error),
+        flushMicrotasks().then((): unknown => "still pending"),
+      ]);
+
+      assertStrictEquals(
+        outcome,
+        cancellation,
+        "request cancellation must settle preloading without waiting for import-map I/O",
+      );
+    } finally {
+      resolveImportMapRead("{}");
+      await preloadResult.catch(() => undefined);
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+      clearImportMapCache();
+    }
+  });
+
   it("preloads the MDX import map under the exact request context", async () => {
     clearImportMapCache();
     const originalLoadModuleESM = mdxRenderer.loadModuleESM;

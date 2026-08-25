@@ -29,6 +29,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Handler, RoutePattern } from "#veryfront/types";
 import { createHandlerRegistry } from "#veryfront/server/runtime-handler/index.ts";
+import { CONTROL_PLANE_RUN_OPERATION_PATH } from "#veryfront/channels/control-plane-routes.ts";
 import {
   CHANNEL_INVOKE_PATH,
   isChannelDispatchRoute,
@@ -223,6 +224,33 @@ describe("signed-dispatch exemptions: handler ordering invariant", () => {
       `The set of routes the dispatch predicates admit no longer matches the table in this ` +
         `file. Add the new route and its owning handler to ADMITTED_ROUTES so its position ` +
         `relative to ApiHandlerWrapper is checked. ${CONSEQUENCE}`,
+    );
+  });
+
+  it("lists every run operation verb the control-plane predicate admits", () => {
+    // The probe list above can only catch a widened predicate for the shapes it
+    // happens to contain. Read the verb alternation out of the predicate's own
+    // pattern so a fourth run operation cannot be admitted without a row here.
+    const alternation = CONTROL_PLANE_RUN_OPERATION_PATH.source.match(/\(\?:([^)]*)\)\$$/u);
+    assertEquals(
+      alternation !== null,
+      true,
+      "CONTROL_PLANE_RUN_OPERATION_PATH must keep its run operation verbs in a literal " +
+        "alternation group so this inventory can read them",
+    );
+    const verbs = alternation![1]!.split("|").toSorted();
+
+    const runOperationPrefix = `/api/control-plane/runs/${RUN_ID}/`;
+    const listedVerbs = ADMITTED_ROUTES
+      .filter((route) => route.method === "POST" && route.path.startsWith(runOperationPrefix))
+      .map((route) => route.path.slice(runOperationPrefix.length))
+      .toSorted();
+
+    assertEquals(
+      verbs,
+      listedVerbs,
+      `A new signed-dispatch run operation must be added to ADMITTED_ROUTES with its owning ` +
+        `handler, which must sit ahead of ApiHandlerWrapper. ${CONSEQUENCE}`,
     );
   });
 });

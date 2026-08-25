@@ -245,6 +245,73 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       assertEquals(cache.size, 2);
     });
 
+    it("isolates production handlers by content source alone", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const sourceA = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-a",
+        contentSourceId: "source-a",
+      });
+      const sourceB = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-a",
+        contentSourceId: "source-b",
+      });
+
+      assertEquals(
+        sourceA !== sourceB,
+        true,
+        "contentSourceId is caller supplied and must never share a compiled module graph across sources",
+      );
+      assertEquals(cache.size, 2, "each content source gets its own handler entry");
+    });
+
+    it("isolates production handlers by release alone", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const releaseA = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-a",
+        contentSourceId: "source-a",
+      });
+      const releaseB = getRSCHandler("/dir", "project", {
+        mode: "production",
+        releaseId: "release-b",
+        contentSourceId: "source-a",
+      });
+
+      assertEquals(
+        releaseA !== releaseB,
+        true,
+        "two releases on the same content source must not share a handler",
+      );
+      assertEquals(cache.size, 2, "each release gets its own handler entry");
+    });
+
+    it("isolates production handlers by content source when no release is set", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const sourceA = getRSCHandler("/dir", "project", {
+        mode: "production",
+        contentSourceId: "source-a",
+      });
+      const sourceB = getRSCHandler("/dir", "project", {
+        mode: "production",
+        contentSourceId: "source-b",
+      });
+
+      assertEquals(
+        sourceA !== sourceB,
+        true,
+        "a release-less content source must still get its own handler",
+      );
+      assertEquals(cache.size, 2, "each content source gets its own handler entry");
+    });
+
     it("preserves the legacy handler identity for branches when pinning is disabled", () => {
       const cache = createStubCache();
       __injectCacheForTests(cache);

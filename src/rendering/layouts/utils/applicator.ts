@@ -7,13 +7,10 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
-import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
-import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
-import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
-import { getProjectReact } from "#veryfront/react";
-import { ensureValidChild } from "./ensure-valid-child.ts";
+import { applyMDXLayout, applyTSXLayout } from "./component-loader.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -92,6 +89,7 @@ export function applyLayoutsESM(
                   moduleServerOrigin,
                   config,
                   isLocalProject,
+                  signal,
                 }),
               spanAttrs,
             );
@@ -160,6 +158,7 @@ export function applyLayoutsESM(
             moduleServerOrigin,
             config,
             isLocalProject,
+            signal,
           }),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
@@ -175,6 +174,34 @@ export function applyLayoutsESM(
   );
 }
 
+/**
+ * Rejects a legacy function-body layout bundle before it reaches the ESM
+ * loader, where its top-level `return` would surface as an opaque syntax
+ * error. A compiled ESM bundle always contains an `export`; a function-body
+ * bundle produces its layout with a top-level `return` instead.
+ */
+function assertESMLayoutBundle(compiledCode: string | undefined, source: string): void {
+  if (!compiledCode) return;
+  if (/\bexport\b/.test(compiledCode) || !/\breturn\b/.test(compiledCode)) return;
+  throw COMPILATION_ERROR.create({
+    detail: `applyLayoutsFunctionBody received a legacy function-body layout bundle (${source}). ` +
+      "Compiled layout code must be an ES module (e.g. `export default Layout`); " +
+      "the synchronous function-body evaluator was removed for security reasons. " +
+      "Recompile the layout with the current MDX pipeline, or migrate to applyLayoutsESM.",
+  });
+}
+
+/**
+ * Compatibility alias for layout application through the secure ESM loader.
+ *
+ * Accepts the same bundle format as {@link applyLayoutsESM}: compiled layout
+ * code must be an ES module. Legacy function-body bundles (top-level
+ * `return { default: Layout }`) are rejected with a migration error; their
+ * synchronous evaluator was removed for security reasons and pre-dates this
+ * alias delegating to the ESM path.
+ *
+ * @deprecated Use {@link applyLayoutsESM}.
+ */
 export async function applyLayoutsFunctionBody(
   pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
@@ -195,88 +222,39 @@ export async function applyLayoutsFunctionBody(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   signal?: AbortSignal,
+  isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
-  const React = await getProjectReact(reactVersion);
-  let element = pageElement;
-
-  logger.debug("Using function-body wrapping for layouts");
-  logger.debug("Nested layouts to apply:", {
-    count: nestedLayouts.length,
-    layouts: nestedLayouts.map((l) => ({
-      kind: l.kind,
-      path: l.componentPath || l.bundle?.compiledCode?.substring(0, 50),
-    })),
-  });
-
-  for (let i = nestedLayouts.length - 1; i >= 0; i--) {
-    const item = nestedLayouts[i];
-    if (!item) continue;
-
-    logger.debug(`Applying layout ${i}:`, {
-      kind: item.kind,
-      path: item.componentPath,
-    });
-
-    if (item.kind === "mdx" && item.bundle?.compiledCode) {
-      element = mdxRenderer.render(item.bundle.compiledCode, {
-        components: mergedComponents,
-        extractLayout: true,
-        children: element,
-      });
-      continue;
-    }
-
-    if (item.kind !== "tsx" || !item.componentPath) continue;
-
-    try {
-      const LayoutComponent = await loadTSXComponent(
-        item.componentPath,
-        projectDir,
-        tsxLayoutModuleCache,
-        adapter,
-        projectId,
-        projectSlug,
-        contentSourceId,
-        modes,
-        reactVersion,
-        undefined,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-        dependencyPinningSource,
-        moduleServerOrigin,
-        config?.build?.serverExternalPackages,
-        signal,
-      );
-
-      const child = ensureValidChild(element, React);
-
-      logger.debug("Applying TSX layout:", {
-        layoutName: LayoutComponent.name || "Anonymous",
-        childType: React.isValidElement(child) ? getElementTypeName(child) : typeof child,
-      });
-
-      const props = layoutDataMap?.get(item.componentPath);
-
-      element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
-
-      logger.debug("After TSX layout applied:", {
-        pageElementType: React.isValidElement(element)
-          ? getElementTypeName(element)
-          : typeof element,
-      });
-    } catch (e) {
-      logger.error("Failed to compile/import TSX layout (non-ESM path)", e);
-      throw e;
-    }
+  assertESMLayoutBundle(layoutBundle?.compiledCode, "named layout");
+  for (let index = 0; index < nestedLayouts.length; index++) {
+    const item = nestedLayouts[index]!;
+    if (item.kind !== "mdx") continue;
+    assertESMLayoutBundle(
+      item.bundle?.compiledCode,
+      `nested layout ${index + 1}`,
+    );
   }
 
-  if (layoutBundle?.compiledCode) {
-    element = mdxRenderer.render(layoutBundle.compiledCode, {
-      components: mergedComponents,
-      extractLayout: true,
-      children: element,
-    });
-  }
-
-  return element;
+  return await applyLayoutsESM(
+    pageElement,
+    layoutBundle,
+    nestedLayouts,
+    projectDir,
+    mergedComponents,
+    tsxLayoutModuleCache,
+    adapter,
+    layoutDataMap,
+    projectId,
+    projectSlug,
+    contentSourceId,
+    modes,
+    undefined,
+    reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
+    config,
+    isLocalProject,
+    signal,
+  );
 }

@@ -6,6 +6,10 @@ import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import {
+  CONTROL_PLANE_RUN_OPERATION_PATH,
+  CONTROL_PLANE_RUN_PATH,
+} from "#veryfront/channels/control-plane-routes.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
 const MAX_SIGNATURE_JWS_CODE_UNITS = 16 * 1024;
@@ -35,10 +39,6 @@ export const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
 
 /** The one route that accepts a signed channel dispatch envelope. */
 export const CHANNEL_INVOKE_PATH = "/channels/invoke";
-
-const CONTROL_PLANE_RUN_OPERATION_PATH =
-  /^\/api\/control-plane\/runs\/[^/]+\/(?:execute|stream|resume)$/u;
-const CONTROL_PLANE_RUN_PATH = /^\/api\/control-plane\/runs\/[^/]+$/u;
 
 /**
  * True when a method and path pair addresses a registered control-plane handler.

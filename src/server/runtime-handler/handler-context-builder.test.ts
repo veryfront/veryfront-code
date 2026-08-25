@@ -1,11 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildHandlerContext,
   buildMinimalContext,
   type HandlerContextOptions,
 } from "./handler-context-builder.ts";
+
+const prepareHostedConfigContext: NonNullable<HandlerContextOptions["prepareHostedConfigContext"]> =
+  () => Promise.resolve({} as any);
 
 function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContextOptions {
   return {
@@ -19,6 +22,10 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     projectSlug: "my-project",
     projectId: "proj-123",
     releaseId: "rel-456",
+    branchId: "branch-1",
+    branchName: "feature-x",
+    defaultBranchName: "main",
+    prepareHostedConfigContext,
     proxyToken: "secret-token",
     environmentName: "production",
     resolvedEnvironment: "production",
@@ -53,6 +60,26 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.projectSlug, "my-project");
     assertEquals(ctx.projectId, "proj-123");
     assertEquals(ctx.releaseId, "rel-456");
+    assertEquals(
+      ctx.branchId,
+      "branch-1",
+      "the hosted agent-source check needs the canonical branch id",
+    );
+    assertEquals(
+      ctx.branchName,
+      "feature-x",
+      "the hosted agent-source check needs the canonical branch name",
+    );
+    assertEquals(
+      ctx.defaultBranchName,
+      "main",
+      "the hosted agent-source check needs the project default branch name",
+    );
+    assertStrictEquals(
+      ctx.prepareHostedConfigContext,
+      opts.prepareHostedConfigContext,
+      "the hosted config preparer must pass through by identity",
+    );
     assertEquals(ctx.proxyToken, "secret-token");
     assertEquals(ctx.environmentName, "production");
     assertEquals(ctx.resolvedEnvironment, "production");

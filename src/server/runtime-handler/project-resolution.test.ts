@@ -646,5 +646,100 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.parsedDomain.isVeryfrontDomain, true);
       assertEquals(result.parsedDomain.slug, "my-project");
     });
+
+    it("resolves the active release for a production veryfront domain without an x-release-id", async () => {
+      let lookupCount = 0;
+      __injectDepsForTests({
+        parseProjectDomain: () => ({
+          ...defaultParsedDomain,
+          slug: "my-project",
+          environment: "production",
+          isVeryfrontDomain: true,
+          isDraft: false,
+        }),
+        lookupProjectByDomain: () => {
+          lookupCount++;
+          return Promise.resolve({
+            project_id: "proj-7",
+            project_slug: "my-project",
+            project_name: "My Project",
+            environment: { id: "env-7", name: "Production" },
+            release_id: "rel-7",
+          });
+        },
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://my-project.production.veryfront.com/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: { fs: { veryfront: { apiToken: "test-token" } } } as unknown as VeryfrontConfig,
+        reqCtx: { slug: "my-project", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(lookupCount, 1, "a production veryfront domain must look up its release");
+      assertEquals(
+        result.releaseId,
+        "rel-7",
+        "a production veryfront domain must resolve its active release",
+      );
+      assertEquals(result.projectId, "proj-7", "the release lookup must supply the project id");
+      assertEquals(
+        result.environmentName,
+        "Production",
+        "the release lookup must supply the environment name",
+      );
+      assertEquals(
+        result.proxyEnv,
+        "production",
+        "a resolved release pins the production environment",
+      );
+    });
+
+    it("skips the release lookup for a draft veryfront domain", async () => {
+      let lookupCount = 0;
+      __injectDepsForTests({
+        parseProjectDomain: () => ({
+          ...defaultParsedDomain,
+          slug: "my-project",
+          environment: "production",
+          isVeryfrontDomain: true,
+          isDraft: true,
+        }),
+        lookupProjectByDomain: () => {
+          lookupCount++;
+          return Promise.resolve({
+            project_id: "proj-7",
+            project_slug: "my-project",
+            project_name: "My Project",
+            environment: { id: "env-7", name: "Production" },
+            release_id: "rel-7",
+          });
+        },
+        getEnvironmentType: () => undefined,
+      });
+
+      const req = new Request("http://my-project.production.veryfront.com/");
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url);
+      const result = await resolveProject(req, url, headers, {
+        config: { fs: { veryfront: { apiToken: "test-token" } } } as unknown as VeryfrontConfig,
+        reqCtx: { slug: "my-project", mode: undefined, branch: null, token: undefined },
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        wsSlugOverride: undefined,
+      });
+
+      assertEquals(lookupCount, 0, "a draft veryfront domain must not look up a release");
+      assertEquals(
+        result.releaseId,
+        undefined,
+        "a draft veryfront domain must not resolve a release",
+      );
+    });
   });
 });

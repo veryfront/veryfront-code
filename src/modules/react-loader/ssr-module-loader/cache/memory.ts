@@ -320,6 +320,7 @@ registerMapCache("ssr-module-cache", createCacheRegistryWrapper(globalModuleCach
 registerMapCache(
   "ssr-cross-project-cache",
   createCacheRegistryWrapper(globalCrossProjectCache),
+  isCrossProjectCacheKeyForProject,
 );
 registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
 registerMapCache("ssr-in-progress", globalInProgress);
@@ -386,6 +387,11 @@ function parseCrossProjectCacheKeyOwner(
   };
 }
 
+function isCrossProjectCacheKeyForProject(key: string, projectId: string): boolean {
+  const owner = parseCrossProjectCacheKeyOwner(key);
+  return owner.isCrossProjectKey ? owner.projectId === projectId : isKeyForProject(key, projectId);
+}
+
 export function clearSSRModuleCacheForProject(
   projectId: string,
   options: ClearSSRModuleCacheForProjectOptions = {},
@@ -401,11 +407,7 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    const crossProjectOwner = parseCrossProjectCacheKeyOwner(key);
-    const belongsToProject = crossProjectOwner.isCrossProjectKey
-      ? crossProjectOwner.projectId === projectId
-      : isKeyForProject(key, projectId);
-    if (!belongsToProject) continue;
+    if (!isCrossProjectCacheKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
   }
 

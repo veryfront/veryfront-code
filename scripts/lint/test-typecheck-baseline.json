@@ -31,7 +31,6 @@
   "src/middleware/core/pipeline/composer.test.ts",
   "src/modules/react-loader/ssr-module-loader.stress.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
-  "src/platform/adapters/redis/node.test.ts",
   "src/rendering/client/browser-logger.test.ts",
   "src/rendering/element-validator/validator-core.test.ts",
   "src/rendering/layouts/utils/compiler.test.ts",
@@ -41,6 +40,5 @@
   "src/rendering/orchestrator/config.test.ts",
   "src/rendering/utils/react-helpers.test.ts",
   "src/server/build-service-worker.test.ts",
-  "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
-  "src/transforms/mdx/compiler/index.test.ts"
+  "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts"
 ]

@@ -73,6 +73,7 @@ async function withDeployEnv<T>(
   fn: (context: { commitSha: string; sourceDigest: string }) => Promise<T>,
 ): Promise<T> {
   const envKeys = [
+    "GITHUB_SHA",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
     "VERYFRONT_PROJECT_SLUG",
@@ -93,6 +94,7 @@ async function withDeployEnv<T>(
     Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
     Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
     Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+    Deno.env.set("GITHUB_SHA", commitSha);
     Deno.env.delete("VERYFRONT_PROJECT_ID");
     _resetEnvironmentConfig();
 
@@ -119,6 +121,7 @@ function createDeployFetchHandler(options: {
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
+  const uploadedFiles = new Map<string, string>();
 
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -153,10 +156,16 @@ function createDeployFetchHandler(options: {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/projects/my-project/files") {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}/files`) {
-      return Response.json({ data: [], page_info: {} });
+      return Response.json({
+        data: [...uploadedFiles].map(([path, content]) => ({ path, content })),
+        page_info: {},
+      });
     }
     if (request.method === "GET" && url.pathname === `/api/projects/${PROJECT_ID}`) {
       return Response.json({ id: PROJECT_ID, slug: "my-project" });
@@ -174,7 +183,10 @@ function createDeployFetchHandler(options: {
       (url.pathname.startsWith(`/api/projects/${PROJECT_ID}/files/`) ||
         url.pathname.startsWith("/api/projects/my-project/files/"))
     ) {
-      options.uploadedPaths?.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+      const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+      const body = await request.clone().json() as { content: string };
+      uploadedFiles.set(path, body.content);
+      options.uploadedPaths?.push(path);
       return Response.json({});
     }
     if (request.method === "GET" && url.pathname.endsWith("/environments")) {

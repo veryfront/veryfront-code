@@ -27,6 +27,7 @@ import type { SecurityConfig } from "#veryfront/types";
 import { createHandlerRegistry } from "./index.ts";
 import { buildMinimalContext } from "./handler-context-builder.ts";
 import { setServerInitialized } from "#veryfront/server/handlers/monitoring/health.handler.ts";
+import { PLATFORM_LIVENESS_PROBE_PATHS } from "#veryfront/security/http/platform-liveness-probe.ts";
 import { isMonitoringPath } from "./request-utils.ts";
 
 /** Kubelet probe paths, exactly as the operator manifest declares them. */
@@ -58,6 +59,7 @@ async function probe(
   pathname: string,
   securityConfig: SecurityConfig | null,
   env: Record<string, string> = {},
+  method = "GET",
 ): Promise<Response> {
   assertEquals(isMonitoringPath(pathname), true, `${pathname} must take the monitoring fast path`);
 
@@ -66,8 +68,8 @@ async function probe(
   const { registry } = createHandlerRegistry(projectDir, adapter);
   const ctx = buildMinimalContext(projectDir, adapter, securityConfig, false, undefined);
 
-  // A kubelet probe: bare GET, no Authorization header, no cookies.
-  const req = new Request(`http://10.42.0.17:3001${pathname}`, { method: "GET" });
+  // A kubelet probe: bare GET (or HEAD), no Authorization header, no cookies.
+  const req = new Request(`http://10.42.0.17:3001${pathname}`, { method });
   const response = await registry.execute(req, ctx);
   return response ?? new Response("Not Found", { status: 404 });
 }
@@ -125,6 +127,66 @@ describe("kubelet probes vs the project auth gate", () => {
 
   it("answer 200 when the auth gate comes from VERYFRONT_BEARER_TOKEN", async () => {
     await assertProbesAnswerOk(null, { VERYFRONT_BEARER_TOKEN: "vf_probe_token" });
+  });
+
+  it("keeps HEAD exempt on the probe paths", async () => {
+    setServerInitialized(true);
+    try {
+      for (const path of KUBELET_PROBE_PATHS) {
+        const res = await probe(path, BASIC_AUTH, {}, "HEAD");
+        await res.body?.cancel();
+        assertEquals(res.status, 200, `HEAD ${path} is a probe method and must stay exempt`);
+      }
+    } finally {
+      setServerInitialized(false);
+    }
+  });
+
+  it("gates non-probe methods on the probe paths", async () => {
+    setServerInitialized(true);
+    try {
+      for (const path of KUBELET_PROBE_PATHS) {
+        const res = await probe(path, BASIC_AUTH, {}, "POST");
+        await res.body?.cancel();
+        assertEquals(
+          res.status,
+          401,
+          `POST ${path}: only GET and HEAD are exempt; any other method is a site visitor and stays gated`,
+        );
+        assertEquals(res.headers.get("WWW-Authenticate"), 'Basic realm="Secure Area"');
+      }
+    } finally {
+      setServerInitialized(false);
+    }
+  });
+
+  it("keeps /_health gated when the project configures auth", async () => {
+    assertEquals(
+      PLATFORM_LIVENESS_PROBE_PATHS.includes("/_health"),
+      false,
+      "only the orchestrator probe paths may be exempt from the auth gate",
+    );
+    setServerInitialized(true);
+    try {
+      for (const securityConfig of [BASIC_AUTH, BEARER_AUTH]) {
+        const res = await probe("/_health", securityConfig);
+        await res.body?.cancel();
+        assertEquals(
+          res.status,
+          401,
+          "/_health discloses runtime version and build mode, so the project auth gate must still apply",
+        );
+      }
+      const basic = await probe("/_health", BASIC_AUTH);
+      await basic.body?.cancel();
+      assertEquals(
+        basic.headers.get("WWW-Authenticate"),
+        'Basic realm="Secure Area"',
+        "the gated probe path must return the auth challenge",
+      );
+    } finally {
+      setServerInitialized(false);
+    }
   });
 
   it("keeps gating a project page while basic auth is configured", async () => {

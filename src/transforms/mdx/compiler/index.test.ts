@@ -16,7 +16,7 @@ describe("transforms/mdx/compiler/index", () => {
   describe("compileContent", () => {
     it("routes .md files to markdown compiler", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         JSX_SOURCE,
         undefined,
@@ -40,7 +40,7 @@ describe("transforms/mdx/compiler/index", () => {
 
     it("routes .mdx files to MDX compiler", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         JSX_SOURCE,
         undefined,
@@ -64,7 +64,14 @@ describe("transforms/mdx/compiler/index", () => {
     it("defaults target to server", async () => {
       const content = `import Chart from "./Chart.tsx";\n\n# Hi\n\n<Chart />`;
       const compile = (target?: "server" | "browser") =>
-        compileContent("runtime", "/project", content, undefined, "/project/app/page.mdx", target);
+        compileContent(
+          "production",
+          "/project",
+          content,
+          undefined,
+          "/project/app/page.mdx",
+          target,
+        );
 
       const omitted = await compile();
       const server = await compile("server");
@@ -85,7 +92,7 @@ describe("transforms/mdx/compiler/index", () => {
 
     it("passes frontmatter through to markdown compiler", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# Content",
         { title: "Injected" },
@@ -100,7 +107,7 @@ describe("transforms/mdx/compiler/index", () => {
 
     it("lets caller frontmatter override the in-body block", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "---\ntitle: From Body\n---\n# Content",
         { title: "From Caller" },
@@ -115,7 +122,7 @@ describe("transforms/mdx/compiler/index", () => {
 
     it("handles files without extension as MDX", async () => {
       const result = await compileContent(
-        "runtime",
+        "production",
         "/tmp/project",
         "# No Extension\n\n<Chart />",
         undefined,

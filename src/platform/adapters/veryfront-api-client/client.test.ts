@@ -16,6 +16,10 @@ function createClient(config: VeryfrontAPIConfig = baseConfig): VeryfrontApiClie
   return new VeryfrontApiClient(config);
 }
 
+type ResolvedRetryConfig = {
+  config: { retry: { maxRetries: number; initialDelay: number; maxDelay: number } };
+};
+
 describe("VeryfrontApiClient", () => {
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
@@ -59,6 +63,27 @@ describe("VeryfrontApiClient", () => {
       client.setProjectSlug("request-slug");
       client.clearProjectSlug();
       assertEquals(client.getProjectSlug(), "config-slug");
+    });
+
+    it("project-scoped calls fail fast without a slug", () => {
+      const client = createClient({ apiBaseUrl: "http://test.api", apiToken: "token" });
+      const listError = assertThrows(
+        () => client.listFiles(),
+        VeryfrontError,
+        "No project slug configured",
+        "listFiles must refuse to build a request without a project slug",
+      );
+      assertEquals(
+        (listError as VeryfrontError).status,
+        400,
+        "a missing project slug must be reported as a 400, not a downstream failure",
+      );
+      assertThrows(
+        () => client.getFile("index.tsx"),
+        VeryfrontError,
+        "No project slug configured",
+        "getFile must refuse to build a request without a project slug",
+      );
     });
   });
 
@@ -113,6 +138,31 @@ describe("VeryfrontApiClient", () => {
       assertEquals(client.isInitialized(), false);
     });
 
+    it("coalesces concurrent initialize() calls into one getProject round trip", async () => {
+      const client = createClient();
+      let getProjectCalls = 0;
+      const mutable = client as unknown as {
+        operations: { getProject: (projectRef: string) => Promise<{ id: string }> };
+      };
+      mutable.operations.getProject = () => {
+        getProjectCalls++;
+        return Promise.resolve({ id: "11111111-2222-3333-4444-555555555555" });
+      };
+
+      await Promise.all([client.initialize(), client.initialize()]);
+
+      assertEquals(
+        getProjectCalls,
+        1,
+        "concurrent initialize() calls must share one getProject round trip",
+      );
+      assertEquals(
+        client.isInitialized(),
+        true,
+        "the coalesced initialization must still mark the client initialized",
+      );
+    });
+
     it("initialize throws when no slug available", async () => {
       const client = createClient({ apiBaseUrl: "http://test.api", apiToken: "token" });
       await assertRejects(
@@ -126,7 +176,11 @@ describe("VeryfrontApiClient", () => {
   describe("retry config", () => {
     it("uses default retry config", () => {
       const client = createClient({ apiBaseUrl: "http://test.api" });
-      assertEquals(client.isProxyMode(), false);
+      assertEquals(
+        (client as unknown as ResolvedRetryConfig).config.retry,
+        { maxRetries: 3, initialDelay: 1000, maxDelay: 10000 },
+        "the client must apply the documented default retry policy",
+      );
     });
 
     it("accepts custom retry config", () => {
@@ -134,17 +188,63 @@ describe("VeryfrontApiClient", () => {
         apiBaseUrl: "http://test.api",
         retry: { maxRetries: 5, initialDelay: 100, maxDelay: 1000 },
       });
-      assertEquals(client.isProxyMode(), false);
+      assertEquals(
+        (client as unknown as ResolvedRetryConfig).config.retry,
+        { maxRetries: 5, initialDelay: 100, maxDelay: 1000 },
+        "a caller-supplied retry policy must reach the transport unchanged",
+      );
     });
   });
 
   describe("searchFilesWithContent", () => {
-    it("should expose searchFilesWithContent method for pattern-based file search", () => {
+    it("should expose searchFilesWithContent method for pattern-based file search", async () => {
       const client = createClient();
+      const listed: Array<{ limit?: number; pattern?: string }> = [];
+      let perFileReads = 0;
+      const mutable = client as unknown as {
+        operations: {
+          listBranchFiles: (
+            projectRef: string,
+            branchRef: string,
+            options: { limit?: number; pattern?: string },
+          ) => Promise<{ files: Array<{ path: string; content?: string }> }>;
+          getBranchFile: () => Promise<never>;
+        };
+      };
+      mutable.operations.listBranchFiles = (_projectRef, _branchRef, options) => {
+        listed.push(options);
+        return Promise.resolve({
+          files: [{ path: "components/Button.tsx", content: "export default Button;" }],
+        });
+      };
+      mutable.operations.getBranchFile = () => {
+        perFileReads++;
+        return Promise.reject(new Error("unexpected per-file read"));
+      };
+
+      assertEquals(
+        await client.searchFilesWithContent("components/Button.*"),
+        [{ path: "components/Button.tsx", content: "export default Button;" }],
+        "searchFilesWithContent must return the matched files with their content",
+      );
+      assertEquals(
+        listed[0]?.pattern,
+        "components/Button.*",
+        "searchFilesWithContent must forward the caller pattern",
+      );
       // searchFilesWithContent uses limit: 100 (up from 20) to support projects
       // with many files (e.g., 138 XML files) that would otherwise cause
       // excessive cache misses and individual API round-trips.
-      assertEquals(typeof client.searchFilesWithContent, "function");
+      assertEquals(
+        listed[0]?.limit,
+        100,
+        "searchFilesWithContent must request 100 files per page to avoid per-file round trips",
+      );
+      assertEquals(
+        perFileReads,
+        0,
+        "files returned with content must not be re-fetched individually",
+      );
     });
   });
 
@@ -241,6 +341,12 @@ describe("VeryfrontApiClient", () => {
       assertEquals(client.isInitialized(), true);
       client.reset();
       assertEquals(client.isInitialized(), false);
+      assertThrows(
+        () => client.getProjectId(),
+        VeryfrontError,
+        "not initialized",
+        "reset must clear the cached project id so later calls cannot target the previous project",
+      );
     });
   });
 
@@ -289,7 +395,7 @@ describe("VeryfrontApiClient", () => {
   describe("bounded content probes", () => {
     it("forwards expected-missing options for branch and published exact reads", async () => {
       const client = createClient();
-      const calls: Array<[string, boolean | undefined]> = [];
+      const calls: Array<[string, string, string, number, boolean | undefined]> = [];
       const mutable = client as unknown as {
         operations: {
           getBranchFileContentBytesWithinLimit: (
@@ -309,23 +415,23 @@ describe("VeryfrontApiClient", () => {
         };
       };
       mutable.operations.getBranchFileContentBytesWithinLimit = (
-        _projectRef,
-        _branchRef,
+        projectRef,
+        branchRef,
         path,
-        _maximumBytes,
+        maximumBytes,
         options,
       ) => {
-        calls.push([path, options?.expectedMissing]);
+        calls.push([projectRef, branchRef, path, maximumBytes, options?.expectedMissing]);
         return Promise.resolve(new Uint8Array([1]));
       };
       mutable.operations.getReleaseFileContentBytesWithinLimit = (
-        _projectRef,
-        _releaseId,
+        projectRef,
+        releaseId,
         path,
-        _maximumBytes,
+        maximumBytes,
         options,
       ) => {
-        calls.push([path, options?.expectedMissing]);
+        calls.push([projectRef, releaseId, path, maximumBytes, options?.expectedMissing]);
         return Promise.resolve(new Uint8Array([2]));
       };
 
@@ -351,10 +457,14 @@ describe("VeryfrontApiClient", () => {
         ],
         [2],
       );
-      assertEquals(calls, [
-        ["pages/home.tsx", true],
-        ["pages/home.tsx", true],
-      ]);
+      assertEquals(
+        calls,
+        [
+          ["config-slug", "main", "pages/home.tsx", 1, true],
+          ["config-slug", "release-id", "pages/home.tsx", 1, true],
+        ],
+        "bounded reads must forward the project ref, the context ref, the byte cap, and expectedMissing unchanged",
+      );
     });
   });
 });

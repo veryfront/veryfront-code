@@ -15,7 +15,15 @@ describe("dev server cache initialization gate", () => {
   it("runs the cache initializers whenever a persistent local cache exists", async () => {
     const source = await readTextFile(fromFileUrl(new URL("./server.ts", import.meta.url)));
 
-    assertStringIncludes(source, "if (isPersistentLocalCacheEnabled()) {");
+    const gate = "if (isPersistentLocalCacheEnabled()) {";
+    assertStringIncludes(source, gate);
+    const gatedBlock = source.slice(source.indexOf(gate));
+    const gatedBody = gatedBlock.slice(0, gatedBlock.indexOf("\n    }\n"));
+    assertStringIncludes(
+      gatedBody,
+      "initializeDistributedCaches(defaultDistributedCacheInitializers)",
+      "the persistent-cache gate must actually run the default distributed cache initializers",
+    );
     assertEquals(
       source.includes("isDiskCacheConfigured"),
       false,
