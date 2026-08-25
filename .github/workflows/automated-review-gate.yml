@@ -537,6 +537,14 @@ jobs:
               core.setFailed("The review status boundary is invalid");
               return;
             }
+            const parseMergeQueuePullNumber = (headRef) => {
+              if (typeof headRef !== "string") return undefined;
+              const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
+              const number = match ? Number(match[1]) : undefined;
+              return Number.isSafeInteger(number)
+                ? { pullNumber: number, baseHeadSha: match[2].toLowerCase() }
+                : undefined;
+            };
             const collectAll = async (endpoint, parameters, source) => {
               const items = [];
               for await (
@@ -620,15 +628,14 @@ jobs:
                 {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`,
+                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`,
                 },
                 "merge queue refs",
               );
               const seen = new Set();
-              const expectedQueueRef =
-                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`;
               for (const queueRef of refs) {
-                if (queueRef?.ref !== expectedQueueRef) continue;
+                const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+                if (parsed?.pullNumber !== pullNumber) continue;
                 const mergeGroupSha = queueRef?.object?.sha;
                 if (!fullSha.test(mergeGroupSha ?? "")) {
                   throw new Error("Merge queue ref has a malformed commit");
@@ -749,6 +756,7 @@ jobs:
             const pullNumber = Number(process.env.PULL_NUMBER);
             const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
             const baseSha = context.payload.merge_group.base_sha;
+            const fullSha = /^[0-9a-f]{40}$/i;
             // The trusted default-branch helper returns sourceHeadSha until
             // this compatibility fix itself has passed the merge queue.
             const serializedBaseSha = queueEntry.baseHeadSha ??
@@ -756,10 +764,67 @@ jobs:
             if (
               !Number.isSafeInteger(pullNumber) ||
               pullNumber !== queueEntry.pullNumber ||
-              typeof baseSha !== "string" ||
+              !fullSha.test(sourceHeadSha ?? "") ||
+              !fullSha.test(baseSha ?? "") ||
+              !fullSha.test(serializedBaseSha ?? "") ||
               baseSha.toLowerCase() !== serializedBaseSha
             ) {
               core.setFailed("Merge queue identity does not match its serialized lock");
+              return;
+            }
+            const bindingResponse = await github.graphql(
+              `query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    number
+                    state
+                    headRefOid
+                    baseRefName
+                    mergeQueueEntry {
+                      baseCommit { oid }
+                      headCommit { oid }
+                    }
+                  }
+                }
+              }`,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: pullNumber,
+              },
+            );
+            const boundPull = bindingResponse?.repository?.pullRequest;
+            const boundEntry = boundPull?.mergeQueueEntry;
+            const mergeGroupSha = context.payload.merge_group.head_sha;
+            const baseRef = boundPull?.baseRefName;
+            const eventRef = context.payload.merge_group.head_ref;
+            const normalizedEventRef = typeof eventRef === "string" &&
+                eventRef.startsWith("refs/heads/")
+              ? eventRef
+              : `refs/heads/${eventRef}`;
+            const expectedRef = typeof baseRef === "string"
+              ? `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${serializedBaseSha}`
+              : "";
+            if (
+              boundPull?.number !== pullNumber || boundPull?.state !== "OPEN" ||
+              !fullSha.test(mergeGroupSha ?? "") ||
+              boundPull?.headRefOid?.toLowerCase() !== sourceHeadSha ||
+              boundEntry?.baseCommit?.oid?.toLowerCase() !== serializedBaseSha ||
+              boundEntry?.headCommit?.oid?.toLowerCase() !== mergeGroupSha ||
+              typeof baseRef !== "string" || baseRef.length === 0 ||
+              baseRef.length > 1024 || baseRef.includes("\0") ||
+              normalizedEventRef !== expectedRef
+            ) {
+              core.setFailed("Merge group is not bound to the current pull request head");
+              return;
+            }
+            const liveRef = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: expectedRef.slice("refs/".length),
+            });
+            if (liveRef?.data?.object?.sha?.toLowerCase() !== mergeGroupSha) {
+              core.setFailed("Merge queue ref no longer targets this merge group");
               return;
             }
             const result = await publishMergeGroupReviewStatus({
@@ -768,7 +833,8 @@ jobs:
               repo: context.repo.repo,
               pullNumber,
               sourceHeadSha,
-              mergeGroupSha: context.payload.merge_group.head_sha,
+              baseHeadSha: serializedBaseSha,
+              mergeGroupSha,
             });
             if (result.state === "success") {
               core.notice(

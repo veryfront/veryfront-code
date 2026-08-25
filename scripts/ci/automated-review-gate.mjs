@@ -812,7 +812,12 @@ export function parseMergeQueuePullNumber(headRef) {
     : undefined;
 }
 
-function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
+function assertMergeGroupInputs({
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+}) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Merge queue pull request number is invalid");
   }
@@ -821,6 +826,9 @@ function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
   }
   if (!FULL_SHA.test(sourceHeadSha)) {
     throw new Error("Merge queue source commit is malformed");
+  }
+  if (!FULL_SHA.test(baseHeadSha)) {
+    throw new Error("Merge queue base commit is malformed");
   }
 }
 
@@ -849,6 +857,68 @@ function latestReviewGateStatusForPull(statuses, pullNumber) {
   );
 }
 
+const ACTIVE_MERGE_QUEUE_BINDING_QUERY = `
+  query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        number
+        state
+        headRefOid
+        baseRefName
+        mergeQueueEntry {
+          baseCommit { oid }
+          headCommit { oid }
+        }
+      }
+    }
+  }
+`;
+
+async function requireActiveMergeQueueBinding({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+}) {
+  const response = await github.graphql(ACTIVE_MERGE_QUEUE_BINDING_QUERY, {
+    owner,
+    repo,
+    number: pullNumber,
+  });
+  const pull = response?.repository?.pullRequest;
+  const entry = pull?.mergeQueueEntry;
+  const liveBaseHeadSha = entry?.baseCommit?.oid;
+  const queueHeadSha = entry?.headCommit?.oid;
+  const baseRef = pull?.baseRefName;
+  const normalizedBaseHeadSha = baseHeadSha.toLowerCase();
+  if (
+    pull?.number !== pullNumber || pull?.state !== "OPEN" ||
+    pull?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase() ||
+    liveBaseHeadSha?.toLowerCase() !== normalizedBaseHeadSha ||
+    queueHeadSha?.toLowerCase() !== mergeGroupSha.toLowerCase() ||
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error("Merge group is not bound to the current pull request head");
+  }
+  const ref =
+    `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${normalizedBaseHeadSha}`;
+  const parsed = parseMergeQueuePullNumber(`refs/${ref}`);
+  if (
+    parsed?.pullNumber !== pullNumber ||
+    parsed?.baseHeadSha !== normalizedBaseHeadSha
+  ) {
+    throw new Error("Merge queue ref identity is malformed");
+  }
+  const liveRef = await github.rest.git.getRef({ owner, repo, ref });
+  if (liveRef?.data?.object?.sha?.toLowerCase() !== mergeGroupSha.toLowerCase()) {
+    throw new Error("Merge queue ref no longer targets this merge group");
+  }
+}
+
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
 export async function publishMergeGroupReviewStatus({
   github,
@@ -856,12 +926,27 @@ export async function publishMergeGroupReviewStatus({
   repo,
   pullNumber,
   sourceHeadSha,
+  baseHeadSha,
   mergeGroupSha,
 }) {
   let failure;
   let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
   try {
-    assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha });
+    assertMergeGroupInputs({
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+    });
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+    });
     const pull = await github.rest.pulls.get({
       owner,
       repo,
@@ -989,6 +1074,15 @@ export async function publishMergeGroupReviewStatus({
         "Human reviewer is no longer trusted for merge queue reuse",
       );
     }
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+    });
     currentReviewStatus = latestReviewStatus;
     const description = `Reused exact-head review for PR #${pullNumber}`;
     await github.rest.repos.createCommitStatus({
@@ -1069,6 +1163,7 @@ export async function reconcileActiveMergeGroupReviewStatuses({
         repo,
         pullNumber,
         sourceHeadSha,
+        baseHeadSha: parsed.baseHeadSha,
         mergeGroupSha,
       }),
     );

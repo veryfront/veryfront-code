@@ -129,6 +129,25 @@ function associatedPull(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function activeQueueBinding(overrides: Record<string, unknown> = {}) {
+  return {
+    repository: {
+      pullRequest: {
+        number: 1,
+        state: "OPEN",
+        headRefOid: HEAD,
+        baseRefName: BASE_REF,
+        mergeQueueEntry: {
+          state: "AWAITING_CHECKS",
+          baseCommit: { oid: BASE_HEAD },
+          headCommit: { oid: OTHER_HEAD },
+        },
+        ...overrides,
+      },
+    },
+  };
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${label} must be a record`);
@@ -758,6 +777,8 @@ function githubFixture(options: {
   permissionError?: Error;
   pullAuthor?: string;
   draft?: boolean;
+  queueBindings?: Record<string, unknown>[];
+  queueRefHeads?: string[];
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -768,9 +789,19 @@ function githubFixture(options: {
     timeline: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const refReads: Record<string, unknown>[] = [];
   const pageReads = new Map<string, number>();
   let pullRead = 0;
+  let queueBindingRead = 0;
+  let queueRefRead = 0;
   const github = {
+    graphql: () => {
+      const responses = options.queueBindings ?? [activeQueueBinding()];
+      const data = responses[
+        Math.min(queueBindingRead++, responses.length - 1)
+      ];
+      return Promise.resolve(data);
+    },
     paginate: {
       async *iterator(endpoint: unknown) {
         const name = Object.entries(endpoints).find(([, value]) =>
@@ -816,7 +847,15 @@ function githubFixture(options: {
         listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
       },
-      git: { listMatchingRefs: endpoints.refs },
+      git: {
+        listMatchingRefs: endpoints.refs,
+        getRef: (parameters: Record<string, unknown>) => {
+          refReads.push(parameters);
+          const heads = options.queueRefHeads ?? [OTHER_HEAD];
+          const sha = heads[Math.min(queueRefRead++, heads.length - 1)];
+          return Promise.resolve({ data: { object: { sha } } });
+        },
+      },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
         getCommit: () =>
@@ -839,7 +878,7 @@ function githubFixture(options: {
       },
     },
   };
-  return { github, published };
+  return { github, published, refReads };
 }
 
 describe("automated review publication", () => {
@@ -1430,6 +1469,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1442,6 +1482,102 @@ describe("merge queue review propagation", () => {
       description: "Reused exact-head review for PR #1",
       target_url: "https://example.test/review-proof",
     }]);
+    assertEquals(fixture.refReads, [
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+      },
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+      },
+    ]);
+  });
+
+  it("fails closed when the live merge-queue binding does not match", async () => {
+    const staleBindings = [
+      ["source", activeQueueBinding({ headRefOid: OTHER_HEAD })],
+      ["base", activeQueueBinding({
+        mergeQueueEntry: {
+          state: "AWAITING_CHECKS",
+          baseCommit: { oid: HEAD },
+          headCommit: { oid: OTHER_HEAD },
+        },
+      })],
+      ["synthetic head", activeQueueBinding({
+        mergeQueueEntry: {
+          state: "AWAITING_CHECKS",
+          baseCommit: { oid: BASE_HEAD },
+          headCommit: { oid: HEAD },
+        },
+      })],
+      ["missing entry", activeQueueBinding({ mergeQueueEntry: null })],
+    ] as const;
+    for (const [label, binding] of staleBindings) {
+      const fixture = githubFixture({
+        pages: {
+          reviews: [[review({ state: "APPROVED" })]],
+          statuses: [[automatedReviewStatus()]],
+        },
+        queueBindings: [binding],
+      });
+      const result = await publishMergeGroupReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+      });
+      assertEquals(result.state, "failure", label);
+      assertEquals(fixture.published[0]?.state, "failure");
+    }
+
+    const replacedRef = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueRefHeads: [HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: replacedRef.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(replacedRef.published[0]?.state, "failure");
+  });
+
+  it("rechecks the live merge-queue binding before publishing success", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueBindings: [
+        activeQueueBinding(),
+        activeQueueBinding({ headRefOid: OTHER_HEAD }),
+      ],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published[0]?.state, "failure");
   });
 
   it("does not reuse proof that predates a base-ref issue event", async () => {
@@ -1470,6 +1606,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
 
@@ -1505,6 +1642,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1529,6 +1667,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 2,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1556,6 +1695,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1605,8 +1745,9 @@ describe("merge queue review propagation", () => {
         owner: "veryfront",
         repo: "veryfront-code",
         pullNumber: 1,
-        sourceHeadSha: HEAD,
-        mergeGroupSha: OTHER_HEAD,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, "failure");
       assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
@@ -1626,6 +1767,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1643,6 +1785,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(sourceDriftResult.state, "failure");
@@ -1691,6 +1834,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1722,6 +1866,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1760,8 +1905,9 @@ describe("merge queue review propagation", () => {
         owner: "veryfront",
         repo: "veryfront-code",
         pullNumber: 1,
-        sourceHeadSha: HEAD,
-        mergeGroupSha: OTHER_HEAD,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, candidate.state);
       assertEquals(fixture.published[0]?.state, candidate.state);
@@ -2088,6 +2234,7 @@ describe("review proof invalidation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(
@@ -2643,6 +2790,8 @@ describe("automated review workflow", () => {
         "publishIndependentFailure",
         "listMatchingRefs",
         "createCommitStatus",
+        "parseMergeQueuePullNumber",
+        "`heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`",
         "process.env.TARGET_SHA",
         "process.env.PULL_NUMBER",
         "Number.isSafeInteger",
@@ -2654,6 +2803,10 @@ describe("automated review workflow", () => {
         "the invalidator must resolve its pull request the way the resolver does",
       );
     }
+    assert(
+      !invalidateScript.includes("pr-${pullNumber}-${headSha}"),
+      "the independent fallback must not treat the queue-ref base suffix as a source head",
+    );
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
     assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");
@@ -2692,6 +2845,20 @@ describe("automated review workflow", () => {
       mergeGroupScript.includes("queueEntry.sourceHeadSha"),
       "the merge-group job must remain compatible with the trusted pre-fix parser until this PR merges",
     );
+    for (
+      const required of [
+        "github.graphql",
+        "mergeQueueEntry",
+        "baseCommit",
+        "headCommit",
+        "github.rest.git.getRef",
+      ]
+    ) {
+      assert(
+        mergeGroupScript.includes(required),
+        "the merge-group job must bind the event to the live queue entry",
+      );
+    }
     assert(
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",
