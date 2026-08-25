@@ -55,7 +55,11 @@ export function parseReviewWakeupRun(run) {
 }
 
 /** Bind a parsed wakeup to one current PR before granting write authority. */
-export function matchesReviewWakeupPullRequest(signal, pullRequest, repository) {
+export function matchesReviewWakeupPullRequest(
+  signal,
+  pullRequest,
+  repository,
+) {
   return pullRequest?.number === signal?.pullNumber &&
     pullRequest?.state === "open" &&
     pullRequest?.head?.ref === signal?.headBranch &&
