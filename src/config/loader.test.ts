@@ -921,6 +921,48 @@ export default config as const;
         }
       });
 
+      it("classifies dependencies without project-controlled array helpers", async () => {
+        const originalPush = Array.prototype.push;
+        const originalIterator = Array.prototype[Symbol.iterator];
+        const message =
+          'Module not found "npm:left-pad".\n  hint: install it\n  at file:///app/veryfront.config.ts';
+        let error: VeryfrontError;
+
+        try {
+          Array.prototype.push = function (...values: unknown[]): number {
+            if (values[0] === 'Module not found "npm:left-pad".') {
+              throw new Error("poisoned push");
+            }
+            return TestReflectApply(originalPush, this, values) as number;
+          };
+          Array.prototype[Symbol.iterator] = function (): ArrayIterator<unknown> {
+            if (this[0] === message) throw new Error("poisoned iterator");
+            return TestReflectApply(originalIterator, this, []) as ArrayIterator<unknown>;
+          };
+
+          error = await loadFailure(
+            "vf-config-hostile-array-",
+            `throw new Error(${JSON.stringify(message)});\n`,
+          );
+        } finally {
+          Array.prototype.push = originalPush;
+          Array.prototype[Symbol.iterator] = originalIterator;
+        }
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("classifies an installable legacy uppercase npm package", async () => {
+        const error = await loadFailure(
+          "vf-config-uppercase-package-",
+          `throw new Error("Cannot find package 'JSONStream' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "JSONStream");
+      });
+
       it("keeps a secret in a subpath out of any package claim", async () => {
         // Falling through to the parse error routes the text through
         // summarizeConfigLoadCause, which redacts and bounds it; the

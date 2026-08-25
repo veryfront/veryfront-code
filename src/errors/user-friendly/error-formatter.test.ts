@@ -122,7 +122,7 @@ describe("formatUserError", () => {
     }));
 
     assert(result.includes("Install the package named in the error"));
-    assert(result.includes("deno add npm:<PACKAGE_NAME>"));
+    assert(result.includes("deno add <PACKAGE_SPECIFIER>"));
     assertEquals(result.includes("React is in your import map"), false);
   });
 

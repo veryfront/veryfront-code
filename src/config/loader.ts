@@ -1666,9 +1666,9 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  * `VeryfrontError.message` and its context, which callers log.
  */
 function missingPackageName(specifier: string): string | undefined {
-  const hasRuntimePrefix =
-    ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean ||
-    ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean;
+  const hasNpmPrefix = ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
+  const hasJsrPrefix = ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean;
+  const hasRuntimePrefix = hasNpmPrefix || hasJsrPrefix;
   const bare = hasRuntimePrefix
     ? ReflectApply(StringPrototypeSlice, specifier, [4]) as string
     : specifier;
@@ -1695,7 +1695,13 @@ function missingPackageName(specifier: string): string | undefined {
   // the real fault, is not installable at all. Falling through to the parse
   // error keeps the runtime's own message, which names the whole specifier.
   if (parsed.subpath !== null) return undefined;
-  if (!isValidServerExternalPackageName(parsed.packageName)) return undefined;
+  if (
+    hasJsrPrefix
+      ? !isValidServerExternalPackageName(parsed.packageName)
+      : !isInstallableLegacyNpmPackageName(parsed.packageName)
+  ) {
+    return undefined;
+  }
   if (parsed.packageName === "node_modules" || parsed.packageName === "favicon.ico") {
     return undefined;
   }
@@ -1713,6 +1719,20 @@ function missingPackageName(specifier: string): string | undefined {
       MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1,
     ]) as string}…`
     : clean;
+}
+
+const LEGACY_NPM_PACKAGE_NAME_PATTERN =
+  /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
+
+/** Accept existing npm names without broadening server-external configuration. */
+function isInstallableLegacyNpmPackageName(packageName: string): boolean {
+  return packageName.length <= MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH &&
+    ReflectApply(
+        RegExpPrototypeExec,
+        LEGACY_NPM_PACKAGE_NAME_PATTERN,
+        [packageName],
+      ) !== null;
 }
 
 /**
@@ -1787,12 +1807,17 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
  * phrasing changes needs updating in both places.
  */
 function reportedMissingSpecifier(message: string): string | undefined {
-  const candidates = [message];
   const firstLine = firstLineIfOnlyRuntimeTrailerFollows(message);
-  if (firstLine !== undefined) candidates.push(firstLine);
+  const candidateCount = firstLine === undefined ? 1 : 2;
 
-  for (const line of candidates) {
-    for (const pattern of MISSING_SPECIFIER_PATTERNS) {
+  for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
+    const line = candidateIndex === 0 ? message : firstLine ?? message;
+    for (
+      let patternIndex = 0;
+      patternIndex < MISSING_SPECIFIER_PATTERNS.length;
+      patternIndex += 1
+    ) {
+      const pattern = MISSING_SPECIFIER_PATTERNS[patternIndex]!;
       // Captured intrinsics, like the rest of this module: a trusted config
       // executes in the shared host realm and can poison `String.prototype`
       // before throwing, and a classifier that threw would leave the caller

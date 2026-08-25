@@ -50,7 +50,7 @@ describe("errors/catalog/module-errors", () => {
     it("dependency-missing should give package-neutral recovery guidance", () => {
       const solution = MODULE_ERROR_CATALOG["dependency-missing"];
       assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example, "deno add npm:<PACKAGE_NAME>");
+      assertEquals(solution?.example, "deno add <PACKAGE_SPECIFIER>");
       assertEquals(JSON.stringify(solution).toLowerCase().includes("react"), false);
     });
 
