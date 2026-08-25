@@ -266,7 +266,7 @@
 **Key Features**:
 
 - Input validation with Zod
-- Path traversal protection
+- Path containment helpers (`validateLexicalPath`), plus enforced read scope for sandboxed workers and isolated Pages `ctx.fs`
 - CORS configuration
 - CSP (Content Security Policy)
 - Rate limiting
