@@ -56,6 +56,15 @@ function describeErrorCategory(error: unknown): string {
   return typeof code === "string" && code ? `${error.name || "Error"}(${code})` : error.name;
 }
 
+function describeRemoteModuleUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "remote module";
+  }
+}
+
 async function removeLegacyHTTPModuleCache(projectDir: string | undefined): Promise<void> {
   if (!projectDir) return;
 
@@ -317,8 +326,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             } else {
               return {
                 errors: [{
-                  text:
-                    `Failed to fetch locked remote module ${lockfileEntry.resolved}: ${res.status}`,
+                  text: `Failed to fetch locked remote module ${
+                    describeRemoteModuleUrl(lockfileEntry.resolved)
+                  }: ${res.status}`,
                 } as Message],
               };
             }
@@ -326,7 +336,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             if (error instanceof OutboundRequestBlockedError) throw error;
             return {
               errors: [{
-                text: `Failed to fetch locked remote module ${lockfileEntry.resolved}`,
+                text: `Failed to fetch locked remote module ${
+                  describeRemoteModuleUrl(lockfileEntry.resolved)
+                }`,
               } as Message],
             };
           }
