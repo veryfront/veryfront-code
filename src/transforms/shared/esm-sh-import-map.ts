@@ -164,16 +164,24 @@ const FILE_EXTENSION = /\.[A-Za-z][A-Za-z0-9]*$/;
  * called `npm`, and a path is not a package coordinate merely for containing
  * one, so the route is recognised only at the front of a known CDN's path.
  */
+function isScopeSegment(segment: string | undefined): boolean {
+  if (segment === undefined) return false;
+
+  // A scope marker may arrive percent-encoded, as `%40scope`, and `pathname`
+  // does not decode it.
+  return segment.startsWith("@") || segment.toLowerCase().startsWith("%40");
+}
+
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
   if (
     PACKAGE_ROUTE_HOSTS.has(url.hostname) && segments[0] !== undefined &&
     PACKAGE_COORDINATE_ROUTES.has(segments[0])
   ) {
-    return segments[1]?.startsWith("@") ? 3 : 2;
+    return isScopeSegment(segments[1]) ? 3 : 2;
   }
 
   if (PACKAGE_ROOT_HOSTS.has(url.hostname)) {
-    return segments[0]?.startsWith("@") ? 2 : 1;
+    return isScopeSegment(segments[0]) ? 2 : 1;
   }
 
   return -1;
@@ -256,8 +264,15 @@ function isSingleModuleMapping(mapping: string): boolean {
       // than silently pointing at a different package.
       // A version disambiguates a reserved name: esm.sh reads `stable@1` as a
       // package coordinate, so `stable@1/sub` is that package's export rather
-      // than a channel route.
-      if (isReservedCoordinateName(parsed.packageName) && parsed.version === null) return true;
+      // than a channel route. A build channel already occupying the first
+      // segment does the same, since `v135/v8/sub` reads back as the package
+      // `v8` while a bare `stable/sub` reads back as the package `sub`.
+      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(mapping);
+      if (
+        isReservedCoordinateName(parsed.packageName) && parsed.version === null && !hasBuildChannel
+      ) {
+        return true;
+      }
 
       // A trailing separator alone is the package root written as a directory.
       return parsed.subpath !== "" && parsed.subpath !== "/";

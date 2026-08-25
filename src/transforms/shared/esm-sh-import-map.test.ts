@@ -214,4 +214,27 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "the scope must not be mistaken for an export when the separator trails",
     );
   });
+
+  it("recognises a percent-encoded scope in a CDN coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://unpkg.com/%40scope/pkg@2" }),
+      "https://unpkg.com/%40scope/pkg@2/sub",
+      "pathname does not decode the scope marker, so the check has to accept both spellings",
+    );
+  });
+
+  it("appends below a build-prefixed package named like a build prefix", () => {
+    // The channel occupies the first segment, so `v135/v8/sub` reads back as
+    // the package `v8`. Only a bare `v8` or `stable` carries the collision.
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh/v135/v8" }),
+      "https://esm.sh/v135/v8/sub",
+      "a build channel disambiguates the coordinate the way a version does",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh/v8" }),
+      "https://esm.sh/v8",
+      "without a channel the collision stands and the mapping stays exact",
+    );
+  });
 });
