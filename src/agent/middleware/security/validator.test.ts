@@ -90,6 +90,18 @@ describe("InputValidator", () => {
     assertEquals(result.violations.length, 2);
   });
 
+  it("preserves the configured position of sticky blocked patterns", async () => {
+    const pattern = /secret/y;
+    pattern.lastIndex = "prefix ".length;
+    const validator = new InputValidator({ blockedPatterns: [Object.freeze(pattern)] });
+
+    const result = await validator.validate("prefix secret");
+
+    assertEquals(result.valid, false);
+    assertEquals(result.violations.length, 1);
+    assertEquals(pattern.lastIndex, "prefix ".length);
+  });
+
   it("sanitizes harmful markup when enabled", async () => {
     const validator = new InputValidator({ sanitize: true });
 
@@ -135,6 +147,18 @@ describe("OutputFilter", () => {
 
     assertEquals(result.filtered, "[REDACTED] [REDACTED] [REDACTED]");
     assertEquals(result.violations.length, 2);
+  });
+
+  it("redacts from the configured position of a sticky blocked pattern", async () => {
+    const pattern = /secret/y;
+    pattern.lastIndex = "prefix ".length;
+    const filter = new OutputFilter({ blockedPatterns: [Object.freeze(pattern)] });
+
+    const result = await filter.filter("prefix secret");
+
+    assertEquals(result.filtered, "prefix [REDACTED]");
+    assertEquals(result.violations.length, 1);
+    assertEquals(pattern.lastIndex, "prefix ".length);
   });
 });
 

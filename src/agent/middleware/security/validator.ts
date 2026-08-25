@@ -100,7 +100,11 @@ const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
 ];
 
 function freshStatefulPattern(pattern: RegExp): RegExp {
-  return pattern.global || pattern.sticky ? new RegExp(pattern.source, pattern.flags) : pattern;
+  if (!pattern.global && !pattern.sticky) return pattern;
+
+  const matcher = new RegExp(pattern.source, pattern.flags);
+  if (pattern.sticky) matcher.lastIndex = pattern.lastIndex;
+  return matcher;
 }
 
 /**
