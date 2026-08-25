@@ -8,12 +8,19 @@ const DEFAULT_CACHE_ENTRIES = 64;
 const MAX_CACHE_ENTRIES = 64;
 const MAX_KEYS = 100;
 const MAX_KID_LENGTH = 256;
+const MIN_RSA_MODULUS_BYTES = 256;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
+const RSA_PUBLIC_EXPONENT = "AQAB";
 const RSA_ALGORITHMS = new Set(["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]);
 const EC_ALGORITHMS_BY_CURVE = new Map([
   ["P-256", new Set(["ES256"])],
   ["P-384", new Set(["ES384"])],
   ["P-521", new Set(["ES512"])],
+]);
+const EC_COORDINATE_BYTES_BY_CURVE = new Map([
+  ["P-256", 32],
+  ["P-384", 48],
+  ["P-521", 66],
 ]);
 
 export type PublicJwk = Readonly<{
@@ -105,6 +112,9 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       if (firstKey !== undefined) {
         return compatibleKey(firstKey, alg);
       }
+      if (keyOptions.forceRefresh === true) {
+        throw new TypeError("JWKS does not contain the requested kid");
+      }
       const refreshed = await load(jwksUri, timeoutMs, true);
       const refreshedKey = refreshed.keys.get(kid);
       if (refreshedKey === undefined) {
@@ -126,10 +136,12 @@ async function fetchJwks(jwksUri: string, timeoutMs: number): Promise<JwksDocume
       validateJwksUrl(candidate);
     },
   });
-  return parseJwksDocument(parsed);
+  return await parseJwksDocument(parsed);
 }
 
-function parseJwksDocument(value: { readonly [key: string]: unknown }): JwksDocument {
+async function parseJwksDocument(
+  value: { readonly [key: string]: unknown },
+): Promise<JwksDocument> {
   const topLevelKeys = Object.keys(value);
   if (topLevelKeys.length !== 1 || topLevelKeys[0] !== "keys") {
     throw new TypeError("JWKS must contain only the top-level keys field");
@@ -140,7 +152,7 @@ function parseJwksDocument(value: { readonly [key: string]: unknown }): JwksDocu
   }
   const output = new Map<string, PublicJwk>();
   for (const key of keys) {
-    const parsed = parsePublicJwk(key);
+    const parsed = await parsePublicJwk(key);
     if (output.has(parsed.kid)) {
       throw new TypeError("JWKS keys must not contain duplicate kid values");
     }
@@ -149,7 +161,7 @@ function parseJwksDocument(value: { readonly [key: string]: unknown }): JwksDocu
   return Object.freeze({ keys: output });
 }
 
-function parsePublicJwk(value: unknown): PublicJwk {
+async function parsePublicJwk(value: unknown): Promise<PublicJwk> {
   if (!isPlainObject(value)) {
     throw new TypeError("JWKS key must be a plain object");
   }
@@ -166,25 +178,32 @@ function parsePublicJwk(value: unknown): PublicJwk {
   }
   rejectPrivateOrSymmetricMaterial(value);
   if (kty === "RSA") {
-    const key = parseRsaKey(value, kid, use, alg, keyOps);
     if (alg !== undefined && !RSA_ALGORITHMS.has(alg)) {
       throw new TypeError("JWKS key algorithm must be compatible with its key type");
     }
+    const key = await parseRsaKey(value, kid, use, alg, keyOps);
     return key;
   }
-  return parseEcKey(value, kid, use, alg, keyOps);
+  return await parseEcKey(value, kid, use, alg, keyOps);
 }
 
-function parseRsaKey(
+async function parseRsaKey(
   value: { readonly [key: string]: unknown },
   kid: string,
   use: unknown,
   alg: string | undefined,
   keyOps: readonly ["verify"] | undefined,
-): PublicJwk {
+): Promise<PublicJwk> {
   const n = parseBase64UrlMember(value.n, "n");
   const e = parseBase64UrlMember(value.e, "e");
-  return freezeKey({
+  const modulus = decodeBase64UrlMember(n, "n");
+  if (modulus.byteLength < MIN_RSA_MODULUS_BYTES) {
+    throw new TypeError("JWKS RSA key modulus must be at least 2048 bits");
+  }
+  if (e !== RSA_PUBLIC_EXPONENT) {
+    throw new TypeError("JWKS RSA key exponent must be 65537");
+  }
+  const key = freezeKey({
     kty: "RSA",
     kid,
     ...(use === "sig" ? { use: "sig" as const } : {}),
@@ -193,33 +212,50 @@ function parseRsaKey(
     e,
     ...(keyOps === undefined ? {} : { key_ops: keyOps }),
   });
+  await importPublicJwk(key, alg ?? "RS256");
+  return key;
 }
 
-function parseEcKey(
+async function parseEcKey(
   value: { readonly [key: string]: unknown },
   kid: string,
   use: unknown,
   alg: string | undefined,
   keyOps: readonly ["verify"] | undefined,
-): PublicJwk {
+): Promise<PublicJwk> {
   const crv = value.crv;
   if (typeof crv !== "string" || !EC_ALGORITHMS_BY_CURVE.has(crv)) {
+    throw new TypeError("JWKS EC key uses an unsupported curve");
+  }
+  const coordinateBytes = EC_COORDINATE_BYTES_BY_CURVE.get(crv);
+  if (coordinateBytes === undefined) {
     throw new TypeError("JWKS EC key uses an unsupported curve");
   }
   const compatibleAlgorithms = EC_ALGORITHMS_BY_CURVE.get(crv);
   if (alg !== undefined && compatibleAlgorithms !== undefined && !compatibleAlgorithms.has(alg)) {
     throw new TypeError("JWKS key algorithm must be compatible with its key type");
   }
-  return freezeKey({
+  const x = parseBase64UrlMember(value.x, "x");
+  const y = parseBase64UrlMember(value.y, "y");
+  if (
+    decodeBase64UrlMember(x, "x").byteLength !== coordinateBytes ||
+    decodeBase64UrlMember(y, "y").byteLength !== coordinateBytes
+  ) {
+    throw new TypeError("JWKS EC key coordinate length must match its curve");
+  }
+  const key = freezeKey({
     kty: "EC",
     kid,
     ...(use === "sig" ? { use: "sig" as const } : {}),
     ...(alg === undefined ? {} : { alg }),
     crv,
-    x: parseBase64UrlMember(value.x, "x"),
-    y: parseBase64UrlMember(value.y, "y"),
+    x,
+    y,
     ...(keyOps === undefined ? {} : { key_ops: keyOps }),
   });
+  const defaultAlgorithm = compatibleAlgorithms?.values().next().value;
+  await importPublicJwk(key, alg ?? defaultAlgorithm ?? "ES256");
+  return key;
 }
 
 function compatibleKey(key: PublicJwk, expectedAlg: string): PublicJwk {
@@ -287,6 +323,62 @@ function parseBase64UrlMember(value: unknown, member: string): string {
   return value;
 }
 
+function decodeBase64UrlMember(value: string, member: string): Uint8Array {
+  try {
+    const padded = `${value.replaceAll("-", "+").replaceAll("_", "/")}${
+      "=".repeat((4 - value.length % 4) % 4)
+    }`;
+    return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+  } catch (error) {
+    throw new TypeError(`JWKS key ${member} member is malformed`, { cause: error });
+  }
+}
+
+async function importPublicJwk(key: PublicJwk, alg: string): Promise<void> {
+  let jwk: JsonWebKey;
+  if (key.kty === "RSA") {
+    if (key.n === undefined || key.e === undefined) {
+      throw new TypeError("JWKS RSA key material is malformed");
+    }
+    jwk = { kty: "RSA", n: key.n, e: key.e };
+  } else {
+    if (key.crv === undefined || key.x === undefined || key.y === undefined) {
+      throw new TypeError("JWKS EC key material is malformed");
+    }
+    jwk = { kty: "EC", crv: key.crv, x: key.x, y: key.y };
+  }
+  try {
+    await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      importAlgorithmFor(key, alg),
+      false,
+      ["verify"],
+    );
+  } catch (error) {
+    throw new TypeError("JWKS key material must be importable as a public signing key", {
+      cause: error,
+    });
+  }
+}
+
+function importAlgorithmFor(
+  key: PublicJwk,
+  alg: string,
+): EcKeyImportParams | RsaHashedImportParams {
+  if (key.kty === "EC") {
+    if (typeof key.crv !== "string") {
+      throw new TypeError("JWKS EC key uses an unsupported curve");
+    }
+    return { name: "ECDSA", namedCurve: key.crv };
+  }
+  const hash = alg.endsWith("384") ? "SHA-384" : alg.endsWith("512") ? "SHA-512" : "SHA-256";
+  return {
+    name: alg.startsWith("PS") ? "RSA-PSS" : "RSASSA-PKCS1-v1_5",
+    hash,
+  };
+}
+
 function parseJwksUri(value: string): URL {
   if (typeof value !== "string" || value.length === 0 || value.length > 2_048) {
     throw new TypeError("JWKS URI must be a bounded non-empty string");
@@ -331,9 +423,9 @@ function parseMaxEntries(value: number | undefined): number {
 
 function evictIfNeeded(entries: Map<string, CacheEntry>, maxEntries: number): void {
   while (entries.size > maxEntries) {
-    const oldest = entries.keys().next().value;
-    if (typeof oldest !== "string") return;
-    entries.delete(oldest);
+    const oldestSettled = [...entries.entries()].find(([, entry]) => entry.pending === undefined);
+    if (oldestSettled === undefined) return;
+    entries.delete(oldestSettled[0]);
   }
 }
 

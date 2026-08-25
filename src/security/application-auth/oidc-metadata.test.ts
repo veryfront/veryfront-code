@@ -3,6 +3,7 @@ import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outb
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { testDelay } from "#veryfront/testing/timing.ts";
 import { createOidcMetadataCache, fetchOidcMetadata, type OidcMetadata } from "./oidc-metadata.ts";
 
 const ISSUER = "https://issuer.example.com/tenant";
@@ -236,6 +237,45 @@ describe("security/application-auth OIDC metadata", () => {
     assertEquals(error.message.includes("?"), false);
   });
 
+  it("aborts and cancels discovery response bodies that stall below the size bound", async () => {
+    let canceled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      pull() {
+        return new Promise<void>(() => undefined);
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<string>((resolve) => {
+      fallbackTimer = setTimeout(() => resolve("stalled"), 50);
+    });
+    const outcome = await Promise.race([
+      withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(stream, { headers: { "content-type": "application/json" } }),
+          ),
+        () => fetchOidcMetadata({ issuer: ISSUER, timeoutMs: 1 }),
+      ).then(
+        () => "resolved",
+        (error: unknown) => error instanceof Error ? error.message : String(error),
+      ),
+      stalled,
+    ]);
+    if (fallbackTimer !== undefined) {
+      clearTimeout(fallbackTimer);
+    }
+
+    assertEquals(outcome, "OIDC discovery request timed out");
+    assertEquals(canceled, true);
+  });
+
   it("cancels streaming bodies that exceed the discovery size bound", async () => {
     let canceled = false;
     const stream = new ReadableStream<Uint8Array>({
@@ -359,5 +399,37 @@ describe("security/application-auth OIDC metadata", () => {
       },
     );
     assertEquals(coldCalls, 2);
+  });
+
+  it("keeps pending metadata loads coalesced under cache capacity pressure", async () => {
+    const cache = createOidcMetadataCache({ ttlSeconds: 60, maxEntries: 1 });
+    const resolvers = new Map<string, (response: Response) => void>();
+    const fetches: string[] = [];
+    const issuerA = "https://pending-a.example.com";
+    const issuerB = "https://pending-b.example.com";
+
+    const [firstA, secondA] = await withMockFetch(
+      (input: RequestInfo | URL) => {
+        const issuer = String(input).replace("/.well-known/openid-configuration", "");
+        fetches.push(issuer);
+        return new Promise<Response>((resolve) => {
+          resolvers.set(issuer, resolve);
+        });
+      },
+      async () => {
+        const firstLoadA = cache.get({ issuer: issuerA });
+        const loadB = cache.get({ issuer: issuerB });
+        const secondLoadA = cache.get({ issuer: issuerA });
+        await testDelay(1);
+        assertEquals(fetches, [issuerA, issuerB]);
+        resolvers.get(issuerA)?.(jsonResponse(metadataFor(issuerA)));
+        resolvers.get(issuerB)?.(jsonResponse(metadataFor(issuerB)));
+        await loadB;
+        return await Promise.all([firstLoadA, secondLoadA]);
+      },
+    );
+
+    assertEquals(firstA, secondA);
+    assertEquals(fetches, [issuerA, issuerB]);
   });
 });

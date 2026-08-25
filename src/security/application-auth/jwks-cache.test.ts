@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { testDelay } from "#veryfront/testing/timing.ts";
 import { createJwksCache } from "./jwks-cache.ts";
 
 const JWKS_URI = "https://issuer.example.com/jwks.json";
@@ -16,13 +17,13 @@ const RSA_KEY = Object.freeze({
   kid: "rsa-1",
   use: "sig",
   alg: "RS256",
-  n: "sXchW0hn5SEGBkvMkNhm8JBJoYczLbrq3IypvTXqRvhBQmV0hnVzpyWenjsAl4Wt",
+  n: "yRWj5-3TOxVFOTvZdh4XCPcg75sLUg8otZsE2FgxJmaQHemSlOtYb3yUzko7uNTn_S2u1Z3W3mitk93Ekmf_IFp8TAyQ830ODnfjIjE_XFXI-4g9iiJHWmD3Qa_3Pztp6pUBFEdpblQYNZaZrzJ9ttGHdye6PBs1MlYN6J33rsf1OnuirpN1zUXqVwFXa9ojs83R3_RIMq3oWw91e5CuCtoGNgRftxiIlK4BS5UccUcZjArShrpDElH_MU7ewHMpXJI45UlBwWK3P57jjoLR69xKBZ5CvJBozxsAny-kKK2-N85OiDnxgaoonss0AMNXoi2E_wnKSJqm33HRa0sfaw",
   e: "AQAB",
 });
 
 const RSA_ROTATED_KEY = Object.freeze({
   ...RSA_KEY,
-  n: "vQv6P7aFZZqrkeRBHT6wIMSMJ5zflpOD9cEfK-Xt0DPZTymhvL6uJoVFvR-Gyt5K",
+  n: "0J7UmD-aZ5jEhhyKSOQDNN6S21hUxGSOIiHwQb9TUdYjjMplaDuYjnkja1Wwh88RHzZhA640vGh8p1_rauaboAP1Xr1-Jpc92hmWUyzr2q2KHaHSkLNkTlZ_m1vJ1hiquHMb6PwICJLi3JDl5fbi-6_-hWep5ABCp-4y4ZVyomm0k2nJWkVkvJbVND6svb4uxPAsBSV1F2rr170Om5bECsZjsy7vfpiWyEWoUeu4n5iZlVtFuxiaobAMHAn9uSgjAdOI0rOw1UtpKkMHAZAOEokJM5gWc6Nh8rWM788STOt0KzjH8Qk6MLI8dJR5UzYMw5uY6JtnkGo5xSUpJglXOQ",
 });
 
 const EC_KEY = Object.freeze({
@@ -34,6 +35,12 @@ const EC_KEY = Object.freeze({
   x: "f83OJ3D2xF4qdt2CbzZ9FZcNCQVryDwJo6VXYiTT4j8",
   y: "x_FEzRu9d2QUQWGWxqskFZp8JjX3xq6M5J7mPcUixkU",
 });
+
+interface GeneratedJwkSet {
+  readonly rsa2048: JsonWebKey;
+  readonly rsa1024: JsonWebKey;
+  readonly ecP256: JsonWebKey;
+}
 
 function jwks(keys: readonly Record<string, unknown>[]): string {
   return JSON.stringify({ keys });
@@ -51,13 +58,15 @@ async function expectJwksRejects(
   body: string,
   message: string,
   init: ResponseInit = {},
+  kid = "rsa-1",
+  alg = "RS256",
 ): Promise<void> {
   const cache = createJwksCache();
   await assertRejects(
     () =>
       withMockFetch(
         () => Promise.resolve(jsonResponse(body, init)),
-        () => cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
+        () => cache.getKey({ jwksUri: JWKS_URI, kid, alg }),
       ),
     TypeError,
     message,
@@ -65,6 +74,13 @@ async function expectJwksRejects(
 }
 
 describe("security/application-auth JWKS cache", () => {
+  let generatedKeysPromise: Promise<GeneratedJwkSet> | undefined;
+
+  function generatedKeys(): Promise<GeneratedJwkSet> {
+    generatedKeysPromise ??= generateJwkSet();
+    return generatedKeysPromise;
+  }
+
   it("fetches, clones, freezes, and returns only compatible public signing keys", async () => {
     const cache = createJwksCache();
     const calls: Array<RequestInit | undefined> = [];
@@ -124,8 +140,76 @@ describe("security/application-auth JWKS cache", () => {
         [{ ...EC_KEY, x: "" }, "malformed"],
       ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>
     ) {
-      await expectJwksRejects(jwks([key]), message);
+      await expectJwksRejects(jwks([key]), message, {}, String(key.kid));
     }
+  });
+
+  it("validates RSA and EC public key material before caching signing keys", async () => {
+    const keys = await generatedKeys();
+    const validRsa = { ...keys.rsa2048, kid: "rsa-generated", alg: "RS256", use: "sig" };
+    const validEc = { ...keys.ecP256, kid: "ec-generated", alg: "ES256", use: "sig" };
+
+    const cache = createJwksCache();
+    const [rsaKey, ecKey] = await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([validRsa, validEc]))),
+      async () =>
+        await Promise.all([
+          cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-generated", alg: "RS256" }),
+          cache.getKey({ jwksUri: JWKS_URI, kid: "ec-generated", alg: "ES256" }),
+        ]),
+    );
+
+    await crypto.subtle.importKey(
+      "jwk",
+      jwkForImport(rsaKey),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    await crypto.subtle.importKey(
+      "jwk",
+      jwkForImport(ecKey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+
+    for (
+      const [key, message] of [
+        [{ ...keys.rsa1024, kid: "rsa-small", alg: "RS256", use: "sig" }, "2048"],
+        [{ ...validRsa, kid: "rsa-exponent", e: "Aw" }, "exponent"],
+        [{ ...validRsa, kid: "rsa-malformed", n: "AQ" }, "2048"],
+        [{ ...validEc, kid: "ec-short-x", x: "AQ" }, "coordinate"],
+        [{ ...validEc, kid: "ec-short-y", y: "AQ" }, "coordinate"],
+      ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>
+    ) {
+      await expectJwksRejects(
+        jwks([key]),
+        message,
+        {},
+        String(key.kid),
+        typeof key.alg === "string" ? key.alg : "RS256",
+      );
+    }
+
+    const originalImportKey = crypto.subtle.importKey;
+    let importAttempted = false;
+    crypto.subtle.importKey = function (): Promise<CryptoKey> {
+      importAttempted = true;
+      return Promise.reject(new DOMException("forced import failure", "DataError"));
+    };
+    try {
+      await expectJwksRejects(
+        jwks([{ ...validEc, kid: "ec-not-importable" }]),
+        "import",
+        {},
+        "ec-not-importable",
+        "ES256",
+      );
+    } finally {
+      crypto.subtle.importKey = originalImportKey;
+    }
+    assertEquals(importAttempted, true);
   });
 
   it("rejects non-JSON, malformed JSON, redirects, oversize bodies, and sanitized fetch failures", async () => {
@@ -220,6 +304,27 @@ describe("security/application-auth JWKS cache", () => {
       TypeError,
       "kid",
     );
+
+    let forcedMissingCalls = 0;
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => {
+            forcedMissingCalls += 1;
+            return Promise.resolve(jsonResponse(jwks([EC_KEY])));
+          },
+          () =>
+            createJwksCache().getKey({
+              jwksUri: JWKS_URI,
+              kid: "missing",
+              alg: "RS256",
+              forceRefresh: true,
+            }),
+        ),
+      TypeError,
+      "kid",
+    );
+    assertEquals(forcedMissingCalls, 1);
   });
 
   it("expires stale entries, evicts failed loads, bounds LRU entries, coalesces concurrency, and stays per-instance", async () => {
@@ -338,4 +443,91 @@ describe("security/application-auth JWKS cache", () => {
     );
     assertEquals(coldCalls, 2);
   });
+
+  it("keeps pending JWKS loads coalesced under cache capacity pressure", async () => {
+    const cache = createJwksCache({ ttlSeconds: 60, maxEntries: 1 });
+    const resolvers = new Map<string, (response: Response) => void>();
+    const fetches: string[] = [];
+    const uriA = "https://pending-a.example.com/jwks";
+    const uriB = "https://pending-b.example.com/jwks";
+
+    const [firstA, secondA] = await withMockFetch(
+      (input: RequestInfo | URL) => {
+        const uri = String(input);
+        fetches.push(uri);
+        return new Promise<Response>((resolve) => {
+          resolvers.set(uri, resolve);
+        });
+      },
+      async () => {
+        const firstLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
+        const loadB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" });
+        const secondLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
+        await testDelay(1);
+        assertEquals(fetches, [uriA, uriB]);
+        resolvers.get(uriA)?.(jsonResponse(jwks([RSA_KEY])));
+        resolvers.get(uriB)?.(jsonResponse(jwks([RSA_KEY])));
+        await loadB;
+        return await Promise.all([firstLoadA, secondLoadA]);
+      },
+    );
+
+    assertEquals(firstA, secondA);
+    assertEquals(fetches, [uriA, uriB]);
+  });
 });
+
+async function generateJwkSet(): Promise<GeneratedJwkSet> {
+  const rsa2048Pair = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const rsa1024Pair = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 1024,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const ecP256Pair = await crypto.subtle.generateKey(
+    {
+      name: "ECDSA",
+      namedCurve: "P-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  return {
+    rsa2048: await crypto.subtle.exportKey("jwk", rsa2048Pair.publicKey),
+    rsa1024: await crypto.subtle.exportKey("jwk", rsa1024Pair.publicKey),
+    ecP256: await crypto.subtle.exportKey("jwk", ecP256Pair.publicKey),
+  };
+}
+
+function jwkForImport(key: {
+  readonly kty: "RSA" | "EC";
+  readonly n?: string;
+  readonly e?: string;
+  readonly crv?: string;
+  readonly x?: string;
+  readonly y?: string;
+}): JsonWebKey {
+  if (key.kty === "RSA") {
+    assert(typeof key.n === "string");
+    assert(typeof key.e === "string");
+    return { kty: "RSA", n: key.n, e: key.e };
+  }
+  assert(typeof key.crv === "string");
+  assert(typeof key.x === "string");
+  assert(typeof key.y === "string");
+  return { kty: "EC", crv: key.crv, x: key.x, y: key.y };
+}

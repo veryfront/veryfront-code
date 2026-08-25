@@ -81,9 +81,9 @@ export function createOidcMetadataCache(
 
   function evictIfNeeded(): void {
     while (entries.size > maxEntries) {
-      const oldest = entries.keys().next().value;
-      if (typeof oldest !== "string") return;
-      entries.delete(oldest);
+      const oldestSettled = [...entries.entries()].find(([, entry]) => entry.pending === undefined);
+      if (oldestSettled === undefined) return;
+      entries.delete(oldestSettled[0]);
     }
   }
 
@@ -328,9 +328,8 @@ export interface FetchJsonObjectOptions {
 export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<JsonObject> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  let response: Response;
   try {
-    response = await guardedOutboundFetch(
+    const response = await guardedOutboundFetch(
       options.url,
       {
         headers: { accept: "application/json" },
@@ -342,6 +341,30 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
         authorizeUrl: options.authorizeUrl,
       },
     );
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new TypeError(`${options.kind} request refused a redirect response`);
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new TypeError(`${options.kind} request failed with HTTP ${response.status}`);
+    }
+    if (!isJsonContentType(response.headers.get("content-type"))) {
+      await response.body?.cancel();
+      throw new TypeError(`${options.kind} response must be JSON`);
+    }
+    const text = await readBoundedText(response, options.maxBytes, options.kind, controller.signal);
+    rejectDuplicateJsonObjectKeys(text, options.kind);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new TypeError(`${options.kind} response must contain valid JSON`, { cause: error });
+    }
+    if (!isPlainObject(parsed)) {
+      throw new TypeError(`${options.kind} response must be a plain JSON object`);
+    }
+    return parsed;
   } catch (error) {
     if (controller.signal.aborted) {
       throw new TypeError(`${options.kind} request timed out`, { cause: error });
@@ -349,34 +372,13 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
     if (error instanceof Error && error.message.toLowerCase().includes("redirect")) {
       throw new TypeError(`${options.kind} request refused a redirect response`, { cause: error });
     }
+    if (error instanceof TypeError) {
+      throw error;
+    }
     throw new TypeError(`${options.kind} request failed`, { cause: error });
   } finally {
     clearTimeout(timeout);
   }
-  if (response.status >= 300 && response.status < 400) {
-    await response.body?.cancel();
-    throw new TypeError(`${options.kind} request refused a redirect response`);
-  }
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new TypeError(`${options.kind} request failed with HTTP ${response.status}`);
-  }
-  if (!isJsonContentType(response.headers.get("content-type"))) {
-    await response.body?.cancel();
-    throw new TypeError(`${options.kind} response must be JSON`);
-  }
-  const text = await readBoundedText(response, options.maxBytes, options.kind);
-  rejectDuplicateJsonObjectKeys(text, options.kind);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw new TypeError(`${options.kind} response must contain valid JSON`, { cause: error });
-  }
-  if (!isPlainObject(parsed)) {
-    throw new TypeError(`${options.kind} response must be a plain JSON object`);
-  }
-  return parsed;
 }
 
 function isJsonContentType(value: string | null): boolean {
@@ -390,6 +392,7 @@ async function readBoundedText(
   response: Response,
   maxBytes: number,
   kind: string,
+  signal: AbortSignal,
 ): Promise<string> {
   const body = response.body;
   if (body === null) {
@@ -400,7 +403,7 @@ async function readBoundedText(
   let total = 0;
   try {
     while (true) {
-      const result = await reader.read();
+      const result = await readWithAbort(reader, signal);
       if (result.done) break;
       total += result.value.byteLength;
       if (total > maxBytes) {
@@ -409,6 +412,11 @@ async function readBoundedText(
       }
       chunks.push(result.value);
     }
+  } catch (error) {
+    if (signal.aborted) {
+      await reader.cancel();
+    }
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -419,6 +427,32 @@ async function readBoundedText(
     offset += chunk.byteLength;
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function readWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      void reader.cancel();
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    reader.read().then(
+      (result) => {
+        signal.removeEventListener("abort", abort);
+        resolve(result);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function rejectDuplicateJsonObjectKeys(text: string, kind: string): void {
