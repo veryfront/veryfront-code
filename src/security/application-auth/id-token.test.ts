@@ -1,0 +1,549 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createJwksCache, type PublicJwk } from "./jwks-cache.ts";
+import { verifyOidcIdToken } from "./id-token.ts";
+
+const ISSUER = "https://issuer.example.com/tenant";
+const ENTRA_ISSUER = "https://login.microsoftonline.com/tenant-id/v2.0";
+const CLIENT_ID = "client-123";
+const NONCE = "nonce-123";
+const JWKS_URI = `${ISSUER}/jwks.json`;
+const NOW = 1_700_000_000;
+
+type IdTokenAlg = "RS256" | "PS256" | "ES256";
+
+interface KeyMaterial {
+  readonly alg: IdTokenAlg;
+  readonly kid: string;
+  readonly publicJwk: PublicJwk;
+  readonly privateKey: CryptoKey;
+}
+
+function claims(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    iss: ISSUER,
+    sub: "user-123",
+    aud: CLIENT_ID,
+    exp: NOW + 300,
+    iat: NOW - 10,
+    nonce: NONCE,
+    email: " user@example.com ",
+    name: " Example User ",
+    groups: ["admin", "admin", " engineering "],
+    roles: ["owner"],
+    ...overrides,
+  };
+}
+
+function jwks(keys: readonly PublicJwk[]): string {
+  return JSON.stringify({ keys });
+}
+
+function jsonResponse(body: string): Response {
+  return new Response(body, { headers: { "content-type": "application/json" } });
+}
+
+describe("security/application-auth OIDC ID tokens", () => {
+  let materialPromise: Promise<Record<IdTokenAlg, KeyMaterial>> | undefined;
+
+  function material(): Promise<Record<IdTokenAlg, KeyMaterial>> {
+    materialPromise ??= generateKeyMaterial();
+    return materialPromise;
+  }
+
+  it("verifies a valid RS256 token before normalizing default Authelia-style claims", async () => {
+    const keys = await material();
+    const token = await signToken(keys.RS256, claims());
+
+    const identity = await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+      () =>
+        verifyOidcIdToken({
+          token,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: createJwksCache(),
+          now: () => NOW,
+        }),
+    );
+
+    assertEquals(identity.issuer, ISSUER);
+    assertEquals(identity.subject, "user-123");
+    assertEquals(identity.email, "user@example.com");
+    assertEquals(identity.name, "Example User");
+    assertEquals(identity.groups, ["admin", "engineering"]);
+    assertEquals(identity.roles, ["owner"]);
+    assertEquals(identity.groupsComplete, true);
+  });
+
+  it("verifies configured ES256 and PS256 algorithms", async () => {
+    const keys = await material();
+    for (const alg of ["ES256", "PS256"] as const) {
+      const token = await signToken(keys[alg], claims());
+      const identity = await withMockFetch(
+        () => Promise.resolve(jsonResponse(jwks([keys[alg].publicJwk]))),
+        () =>
+          verifyOidcIdToken({
+            token,
+            issuer: ISSUER,
+            clientId: CLIENT_ID,
+            nonce: NONCE,
+            jwksUri: JWKS_URI,
+            jwksCache: createJwksCache(),
+            allowedAlgorithms: [alg],
+            now: () => NOW,
+          }),
+      );
+      assertEquals(identity.subject, "user-123");
+    }
+  });
+
+  it("rejects malformed, unsigned, symmetric, extension, and oversized token headers before key lookup", async () => {
+    const keys = await material();
+    const valid = await signToken(keys.RS256, claims());
+    const validSegments = valid.split(".");
+    for (
+      const [token, message] of [
+        [`${valid}.extra`, "three"],
+        [`${validSegments[0]}..${validSegments[2]}`, "non-empty"],
+        [await signToken(keys.RS256, claims(), { alg: "none" }), "algorithm"],
+        [await signToken(keys.RS256, claims(), { alg: "HS256" }), "algorithm"],
+        [await signToken(keys.RS256, claims(), { kid: undefined }), "kid"],
+        [await signToken(keys.RS256, claims(), { kid: "" }), "kid"],
+        [await signToken(keys.RS256, claims(), { kid: "k".repeat(257) }), "kid"],
+        [await signToken(keys.RS256, claims(), { crit: ["exp"] }), "header"],
+        [await signToken(keys.RS256, claims(), { b64: false }), "header"],
+        [await signToken(keys.RS256, claims(), { jku: "https://evil.example.com/jwks" }), "header"],
+        [await signToken(keys.RS256, claims(), { typ: 12 }), "typ"],
+        ["a".repeat(16_385), "size"],
+        [
+          `${base64Url(new TextEncoder().encode("{"))}.${validSegments[1]}.${validSegments[2]}`,
+          "header",
+        ],
+        [`${base64Url(new Uint8Array(2_049))}.${validSegments[1]}.${validSegments[2]}`, "header"],
+      ] satisfies ReadonlyArray<readonly [string, string]>
+    ) {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          withMockFetch(
+            () => {
+              calls += 1;
+              return Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk])));
+            },
+            () =>
+              verifyOidcIdToken({
+                token,
+                issuer: ISSUER,
+                clientId: CLIENT_ID,
+                nonce: NONCE,
+                jwksUri: JWKS_URI,
+                jwksCache: createJwksCache(),
+                now: () => NOW,
+              }),
+          ),
+        TypeError,
+        message,
+      );
+      assertEquals(calls, 0);
+    }
+  });
+
+  it("rejects bad signatures and retries same-kid signature failure with one forced JWKS refresh", async () => {
+    const keys = await material();
+    const rotated = await generateKeyMaterial("rotated");
+    const token = await signToken(keys.RS256, claims());
+    const segments = token.split(".");
+    const tampered = `${segments[0]}.${base64Json({ ...claims(), sub: "attacker" })}.${
+      segments[2]
+    }`;
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token: tampered,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "signature",
+    );
+
+    let calls = 0;
+    const identity = await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(
+          jsonResponse(jwks([calls === 1 ? rotated.RS256.publicJwk : keys.RS256.publicJwk])),
+        );
+      },
+      () =>
+        verifyOidcIdToken({
+          token,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: createJwksCache(),
+          now: () => NOW,
+        }),
+    );
+    assertEquals(identity.subject, "user-123");
+    assertEquals(calls, 2);
+  });
+
+  it("rejects missing kids, key-type mismatches, and unknown kids without extra token-level refresh", async () => {
+    const keys = await material();
+    const rsaToken = await signToken(keys.RS256, claims());
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () =>
+            Promise.resolve(
+              jsonResponse(jwks([{ ...keys.ES256.publicJwk, kid: keys.RS256.kid }])),
+            ),
+          () =>
+            verifyOidcIdToken({
+              token: rsaToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "key",
+    );
+
+    let calls = 0;
+    const missingKidToken = await signToken(keys.RS256, claims(), { kid: "missing" });
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => {
+            calls += 1;
+            return Promise.resolve(jsonResponse(jwks([keys.ES256.publicJwk])));
+          },
+          () =>
+            verifyOidcIdToken({
+              token: missingKidToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "verification",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("enforces issuer, audience, azp, subject, nonce, and time claims", async () => {
+    const keys = await material();
+    for (
+      const [overrides, message] of [
+        [{ iss: `${ISSUER}/` }, "issuer"],
+        [{ aud: "other-client" }, "audience"],
+        [{ aud: [CLIENT_ID, "api"], azp: undefined }, "azp"],
+        [{ aud: [CLIENT_ID, "api"], azp: "other-client" }, "azp"],
+        [{ aud: [CLIENT_ID, CLIENT_ID] }, "audience"],
+        [{ azp: "other-client" }, "azp"],
+        [{ sub: "" }, "subject"],
+        [{ sub: 123 }, "subject"],
+        [{ sub: "line\nbreak" }, "subject"],
+        [{ nonce: undefined }, "nonce"],
+        [{ nonce: "wrong" }, "nonce"],
+        [{ nonce: "n".repeat(257) }, "nonce"],
+        [{ exp: NOW - 61, iat: NOW - 120 }, "expired"],
+        [{ exp: NOW + 300, iat: NOW + 61 }, "issued"],
+        [{ nbf: NOW + 61 }, "not yet"],
+        [{ iat: NOW - 601 }, "age"],
+        [{ exp: NOW - 10, iat: NOW + 10 }, "window"],
+        [{ exp: NOW + 86_402, iat: NOW }, "window"],
+      ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>
+    ) {
+      const token = await signToken(keys.RS256, claims(overrides));
+      await assertRejects(
+        () =>
+          withMockFetch(
+            () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+            () =>
+              verifyOidcIdToken({
+                token,
+                issuer: ISSUER,
+                clientId: CLIENT_ID,
+                nonce: NONCE,
+                jwksUri: JWKS_URI,
+                jwksCache: createJwksCache(),
+                now: () => NOW,
+              }),
+          ),
+        TypeError,
+        message,
+      );
+    }
+  });
+
+  it("normalizes Microsoft Entra claims, custom claim names, optional absence, and group overage", async () => {
+    const keys = await material();
+    const entraClaims = claims({
+      iss: ENTRA_ISSUER,
+      sub: "entra-user",
+      aud: [CLIENT_ID, "api://resource"],
+      azp: CLIENT_ID,
+      preferred_username: "entra@example.com",
+      display_name: "Entra User",
+      app_roles: ["Reader", "Writer"],
+      security_groups: ["group-a"],
+      _claim_names: { groups: "src1" },
+      _claim_sources: { src1: { endpoint: "https://graph.example.com/groups" } },
+      email: undefined,
+      name: undefined,
+      groups: undefined,
+      roles: undefined,
+    });
+    const entraToken = await signToken(keys.RS256, entraClaims);
+    const identity = await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+      () =>
+        verifyOidcIdToken({
+          token: entraToken,
+          issuer: ENTRA_ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: createJwksCache(),
+          now: () => NOW,
+          claimNames: {
+            email: "preferred_username",
+            name: "display_name",
+            groups: "security_groups",
+            roles: "app_roles",
+          },
+        }),
+    );
+
+    assertEquals(identity.email, "entra@example.com");
+    assertEquals(identity.name, "Entra User");
+    assertEquals(identity.groups, ["group-a"]);
+    assertEquals(identity.roles, ["Reader", "Writer"]);
+    assertEquals(identity.groupsComplete, false);
+
+    const missingOptionalToken = await signToken(
+      keys.RS256,
+      claims({ email: undefined, name: undefined }),
+    );
+    const missingOptional = await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+      () =>
+        verifyOidcIdToken({
+          token: missingOptionalToken,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: createJwksCache(),
+          now: () => NOW,
+        }),
+    );
+    assertEquals(missingOptional.email, undefined);
+    assertEquals(missingOptional.name, undefined);
+
+    const invalidGroupsToken = await signToken(keys.RS256, claims({ groups: ["ok", 1] }));
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token: invalidGroupsToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "groups",
+    );
+
+    const invalidEmailToken = await signToken(keys.RS256, claims({ email: 1 }));
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token: invalidEmailToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "email",
+    );
+  });
+
+  it("rejects malformed payload JSON, duplicate claims, non-object claims, and redacts sensitive values", async () => {
+    const keys = await material();
+    const valid = await signToken(keys.RS256, claims({ sub: "secret-subject" }));
+    const validSegments = valid.split(".");
+    assertEquals(validSegments.length, 3);
+    const header = validSegments[0];
+    const signature = validSegments[2];
+    assert(header !== undefined);
+    assert(signature !== undefined);
+    const malformed = `${header}.${base64Url(new TextEncoder().encode('{"iss":'))}.${signature}`;
+    const duplicate = await signRaw(keys.RS256, header, `{"iss":"${ISSUER}","iss":"${ISSUER}"}`);
+    const arrayPayload = await signRaw(keys.RS256, header, "[]");
+
+    for (const token of [malformed, duplicate, arrayPayload]) {
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+            () =>
+              verifyOidcIdToken({
+                token,
+                issuer: ISSUER,
+                clientId: CLIENT_ID,
+                nonce: "secret-nonce",
+                jwksUri: `${JWKS_URI}?token=secret`,
+                jwksCache: createJwksCache(),
+                now: () => NOW,
+              }),
+          ),
+        TypeError,
+      );
+      assert(error instanceof Error);
+      assertEquals(error.message.includes("secret"), false);
+      assertEquals(error.message.includes(header), false);
+    }
+  });
+});
+
+async function generateKeyMaterial(prefix = "test"): Promise<Record<IdTokenAlg, KeyMaterial>> {
+  const rsaPkcs = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const rsaPss = await crypto.subtle.generateKey(
+    {
+      name: "RSA-PSS",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const ec = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  return {
+    RS256: await exportMaterial("RS256", `${prefix}-rsa`, rsaPkcs),
+    PS256: await exportMaterial("PS256", `${prefix}-pss`, rsaPss),
+    ES256: await exportMaterial("ES256", `${prefix}-ec`, ec),
+  };
+}
+
+async function exportMaterial(
+  alg: IdTokenAlg,
+  kid: string,
+  pair: CryptoKeyPair,
+): Promise<KeyMaterial> {
+  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const publicJwk: PublicJwk = Object.freeze({
+    ...(alg === "ES256"
+      ? { kty: "EC" as const, crv: jwk.crv, x: jwk.x, y: jwk.y }
+      : { kty: "RSA" as const, n: jwk.n, e: jwk.e }),
+    kid,
+    alg,
+    use: "sig" as const,
+  });
+  return { alg, kid, publicJwk, privateKey: pair.privateKey };
+}
+
+async function signToken(
+  material: KeyMaterial,
+  payload: Record<string, unknown> | Promise<Record<string, unknown>>,
+  headerOverrides: Record<string, unknown> = {},
+): Promise<string> {
+  const header = base64Json({
+    alg: material.alg,
+    kid: material.kid,
+    typ: "JWT",
+    ...headerOverrides,
+  });
+  const body = base64Json(await payload);
+  return await signRaw(material, header, new TextDecoder().decode(decodeBase64Url(body)));
+}
+
+async function signRaw(
+  material: KeyMaterial,
+  header: string,
+  payloadJson: string,
+): Promise<string> {
+  const body = base64Url(new TextEncoder().encode(payloadJson));
+  const signingInput = `${header}.${body}`;
+  const signature = await crypto.subtle.sign(
+    signingAlgorithm(material.alg),
+    material.privateKey,
+    new TextEncoder().encode(signingInput),
+  );
+  return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
+}
+
+function signingAlgorithm(alg: IdTokenAlg): AlgorithmIdentifier | RsaPssParams | EcdsaParams {
+  if (alg === "PS256") return { name: "RSA-PSS", saltLength: 32 };
+  if (alg === "ES256") return { name: "ECDSA", hash: "SHA-256" };
+  return { name: "RSASSA-PKCS1-v1_5" };
+}
+
+function base64Json(value: unknown): string {
+  return base64Url(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const padded = `${value.replaceAll("-", "+").replaceAll("_", "/")}${
+    "=".repeat((4 - value.length % 4) % 4)
+  }`;
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}

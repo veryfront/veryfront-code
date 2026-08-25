@@ -1,10 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outbound-fetch.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { testDelay } from "#veryfront/testing/timing.ts";
-import { createOidcMetadataCache, fetchOidcMetadata, type OidcMetadata } from "./oidc-metadata.ts";
+import {
+  createOidcMetadataCache,
+  fetchOidcMetadata,
+  type OidcMetadata,
+  parseStrictJsonObject,
+} from "./oidc-metadata.ts";
 
 const ISSUER = "https://issuer.example.com/tenant";
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
@@ -55,6 +60,29 @@ async function expectDiscoveryRejects(
 }
 
 describe("security/application-auth OIDC metadata", () => {
+  it("exposes the strict JSON object parser used by discovery and JWKS consumers", () => {
+    assertEquals(parseStrictJsonObject('{"issuer":"https://issuer.example.com"}', "JWT claims"), {
+      issuer: "https://issuer.example.com",
+    });
+
+    for (
+      const [body, message] of [
+        ['{"kid":"a","kid":"b"}', "duplicate"],
+        ['{"kid":"a"} trailing', "valid JSON"],
+        ["[]", "plain JSON object"],
+        ['{"__proto__":{}}', "reserved"],
+        ['{"constructor":{}}', "reserved"],
+        ['{"prototype":{}}', "reserved"],
+      ] satisfies ReadonlyArray<readonly [string, string]>
+    ) {
+      assertThrows(
+        () => parseStrictJsonObject(body, "JWT claims"),
+        TypeError,
+        message,
+      );
+    }
+  });
+
   it("fetches the configured issuer discovery document through guarded JSON transport", async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = [];
     const result = await withMockFetch(

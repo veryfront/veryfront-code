@@ -354,17 +354,7 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
       throw new TypeError(`${options.kind} response must be JSON`);
     }
     const text = await readBoundedText(response, options.maxBytes, options.kind, controller.signal);
-    rejectDuplicateJsonObjectKeys(text, options.kind);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      throw new TypeError(`${options.kind} response must contain valid JSON`, { cause: error });
-    }
-    if (!isPlainObject(parsed)) {
-      throw new TypeError(`${options.kind} response must be a plain JSON object`);
-    }
-    return parsed;
+    return parseStrictJsonObject(text, `${options.kind} response`);
   } catch (error) {
     if (controller.signal.aborted) {
       throw new TypeError(`${options.kind} request timed out`, { cause: error });
@@ -455,6 +445,21 @@ function readWithAbort(
   });
 }
 
+export function parseStrictJsonObject(text: string, kind: string): JsonObject {
+  rejectDuplicateJsonObjectKeys(text, kind);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new TypeError(`${kind} must contain valid JSON`, { cause: error });
+  }
+  if (!isPlainObject(parsed)) {
+    throw new TypeError(`${kind} must be a plain JSON object`);
+  }
+  rejectReservedJsonKeys(parsed, kind);
+  return parsed;
+}
+
 function rejectDuplicateJsonObjectKeys(text: string, kind: string): void {
   const parser = new JsonDuplicateKeyParser(text, kind);
   parser.parse();
@@ -464,6 +469,22 @@ export function isPlainObject(value: unknown): value is JsonObject {
   if (value === null || typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function rejectReservedJsonKeys(value: unknown, kind: string): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      rejectReservedJsonKeys(entry, kind);
+    }
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  for (const key of Object.keys(value)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      throw new TypeError(`${kind} contains a reserved JSON object key`);
+    }
+    rejectReservedJsonKeys(value[key], kind);
+  }
 }
 
 class JsonDuplicateKeyParser {
@@ -479,7 +500,7 @@ class JsonDuplicateKeyParser {
     this.#parseValue();
     this.#skipWhitespace();
     if (this.#index !== this.text.length) {
-      throw new TypeError(`${this.kind} response must contain valid JSON`);
+      throw new TypeError(`${this.kind} must contain valid JSON`);
     }
   }
 
@@ -512,16 +533,16 @@ class JsonDuplicateKeyParser {
     while (true) {
       this.#skipWhitespace();
       if (this.text[this.#index] !== '"') {
-        throw new TypeError(`${this.kind} response must contain valid JSON`);
+        throw new TypeError(`${this.kind} must contain valid JSON`);
       }
       const key = this.#parseString();
       if (keys.has(key)) {
-        throw new TypeError(`${this.kind} response contains a duplicate JSON object key`);
+        throw new TypeError(`${this.kind} contains a duplicate JSON object key`);
       }
       keys.add(key);
       this.#skipWhitespace();
       if (this.text[this.#index] !== ":") {
-        throw new TypeError(`${this.kind} response must contain valid JSON`);
+        throw new TypeError(`${this.kind} must contain valid JSON`);
       }
       this.#index += 1;
       this.#parseValue();
@@ -532,7 +553,7 @@ class JsonDuplicateKeyParser {
         return;
       }
       if (next !== ",") {
-        throw new TypeError(`${this.kind} response must contain valid JSON`);
+        throw new TypeError(`${this.kind} must contain valid JSON`);
       }
       this.#index += 1;
     }
@@ -554,7 +575,7 @@ class JsonDuplicateKeyParser {
         return;
       }
       if (next !== ",") {
-        throw new TypeError(`${this.kind} response must contain valid JSON`);
+        throw new TypeError(`${this.kind} must contain valid JSON`);
       }
       this.#index += 1;
     }
@@ -581,16 +602,16 @@ class JsonDuplicateKeyParser {
         try {
           const parsed = JSON.parse(this.text.slice(start, this.#index));
           if (typeof parsed !== "string") {
-            throw new TypeError(`${this.kind} response must contain valid JSON`);
+            throw new TypeError(`${this.kind} must contain valid JSON`);
           }
           return parsed;
         } catch {
-          throw new TypeError(`${this.kind} response must contain valid JSON`);
+          throw new TypeError(`${this.kind} must contain valid JSON`);
         }
       }
       this.#index += 1;
     }
-    throw new TypeError(`${this.kind} response must contain valid JSON`);
+    throw new TypeError(`${this.kind} must contain valid JSON`);
   }
 
   #parseLiteralOrNumber(): void {
@@ -600,12 +621,12 @@ class JsonDuplicateKeyParser {
     }
     const token = this.text.slice(start, this.#index);
     if (token.length === 0) {
-      throw new TypeError(`${this.kind} response must contain valid JSON`);
+      throw new TypeError(`${this.kind} must contain valid JSON`);
     }
     try {
       JSON.parse(token);
     } catch {
-      throw new TypeError(`${this.kind} response must contain valid JSON`);
+      throw new TypeError(`${this.kind} must contain valid JSON`);
     }
   }
 
