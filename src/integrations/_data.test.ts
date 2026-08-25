@@ -350,7 +350,7 @@ describe("integration endpoint specs", () => {
     assertEquals(paypal.auth.authorizationUrl, undefined);
   });
 
-  it("keeps Salesforce write tools curated instead of exposing generic record mutation", () => {
+  it("keeps Salesforce and ServiceNow write tools curated", () => {
     const salesforce = getConnector("salesforce");
     const toolIds = getLocalToolIds("salesforce", salesforce.tools);
 
@@ -393,16 +393,32 @@ describe("integration endpoint specs", () => {
       ],
     );
 
-    const servicenowQuery = getTool("servicenow", "query_table");
-    assertEquals(servicenowQuery.requiresWrite, false);
-    assertEquals(
-      servicenowQuery.endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/{tableName}",
-    );
-    assertEquals(
-      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
-      "passthrough",
-    );
+    const servicenow = getConnector("servicenow");
+    const servicenowToolIds = getLocalToolIds("servicenow", servicenow.tools);
+
+    assertEquals(servicenowToolIds.includes("query_table"), false);
+    assertEquals(servicenowToolIds.includes("create_table_record"), false);
+    assertEquals(servicenowToolIds.includes("update_table_record"), false);
+    assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_incident").endpoint?.method, "PATCH");
+
+    // Every retained ServiceNow tool must bind its host from the trusted
+    // SERVICENOW_INSTANCE environment config; a caller-controlled host param
+    // would let arbitrary hosts receive the SERVICENOW_ACCESS_TOKEN header.
+    for (const tool of servicenow.tools) {
+      const endpoint = tool.endpoint;
+      assertExists(endpoint, `Expected servicenow:${tool.id} to have an endpoint spec`);
+      assertEquals(
+        endpoint.url.startsWith("https://{{env.SERVICENOW_INSTANCE}}/"),
+        true,
+        `servicenow:${tool.id} must bind its endpoint host from SERVICENOW_INSTANCE`,
+      );
+      assertEquals(
+        endpoint.params?.instanceHost,
+        undefined,
+        `servicenow:${tool.id} must not accept a caller-controlled instance host`,
+      );
+    }
   });
 
   it("declares the Salesforce baseline tools", () => {
@@ -2035,18 +2051,18 @@ describe("integration endpoint specs", () => {
     assertEquals(getTool("servicenow", "update_incident").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_interactions").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/interaction",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
     );
     assertEquals(getTool("servicenow", "create_interaction").requiresWrite, true);
     assertEquals(getTool("servicenow", "update_interaction").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_requests").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_request",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request",
     );
     assertEquals(getTool("servicenow", "create_request").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_request_items").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_req_item",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
     );
     assertEquals(getTool("servicenow", "create_request_item").requiresWrite, true);
   });

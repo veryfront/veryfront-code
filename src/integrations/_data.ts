@@ -49291,14 +49291,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49328,14 +49322,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49358,15 +49346,7 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/incident",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident",
         "body": {
           "short_description": {
             "type": "string",
@@ -49391,14 +49371,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49426,14 +49400,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49463,14 +49431,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49494,15 +49456,7 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
         "body": {
           "short_description": {
             "type": "string",
@@ -49529,14 +49483,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49561,14 +49509,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_request",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49598,14 +49540,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_request/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49629,14 +49565,8 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url":
-          "https://{instanceHost}/api/sn_sc/v1/servicecatalog/items/{catalogItemSysId}/order_now",
+          "https://{{env.SERVICENOW_INSTANCE}}/api/sn_sc/v1/servicecatalog/items/{catalogItemSysId}/order_now",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "catalogItemSysId": {
             "type": "string",
             "in": "path",
@@ -49665,14 +49595,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49702,14 +49626,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -49733,15 +49651,7 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
         "body": {
           "request": {
             "type": "string",
@@ -49774,14 +49684,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/kb_knowledge",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/kb_knowledge",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49810,14 +49714,8 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sys_user",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sys_user",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -49837,123 +49735,6 @@ export const connectors: IntegrationConfig[] = [
             "default": "sys_id,user_name,name,email,active,department",
           },
         },
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__query_table",
-      "name": "Query Table",
-      "description":
-        "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-          "sysparm_query": {
-            "type": "string",
-            "in": "query",
-            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on",
-          },
-          "sysparm_fields": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated fields to return",
-          },
-          "sysparm_limit": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum records to return",
-            "default": 25,
-          },
-          "sysparm_offset": {
-            "type": "number",
-            "in": "query",
-            "description": "Record offset for pagination",
-          },
-        },
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__create_table_record",
-      "name": "Create Table Record",
-      "description": "Create a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
-            "description":
-              'Field map for the new record, e.g. {"short_description":"...","priority":"2"}',
-            "required": true,
-          },
-        },
-        "bodyMode": "passthrough",
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__update_table_record",
-      "name": "Update Table Record",
-      "description": "Update a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}/{sysId}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-          "sysId": {
-            "type": "string",
-            "in": "path",
-            "description": "sys_id of the record",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map of fields to update",
-            "required": true,
-          },
-        },
-        "bodyMode": "passthrough",
         "response": { "transform": "result" },
       },
     }],
