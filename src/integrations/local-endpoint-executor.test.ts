@@ -392,6 +392,77 @@ describe("local integration endpoint executor", () => {
     assertEquals(requests, ["https://example.service-now.com/api/now/v1/table/incident"]);
   });
 
+  it("ignores a polluted Object.prototype.pattern during argument validation", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    let getterCalls = 0;
+    defineProperty(Object.prototype, "pattern", {
+      configurable: true,
+      get(): string {
+        getterCalls += 1;
+        return "^only-polluted-values$";
+      },
+    });
+
+    try {
+      // A field that declares no pattern must not inherit the polluted one:
+      // "item-1" would be rejected if the inherited value were enforced.
+      await executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "GET",
+          url: "https://api.example.test/items/{itemId}",
+          params: {
+            itemId: {
+              type: "string",
+              in: "path",
+              description: "Item ID",
+              required: true,
+            },
+          },
+        }),
+        args: { itemId: "item-1" },
+        authHeaders: { Authorization: `Bearer ${SECRET}` },
+        allowedOrigin: "https://api.example.test",
+        transport,
+      });
+
+      // A field's own pattern must still be enforced while the pollution is live.
+      const error = await assertRejects(
+        () =>
+          executeLocalIntegrationEndpoint({
+            endpoint: endpoint({
+              method: "GET",
+              url: "https://api.example.test/items/{itemId}",
+              params: {
+                itemId: {
+                  type: "string",
+                  in: "path",
+                  description: "Item ID",
+                  pattern: "^item-[0-9]+$",
+                  required: true,
+                },
+              },
+            }),
+            args: { itemId: "attacker.example" },
+            authHeaders: { Authorization: `Bearer ${SECRET}` },
+            allowedOrigin: "https://api.example.test",
+            transport,
+          }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-request-invalid");
+    } finally {
+      deleteProperty(Object.prototype, "pattern");
+    }
+
+    assertEquals(getterCalls, 0, "an inherited pattern getter must never execute");
+    assertEquals(requests, ["https://api.example.test/items/item-1"]);
+  });
+
   it("uses an exact-origin, redirect-rejecting transport contract", async () => {
     let authorized = false;
     await executeLocalIntegrationEndpoint({

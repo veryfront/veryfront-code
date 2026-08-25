@@ -44625,8 +44625,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44677,8 +44686,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44708,8 +44726,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44739,8 +44766,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/invoice/{invoiceId}",
+        "url": "https://{host}/v3/company/{realmId}/invoice/{invoiceId}",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44770,8 +44806,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/invoice",
+        "url": "https://{host}/v3/company/{realmId}/invoice",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44804,8 +44849,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44854,8 +44908,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/bill/{billId}",
+        "url": "https://{host}/v3/company/{realmId}/bill/{billId}",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44885,8 +44948,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/bill",
+        "url": "https://{host}/v3/company/{realmId}/bill",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44920,8 +44992,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/purchase",
+        "url": "https://{host}/v3/company/{realmId}/purchase",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -44955,8 +45036,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/upload",
+        "url": "https://{host}/v3/company/{realmId}/upload",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -45004,8 +45094,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -45037,8 +45136,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -45083,8 +45191,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://quickbooks.api.intuit.com/v3/company/{realmId}/query",
+        "url": "https://{host}/v3/company/{realmId}/query",
         "params": {
+          "host": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern":
+              "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$",
+          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -45156,7 +45273,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 3,
         "title": "Copy credentials",
         "description":
-          "From the app's Keys & credentials page, copy the production Client ID and Client Secret. Production keys require app review. Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env.",
+          "From the app's Keys & credentials page, copy the Client ID and Client Secret (Development keys work against the sandbox environment; Production keys require app review). Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env.",
       }, {
         "step": 4,
         "title": "Note your realm ID",
@@ -45165,13 +45282,15 @@ export const connectors: IntegrationConfig[] = [
       }, {
         "step": 5,
         "title": "Verify access",
-        "description": "Run the List Invoices tool with your realmId.",
+        "description":
+          "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company; it defaults to the production host).",
       }],
       "notes": [
         "The token endpoint authenticates with HTTP Basic (client_id:client_secret base64-encoded)",
         "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
         "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
         "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
+        "Every tool takes a host parameter restricted to exactly quickbooks.api.intuit.com (production, the default) or sandbox-quickbooks.api.intuit.com (sandbox companies) — no other host is accepted",
       ],
       "documentation":
         "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",

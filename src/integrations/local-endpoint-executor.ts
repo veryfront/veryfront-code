@@ -275,10 +275,27 @@ function fieldValue(
   if (!valueMatchesType(value, field.type)) {
     requestInvalid(`Local integration argument "${name}" must have type "${field.type}"`);
   }
-  if ("pattern" in field && field.pattern !== undefined) {
-    assertPattern(value, field.pattern, name);
+  const pattern = fieldPattern(field);
+  if (pattern !== undefined) {
+    assertPattern(value, pattern, name);
   }
   return { present: true, value };
+}
+
+/**
+ * Reads a field's declared pattern as an own data property.
+ *
+ * A prototype-traversing read (`"pattern" in field`, `field.pattern`) would let
+ * an `Object.prototype.pattern` pollution poison validation for every field --
+ * or execute an inherited getter -- so only a string the catalog entry itself
+ * carries is ever enforced.
+ */
+function fieldPattern(
+  field: IntegrationEndpointParam | IntegrationEndpointBodyField,
+): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(field, "pattern");
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
 }
 
 function scalarString(value: unknown): string {

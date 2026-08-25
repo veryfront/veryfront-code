@@ -1375,15 +1375,29 @@ describe("integration endpoint specs", () => {
     }
   });
 
-  it("keeps QuickBooks OAuth requests on the Intuit API origin", () => {
+  it("keeps QuickBooks OAuth requests on the official Intuit API origins", () => {
     const quickbooks = getConnector("quickbooks");
 
     for (const tool of quickbooks.tools) {
       const endpoint = tool.endpoint;
       if (!endpoint) continue;
 
-      assertEquals(new URL(endpoint.url).origin, "https://quickbooks.api.intuit.com");
-      assertEquals(endpoint.params?.host, undefined);
+      assertEquals(
+        endpoint.url.startsWith("https://{host}/"),
+        true,
+        `${tool.id ?? tool.name} must route through the constrained host selector`,
+      );
+      const host = endpoint.params?.host;
+      assertExists(host, `${tool.id ?? tool.name} must declare the host selector`);
+      assertEquals(host.default, "quickbooks.api.intuit.com");
+      assertExists(host.pattern, `${tool.id ?? tool.name} must constrain host`);
+      const pattern = new RegExp(host.pattern);
+      assertEquals(pattern.test("quickbooks.api.intuit.com"), true);
+      assertEquals(pattern.test("sandbox-quickbooks.api.intuit.com"), true);
+      assertEquals(pattern.test("attacker.example"), false);
+      assertEquals(pattern.test("evil-quickbooks.api.intuit.com"), false);
+      assertEquals(pattern.test("quickbooks.api.intuit.com.attacker.example"), false);
+      assertEquals(pattern.test("quickbooks.api.intuit.com@attacker.example"), false);
     }
   });
 

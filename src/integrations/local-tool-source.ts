@@ -397,8 +397,15 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
-  if (field.type === "string" && field.pattern !== undefined) {
-    schema.pattern = field.pattern;
+  // Own-property read: a prototype-traversing `field.pattern` would let an
+  // `Object.prototype.pattern` pollution inject a constraint into every
+  // model-facing schema (or execute an inherited getter).
+  const patternDescriptor = getOwnPropertyDescriptor(field, "pattern");
+  const pattern = patternDescriptor && "value" in patternDescriptor
+    ? patternDescriptor.value
+    : undefined;
+  if (field.type === "string" && typeof pattern === "string") {
+    schema.pattern = pattern;
   }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
