@@ -8,12 +8,12 @@ const REACT_COMPONENT_TAGS: ReadonlySet<symbol> = new Set([
   Symbol.for("react.lazy"),
   Symbol.for("react.context"),
   Symbol.for("react.provider"),
+  Symbol.for("react.consumer"),
 ]);
 
 /**
- * Detects the component objects `React.memo`, `React.forwardRef` and
- * `React.lazy` produce, which is what separates a component from an ordinary
- * data export such as an App Router `metadata` object.
+ * Detects React component-type objects, which separates a component from an
+ * ordinary data export such as an App Router `metadata` object.
  *
  * The tags are matched individually rather than accepting any symbol-valued
  * `$$typeof`, because a React *element* carries one too. An element is a

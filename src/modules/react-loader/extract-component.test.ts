@@ -117,6 +117,26 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("keeps a provider type declared before a helper function", () => {
+    const Provider = { $$typeof: Symbol.for("react.provider"), _context: {} };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Provider, helper }, "provider.tsx"),
+      Provider,
+      "a provider is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
+  it("keeps a consumer type declared before a helper function", () => {
+    const Consumer = { $$typeof: Symbol.for("react.consumer"), _context: {} };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Consumer, helper }, "consumer.tsx"),
+      Consumer,
+      "a consumer is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
   it("skips an export that throws when it is read", () => {
     const Page = () => null;
     const moduleObj: Record<string, unknown> = { __esModule: true };
@@ -132,6 +152,23 @@ describe("modules/react-loader/extract-component", () => {
       extractComponent(moduleObj, "circular.tsx"),
       Page,
       "a namespace getter that throws must not hide a usable component behind it",
+    );
+  });
+
+  it("does not read a later getter after finding a component", () => {
+    const Page = () => null;
+    const moduleObj: Record<string, unknown> = { __esModule: true, Page };
+    Object.defineProperty(moduleObj, "optionalDependency", {
+      enumerable: true,
+      get() {
+        throw new ReferenceError("Cannot access 'optionalDependency' before initialization");
+      },
+    });
+
+    assertEquals(
+      extractComponent(moduleObj, "lazy.tsx"),
+      Page,
+      "an unrelated getter after the selected component must never be evaluated",
     );
   });
 
