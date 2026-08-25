@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { parseLocalImports } from "./import-parser.ts";
@@ -330,6 +331,154 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
+  // Regression: the containment predicate dispatched through live
+  // String.prototype methods, so tenant SSR code that replaced replaceAll or
+  // startsWith after running once in this realm could make an escaping path
+  // look contained on later renders. The predicate must run on captured
+  // intrinsics. The poison here is surgical, as an attacker's would be, so the
+  // rest of the pipeline keeps working while the containment calls lie.
+  it("keeps containment when String.prototype methods are poisoned", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-intrinsics-" });
+    const originalReplaceAll = String.prototype.replaceAll;
+    const originalStartsWith = String.prototype.startsWith;
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
+      const code = `import Secret from "@/../secret.tsx";\n\n<Secret />\n`;
+      const adapter = await getLocalAdapter();
+
+      const poisonedReplaceAll = function (
+        this: string,
+        searchValue: string | RegExp,
+        replaceValue: string,
+      ): string {
+        if (String(this).includes("secret.tsx") && searchValue === "\\") return "";
+        return (originalReplaceAll as (
+          this: string,
+          searchValue: string,
+          replaceValue: string,
+        ) => string).call(this, searchValue as string, replaceValue);
+      };
+      const poisonedStartsWith = function (
+        this: string,
+        searchString: string,
+        position?: number,
+      ): boolean {
+        if (
+          String(this).includes("secret.tsx") &&
+          (searchString === "../" || searchString === "/")
+        ) {
+          return false;
+        }
+        return originalStartsWith.call(this, searchString, position);
+      };
+      String.prototype.replaceAll = poisonedReplaceAll as typeof String.prototype.replaceAll;
+      String.prototype.startsWith = poisonedStartsWith;
+
+      const result = await parseLocalImports(code, filePath, projectDir, adapter);
+
+      assertEquals(result.imports.length, 0, "poisoned intrinsics must not admit an escape");
+      assertEquals(result.missing.length, 1, "the traversal must still be rejected");
+    } finally {
+      String.prototype.replaceAll = originalReplaceAll;
+      String.prototype.startsWith = originalStartsWith;
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: symlinkSemantics was read as an inherited property, so a
+  // marker inherited through the prototype chain (for example Object.prototype
+  // pollution with "none") switched realPath() off and an in-project symlink
+  // targeting a file outside the project was accepted. Only an own data
+  // property is authority, as FSAdapterWrapper captures it.
+  it("ignores an inherited symlink-free claim when validating containment", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-inherited-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "@/linked/secret.tsx";\n\n<Secret />\n`;
+
+      const localFs = (await getLocalAdapter()).fs;
+      const pollutedFs = Object.create(
+        { symlinkSemantics: "none" },
+      ) as RuntimeAdapter["fs"];
+      pollutedFs.stat = (path: string) => localFs.stat(path);
+      pollutedFs.realPath = (path: string) => localFs.realPath!(path);
+      const adapter = { fs: pollutedFs } as RuntimeAdapter;
+
+      const result = await parseLocalImports(code, filePath, projectDir, adapter);
+
+      assertEquals(result.imports.length, 0, "an inherited marker must not skip realPath");
+      assertEquals(result.missing.length, 1, "the symlink escape must still be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: an accepted import was classified from its canonical path, so
+  // a stylesheet reached through an in-project symlink whose target carries no
+  // .css suffix was processed as JavaScript instead of being registered for
+  // HTML inclusion. The requested path names the type; the canonical path is
+  // only what gets read.
+  it("classifies a symlinked stylesheet from the requested path", async () => {
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-css-classify-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "theme-generated"), `.theme { color: red; }`);
+      await Deno.symlink(join(projectDir, "theme-generated"), join(projectDir, "theme.css"));
+      const filePath = join(projectDir, "pages/index.tsx");
+      const code = `import "@/theme.css";\nexport default () => null;`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.missing.length, 0);
+      assertEquals(result.imports.length, 0, "a stylesheet must not be treated as JavaScript");
+      assertEquals(result.cssImports.length, 1, "the symlinked stylesheet must stay CSS");
+      assertEquals(
+        result.cssImports[0]?.absolutePath,
+        await Deno.realPath(join(projectDir, "theme.css")),
+        "the recorded path must still be the approved canonical target",
+      );
+    } finally {
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: stripping trailing separators must preserve a portable Windows
+  // drive root too: "C:/" must not become the drive-relative "C:", which
+  // resolves against the current directory and breaks every @/ import of a
+  // project mounted at a drive root.
+  it("resolves compiled aliases when the project directory is a drive root", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(
+            path === "components/Button.tsx" ? "C:/components/Button.tsx" : null,
+          ),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default () => Button;`;
+
+    const result = await parseLocalImports(code, "C:/pages/index.tsx", "C:/", adapter);
+
+    assertEquals(result.missing.length, 0, "a drive-root @/ import must resolve");
+    assertEquals(result.imports.length, 1);
+    assertEquals(result.imports[0]?.absolutePath, "C:/components/Button.tsx");
+  });
+
   // Regression: stripping trailing separators turned a projectDir of "/" into
   // "", so the canonical check called realPath("") and every @/ import of a
   // root-mounted project failed, including files that exist inside it.
@@ -347,7 +496,10 @@ describe("transforms/esm/import-parser", () => {
 
       assertEquals(result.missing.length, 0, "a root-mounted @/ import must resolve");
       assertEquals(result.imports.length, 1);
-      assertEquals(result.imports[0].absolutePath, await Deno.realPath(join(rootDir, "Badge.tsx")));
+      assertEquals(
+        result.imports[0]?.absolutePath,
+        await Deno.realPath(join(rootDir, "Badge.tsx")),
+      );
     } finally {
       stub.restore();
       await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);

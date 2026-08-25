@@ -15,6 +15,10 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  type CapturedSnapshotReader,
+  captureSnapshotReadCapability,
+} from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import type { ModuleCacheEntry } from "./types.ts";
 import {
@@ -23,6 +27,17 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+/** Ceiling for one dependency source admitted through the bound snapshot read. */
+const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
+
+const reflectApply = Reflect.apply;
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const decodeUtf8 = TextDecoder.prototype.decode;
+
+function decodeDependencySource(bytes: Uint8Array): string {
+  return reflectApply(decodeUtf8, strictUtf8Decoder, [bytes]) as string;
+}
 
 export interface ResolvedCachedDependencies {
   localImportPaths: Map<string, string>;
@@ -96,6 +111,11 @@ export class SSRDependencyValidator {
   /** Accumulated missing dependencies across the transform tree. */
   missingDependencies: MissingImport[] = [];
 
+  /** Bound, no-follow snapshot read capability captured from the adapter. */
+  private readonly projectSnapshotReader?: CapturedSnapshotReader;
+  /** The adapter's own contract that its paths cannot traverse symlinks. */
+  private readonly symlinkFreeFs: boolean;
+
   constructor(
     private transformWithDependencies: (
       filePath: string,
@@ -111,7 +131,21 @@ export class SSRDependencyValidator {
     ) => Promise<string>,
     private adapter: RuntimeAdapter,
     private projectDir: string,
-  ) {}
+  ) {
+    // Symlink-free semantics are authority, so only an own data property
+    // counts, exactly as FSAdapterWrapper captures it: an inherited value
+    // must not bypass the bound snapshot read below.
+    const semantics = Object.getOwnPropertyDescriptor(adapter.fs, "symlinkSemantics");
+    this.symlinkFreeFs = semantics !== undefined && "value" in semantics &&
+      semantics.value === "none";
+    this.projectSnapshotReader = captureSnapshotReadCapability(
+      adapter.fs,
+      "SSR dependency filesystem",
+      // FSAdapterWrapper publishes absent optional capabilities as frozen
+      // `undefined` own properties; treat that as unsupported, not malformed.
+      true,
+    );
+  }
 
   /** Reset missing dependencies for a new load cycle. */
   reset(): void {
@@ -302,6 +336,31 @@ export class SSRDependencyValidator {
     return path === projectDir || path.startsWith(`${projectDir}/`);
   }
 
+  /**
+   * Read an approved in-project dependency without trusting the path twice.
+   *
+   * Import containment approves a canonical pathname, but on a native
+   * filesystem the file or one of its parents can be replaced with a symlink
+   * between that approval and this read. The captured snapshot capability
+   * binds the two: it re-verifies no-follow containment beneath the project
+   * root atomically with the read, so a retargeted link is refused instead of
+   * followed. A filesystem whose own contract rules out symlink traversal
+   * cannot be retargeted, so its plain read is already bound; adapters
+   * providing neither authority keep the direct read they always had.
+   */
+  private async readProjectImportSource(path: string): Promise<string> {
+    if (this.symlinkFreeFs) return await this.adapter.fs.readFile(path);
+    if (this.projectSnapshotReader) {
+      const bytes = await this.projectSnapshotReader.read(
+        path,
+        this.projectDir,
+        MAX_LOCAL_IMPORT_SOURCE_BYTES,
+      );
+      return decodeDependencySource(bytes);
+    }
+    return await this.adapter.fs.readFile(path);
+  }
+
   private readLocalImportSource(
     path: string,
     localFs: ReturnType<typeof createFileSystem>,
@@ -311,7 +370,7 @@ export class SSRDependencyValidator {
     }
 
     if (this.isProjectAbsolutePath(path)) {
-      return this.adapter.fs.readFile(path);
+      return this.readProjectImportSource(path);
     }
 
     return localFs.readTextFile(path);

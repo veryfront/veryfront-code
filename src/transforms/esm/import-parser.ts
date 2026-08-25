@@ -1,6 +1,6 @@
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { dirname, join, relative } from "#veryfront/compat/path";
+import { dirname, join, normalize, relative } from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -40,6 +40,25 @@ interface ParseLocalImportsResult {
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
+
+// Tenant SSR code executes in this realm before later parses run, so the
+// containment decision must not dispatch through mutable prototype methods or
+// inherited adapter properties. Capture the intrinsics it depends on at module
+// initialization, as the path compatibility layer does for its own operations.
+const ReflectApply = Reflect.apply;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const universalObjectPrototype = Object.prototype;
+const StringReplaceAll = String.prototype.replaceAll;
+const StringStartsWith = String.prototype.startsWith;
+
+function stringReplaceAll(value: string, search: string, replacement: string): string {
+  return ReflectApply(StringReplaceAll, value, [search, replacement]) as string;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
 
 /**
  * Compiled MDX, keyed by project, file and content hash.
@@ -118,6 +137,7 @@ export async function parseLocalImports(
   const cssImports: LocalImport[] = [];
   const crossProjectImports: CrossProjectImport[] = [];
   const missingImports: MissingImport[] = [];
+  const containment = createContainmentContext(projectDir, adapter);
 
   for (const imp of imports) {
     const specifier = imp.n;
@@ -134,13 +154,14 @@ export async function parseLocalImports(
       // this record is read back verbatim in the "Component has missing
       // dependencies" build error. Report what the author wrote instead.
       const authoredSpecifier = toAuthoredSpecifier(targetPath, specifier, filePath);
-      const resolved = targetPath
-        ? await resolveContainedFilePath(targetPath, projectDir, adapter)
-        : null;
+      const resolved = targetPath ? await resolveContainedFilePath(targetPath, containment) : null;
 
       if (resolved) {
-        const entry = { specifier: authoredSpecifier, absolutePath: resolved };
-        if (resolved.endsWith(".css")) cssImports.push(entry);
+        const entry = { specifier: authoredSpecifier, absolutePath: resolved.absolutePath };
+        // An in-project symlink may canonicalize to a target whose suffix
+        // differs from the link's. The import keeps the type the author
+        // addressed; the canonical path is only what gets read.
+        if (resolved.requestedPath.endsWith(".css")) cssImports.push(entry);
         else localImports.push(entry);
         continue;
       }
@@ -174,13 +195,11 @@ export async function parseLocalImports(
 
     if (specifier.startsWith("@/")) {
       const aliasPath = specifier.slice(2);
-      const resolved = await resolveAliasImportPath(aliasPath, projectDir, adapter);
+      const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
-        if (resolved.endsWith(".css")) {
-          cssImports.push({ specifier, absolutePath: resolved });
-        } else {
-          localImports.push({ specifier, absolutePath: resolved });
-        }
+        const entry = { specifier, absolutePath: resolved.absolutePath };
+        if (resolved.requestedPath.endsWith(".css")) cssImports.push(entry);
+        else localImports.push(entry);
         continue;
       }
 
@@ -209,50 +228,132 @@ export async function parseLocalImports(
 }
 
 function isPathWithinProject(path: string, projectDir: string): boolean {
-  const projectRelativePath = relative(projectDir, path).replaceAll("\\", "/");
+  // This predicate is the containment decision, so it runs on captured string
+  // intrinsics: tenant code that replaced String.prototype.replaceAll or
+  // startsWith must not be able to make an escaping path look contained.
+  const projectRelativePath = stringReplaceAll(relative(projectDir, path), "\\", "/");
   return projectRelativePath !== ".." &&
-    !projectRelativePath.startsWith("../") &&
-    !projectRelativePath.startsWith("/");
+    !stringStartsWith(projectRelativePath, "../") &&
+    !stringStartsWith(projectRelativePath, "/");
+}
+
+/**
+ * Everything one parse needs to decide containment, captured once per parse:
+ * the normalized project root, the adapter's own symlink-free contract, the
+ * canonicalization capability, and a shared canonical project root so accepted
+ * imports do not repeat `realPath(projectDir)` per dependency per render.
+ */
+interface ContainmentContext {
+  readonly projectDir: string;
+  readonly adapter?: RuntimeAdapter;
+  readonly symlinkFree: boolean;
+  readonly canonicalize: ((path: string) => Promise<string>) | null;
+  canonicalProjectDir(): Promise<string>;
+}
+
+function createContainmentContext(
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): ContainmentContext {
+  // Strip trailing separators but preserve filesystem roots: "/" must not
+  // become "" (which realPath rejects) and a portable Windows drive root such
+  // as "C:/" must not become the drive-relative "C:". The path facade's
+  // normalize implements exactly that contract on captured intrinsics.
+  const normalizedProjectDir = projectDir === "" ? "/" : normalize(projectDir);
+  const fs = adapter?.fs;
+  // Symlink-free semantics are authority, so only an own data property
+  // counts, exactly as FSAdapterWrapper captures it: an inherited value (for
+  // example Object.prototype pollution with "none") must not switch the
+  // canonical check off.
+  const semantics = fs === undefined
+    ? undefined
+    : ObjectGetOwnPropertyDescriptor(fs, "symlinkSemantics");
+  const symlinkFree = semantics !== undefined && "value" in semantics &&
+    semantics.value === "none";
+  const realPathMethod = fs === undefined ? undefined : captureRealPath(fs);
+  const canonicalize = realPathMethod !== undefined
+    ? (path: string) => ReflectApply(realPathMethod, fs, [path]) as Promise<string>
+    : adapter === undefined
+    ? realPath
+    : null;
+  let canonicalRoot: Promise<string> | undefined;
+  return {
+    projectDir: normalizedProjectDir,
+    adapter,
+    symlinkFree,
+    canonicalize,
+    canonicalProjectDir(): Promise<string> {
+      canonicalRoot ??= canonicalize!(normalizedProjectDir);
+      return canonicalRoot;
+    },
+  };
+}
+
+/**
+ * The adapter's realPath as a data property from its own prototype chain.
+ * Canonicalization is authority, so a value inherited from Object.prototype
+ * (pollution) or served by an accessor is never used; absence fails closed in
+ * the caller. Captured once per parse instead of being looked up per import.
+ */
+function captureRealPath(
+  fs: object,
+): ((path: string) => Promise<string>) | undefined {
+  let owner: object | null = fs;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === universalObjectPrototype) return undefined;
+    const descriptor = ObjectGetOwnPropertyDescriptor(owner, "realPath");
+    if (descriptor !== undefined) {
+      return "value" in descriptor && typeof descriptor.value === "function"
+        ? descriptor.value as (path: string) => Promise<string>
+        : undefined;
+    }
+    owner = ObjectGetPrototypeOf(owner);
+  }
+  return undefined;
+}
+
+interface ContainedImportPath {
+  /** Canonical path callers must record and later read. */
+  absolutePath: string;
+  /** Lexically resolved path naming what the author addressed. */
+  requestedPath: string;
 }
 
 async function resolveContainedFilePath(
   targetPath: string,
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<string | null> {
-  if (!isPathWithinProject(targetPath, projectDir)) return null;
+  containment: ContainmentContext,
+): Promise<ContainedImportPath | null> {
+  if (!isPathWithinProject(targetPath, containment.projectDir)) return null;
 
-  const resolved = await resolveExistingFilePath(targetPath, adapter);
+  const resolved = await resolveExistingFilePath(targetPath, containment.adapter);
   if (!resolved) return null;
-  return await toContainedCanonicalPath(resolved, projectDir, adapter);
+  return await toContainedImportPath(resolved, containment);
 }
 
 /**
- * The canonical (symlink-free) form of `resolved` when it stays inside the
- * project, or null when it escapes. The canonical path is what callers must
- * record and later read: returning the lexical path instead would let a
- * symlink retargeted between this check and the eventual `readFile` escape
- * containment (TOCTOU).
+ * The canonical (symlink-free) form of `resolved` paired with the requested
+ * path, or null when the canonical form escapes the project. The canonical
+ * path is what callers must record and later read: returning the lexical path
+ * instead would let a symlink retargeted between this check and the eventual
+ * `readFile` escape containment (TOCTOU). The requested path travels with it
+ * because it, not the link target's name, says whether the author imported a
+ * stylesheet or a module.
  */
-async function toContainedCanonicalPath(
+async function toContainedImportPath(
   resolved: string,
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<string | null> {
-  if (adapter?.fs.symlinkSemantics === "none") return resolved;
-
-  const canonicalize = adapter?.fs.realPath
-    ? (path: string) => adapter.fs.realPath!(path)
-    : adapter === undefined
-    ? realPath
-    : null;
-  if (!canonicalize) return null;
+  containment: ContainmentContext,
+): Promise<ContainedImportPath | null> {
+  if (containment.symlinkFree) {
+    return { absolutePath: resolved, requestedPath: resolved };
+  }
+  if (containment.canonicalize === null) return null;
 
   const [canonicalProjectDir, canonicalResolved] = await Promise.all([
-    canonicalize(projectDir),
-    canonicalize(resolved),
+    containment.canonicalProjectDir(),
+    containment.canonicalize(resolved),
   ]);
-  return isPathWithinProject(canonicalResolved, canonicalProjectDir) ? canonicalResolved : null;
+  if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
+  return { absolutePath: canonicalResolved, requestedPath: resolved };
 }
 
 /**
@@ -351,23 +452,17 @@ async function resolveExistingFilePath(
 
 async function resolveAliasImportPath(
   basePath: string,
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<string | null> {
+  containment: ContainmentContext,
+): Promise<ContainedImportPath | null> {
   const normalizedPath = basePath.replace(/^\/+/, "");
-  const fs = createFileSystem();
-  // Strip trailing separators but preserve the filesystem root: a project
-  // mounted at "/" must not normalize to "", which realPath rejects.
-  const projectNormalizedDir = projectDir.replace(/\/+$/, "") || "/";
-  const lexicalPath = join(projectNormalizedDir, normalizedPath);
-  if (!isPathWithinProject(lexicalPath, projectNormalizedDir)) return null;
+  const lexicalPath = join(containment.projectDir, normalizedPath);
+  if (!isPathWithinProject(lexicalPath, containment.projectDir)) return null;
 
+  const adapter = containment.adapter;
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) {
-        return await toContainedCanonicalPath(resolved, projectNormalizedDir, adapter);
-      }
+      if (resolved) return await toContainedImportPath(resolved, containment);
     } catch (_) {
       /* expected: resolveFile may not be supported */
       // Fall through to manual resolution
@@ -375,17 +470,17 @@ async function resolveAliasImportPath(
   }
 
   if (HAS_EXTENSION_RE.test(normalizedPath)) {
-    return await resolveContainedFilePath(lexicalPath, projectNormalizedDir, adapter);
+    return await resolveContainedFilePath(lexicalPath, containment);
   }
 
   const candidates = [
-    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath + ext)),
-    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath, "index" + ext)),
+    ...EXTENSIONS.map((ext) => join(containment.projectDir, normalizedPath + ext)),
+    ...EXTENSIONS.map((ext) => join(containment.projectDir, normalizedPath, "index" + ext)),
   ];
 
-  const resolved = await findFirstExistingFile(candidates, fs);
+  const resolved = await findFirstExistingFile(candidates, createFileSystem());
   if (!resolved) return null;
-  return await toContainedCanonicalPath(resolved, projectNormalizedDir, adapter);
+  return await toContainedImportPath(resolved, containment);
 }
 
 async function findFirstExistingFile(

@@ -121,6 +121,21 @@ describe("SSRDependencyValidator", () => {
       adapterReads.push(path);
       return Promise.resolve('export const child = "from-adapter";');
     };
+    // In-project reads bind containment to the read through the adapter's
+    // snapshot capability when it has one, so route that through the adapter
+    // double as well instead of letting it reach the real disk. The native
+    // adapter publishes the capability as a non-writable property, so the
+    // override must be defined rather than assigned.
+    Object.defineProperty(adapterFs, "readFileSnapshotWithinLimit", {
+      value: (path: string) => {
+        adapterReads.push(path);
+        return Promise.resolve(
+          new TextEncoder().encode('export const child = "from-adapter";'),
+        );
+      },
+      configurable: true,
+      enumerable: true,
+    });
     const adapter = Object.create(denoAdapter, {
       fs: { value: adapterFs },
     }) as typeof denoAdapter;
@@ -165,6 +180,54 @@ describe("SSRDependencyValidator", () => {
         validator.missingDependencies,
         [],
         "an in-project dependency read through the adapter must not be reported missing",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  // Regression: import containment approves a canonical pathname, but the
+  // later read followed whatever the path named by then, so a symlink placed
+  // at the approved path after validation escaped the project. The read must
+  // be bound to containment: the adapter's no-follow snapshot capability
+  // refuses the replaced path instead of following it.
+  it("refuses to read an approved project path replaced by a symlink", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-toctou-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      const externalDir = join(tempDir, "external");
+      await mkdir(projectDir, { recursive: true });
+      await mkdir(externalDir, { recursive: true });
+      await writeTextFile(join(externalDir, "secret.ts"), `export const leaked = "secret";`);
+      const approvedPath = join(projectDir, "child.ts");
+      // The path was approved while it named a regular file; by read time an
+      // attacker has replaced it with a link to an out-of-project target.
+      await Deno.symlink(join(externalDir, "secret.ts"), approvedPath);
+
+      const transformedSources: Array<string | undefined> = [];
+      const validator = new SSRDependencyValidator(
+        (_filePath, source) => {
+          transformedSources.push(source);
+          return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await validator.processLocalImports(
+        [{ absolutePath: approvedPath, specifier: "./child.ts" }],
+        join(projectDir, "page.ts"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(transformedSources, [], "the replaced path must not be transformed");
+      assertEquals(
+        validator.missingDependencies.length,
+        1,
+        "the bound read must refuse the retargeted symlink",
       );
     } finally {
       await remove(tempDir, { recursive: true });
