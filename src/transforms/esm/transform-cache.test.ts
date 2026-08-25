@@ -152,7 +152,7 @@ describe("transforms/esm/transform-cache", () => {
       }
     });
 
-    it("retains fallback entries larger than the default LRU byte limit", () => {
+    it("does not retain fallback entries larger than the byte limit", () => {
       __injectCachesForTests(null);
       __injectCachesForTests({ cacheBackend: null });
       destroyTransformCache();
@@ -161,9 +161,63 @@ describe("transforms/esm/transform-cache", () => {
         const largeTransform = "x".repeat(26 * 1024 * 1024);
         setCachedTransform("large-key", largeTransform, "large-hash");
 
-        const result = getCachedTransform("large-key");
-        assertEquals(result?.code.length, largeTransform.length);
-        assertEquals(result?.hash, "large-hash");
+        assertEquals(getCachedTransform("large-key"), undefined);
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("rejects an oversized entry without flushing existing entries", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        setCachedTransform("small-key-1", "small-code-1", "small-hash-1");
+        setCachedTransform("small-key-2", "small-code-2", "small-hash-2");
+
+        const oversizedTransform = "x".repeat(26 * 1024 * 1024);
+        setCachedTransform("oversized-key", oversizedTransform, "oversized-hash");
+
+        assertEquals(getCachedTransform("oversized-key"), undefined);
+        assertEquals(getCachedTransform("small-key-1")?.hash, "small-hash-1");
+        assertEquals(getCachedTransform("small-key-2")?.hash, "small-hash-2");
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("evicts least recently used entries to stay within the byte limit", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        const largeTransform = "x".repeat(20 * 1024 * 1024);
+        setCachedTransform("large-key-1", largeTransform, "large-hash-1");
+        setCachedTransform("large-key-2", largeTransform, "large-hash-2");
+
+        assertEquals(getCachedTransform("large-key-1"), undefined);
+        assertEquals(getCachedTransform("large-key-2")?.hash, "large-hash-2");
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("counts the retained key string against the byte limit", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        const hugeKey = "k".repeat(26 * 1024 * 1024);
+        setCachedTransform(hugeKey, "tiny-code", "tiny-hash");
+
+        assertEquals(
+          getCachedTransform(hugeKey),
+          undefined,
+          "an entry with a huge key must not be retained even when its code is tiny",
+        );
       } finally {
         destroyTransformCache();
       }
@@ -241,6 +295,100 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(result?.dependencyResolutionObservations, [
         { packageName: "zod", declaration: "^4" },
       ]);
+    });
+
+    it("counts dependency observation declarations against the byte limit", async () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        await setCachedTransformAsync("small-meta-key", "small-code", "small-hash");
+
+        // Tiny code, but ~52MB of retained dependency declarations.
+        const hugeDeclaration = "d".repeat(13 * 1024 * 1024);
+        await setCachedTransformAsync(
+          "huge-observations-key",
+          "tiny-code",
+          "tiny-hash",
+          300,
+          undefined,
+          [
+            { packageName: "pkg-a", declaration: hugeDeclaration },
+            { packageName: "pkg-b", declaration: hugeDeclaration },
+          ],
+        );
+
+        assertEquals(
+          await getCachedTransformAsync("huge-observations-key"),
+          undefined,
+          "an entry with oversized observation metadata must not be retained",
+        );
+        assertEquals(
+          (await getCachedTransformAsync("small-meta-key"))?.hash,
+          "small-hash",
+          "rejecting an oversized entry must not flush existing entries",
+        );
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("counts the bundle manifest id against the byte limit", async () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        // Tiny code, but a ~52MB retained bundle manifest id.
+        const hugeManifestId = "m".repeat(26 * 1024 * 1024);
+        await setCachedTransformAsync(
+          "huge-manifest-key",
+          "tiny-code",
+          "tiny-hash",
+          300,
+          hugeManifestId,
+        );
+
+        assertEquals(
+          await getCachedTransformAsync("huge-manifest-key"),
+          undefined,
+          "an entry with an oversized bundle manifest id must not be retained",
+        );
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
+    it("evicts least recently used entries when metadata exceeds the byte limit", async () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        // Tiny code, but each entry retains ~20MB of observation metadata.
+        const declaration = "d".repeat(10 * 1024 * 1024);
+        for (let index = 1; index <= 3; index++) {
+          await setCachedTransformAsync(
+            `meta-key-${index}`,
+            "tiny-code",
+            `meta-hash-${index}`,
+            300,
+            undefined,
+            [{ packageName: "pkg", declaration }],
+          );
+        }
+
+        assertEquals(
+          await getCachedTransformAsync("meta-key-1"),
+          undefined,
+          "metadata-heavy entries must evict the least recently used entry",
+        );
+        assertEquals((await getCachedTransformAsync("meta-key-2"))?.hash, "meta-hash-2");
+        assertEquals((await getCachedTransformAsync("meta-key-3"))?.hash, "meta-hash-3");
+      } finally {
+        destroyTransformCache();
+      }
     });
 
     it("discards a backend entry whose code is empty", async () => {
