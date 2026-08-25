@@ -276,22 +276,61 @@ describe("server/runtime-handler/index", () => {
 
   it("allows proxy context only behind the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
+    const isolationCalls = { check: 0, start: 0, complete: 0 };
+    injectIsolationDepsForTests({
+      checkRequest: () => {
+        isolationCalls.check += 1;
+        return { allowed: true };
+      },
+      startRequest: () => {
+        isolationCalls.start += 1;
+      },
+      completeRequest: () => {
+        isolationCalls.complete += 1;
+      },
+    });
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
 
-    const response = await handler(
-      new Request("http://localhost/page", {
-        headers: {
-          "x-project-slug": "my-project",
-          "x-token": "proxy-token",
-          "x-forwarded-host": "my-project.production.veryfront.com",
-          "x-release-id": "rel_123",
-        },
-      }),
-    );
+    try {
+      const response = await handler(
+        new Request("http://localhost/page", {
+          headers: {
+            "x-project-slug": "my-project",
+            "x-token": "proxy-token",
+            "x-forwarded-host": "my-project.production.veryfront.com",
+            "x-release-id": "rel_123",
+          },
+        }),
+      );
 
-    assertEquals(response.status === 502, false);
-    const body = await response.text();
-    assertEquals(body.includes("proxy context headers require a trusted upstream proxy"), false);
+      assertEquals(response.status === 502, false);
+      const body = await response.text();
+      assertEquals(body.includes("proxy context headers require a trusted upstream proxy"), false);
+      assertEquals(
+        body.includes("Untrusted proxy context"),
+        false,
+        "an operator-trusted topology must not be rejected by the proxy guard",
+      );
+      assertEquals(
+        isolationCalls.check,
+        1,
+        "a trusted proxy request must reach the isolation-gated pipeline",
+      );
+      assertEquals(
+        isolationCalls.start,
+        1,
+        "admission must start the request rather than short-circuit at the proxy guard",
+      );
+      // The fixture project has no loadable config, so the first failure past
+      // the proxy guard is config loading. Reaching it proves admission.
+      assertEquals(
+        body.includes("config-parse-error"),
+        true,
+        "a trusted proxy request must be admitted through to project runtime resolution",
+      );
+    } finally {
+      Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    }
   });
 
   it("returns 502 when trust-sensitive proxy context headers are present but untrusted", async () => {

@@ -563,8 +563,44 @@ describe("project-env/cache", () => {
     await cache.get(scope({ environmentId: "env-1" }));
     await cache.get(scope({ environmentId: "env-2" }));
     await cache.get(scope({ environmentId: "env-3" }));
-    await cache.get(scope({ environmentId: "env-1" }));
 
-    assertEquals(fetchCount, 4);
+    await cache.get(scope({ environmentId: "env-2" }));
+    await cache.get(scope({ environmentId: "env-3" }));
+    assertEquals(
+      fetchCount,
+      3,
+      "inserting env-3 must evict only the oldest entry, not flush the warm tenants",
+    );
+
+    await cache.get(scope({ environmentId: "env-1" }));
+    assertEquals(fetchCount, 4, "the evicted oldest entry must refetch");
+  });
+
+  it("keeps the recorded failures bounded", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      () => {
+        fetchCount++;
+        return Promise.reject(new Error(`upstream refused ${fetchCount}`));
+      },
+      60_000,
+      2,
+      { failureTtlMs: 60_000 },
+    );
+
+    await assertRejects(() => cache.get(scope({ environmentId: "env-1" })));
+    await assertRejects(() => cache.get(scope({ environmentId: "env-2" })));
+    await assertRejects(() => cache.get(scope({ environmentId: "env-3" })));
+    assertEquals(fetchCount, 3, "each distinct scope fetches once");
+
+    await assertRejects(() => cache.get(scope({ environmentId: "env-3" })));
+    assertEquals(fetchCount, 3, "the newest failure replays from the failure map");
+
+    await assertRejects(() => cache.get(scope({ environmentId: "env-1" })));
+    assertEquals(
+      fetchCount,
+      4,
+      "the oldest failure is evicted once the map exceeds maxEntries and refetches",
+    );
   });
 });

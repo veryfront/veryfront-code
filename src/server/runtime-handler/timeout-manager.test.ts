@@ -27,14 +27,26 @@ describe("timeout-manager", () => {
 
     it("returns error wrapper for handler exceptions", async () => {
       const handler = async (): Promise<Response> => {
-        throw new Error("Handler failed");
+        throw new Error("Handler failed at /srv/secret/path?token=abc");
       };
 
       const { response, error } = await withRequestTimeout(handler, "/test", "GET");
 
       assertEquals(response.status, 500);
       assertExists(error);
-      assertEquals(error.message, "Handler failed");
+      assertEquals(error.message, "Handler failed at /srv/secret/path?token=abc");
+      assertEquals(
+        response.headers.get("content-type"),
+        "text/html; charset=utf-8",
+        "unknown exceptions must keep the opaque HTML error page",
+      );
+      const html = await response.text();
+      assertEquals(
+        html.includes("Handler failed"),
+        false,
+        "the internal exception message must never reach the client",
+      );
+      assertEquals(html.length > 0, true, "the opaque page must still have a body");
     });
 
     it("returns error wrapper when a handler throws before returning a promise", async () => {

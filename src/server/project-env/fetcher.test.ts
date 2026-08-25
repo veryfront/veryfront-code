@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockServer } from "../../../tests/_helpers/utils.ts";
 import {
   fetchProjectEnvVars,
@@ -67,23 +73,21 @@ function responseWithBodyCleanup(
 
 describe("project-env/fetcher", () => {
   it("maps unknown transport failures to typed 502 semantics", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch;
-
-    try {
-      const error = await assertRejects(() =>
-        fetchProjectEnvVars(
-          "https://api.veryfront.test",
-          "my-project",
-          "env-123",
-          "test-token",
-        )
-      );
-      assertEquals((error as { slug?: string }).slug, "network-error");
-      assertEquals((error as { status?: number }).status, 502);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch,
+      async () => {
+        const error = await assertRejects(() =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+          )
+        );
+        assertEquals((error as { slug?: string }).slug, "network-error");
+        assertEquals((error as { status?: number }).status, 502);
+      },
+    );
   });
 
   it("fetches and transforms env vars from API", async () => {
@@ -142,13 +146,41 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("throws on non-200 response", async () => {
+  it("classifies a 401 as a rejected credential", async () => {
     const { server, port } = createMockServer(() => {
       return new Response("Unauthorized", { status: 401 });
     });
 
     try {
-      await assertRejects(() => fetchFromMockApi(port));
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "authentication-required",
+        "a 401 is a rejected credential, not a transient network fault",
+      );
+      assertEquals((error as { status?: number }).status, 401, "the error keeps the 401 status");
+      assertEquals(
+        (error as Error).message,
+        "Project credential was rejected",
+        "the error message names the rejected credential",
+      );
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("classifies a 404 as a permission failure", async () => {
+    const { server, port } = createMockServer(() => {
+      return new Response("Not Found", { status: 404 });
+    });
+
+    try {
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals(
+        (error as { slug?: string }).slug,
+        "permission-denied",
+        "a 404 is folded into the permission-denied branch",
+      );
     } finally {
       await server.shutdown();
     }
@@ -172,94 +204,91 @@ describe("project-env/fetcher", () => {
   });
 
   it("preserves the authorization error when response cleanup throws synchronously", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        responseWithBodyCleanup(403, () => {
-          throw new Error("cleanup failed synchronously");
-        }),
-      )) as typeof fetch;
-
-    try {
-      const error = await assertRejects(() =>
-        fetchProjectEnvVars(
-          "https://api.veryfront.test",
-          "my-project",
-          "env-123",
-          "test-token",
-        )
-      );
-      assertEquals((error as { slug?: string }).slug, "permission-denied");
-      assertEquals((error as { status?: number }).status, 403);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          responseWithBodyCleanup(403, () => {
+            throw new Error("cleanup failed synchronously");
+          }),
+        )) as typeof fetch,
+      async () => {
+        const error = await assertRejects(() =>
+          fetchProjectEnvVars(
+            "https://api.veryfront.test",
+            "my-project",
+            "env-123",
+            "test-token",
+          )
+        );
+        assertEquals((error as { slug?: string }).slug, "permission-denied");
+        assertEquals((error as { status?: number }).status, 403);
+      },
+    );
   });
 
   it("preserves the internal request error when response cleanup rejects", async () => {
-    const originalFetch = globalThis.fetch;
     let fetchCount = 0;
-    globalThis.fetch = (() => {
-      fetchCount++;
-      return Promise.resolve(
-        fetchCount === 1
-          ? responseWithBodyCleanup(200, () => Promise.resolve())
-          : responseWithBodyCleanup(500, () => Promise.reject(new Error("cleanup rejected"))),
-      );
-    }) as typeof fetch;
-
-    try {
-      const error = await assertRejects(() =>
-        withInternalCredentials("runtime-user", "runtime-pass", () =>
-          fetchProjectEnvVars(
-            "https://api.veryfront.test",
-            "my-project",
-            "env-123",
-            "test-token",
-          ))
-      );
-      assertEquals((error as { slug?: string }).slug, "network-error");
-      assertEquals((error as { status?: number }).status, 502);
-      assertEquals(fetchCount, 2);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() => {
+        fetchCount++;
+        return Promise.resolve(
+          fetchCount === 1
+            ? responseWithBodyCleanup(200, () => Promise.resolve())
+            : responseWithBodyCleanup(500, () => Promise.reject(new Error("cleanup rejected"))),
+        );
+      }) as typeof fetch,
+      async () => {
+        const error = await assertRejects(() =>
+          withInternalCredentials("runtime-user", "runtime-pass", () =>
+            fetchProjectEnvVars(
+              "https://api.veryfront.test",
+              "my-project",
+              "env-123",
+              "test-token",
+            ))
+        );
+        assertEquals((error as { slug?: string }).slug, "network-error");
+        assertEquals((error as { status?: number }).status, 502);
+        assertEquals(fetchCount, 2);
+      },
+    );
   });
 
   it("does not wait for response cleanup before the privileged fetch", async () => {
-    const originalFetch = globalThis.fetch;
     let fetchCount = 0;
     let timeoutId: number | undefined;
-    globalThis.fetch = (() => {
-      fetchCount++;
-      return Promise.resolve(
-        fetchCount === 1
-          ? responseWithBodyCleanup(200, () => new Promise<void>(() => {}))
-          : Response.json({ data: [{ key: "API_KEY", value: "plaintext-value" }] }),
-      );
-    }) as typeof fetch;
-
-    try {
-      const timeout = Symbol("timeout");
-      const deadline = new Promise<typeof timeout>((resolve) => {
-        timeoutId = setTimeout(() => resolve(timeout), 100);
-      });
-      const result = await Promise.race([
-        withInternalCredentials("runtime-user", "runtime-pass", () =>
-          fetchProjectEnvVars(
-            "https://api.veryfront.test",
-            "my-project",
-            "env-123",
-            "test-token",
-          )),
-        deadline,
-      ]);
-      assertEquals(result, { API_KEY: "plaintext-value" });
-      assertEquals(fetchCount, 2);
-    } finally {
-      clearTimeout(timeoutId);
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() => {
+        fetchCount++;
+        return Promise.resolve(
+          fetchCount === 1
+            ? responseWithBodyCleanup(200, () => new Promise<void>(() => {}))
+            : Response.json({ data: [{ key: "API_KEY", value: "plaintext-value" }] }),
+        );
+      }) as typeof fetch,
+      async () => {
+        try {
+          const timeout = Symbol("timeout");
+          const deadline = new Promise<typeof timeout>((resolve) => {
+            timeoutId = setTimeout(() => resolve(timeout), 100);
+          });
+          const result = await Promise.race([
+            withInternalCredentials("runtime-user", "runtime-pass", () =>
+              fetchProjectEnvVars(
+                "https://api.veryfront.test",
+                "my-project",
+                "env-123",
+                "test-token",
+              )),
+            deadline,
+          ]);
+          assertEquals(result, { API_KEY: "plaintext-value" });
+          assertEquals(fetchCount, 2);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      },
+    );
   });
 
   it("rejects management redirects without following them", async () => {
@@ -322,32 +351,30 @@ describe("project-env/fetcher", () => {
   });
 
   it("keeps required env fetch headers authoritative over optional Headers input", async () => {
-    const originalFetch = globalThis.fetch;
     let capturedHeaders: Headers | undefined;
-    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
-      capturedHeaders = new Headers(init?.headers);
-      return Promise.resolve(Response.json({ data: [] }));
-    }) as typeof fetch;
-
-    try {
-      await projectEnvFetcherInternals.fetchEnvironmentVariables(
-        "https://api.veryfront.test/internal/project-environment-variables",
-        "Basic runtime-secret",
-        "my-project",
-        "env-123",
-        undefined,
-        new Headers({
-          accept: "text/plain",
-          authorization: "Bearer attacker",
-          "x-project-slug": "my-project",
-        }),
-      );
-      assertEquals(capturedHeaders?.get("authorization"), "Basic runtime-secret");
-      assertEquals(capturedHeaders?.get("accept"), "application/json");
-      assertEquals(capturedHeaders?.get("x-project-slug"), "my-project");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        capturedHeaders = new Headers(init?.headers);
+        return Promise.resolve(Response.json({ data: [] }));
+      }) as typeof fetch,
+      async () => {
+        await projectEnvFetcherInternals.fetchEnvironmentVariables(
+          "https://api.veryfront.test/internal/project-environment-variables",
+          "Basic runtime-secret",
+          "my-project",
+          "env-123",
+          undefined,
+          new Headers({
+            accept: "text/plain",
+            authorization: "Bearer attacker",
+            "x-project-slug": "my-project",
+          }),
+        );
+        assertEquals(capturedHeaders?.get("authorization"), "Basic runtime-secret");
+        assertEquals(capturedHeaders?.get("accept"), "application/json");
+        assertEquals(capturedHeaders?.get("x-project-slug"), "my-project");
+      },
+    );
   });
 
   it("fails closed when the configured internal endpoint is absent", async () => {
@@ -445,75 +472,75 @@ describe("project-env/fetcher", () => {
   });
 
   it("does not call the internal endpoint after management authorization times out", async () => {
-    const originalFetch = globalThis.fetch;
     const paths: string[] = [];
     const controller = new AbortController();
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-      paths.push(new URL(input instanceof Request ? input.url : input).pathname);
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
-      });
-    }) as typeof fetch;
-
-    try {
-      const assertion = assertRejects(() =>
-        withInternalCredentials("runtime-user", "runtime-pass", () =>
-          fetchProjectEnvVars(
-            "https://api.veryfront.test",
-            "my-project",
-            "env-123",
-            "test-token",
-            controller.signal,
-          ))
-      );
-      controller.abort(new Error("management timeout"));
-      const error = await assertion;
-      assertInstanceOf(error, Error);
-      assertEquals(error.message, "management timeout");
-      assertEquals(paths, ["/projects/my-project/environment-variables"]);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        paths.push(new URL(input instanceof Request ? input.url : input).pathname);
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      }) as typeof fetch,
+      async () => {
+        const assertion = assertRejects(() =>
+          withInternalCredentials("runtime-user", "runtime-pass", () =>
+            fetchProjectEnvVars(
+              "https://api.veryfront.test",
+              "my-project",
+              "env-123",
+              "test-token",
+              controller.signal,
+            ))
+        );
+        controller.abort(new Error("management timeout"));
+        const error = await assertion;
+        assertInstanceOf(error, Error);
+        assertEquals(error.message, "management timeout");
+        assertEquals(paths, ["/projects/my-project/environment-variables"]);
+      },
+    );
   });
 
   it("does not fall back after the internal request times out", async () => {
-    const originalFetch = globalThis.fetch;
     const paths: string[] = [];
     const internalRequestStarted = Promise.withResolvers<void>();
     const controller = new AbortController();
-    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-      const path = new URL(input instanceof Request ? input.url : input).pathname;
-      paths.push(path);
-      if (path === "/projects/my-project/environment-variables") {
-        return Promise.resolve(Response.json({ data: [] }));
-      }
-      internalRequestStarted.resolve();
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
-      });
-    }) as typeof fetch;
-
-    try {
-      const assertion = assertRejects(() =>
-        withInternalCredentials("runtime-user", "runtime-pass", () =>
-          fetchProjectEnvVars(
-            "https://api.veryfront.test",
-            "my-project",
-            "env-123",
-            "test-token",
-            controller.signal,
-          ))
-      );
-      await internalRequestStarted.promise;
-      controller.abort(new Error("internal timeout"));
-      await assertion;
-      assertEquals(paths, [
-        "/projects/my-project/environment-variables",
-        "/internal/project-environment-variables",
-      ]);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(input instanceof Request ? input.url : input).pathname;
+        paths.push(path);
+        if (path === "/projects/my-project/environment-variables") {
+          return Promise.resolve(Response.json({ data: [] }));
+        }
+        internalRequestStarted.resolve();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      }) as typeof fetch,
+      async () => {
+        const assertion = assertRejects(() =>
+          withInternalCredentials("runtime-user", "runtime-pass", () =>
+            fetchProjectEnvVars(
+              "https://api.veryfront.test",
+              "my-project",
+              "env-123",
+              "test-token",
+              controller.signal,
+            ))
+        );
+        await internalRequestStarted.promise;
+        controller.abort(new Error("internal timeout"));
+        await assertion;
+        assertEquals(paths, [
+          "/projects/my-project/environment-variables",
+          "/internal/project-environment-variables",
+        ]);
+      },
+    );
   });
 
   it("rejects masked values without exposing the tenant-defined key", async () => {
@@ -588,32 +615,86 @@ describe("project-env/fetcher", () => {
   });
 
   it("bounds streamed environment responses before JSON parsing", async () => {
+    // Served through an in-process stream rather than the mock server so the
+    // emitted byte count measures exactly what the reader pulled, not what the
+    // HTTP server buffered ahead of the client.
     const chunk = new Uint8Array(64 * 1024).fill(0x20);
     let emittedBytes = 0;
-    const { server, port } = createMockServer(() => {
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          pull(controller) {
-            if (emittedBytes > PROJECT_ENV_RESPONSE_MAX_BYTES) {
-              controller.close();
-              return;
-            }
-            emittedBytes += chunk.byteLength;
-            controller.enqueue(chunk);
-          },
-        }),
-        {
-          headers: { "content-type": "application/json" },
-        },
-      );
-    });
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                // Self-closes well past the cap so a missing bound fails the byte
+                // ceiling assertion instead of hanging or exhausting memory.
+                if (emittedBytes > PROJECT_ENV_RESPONSE_MAX_BYTES * 3) {
+                  controller.close();
+                  return;
+                }
+                emittedBytes += chunk.byteLength;
+                controller.enqueue(chunk);
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        )) as typeof fetch,
+      async () => {
+        const error = await assertRejects(() =>
+          fetchProjectEnvVars("https://api.veryfront.test", "my-project", "env-123", "test-token")
+        );
+        assertEquals((error as { slug?: string }).slug, "network-error");
+        assertStringIncludes(
+          String((error as Error).message),
+          "Project environment response exceeded its size limit",
+          "an oversized body must be refused by the size bound, not incidentally by JSON.parse",
+        );
+        assertEquals(
+          emittedBytes <= PROJECT_ENV_RESPONSE_MAX_BYTES + chunk.byteLength * 2,
+          true,
+          "reading must stop once the size bound is exceeded",
+        );
+      },
+    );
+  });
 
-    try {
-      const error = await assertRejects(() => fetchFromMockApi(port));
-      assertEquals((error as { slug?: string }).slug, "network-error");
-      assertEquals(emittedBytes <= PROJECT_ENV_RESPONSE_MAX_BYTES + chunk.byteLength * 2, true);
-    } finally {
-      await server.shutdown();
-    }
+  it("refuses a declared content-length above the cap without reading the body", async () => {
+    let bodyReads = 0;
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            // highWaterMark 0 so pull only runs when a reader actually reads.
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                bodyReads += 1;
+                controller.enqueue(new TextEncoder().encode('{"data":[]}'));
+                controller.close();
+              },
+            }, { highWaterMark: 0 }),
+            {
+              headers: {
+                "content-type": "application/json",
+                "content-length": String(PROJECT_ENV_RESPONSE_MAX_BYTES + 1),
+              },
+            },
+          ),
+        )) as typeof fetch,
+      async () => {
+        const error = await assertRejects(() =>
+          fetchProjectEnvVars("https://api.veryfront.test", "my-project", "env-123", "test-token")
+        );
+        assertStringIncludes(
+          String((error as Error).message),
+          "Project environment response exceeded its size limit",
+          "a declared length above the cap must be refused by the size bound",
+        );
+        assertEquals(
+          bodyReads,
+          0,
+          "the body must never be read once the declared length is over the cap",
+        );
+      },
+    );
   });
 });

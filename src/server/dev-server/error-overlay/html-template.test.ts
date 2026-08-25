@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateErrorHTML, generateRuntimeScript } from "./html-template.ts";
 
@@ -20,6 +20,61 @@ describe("server/dev-server/error-overlay/html-template", () => {
     it("should include XSS-safe escapeHtml function", () => {
       const script = generateRuntimeScript();
       assertEquals(script.includes("escapeHtml"), true);
+    });
+
+    it("escapes error text before writing the runtime overlay into innerHTML", () => {
+      const script = generateRuntimeScript();
+      const appended: Array<{ innerHTML: string }> = [];
+      const makeElement = () => ({ id: "", innerHTML: "", remove(): void {} });
+      const fakeDocument = {
+        referrer: "",
+        getElementById(): null {
+          return null;
+        },
+        createElement: makeElement,
+        body: {
+          appendChild(el: { innerHTML: string }): void {
+            appended.push(el);
+          },
+        },
+      };
+      const fakeWindow: Record<string, unknown> = {
+        addEventListener(): void {},
+        location: { origin: "http://localhost:3000", href: "http://localhost:3000/" },
+      };
+      fakeWindow.parent = fakeWindow;
+
+      new Function("window", "document", "WebSocket", script)(
+        fakeWindow,
+        fakeDocument,
+        class FakeWebSocket {},
+      );
+      (fakeWindow.showErrorOverlay as (info: unknown) => void)({
+        type: "runtime",
+        error: {
+          name: "Error",
+          message: "<img src=x onerror=alert(1)>",
+          stack: "<img src=x onerror=alert(2)>",
+        },
+      });
+
+      assertEquals(appended.length, 1, "the runtime overlay must be appended to the body");
+      const html = appended[0]!.innerHTML;
+      assertStringIncludes(
+        html,
+        "&lt;img src=x onerror=alert(1)&gt;",
+        "the runtime overlay must escape error.message before writing it into innerHTML",
+      );
+      assertStringIncludes(
+        html,
+        "&lt;img src=x onerror=alert(2)&gt;",
+        "the runtime overlay must escape error.stack before writing it into innerHTML",
+      );
+      assertEquals(
+        html.includes("<img src=x"),
+        false,
+        "raw error markup must never reach the overlay innerHTML",
+      );
     });
 
     it("should include url in runtimeError postMessage payload", () => {
@@ -76,9 +131,26 @@ describe("server/dev-server/error-overlay/html-template", () => {
         line: 42,
         column: 5,
       });
-      assertEquals(html.includes("src/app.tsx"), true);
-      assertEquals(html.includes("42"), true);
-      assertEquals(html.includes("5"), true);
+      assertStringIncludes(
+        html,
+        "File: src/app.tsx:42:5",
+        "the overlay must render file, line and column as one location",
+      );
+    });
+
+    it("should omit the column separator when the column is unknown", () => {
+      const html = generateErrorHTML({
+        type: "runtime",
+        error: new Error("fail"),
+        file: "src/app.tsx",
+        line: 42,
+      });
+      assertStringIncludes(html, "File: src/app.tsx:42", "file and line still render");
+      assertEquals(
+        html.includes("src/app.tsx:42:"),
+        false,
+        "no trailing separator when the column is unknown",
+      );
     });
 
     it("should include suggestion if provided", () => {

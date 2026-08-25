@@ -17,7 +17,12 @@
  * watcher and a real TCP bind, so it is excluded from the unit shard.
  */
 
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { FileWatcher, WatchOptions } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
@@ -112,9 +117,16 @@ describe("DevServer start failure", () => {
           enableFastRefresh: false,
         });
 
-        await assertRejects(
+        const error = await assertRejects(
           () => server.start(),
+          Error,
+          undefined,
           "start() must reject when the port is already bound",
+        );
+        assertStringIncludes(
+          String((error as Error).message).toLowerCase(),
+          "in use",
+          "start() must reject with the underlying bind failure, not a cleanup error or a rewritten message",
         );
 
         // Guard against a vacuous pass: if the dev server never opened a

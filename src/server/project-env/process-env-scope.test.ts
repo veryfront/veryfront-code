@@ -186,6 +186,37 @@ describe("process.env under an active project env snapshot", () => {
     });
   });
 
+  it("merges without clearing when process.env is assigned outside any scope", () => {
+    const processLike = (globalThis as { process?: { env: Record<string, string | undefined> } })
+      .process!;
+    const view = processLike.env;
+
+    withHostVar("VF_SCOPE_PROBE_HOST_ONLY", "host-scoped-value", () => {
+      try {
+        processLike.env = { VF_SCOPE_PROBE_ASSIGNED: "assigned" };
+
+        assertEquals(processLike.env, view, "assignment must not detach the installed view");
+        assertEquals(
+          processEnv?.["VF_SCOPE_PROBE_HOST_ONLY"],
+          "host-scoped-value",
+          "a host-level assignment adds and overwrites but never clears",
+        );
+        assertEquals(
+          (processEnv?.["PATH"]?.length ?? 0) > 0,
+          true,
+          "PATH must survive a host-level assignment",
+        );
+        assertEquals(
+          processEnv?.["VF_SCOPE_PROBE_ASSIGNED"],
+          "assigned",
+          "assigned keys are added",
+        );
+      } finally {
+        delete processEnv!["VF_SCOPE_PROBE_ASSIGNED"];
+      }
+    });
+  });
+
   it("restores the host view when a nested scope exits", () => {
     withHostVar("VF_SCOPE_PROBE_HOST_ONLY", "host-scoped-value", () => {
       runWithProjectEnv({ PROJECT_VAR: "outer" }, () => {

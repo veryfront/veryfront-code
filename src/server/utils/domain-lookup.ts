@@ -180,7 +180,10 @@ function fetchDomainLookup(
         });
         injectContext(headers);
 
-        const response = await fetch(url, { headers, signal: controller.signal });
+        const response = await fetch(url, {
+          headers,
+          signal: controller.signal,
+        });
 
         if (response.status === 404) {
           logger.debug("No project found for domain", { domain });
