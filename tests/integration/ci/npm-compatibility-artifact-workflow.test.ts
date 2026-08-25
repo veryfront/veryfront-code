@@ -93,6 +93,13 @@ describe("canonical npm artifact workflow", () => {
       asRecord(producer.outputs, "producer outputs").build_duration_seconds,
       "${{ steps.build.outputs.build_duration_seconds }}",
     );
+    const rcStep = namedStep(producer, "Prepare RC compatibility build version");
+    assertEquals(rcStep.if, "github.ref == 'refs/heads/main'");
+    assertStringIncludes(String(rcStep.run), "BASE=$(jq -r '.version' deno.json)");
+    assertStringIncludes(
+      String(rcStep.run),
+      'VERSION="${BASE}.${{ github.run_number }}" deno run -A scripts/ci/prepare-rc-build.ts',
+    );
   });
 
   it("feeds the same downloaded artifact to existing smoke and runtime flows", async () => {

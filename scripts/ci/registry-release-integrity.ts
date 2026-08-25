@@ -5,10 +5,16 @@ export type RegistryFailureClassification =
   | "timeout"
   | "lookup";
 
+export interface RegistryReleaseErrorContext {
+  packageName?: string;
+  version?: string;
+}
+
 export class RegistryReleaseError extends Error {
   constructor(
     readonly classification: RegistryFailureClassification,
     message: string,
+    readonly context: RegistryReleaseErrorContext = {},
   ) {
     super(message);
     this.name = "RegistryReleaseError";
@@ -79,6 +85,15 @@ function registryVersionUrl(
   ).href;
 }
 
+function registryErrorContext(
+  options: Pick<PollRegistryPackageOptions, "packageName" | "version">,
+): RegistryReleaseErrorContext {
+  return {
+    packageName: options.packageName,
+    version: options.version,
+  };
+}
+
 function validateMetadata(
   metadata: RegistryPackageMetadata,
   options: PollRegistryPackageOptions,
@@ -88,6 +103,7 @@ function validateMetadata(
     throw new RegistryReleaseError(
       "wrong-version",
       `${spec} returned version ${metadata.version ?? "<missing>"}.`,
+      registryErrorContext(options),
     );
   }
   if (metadata.gitHead !== options.expectedGitHead) {
@@ -96,6 +112,7 @@ function validateMetadata(
       `${spec} has wrong gitHead ${
         metadata.gitHead ?? "<missing>"
       }; expected ${options.expectedGitHead}.`,
+      registryErrorContext(options),
     );
   }
   const predicateType = metadata.dist?.attestations?.provenance?.predicateType;
@@ -103,6 +120,7 @@ function validateMetadata(
     throw new RegistryReleaseError(
       "provenance",
       `${spec} does not expose npm SLSA provenance (${predicateType ?? "missing"}).`,
+      registryErrorContext(options),
     );
   }
 }
@@ -116,18 +134,21 @@ function incompleteMetadataError(
     return new RegistryReleaseError(
       "missing-version",
       `${spec} registry metadata does not include a version yet.`,
+      registryErrorContext(options),
     );
   }
   if (metadata.gitHead === undefined) {
     return new RegistryReleaseError(
       "provenance",
       `${spec} registry metadata does not include gitHead yet.`,
+      registryErrorContext(options),
     );
   }
   if (metadata.dist?.attestations?.provenance?.predicateType === undefined) {
     return new RegistryReleaseError(
       "provenance",
       `${spec} does not expose npm SLSA provenance yet.`,
+      registryErrorContext(options),
     );
   }
   return undefined;
@@ -144,9 +165,11 @@ export async function pollRegistryPackage(
   const fetcher = options.fetcher ?? fetch;
   const delay = options.delay ?? defaultDelay;
   const spec = `${options.packageName}@${options.version}`;
+  const context = registryErrorContext(options);
   let lastFailure: RegistryReleaseError | "timeout" = new RegistryReleaseError(
     "missing-version",
     `${spec} is not available yet.`,
+    context,
   );
 
   for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
@@ -163,11 +186,13 @@ export async function pollRegistryPackage(
         lastFailure = new RegistryReleaseError(
           "missing-version",
           `${spec} is not available yet.`,
+          context,
         );
       } else if (!response.ok) {
         throw new RegistryReleaseError(
           "lookup",
           `${spec} registry lookup failed with HTTP ${response.status}.`,
+          context,
         );
       } else {
         const metadata = await response.json() as RegistryPackageMetadata;
@@ -187,6 +212,7 @@ export async function pollRegistryPackage(
           `${spec} registry lookup failed: ${
             error instanceof Error ? error.message : String(error)
           }.`,
+          context,
         );
       }
       lastFailure = "timeout";
@@ -204,11 +230,13 @@ export async function pollRegistryPackage(
     throw new RegistryReleaseError(
       "timeout",
       `${spec} registry lookup timed out after ${options.maxAttempts} attempts.`,
+      context,
     );
   }
   throw new RegistryReleaseError(
     lastFailure.classification,
     `${lastFailure.message} Still incomplete after ${options.maxAttempts} propagation attempts.`,
+    lastFailure.context,
   );
 }
 
@@ -244,6 +272,19 @@ function readCliOptions(args: string[]): CliOptions {
   return { version, gitHead, registryUrl, packages };
 }
 
+function sanitizeFailureContextPart(value: string): string {
+  return value.replace(/[^A-Za-z0-9@./_+-]/g, "?").slice(0, 128);
+}
+
+function formatFailureContext(
+  context: RegistryReleaseErrorContext,
+): string {
+  if (!context.packageName || !context.version) return "";
+  return ` for ${sanitizeFailureContextPart(context.packageName)}@${
+    sanitizeFailureContextPart(context.version)
+  }`;
+}
+
 async function main(args: string[]): Promise<void> {
   const options = readCliOptions(args);
   await Promise.all(options.packages.map((packageName) =>
@@ -271,7 +312,9 @@ export function formatRegistryReleaseFailure(error: unknown): string {
       case "provenance":
       case "timeout":
       case "lookup":
-        return `REGISTRY RELEASE FAIL [${error.classification}].`;
+        return `REGISTRY RELEASE FAIL [${error.classification}]${
+          formatFailureContext(error.context)
+        }.`;
     }
   }
   return "REGISTRY RELEASE FAIL [configuration].";

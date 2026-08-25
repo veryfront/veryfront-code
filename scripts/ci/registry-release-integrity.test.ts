@@ -212,8 +212,32 @@ describe("registry release integrity polling", () => {
     );
 
     const output = formatRegistryReleaseFailure(error);
-    assertEquals(output, "REGISTRY RELEASE FAIL [provenance].");
+    assertEquals(
+      output,
+      `REGISTRY RELEASE FAIL [provenance] for ${PACKAGE_NAME}@${VERSION}.`,
+    );
     assertEquals(output.includes(injectedGitHead), false);
+  });
+
+  it("keeps sanitized package context in immediate lookup failures", async () => {
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: "@veryfront/ext bad\n::error::package",
+        version: "0.1.1253\n::error::version",
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1,
+        retryDelayMs: 0,
+        requestTimeoutMs: 100,
+        fetcher: () => Promise.resolve(new Response("server error", { status: 500 })),
+        delay: () => Promise.resolve(),
+      })
+    );
+
+    const output = formatRegistryReleaseFailure(error);
+    assertEquals(
+      output,
+      "REGISTRY RELEASE FAIL [lookup] for @veryfront/ext?bad???error??package@0.1.1253???error??version.",
+    );
   });
 
   it("rejects a package without npm SLSA provenance", async () => {
