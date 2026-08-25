@@ -31,6 +31,14 @@ export {
   validateRequestLimits,
 } from "./input-validation/index.ts";
 export type {
+  ApplicationIdentity,
+  AuthClaimPrimitive,
+  AuthClaimValue,
+  SerializedApplicationIdentity,
+  SerializedAuthClaims,
+} from "./application-auth/types.ts";
+
+export type {
   ParseFormOptions,
   ParseJsonOptions,
   ParseQueryOptions,
