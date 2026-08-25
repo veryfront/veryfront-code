@@ -133,5 +133,34 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
         "custom elements do not receive normalized for attributes",
       );
     });
+
+    it("preserves htmlFor on customized built-ins declared via the is prop", async () => {
+      const html = await treeToHTML({
+        type: "server",
+        component: "label",
+        props: { is: "design-label", htmlFor: "target" },
+        children: [{
+          type: "client",
+          component: "ClientBoundary",
+          props: { id: "target" },
+        }],
+      });
+
+      assertEquals(
+        html.includes('is="design-label"'),
+        true,
+        "the is attribute is emitted",
+      );
+      assertEquals(
+        html.includes('htmlFor="target"'),
+        true,
+        "customized built-ins preserve React-style htmlFor",
+      );
+      assertEquals(
+        html.includes('for="target"'),
+        false,
+        "customized built-ins do not receive normalized for attributes",
+      );
+    });
   });
 });

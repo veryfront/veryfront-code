@@ -7,24 +7,28 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
-function isCustomElementTag(tagName: string | undefined): boolean {
-  return tagName?.includes("-") === true;
+// Mirrors React's custom-element detection: hyphenated tag names, plus
+// customized built-ins declared via a string `is` prop.
+function isCustomElement(tagName: string | undefined, props: Record<string, unknown>): boolean {
+  if (tagName?.includes("-") === true) return true;
+  return typeof props.is === "string";
 }
 
-function renderAttributeName(key: string, tagName: string | undefined): string {
+function renderAttributeName(key: string, customElement: boolean): string {
   if (key === "className") return "class";
-  if (key === "htmlFor" && !isCustomElementTag(tagName)) return "for";
+  if (key === "htmlFor" && !customElement) return "for";
   return key;
 }
 
 export function renderAttributes(props: Record<string, unknown>, tagName?: string): string {
   const attrs: string[] = [];
+  const customElement = isCustomElement(tagName, props);
 
   for (const [key, value] of Object.entries(props)) {
     if (value == null || SKIP_PROPS.has(key)) continue;
     if (!isSafeSerializedPropName(key)) continue;
 
-    const attrName = renderAttributeName(key, tagName);
+    const attrName = renderAttributeName(key, customElement);
 
     if (typeof value === "boolean") {
       if (value) attrs.push(attrName);
