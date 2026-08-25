@@ -30,6 +30,14 @@
       "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.adyen.com/account/account-structure/"
+    },
+    {
+      "name": "ADYEN_CHECKOUT_HOST",
+      "description": "Adyen Checkout API host. Defaults to checkout-test.adyen.com for test. For live, set your prefixed live host including the checkout path segment.",
+      "required": true,
+      "sensitive": false,
+      "placeholder": "checkout-test.adyen.com",
+      "default": "checkout-test.adyen.com"
     }
   ],
   "tools": [
@@ -40,16 +48,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{checkoutHost}/v71/sessions",
-        "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          }
-        },
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/sessions",
         "body": {
           "amount": {
             "type": "object",
@@ -93,15 +92,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{checkoutHost}/v71/sessions/{sessionId}",
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/sessions/{sessionId}",
         "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          },
           "sessionId": {
             "type": "string",
             "in": "path",
@@ -124,16 +116,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{checkoutHost}/v71/paymentMethods",
-        "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          }
-        },
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/paymentMethods",
         "body": {
           "merchantAccount": {
             "type": "string",
@@ -166,16 +149,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{checkoutHost}/v71/paymentLinks",
-        "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          }
-        },
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/paymentLinks",
         "body": {
           "amount": {
             "type": "object",
@@ -230,15 +204,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/captures",
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/payments/{paymentPspReference}/captures",
         "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          },
           "paymentPspReference": {
             "type": "string",
             "in": "path",
@@ -271,15 +238,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/refunds",
+        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/payments/{paymentPspReference}/refunds",
         "params": {
-          "checkoutHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
-            "required": true,
-            "default": "checkout-test.adyen.com"
-          },
           "paymentPspReference": {
             "type": "string",
             "in": "path",
@@ -333,7 +293,10 @@
       "icon": "currency"
     }
   ],
-  "suggestedWith": ["slack", "sheets"],
+  "suggestedWith": [
+    "slack",
+    "sheets"
+  ],
   "SETUP_GUIDE": {
     "title": "Adyen setup",
     "steps": [
@@ -350,7 +313,7 @@
       {
         "step": 3,
         "title": "Configure environment variables",
-        "description": "Set ADYEN_API_KEY to the generated key. Optionally set ADYEN_MERCHANT_ACCOUNT to your merchant account name (shown in the Customer Area) - it is required as the merchantAccount field in every request body."
+        "description": "Set ADYEN_API_KEY to the generated key. ADYEN_CHECKOUT_HOST defaults to checkout-test.adyen.com; for live, set it to your prefixed live host. Optionally set ADYEN_MERCHANT_ACCOUNT to your merchant account name (shown in the Customer Area) - it is required as the merchantAccount field in every request body."
       },
       {
         "step": 4,
@@ -359,7 +322,7 @@
       }
     ],
     "notes": [
-      "Each tool takes a checkoutHost parameter. For test, keep the default checkout-test.adyen.com. For live, pass your prefixed live host including the checkout path segment, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout (test and live URLs have different structures).",
+      "ADYEN_CHECKOUT_HOST defaults to checkout-test.adyen.com for test. For live, set it to your prefixed live host including the checkout path segment. Test and live URLs have different structures.",
       "Amounts are in minor units (e.g. value 1000 with currency EUR is EUR 10.00).",
       "Refund outcomes are asynchronous: the API acknowledges the request and the final result is delivered via a REFUND webhook.",
       "The Checkout API does not provide a payment listing endpoint; use get_session_result or webhooks to track payment outcomes."

@@ -41,14 +41,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.1/clusters/list",
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.1/clusters/list",
         "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          },
           "page_size": {
             "type": "number",
             "in": "query",
@@ -107,14 +101,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.2/jobs/list",
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/list",
         "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          },
           "limit": {
             "type": "number",
             "in": "query",
@@ -169,15 +157,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{workspaceHost}/api/2.2/jobs/run-now",
-        "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          }
-        },
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/run-now",
         "body": {
           "job_id": {
             "type": "number",
@@ -202,14 +182,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.2/jobs/runs/list",
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/list",
         "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          },
           "job_id": {
             "type": "number",
             "in": "query",
@@ -277,15 +251,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{workspaceHost}/api/2.2/jobs/runs/cancel",
-        "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          }
-        },
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/cancel",
         "body": {
           "run_id": {
             "type": "number",
@@ -302,14 +268,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.2/jobs/runs/get",
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/get",
         "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          },
           "run_id": {
             "type": "number",
             "in": "query",
@@ -326,15 +286,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{workspaceHost}/api/2.0/sql/statements",
-        "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          }
-        },
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/statements",
         "body": {
           "statement": {
             "type": "string",
@@ -373,14 +325,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.0/sql/statements/{statementId}",
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/statements/{statementId}",
         "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          },
           "statementId": {
             "type": "string",
             "in": "path",
@@ -397,15 +343,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{workspaceHost}/api/2.0/sql/warehouses",
-        "params": {
-          "workspaceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
-            "required": true
-          }
-        },
+        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/warehouses",
         "response": {
           "historicalSummary": {
             "collectionKeys": [

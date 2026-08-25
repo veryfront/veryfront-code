@@ -613,6 +613,28 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("binds credential-bearing custom hosts to integration environment configuration", () => {
+    const expectedHosts = {
+      adyen: "{{env.ADYEN_CHECKOUT_HOST}}",
+      databricks: "{{env.DATABRICKS_HOST}}",
+      "azure-document-intelligence": "{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}",
+    } as const;
+
+    for (const [name, expectedHost] of Object.entries(expectedHosts)) {
+      const connector = getConnector(name);
+      for (const tool of connector.tools) {
+        if (!tool.endpoint) continue;
+        assertEquals(
+          new URL(tool.endpoint.url.replace(expectedHost, "trusted.example.com")).host,
+          "trusted.example.com",
+        );
+        assertEquals(tool.endpoint.params?.checkoutHost, undefined);
+        assertEquals(tool.endpoint.params?.workspaceHost, undefined);
+        assertEquals(tool.endpoint.params?.resourceHost, undefined);
+      }
+    }
+  });
+
   it("publishes all connector tool IDs with their integration namespace prefix", () => {
     const seenToolIds = new Set<string>();
     let toolCount = 0;
