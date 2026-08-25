@@ -392,13 +392,14 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
+  const promptSkills = initialModelVisibleToolNames.includes("load_skill") ? selectedSkills : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: selectedSkills,
+    skills: promptSkills,
     availableToolNames: initialModelVisibleToolNames,
   });
   return {

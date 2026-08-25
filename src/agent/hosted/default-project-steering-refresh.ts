@@ -285,6 +285,9 @@ export function createDefaultHostedProjectSteeringRefresh(
       ].sort()
       : toolNames;
     input.taskContext.availableToolNames = modelVisibleToolNames;
+    const promptSkills = modelVisibleToolNames.includes("load_skill")
+      ? skillSelectorSnapshot.definitions
+      : [];
 
     const refreshedInstructions = options.buildInstructions({
       agentConfig: input.liveProjectSteering.agent,
@@ -292,7 +295,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       branchId,
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
-      skills: skillSelectorSnapshot.definitions,
+      skills: promptSkills,
       availableToolNames: modelVisibleToolNames,
     });
 
