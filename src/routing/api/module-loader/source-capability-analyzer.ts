@@ -399,13 +399,22 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
         // The receiver may name Object or Reflect directly, through a local
         // alias binding, or through a property read off the global object;
         // each reaches the same prototype mutator.
+        const resolvesToObject = resolvesToGlobalIntrinsic(
+          callee.object,
+          "Object",
+          scope,
+          nodeScopes,
+        );
         const mutatesPrototype = property === "setPrototypeOf" &&
-            (resolvesToGlobalIntrinsic(callee.object, "Object", scope, nodeScopes) ||
+            (resolvesToObject ||
               resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes)) ||
           property === "set" &&
             resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes) &&
             // A key this analysis cannot read may spell __proto__.
-            (staticString(args[1]) === "__proto__" || staticString(args[1]) === null);
+            (staticString(args[1]) === "__proto__" || staticString(args[1]) === null) ||
+          // Object.assign invokes the target's inherited __proto__ setter when
+          // a source carries an own enumerable property under that name.
+          property === "assign" && resolvesToObject && args.length > 1;
         if (mutatesPrototype && args[0]) markPrototypeMutation(args[0], scope);
       }
     }
@@ -1110,11 +1119,13 @@ export async function analyzeSourceCapabilities(
       const callee = unwrapExpression(node.callee);
       if (
         (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
-        memberPropertyName(callee) === "get" && isNode(callee.object)
+        isNode(callee.object)
       ) {
+        const calleeProperty = memberPropertyName(callee);
         const object = unwrapExpression(callee.object);
         const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
         if (
+          calleeProperty === "get" &&
           object.type === "Identifier" && object.name === "Reflect" &&
           resolveBinding(scope, "Reflect") === null
         ) {
@@ -1125,6 +1136,16 @@ export async function analyzeSourceCapabilities(
             if (property === null || property === "eval" || property === "Function") {
               hasDynamicCodeGeneration = true;
             }
+          }
+        }
+        if (
+          calleeProperty === "getOwnPropertyDescriptor" &&
+          (resolvesToGlobalIntrinsic(callee.object, "Object", scope, nodeScopes) ||
+            resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes))
+        ) {
+          const descriptorKey = staticString(args[1]);
+          if (descriptorKey === null || descriptorKey === "constructor") {
+            hasDynamicCodeGeneration = true;
           }
         }
       }
