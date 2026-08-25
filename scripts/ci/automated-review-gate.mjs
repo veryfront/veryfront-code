@@ -725,23 +725,45 @@ export async function invalidateReviewProof({
   owner,
   repo,
   pullNumber,
-  reconciliationStartedAt = /** @type {string | undefined} */ (undefined),
+  expectedHeadSha = /** @type {string | undefined} */ (undefined),
+  reconciliationStatusId = /** @type {number | undefined} */ (undefined),
 }) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Pull request number is invalid");
+  }
+  if (expectedHeadSha !== undefined && !FULL_SHA.test(expectedHeadSha)) {
+    throw new Error("Expected pull request head commit is invalid");
+  }
+  if (
+    reconciliationStatusId !== undefined &&
+    (!Number.isSafeInteger(reconciliationStatusId) ||
+      reconciliationStatusId < 0)
+  ) {
+    throw new Error("Reconciliation status identity is invalid");
   }
   const response = await github.rest.pulls.get({
     owner,
     repo,
     pull_number: pullNumber,
   });
-  const headSha = response?.data?.head?.sha;
-  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+  const resolvedHeadSha = response?.data?.head?.sha;
+  if (typeof resolvedHeadSha !== "string" || !FULL_SHA.test(resolvedHeadSha)) {
     throw new Error("Could not resolve the pull request head commit");
   }
+  const headSha = resolvedHeadSha.toLowerCase();
   const description = `PR#${pullNumber} review status unavailable`;
-  const reconciliationStartedTime = Date.parse(reconciliationStartedAt ?? "");
-  if (Number.isFinite(reconciliationStartedTime)) {
+  if (
+    expectedHeadSha !== undefined &&
+    headSha !== expectedHeadSha.toLowerCase()
+  ) {
+    return {
+      headSha: expectedHeadSha.toLowerCase(),
+      description,
+      queueFailures: 0,
+      skipped: true,
+    };
+  }
+  if (reconciliationStatusId !== undefined) {
     const statuses = await collectAll(
       github,
       github.rest.repos.listCommitStatusesForRef,
@@ -749,10 +771,9 @@ export async function invalidateReviewProof({
       "review statuses",
     );
     const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
-    const latestStatusTime = Date.parse(latestStatus?.created_at ?? "");
     if (
-      Number.isFinite(latestStatusTime) &&
-      latestStatusTime > reconciliationStartedTime &&
+      Number.isSafeInteger(latestStatus?.id) &&
+      latestStatus.id !== reconciliationStatusId &&
       trustedReviewGateReviewer(
           latestStatus,
           pullNumber,
@@ -777,7 +798,7 @@ export async function invalidateReviewProof({
       ? response.data.html_url
       : undefined,
   });
-  return { headSha, description, ...result };
+  return { headSha, description, ...result, skipped: false };
 }
 
 /** Extract the pull request represented by a merge queue head ref. */

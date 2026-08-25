@@ -1946,12 +1946,13 @@ describe("automated review request", () => {
 });
 
 describe("review proof invalidation", () => {
-  it("does not overwrite a trusted success published by a later reconciliation", async () => {
+  it("does not overwrite a same-second success published after reconciliation began", async () => {
     const fixture = githubFixture({
       headResponses: [HEAD],
       pages: {
         statuses: [[automatedReviewStatus({
-          created_at: "2026-08-25T08:00:01Z",
+          id: 101,
+          created_at: "2026-08-25T08:00:00Z",
         })]],
         refs: [[{
           ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
@@ -1964,7 +1965,7 @@ describe("review proof invalidation", () => {
       owner: "veryfront",
       repo: "veryfront-code",
       pullNumber: 1,
-      reconciliationStartedAt: "2026-08-25T08:00:00Z",
+      reconciliationStatusId: 100,
     });
 
     assertEquals(result.skipped, true);
@@ -1974,6 +1975,29 @@ describe("review proof invalidation", () => {
       [],
       "an older fallback must not replace a newer exact-head success",
     );
+  });
+
+  it("invalidates a same-second success that existed when reconciliation began", async () => {
+    const fixture = githubFixture({
+      headResponses: [HEAD],
+      pages: {
+        statuses: [[automatedReviewStatus({
+          id: 100,
+          created_at: "2026-08-25T08:00:00Z",
+        })]],
+        refs: [[]],
+      },
+    });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      reconciliationStatusId: 100,
+    });
+
+    assertEquals(result.skipped, false);
+    assertEquals(fixture.published[0]?.state, "failure");
   });
 
   it("closes source and queued gates a dropped reconciliation left behind", async () => {
@@ -2021,6 +2045,25 @@ describe("review proof invalidation", () => {
         },
       ],
       "a lost revocation must fail both source and active queued proof",
+    );
+  });
+
+  it("does not let a stale invalidator close a newer pull request head", async () => {
+    const fixture = githubFixture({ headResponses: [OTHER_HEAD] });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      expectedHeadSha: HEAD,
+    });
+
+    assertEquals(result.skipped, true);
+    assertEquals(result.headSha, HEAD);
+    assertEquals(
+      fixture.published,
+      [],
+      "an old reconciliation must not write a failure onto the new head",
     );
   });
 
@@ -2297,7 +2340,6 @@ describe("automated review workflow", () => {
         "github.event_name == 'merge_group'",
         "github.event.issue.pull_request",
         "github.event.workflow_run.event == 'pull_request_review'",
-        "github.event.workflow_run.conclusion == 'success'",
       ]
     ) {
       assert(
@@ -2305,17 +2347,26 @@ describe("automated review workflow", () => {
         "target resolution must skip events that no publisher job can use",
       );
     }
+    assert(
+      !targetIf.includes("github.event.workflow_run.conclusion == 'success'"),
+      "failed or cancelled review wakeups must reach trusted invalidation",
+    );
     assertEquals(record(targetJob.permissions, "target permissions"), {
       contents: "read",
       "pull-requests": "read",
+      statuses: "read",
     });
     assertEquals(
       record(targetJob.outputs, "target outputs").key,
-      "${{ steps.resolve.outputs.result }}",
+      "${{ steps.resolve.outputs.key }}",
     );
     assertEquals(
       record(targetJob.outputs, "target outputs").pull_number,
       "${{ steps.resolve.outputs.pull-number }}",
+    );
+    assertEquals(
+      record(targetJob.outputs, "target outputs").status_id,
+      "${{ steps.resolve.outputs.status-id }}",
     );
     const targetSteps = targetJob.steps;
     assert(Array.isArray(targetSteps));
@@ -2326,21 +2377,26 @@ describe("automated review workflow", () => {
       )
         .script,
     );
-    assertTrustedGateLoad(targetScript);
+    assert(
+      !targetScript.includes("automated-review-gate.mjs") &&
+        !targetScript.includes("getContent") &&
+        !targetScript.includes("import("),
+      "target resolution must survive a missing or malformed gate module",
+    );
     for (
       const required of [
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
-        "parseReviewWakeupRun",
-        "parseMergeQueuePullNumber",
-        "matchesReviewWakeupPullRequest",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
+        'core.setOutput("key"',
         'core.setOutput("pull-number"',
+        'core.setOutput("status-id"',
         "github.rest.git.getRef",
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
         "Could not resolve a valid review target commit",
+        'workflowRun?.conclusion !== "success"',
       ]
     ) assert(targetScript.includes(required));
     assert(
@@ -2528,12 +2584,11 @@ describe("automated review workflow", () => {
     assertEquals(
       record(invalidateJob.permissions, "invalidate permissions"),
       {
-        actions: "read",
         contents: "read",
         "pull-requests": "read",
         statuses: "write",
       },
-      "invalidation reads only its workflow timestamp plus PR and status evidence",
+      "invalidation reads only trusted gate code plus PR, ref, and status evidence",
     );
     assertEquals(
       record(invalidateJob.concurrency, "invalidate concurrency"),
@@ -2552,14 +2607,24 @@ describe("automated review workflow", () => {
       ).script,
     );
     assertTrustedGateLoad(invalidateScript);
+    assertEquals(
+      record(invalidateJob.env, "invalidate environment"),
+      {
+        TARGET_SHA: "${{ needs.target.outputs.key }}",
+        PULL_NUMBER: "${{ needs.target.outputs.pull_number }}",
+        RECONCILIATION_STATUS_ID:
+          "${{ needs.target.outputs.status_id }}",
+      },
+    );
     for (
       const required of [
         "invalidateReviewProof",
-        "parseReviewWakeupRun",
-        "getWorkflowRun",
-        "reconciliationStartedAt",
-        "context.payload.pull_request?.number",
-        "context.payload.issue?.pull_request",
+        "reconciliationStatusId",
+        "publishIndependentFailure",
+        "listMatchingRefs",
+        "createCommitStatus",
+        "process.env.TARGET_SHA",
+        "process.env.PULL_NUMBER",
         "Number.isSafeInteger",
         "core.setFailed",
       ]

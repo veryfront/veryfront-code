@@ -30,16 +30,17 @@ jobs:
       github.event_name == 'merge_group' ||
       ((github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
        (github.event_name != 'workflow_run' ||
-        (github.event.workflow_run.event == 'pull_request_review' &&
-         github.event.workflow_run.conclusion == 'success')))
+        github.event.workflow_run.event == 'pull_request_review'))
     permissions:
       contents: read
       pull-requests: read
+      statuses: read
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
-      key: ${{ steps.resolve.outputs.result }}
+      key: ${{ steps.resolve.outputs.key }}
       pull_number: ${{ steps.resolve.outputs.pull-number }}
+      status_id: ${{ steps.resolve.outputs.status-id }}
     steps:
       - name: Resolve the current head commit
         id: resolve
@@ -48,99 +49,112 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            let matchesReviewWakeupPullRequest;
-            let parseMergeQueuePullNumber;
-            let parseReviewWakeupRun;
-            try {
-              const response = await github.rest.repos.getContent({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                path: "scripts/ci/automated-review-gate.mjs",
-                ref: context.payload.repository.default_branch,
-              });
-              const file = response.data;
+            const fullSha = /^[0-9a-f]{40}$/i;
+            const parseMergeQueuePullNumber = (headRef) => {
+              if (typeof headRef !== "string") return undefined;
+              const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
+              const pullNumber = match ? Number(match[1]) : undefined;
+              return Number.isSafeInteger(pullNumber)
+                ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+                : undefined;
+            };
+            const parseReviewWakeupIdentity = (run) => {
+              const path = typeof run?.path === "string" ? run.path : "";
+              const trustedPath = path === ".github/workflows/automated-review-wakeup.yml" ||
+                path.startsWith(".github/workflows/automated-review-wakeup.yml@");
+              const title = typeof run?.display_title === "string"
+                ? run.display_title
+                : "";
+              const match = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(title);
+              const pullNumber = match ? Number(match[1]) : undefined;
+              const headRepositoryId = run?.head_repository?.id;
               if (
-                Array.isArray(file) || file?.type !== "file" ||
-                file?.encoding !== "base64" ||
-                typeof file?.content !== "string"
-              ) throw new Error("Trusted review gate content is malformed");
-              const gateUrl = `data:text/javascript;base64,${
-                Buffer.from(file.content, "base64").toString("base64")
-              }`;
-              ({
-                matchesReviewWakeupPullRequest,
-                parseMergeQueuePullNumber,
-                parseReviewWakeupRun,
-              } = await import(gateUrl));
-            } catch (error) {
-              core.setFailed(`Could not load the review target resolver: ${error}`);
-              return `run-${context.runId}`;
-            }
+                !trustedPath || run?.event !== "pull_request_review" ||
+                !Number.isSafeInteger(run?.id) || run.id < 1 ||
+                !Number.isSafeInteger(pullNumber) ||
+                !Number.isSafeInteger(headRepositoryId) || headRepositoryId < 1 ||
+                typeof run?.head_branch !== "string" || run.head_branch.length === 0 ||
+                typeof run?.head_sha !== "string" || !fullSha.test(run.head_sha)
+              ) return undefined;
+              return {
+                pullNumber,
+                headBranch: run.head_branch,
+                headRepositoryId,
+              };
+            };
             const workflowRun = context.payload.workflow_run;
             let wakeupSignal;
             if (context.eventName === "workflow_run") {
-              wakeupSignal = parseReviewWakeupRun(workflowRun);
+              wakeupSignal = parseReviewWakeupIdentity(workflowRun);
               if (!wakeupSignal) {
                 core.setFailed("Could not validate the review wakeup run");
-                return `run-${context.runId}`;
+                core.setOutput("key", `run-${context.runId}`);
+                return;
               }
             }
+            let queueEntry;
             if (context.eventName === "merge_group") {
-              const queueEntry = parseMergeQueuePullNumber(
+              queueEntry = parseMergeQueuePullNumber(
                 context.payload.merge_group?.head_ref,
               );
               if (!queueEntry) {
                 core.setFailed("Could not resolve the merge queue source");
-                return `run-${context.runId}`;
+                core.setOutput("key", `run-${context.runId}`);
+                return;
               }
-              core.setOutput("pull-number", String(queueEntry.pullNumber));
-              return queueEntry.sourceHeadSha;
             }
-            const pullNumber = context.payload.pull_request?.number ??
+            const pullNumber = queueEntry?.pullNumber ??
+              context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
                 : wakeupSignal?.pullNumber);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed("Could not resolve a valid pull request number");
-              return `run-${context.runId}`;
+              core.setOutput("key", `run-${context.runId}`);
+              return;
             }
-            let headSha;
-            try {
-              const response = await github.rest.git.getRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `pull/${pullNumber}/head`,
-              });
-              headSha = response.data?.object?.sha;
-            } catch (error) {
-              let failureHeadSha;
+            let headSha = queueEntry?.sourceHeadSha;
+            if (!headSha) {
               try {
-                const fallbackResponse = await github.rest.pulls.get({
+                const response = await github.rest.git.getRef({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  pull_number: pullNumber,
+                  ref: `pull/${pullNumber}/head`,
                 });
-                failureHeadSha = fallbackResponse.data?.head?.sha;
-              } catch (fallbackError) {
-                const eventFailureHead =
-                  context.payload.pull_request?.number === pullNumber
-                    ? context.payload.pull_request?.head?.sha
-                    : undefined;
-                if (/^[0-9a-f]{40}$/i.test(eventFailureHead ?? "")) {
-                  failureHeadSha = eventFailureHead;
-                } else {
+                headSha = response.data?.object?.sha;
+              } catch (error) {
+                try {
+                  const fallbackResponse = await github.rest.pulls.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pullNumber,
+                  });
+                  const fallbackHead = fallbackResponse.data?.head?.sha;
+                  if (typeof fallbackHead === "string" && fullSha.test(fallbackHead)) {
+                    headSha = fallbackHead;
+                  }
+                } catch (fallbackError) {
                   core.error(
                     `Could not resolve a failure target from the pull request: ${fallbackError}`,
                   );
                 }
+                const eventFailureHead =
+                  context.payload.pull_request?.number === pullNumber
+                    ? context.payload.pull_request?.head?.sha
+                    : undefined;
+                if (!headSha && fullSha.test(eventFailureHead ?? "")) {
+                  headSha = eventFailureHead;
+                }
+                core.setFailed(`Could not resolve the pull request head ref: ${error}`);
               }
-              core.setFailed(`Could not resolve the pull request head ref: ${error}`);
-              return failureHeadSha ?? `run-${context.runId}`;
             }
-            if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
+            if (!fullSha.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
-              return `run-${context.runId}`;
+              core.setOutput("key", `run-${context.runId}`);
+              return;
             }
+            headSha = headSha.toLowerCase();
+            core.setOutput("key", headSha);
             core.setOutput("pull-number", String(pullNumber));
             if (wakeupSignal) {
               let pullRequest;
@@ -153,22 +167,69 @@ jobs:
                 pullRequest = response.data;
               } catch (error) {
                 core.setFailed(`Could not validate the review wakeup: ${error}`);
-                return headSha;
+                return;
               }
               if (
-                !matchesReviewWakeupPullRequest(
-                  wakeupSignal,
-                  pullRequest,
-                  context.payload.repository,
-                )
+                pullRequest?.number !== wakeupSignal.pullNumber ||
+                pullRequest?.state !== "open" ||
+                pullRequest?.head?.ref !== wakeupSignal.headBranch ||
+                pullRequest?.head?.sha?.toLowerCase() !== headSha ||
+                pullRequest?.head?.repo?.id !== wakeupSignal.headRepositoryId ||
+                pullRequest?.base?.repo?.id !== context.payload.repository?.id ||
+                typeof pullRequest?.base?.ref !== "string" ||
+                pullRequest.base.ref.length === 0 ||
+                pullRequest.base.ref.length > 1024 ||
+                pullRequest.base.ref.includes("\0")
               ) {
                 core.setFailed(
                   "Review wakeup metadata does not match the pull request",
                 );
-                return headSha;
+                return;
               }
             }
-            return headSha;
+            let statusId = 0;
+            let statusFound = false;
+            try {
+              for (let page = 1; page <= 5; page += 1) {
+                const response = await github.rest.repos.listCommitStatusesForRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: headSha,
+                  per_page: 100,
+                  page,
+                });
+                if (!Array.isArray(response.data)) {
+                  throw new Error("Review status history is malformed");
+                }
+                for (const status of response.data) {
+                  if (
+                    status?.context !== "Automated review" ||
+                    typeof status?.description !== "string" ||
+                    !status.description.startsWith(`PR#${pullNumber} `) ||
+                    status?.creator?.login !== "github-actions[bot]" ||
+                    status?.creator?.id !== 41898282 ||
+                    status?.creator?.type !== "Bot"
+                  ) continue;
+                  if (!Number.isSafeInteger(status?.id) || status.id < 1) {
+                    throw new Error("Review status identity is malformed");
+                  }
+                  statusId = status.id;
+                  statusFound = true;
+                  break;
+                }
+                if (statusFound || response.data.length < 100) break;
+                if (page === 5) {
+                  throw new Error("Review status history exceeded 500 items");
+                }
+              }
+              core.setOutput("status-id", String(statusId));
+            } catch (error) {
+              core.setFailed(`Could not capture the review status boundary: ${error}`);
+              return;
+            }
+            if (workflowRun?.conclusion !== "success") {
+              core.setFailed("The review wakeup did not complete successfully");
+            }
 
   merge_group_target_failure:
     name: close unresolved merge group review gate
@@ -418,10 +479,13 @@ jobs:
         github.event.action == 'edited' &&
         github.event.changes.base))
     permissions:
-      actions: read
       contents: read
       pull-requests: read
       statuses: write
+    env:
+      TARGET_SHA: ${{ needs.target.outputs.key }}
+      PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
+      RECONCILIATION_STATUS_ID: ${{ needs.target.outputs.status_id }}
     concurrency:
       # Share the source-head publisher lock so fallback failures cannot race
       # successful source or merge-group status writes.
@@ -435,58 +499,177 @@ jobs:
         with:
           retries: 3
           script: |
-            const response = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              path: "scripts/ci/automated-review-gate.mjs",
-              ref: context.payload.repository.default_branch,
-            });
-            const file = response.data;
-            if (
-              Array.isArray(file) || file?.type !== "file" ||
-              file?.encoding !== "base64" ||
-              typeof file?.content !== "string"
-            ) throw new Error("Trusted review gate content is malformed");
-            const gateUrl = `data:text/javascript;base64,${
-              Buffer.from(file.content, "base64").toString("base64")
-            }`;
-            const {
-              invalidateReviewProof,
-              parseReviewWakeupRun,
-            } = await import(gateUrl);
-            const pullNumber = context.eventName === "pull_request_target"
-              ? context.payload.pull_request?.number
-              : context.eventName === "issue_comment"
-              ? (context.payload.issue?.pull_request
-                ? context.payload.issue?.number
-                : undefined)
-              : parseReviewWakeupRun(context.payload.workflow_run)?.pullNumber;
+            const fullSha = /^[0-9a-f]{40}$/i;
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const headSha = process.env.TARGET_SHA;
+            const statusIdText = process.env.RECONCILIATION_STATUS_ID ?? "";
+            const reconciliationStatusId = statusIdText === ""
+              ? undefined
+              : Number(statusIdText);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed(
                 "Could not resolve the pull request whose review proof is unverified",
               );
               return;
             }
-            let reconciliationStartedAt;
-            try {
-              const workflowRun = await github.rest.actions.getWorkflowRun({
+            if (!fullSha.test(headSha ?? "")) {
+              core.setFailed("Could not resolve the head whose review proof is unverified");
+              return;
+            }
+            if (
+              reconciliationStatusId !== undefined &&
+              (!Number.isSafeInteger(reconciliationStatusId) ||
+                reconciliationStatusId < 0)
+            ) {
+              core.setFailed("The review status boundary is invalid");
+              return;
+            }
+            const collectAll = async (endpoint, parameters, source) => {
+              const items = [];
+              for await (
+                const response of github.paginate.iterator(endpoint, {
+                  ...parameters,
+                  per_page: 100,
+                })
+              ) {
+                if (!Array.isArray(response?.data)) {
+                  throw new Error(`${source} pagination returned malformed data`);
+                }
+                items.push(...response.data);
+                if (items.length > 500) {
+                  throw new Error(`${source} exceeded 500 items`);
+                }
+              }
+              return items;
+            };
+            const publishIndependentFailure = async () => {
+              const pull = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                run_id: context.runId,
+                pull_number: pullNumber,
               });
-              reconciliationStartedAt = workflowRun.data?.created_at;
+              if (pull.data?.head?.sha?.toLowerCase() !== headSha.toLowerCase()) {
+                return { headSha, queueFailures: 0, skipped: true };
+              }
+              const baseRepositoryId = pull.data?.base?.repo?.id;
+              const baseRef = pull.data?.base?.ref;
+              if (
+                !Number.isSafeInteger(baseRepositoryId) || baseRepositoryId < 1 ||
+                typeof baseRef !== "string" || baseRef.length === 0 ||
+                baseRef.length > 1024 || baseRef.includes("\0")
+              ) throw new Error("Pull request base is malformed");
+              if (reconciliationStatusId !== undefined) {
+                const { createHash } = require("node:crypto");
+                const baseBinding = createHash("sha256")
+                  .update(`${baseRepositoryId}\0${baseRef}`)
+                  .digest("hex");
+                const statuses = await collectAll(
+                  github.rest.repos.listCommitStatusesForRef,
+                  { owner: context.repo.owner, repo: context.repo.repo, ref: headSha },
+                  "review statuses",
+                );
+                const latest = statuses.find((status) =>
+                  status?.context === "Automated review" &&
+                  typeof status?.description === "string" &&
+                  status.description.startsWith(`PR#${pullNumber} `)
+                );
+                const successPrefix = `PR#${pullNumber} base:${baseBinding} by:`;
+                const reviewer = latest?.description?.startsWith(successPrefix)
+                  ? latest.description.slice(successPrefix.length)
+                  : "";
+                const trustedReviewer =
+                  reviewer === "chatgpt-codex-connector[bot]" ||
+                  /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(reviewer);
+                if (
+                  Number.isSafeInteger(latest?.id) &&
+                  latest.id !== reconciliationStatusId &&
+                  latest?.state === "success" &&
+                  latest?.creator?.login === "github-actions[bot]" &&
+                  latest?.creator?.id === 41898282 &&
+                  latest?.creator?.type === "Bot" &&
+                  trustedReviewer
+                ) return { headSha, queueFailures: 0, skipped: true };
+              }
+              const pullUrl = typeof pull.data?.html_url === "string"
+                ? pull.data.html_url
+                : `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`;
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: headSha,
+                state: "failure",
+                context: "Automated review",
+                description: `PR#${pullNumber} review status unavailable`,
+                target_url: pullUrl,
+              });
+              const refs = await collectAll(
+                github.rest.git.listMatchingRefs,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`,
+                },
+                "merge queue refs",
+              );
+              const seen = new Set();
+              const expectedQueueRef =
+                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`;
+              for (const queueRef of refs) {
+                if (queueRef?.ref !== expectedQueueRef) continue;
+                const mergeGroupSha = queueRef?.object?.sha;
+                if (!fullSha.test(mergeGroupSha ?? "")) {
+                  throw new Error("Merge queue ref has a malformed commit");
+                }
+                if (seen.has(mergeGroupSha.toLowerCase())) continue;
+                seen.add(mergeGroupSha.toLowerCase());
+                await github.rest.repos.createCommitStatus({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  sha: mergeGroupSha,
+                  state: "failure",
+                  context: "Automated review",
+                  description: `Could not revalidate review for PR #${pullNumber}`,
+                  target_url: pullUrl,
+                });
+              }
+              return {
+                headSha,
+                queueFailures: seen.size,
+                skipped: false,
+              };
+            };
+            let result;
+            try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
+              const { invalidateReviewProof } = await import(gateUrl);
+              result = await invalidateReviewProof({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                expectedHeadSha: headSha,
+                reconciliationStatusId,
+              });
             } catch (error) {
               core.warning(
-                `Could not timestamp fallback invalidation: ${error}`,
+                `Trusted invalidation was unavailable, using the independent failure path: ${error}`,
               );
+              result = await publishIndependentFailure();
             }
-            const result = await invalidateReviewProof({
-              github,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pullNumber,
-              reconciliationStartedAt,
-            });
             // Keep the run red: the revocation event was still dropped, and
             // the closed gate has to be looked at rather than waited out.
             core.setFailed(
