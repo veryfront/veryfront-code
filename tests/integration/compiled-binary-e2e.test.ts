@@ -753,7 +753,7 @@ export function GET() {
 
   it("fails closed when API isolation conflicts with a broad host execution grant", async () => {
     const projectDir = await createTestProject(
-      "isolation-downgrade-test",
+      "isolation-fail-closed-test",
       `
 export default function Home() {
   return <div>Home Page</div>;
