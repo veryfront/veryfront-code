@@ -5,6 +5,15 @@ export interface SingleflightOptions {
   staleAfterMs?: number;
   /** Called after this exact leader is evicted as stale. */
   onStaleEvicted?: () => void;
+  /** Maximum callers that may join an existing leader. */
+  maxFollowers?: number;
+}
+
+export class SingleflightFollowerLimitError extends Error {
+  constructor() {
+    super("Singleflight follower limit reached");
+    this.name = "SingleflightFollowerLimitError";
+  }
 }
 
 export interface SingleflightControl {
@@ -14,6 +23,7 @@ export interface SingleflightControl {
 
 interface SingleflightEntry<T> {
   promise: Promise<T>;
+  followers: number;
   staleTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -68,9 +78,30 @@ export class Singleflight<T> {
     if (options.staleAfterMs !== undefined && options.staleAfterMs <= 0) {
       throw new RangeError("Singleflight staleAfterMs must be greater than zero");
     }
+    if (
+      options.maxFollowers !== undefined &&
+      (!Number.isInteger(options.maxFollowers) || options.maxFollowers < 0)
+    ) {
+      throw new RangeError(
+        "Singleflight maxFollowers must be a non-negative integer",
+      );
+    }
 
     const existing = this.inflight.get(key);
-    if (existing) return existing.promise;
+    if (existing) {
+      if (
+        options.maxFollowers !== undefined &&
+        existing.followers >= options.maxFollowers
+      ) {
+        throw new SingleflightFollowerLimitError();
+      }
+      existing.followers++;
+      try {
+        return await existing.promise;
+      } finally {
+        existing.followers--;
+      }
+    }
 
     let resolvePromise!: (value: T | PromiseLike<T>) => void;
     let rejectPromise!: (reason?: unknown) => void;
@@ -78,7 +109,7 @@ export class Singleflight<T> {
       resolvePromise = resolve;
       rejectPromise = reject;
     });
-    const entry: SingleflightEntry<T> = { promise };
+    const entry: SingleflightEntry<T> = { promise, followers: 0 };
     const control: SingleflightControl = {
       isCurrent: () => this.inflight.get(key) === entry,
     };

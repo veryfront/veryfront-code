@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
+import {
+  Singleflight,
+  SingleflightFollowerLimitError,
+  waitForSharedPromise,
+} from "./singleflight.ts";
 
 describe("Singleflight", () => {
   it("lets one waiter detach without cancelling shared work", async () => {
@@ -43,6 +47,27 @@ describe("Singleflight", () => {
     assertEquals(r2, 42);
     assertEquals(r3, 42);
     assertEquals(callCount, 1);
+  });
+
+  it("limits callers waiting on an existing operation", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+    const follower = sf.do(
+      "key",
+      () => Promise.resolve(2),
+      { maxFollowers: 1 },
+    );
+
+    await assertRejects(
+      () => sf.do("key", () => Promise.resolve(3), { maxFollowers: 1 }),
+      SingleflightFollowerLimitError,
+      "Singleflight follower limit reached",
+    );
+
+    operation.resolve(42);
+    assertEquals(await leader, 42);
+    assertEquals(await follower, 42);
   });
 
   it("should allow different keys to run concurrently", async () => {

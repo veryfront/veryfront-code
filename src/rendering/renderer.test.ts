@@ -1469,6 +1469,68 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
   });
 
+  it("bounds callers waiting on an identical cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const renderGate = Promise.withResolvers<void>();
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (slug) => {
+          renderCalls++;
+          await renderGate.promise;
+          return {
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const renders = Array.from(
+      { length: 22 },
+      () =>
+        renderer.renderPage("/bounded-burst", ctx, {
+          environment: "production",
+          releaseId: "rel-1",
+          releaseAssetManifest: null,
+        }),
+    );
+
+    try {
+      await assertRejects(() => renders.at(-1)!, Error, "Service is overloaded");
+      assertEquals(renderCalls, 1);
+    } finally {
+      renderGate.resolve();
+    }
+
+    const results = await Promise.allSettled(renders);
+    assertEquals(
+      results.filter((result) => result.status === "fulfilled").length,
+      21,
+    );
+    assertEquals(
+      results.filter((result) => result.status === "rejected").length,
+      1,
+    );
+  });
+
   it("detaches a cancelled caller without aborting a shared cacheable render", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
