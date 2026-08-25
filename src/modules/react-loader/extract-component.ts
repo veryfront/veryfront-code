@@ -1,47 +1,50 @@
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors";
 
-/** The `$$typeof` tags React puts on component types, as opposed to elements. */
-const REACT_COMPONENT_TAGS: ReadonlySet<symbol> = new Set([
-  Symbol.for("react.memo"),
-  Symbol.for("react.forward_ref"),
-  Symbol.for("react.lazy"),
-  Symbol.for("react.context"),
-  Symbol.for("react.provider"),
-  Symbol.for("react.consumer"),
+/**
+ * The `$$typeof` tags that mark a rendered node rather than a component type.
+ *
+ * An element or a portal is the *result* of rendering, so handing one to React
+ * as a component fails. Everything else React tags is a component type of some
+ * kind: `memo`, `forwardRef`, `lazy`, context, provider, consumer, and the
+ * client and server references the RSC path produces.
+ */
+const REACT_NODE_TAGS: ReadonlySet<symbol> = new Set([
+  Symbol.for("react.element"),
+  Symbol.for("react.transitional.element"),
+  Symbol.for("react.portal"),
 ]);
 
+/** Reports whether a symbol is one React registered, such as `react.memo`. */
+function isReactTag(tag: unknown): tag is symbol {
+  return typeof tag === "symbol" && (Symbol.keyFor(tag)?.startsWith("react.") ?? false);
+}
+
 /**
- * Detects React component-type objects, which separates a component from an
+ * Detects React's component-type objects, which separates a component from an
  * ordinary data export such as an App Router `metadata` object.
  *
- * The tags are matched individually rather than accepting any symbol-valued
- * `$$typeof`, because a React *element* carries one too. An element is a
- * rendered node, not a component type, so selecting one would hand React
- * something it cannot instantiate.
+ * Excluding the node tags is what matters here, rather than listing the
+ * component tags: React keeps adding component types, and this module has no
+ * business tracking that list. Anything React tags that is not a rendered node
+ * is something the caller can render.
  */
 function isReactComponentObject(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
 
   const tag = (value as { $$typeof?: unknown }).$$typeof;
-  return typeof tag === "symbol" && REACT_COMPONENT_TAGS.has(tag);
+  return isReactTag(tag) && !REACT_NODE_TAGS.has(tag);
 }
 
 /**
  * Detects React's symbol-valued built-in types.
  *
- * `Fragment`, `Suspense`, `StrictMode`, `Profiler` and friends are registered
- * symbols rather than functions or tagged objects, and a layout is allowed to
- * be one. Matching on the registry key covers them all, and any type React adds
- * later, without pinning a list that would silently fall behind.
- *
- * A bare symbol cannot be an element, so this does not reopen the element case
- * that `REACT_COMPONENT_TAGS` exists to exclude.
+ * `Fragment`, `Suspense`, `StrictMode` and `Profiler` are registered symbols
+ * rather than functions or tagged objects, and a layout is allowed to be one.
+ * A bare symbol is never a rendered node, so no exclusion is needed.
  */
 function isReactBuiltinType(value: unknown): boolean {
-  if (typeof value !== "symbol") return false;
-
-  return Symbol.keyFor(value)?.startsWith("react.") ?? false;
+  return isReactTag(value);
 }
 
 /**

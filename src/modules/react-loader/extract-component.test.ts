@@ -149,6 +149,28 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("keeps an RSC client reference declared before a helper function", () => {
+    // The RSC path recognises this shape too, in
+    // rendering/rsc/server-renderer/component-detector.ts.
+    const Page = { $$typeof: Symbol.for("react.client.reference"), $$id: "page#default" };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "client-ref.tsx"),
+      Page,
+      "a client reference is a component the RSC renderer resolves, not a data export",
+    );
+  });
+
+  it("does not mistake a portal for a component type", () => {
+    const node = { $$typeof: Symbol.for("react.portal"), children: null };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, node, Page }, "portal.tsx"),
+      Page,
+      "a portal is a rendered node, like an element, and cannot be instantiated",
+    );
+  });
+
   it("skips a symbol that is not a React type", () => {
     const marker = Symbol.for("app.marker");
     const Page = () => null;
