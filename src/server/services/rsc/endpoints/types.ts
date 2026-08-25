@@ -20,6 +20,7 @@ export interface ActionRequestParams {
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
   mode?: "development" | "production";
+  applicationIdentityHeaderNames?: readonly string[];
 }
 
 export interface RSCEndpointParams {
@@ -39,4 +40,5 @@ export interface RSCEndpointParams {
   allowHostProjectCodeExecution: boolean;
   mode?: "development" | "production";
   nonce?: string;
+  applicationIdentityHeaderNames?: readonly string[];
 }
