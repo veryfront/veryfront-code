@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const scriptPath = `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`;
 const decoder = new TextDecoder();
@@ -18,32 +19,31 @@ async function runBash(
 
 describe("npm package publishing", () => {
   it("publishes the canonical tarball without repacking the materialized package", async () => {
-    const stateDir = await Deno.makeTempDir();
-    const packageDir = `${stateDir}/npm`;
-    const artifactDir = `${stateDir}/artifact`;
-    const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
-    const npmLog = `${stateDir}/npm.log`;
-    await Deno.mkdir(packageDir);
-    await Deno.mkdir(artifactDir);
-    await Deno.writeTextFile(
-      `${packageDir}/package.json`,
-      JSON.stringify({ name: "veryfront", version: "0.1.0" }),
-    );
-    await Deno.writeTextFile(tarball, "canonical tarball bytes");
-    await Deno.writeTextFile(
-      `${artifactDir}/manifest.json`,
-      JSON.stringify({
-        packages: [{
-          name: "veryfront",
-          version: "0.1.0",
-          file: "veryfront-0.1.0.tgz",
-          sha256: "0".repeat(64),
-        }],
-      }),
-    );
-    await Deno.writeTextFile(npmLog, "");
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/npm`;
+      const artifactDir = `${stateDir}/artifact`;
+      const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.mkdir(artifactDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "veryfront", version: "0.1.0" }),
+      );
+      await Deno.writeTextFile(tarball, "canonical tarball bytes");
+      await Deno.writeTextFile(
+        `${artifactDir}/manifest.json`,
+        JSON.stringify({
+          packages: [{
+            name: "veryfront",
+            version: "0.1.0",
+            file: "veryfront-0.1.0.tgz",
+            sha256: "0".repeat(64),
+          }],
+        }),
+      );
+      await Deno.writeTextFile(npmLog, "");
 
-    try {
       const output = await runBash(
         [
           "set -euo pipefail",
@@ -73,36 +73,33 @@ describe("npm package publishing", () => {
           `publish ${tarball} --provenance --access public --tag rc`,
         ],
       );
-    } finally {
-      await Deno.remove(stateDir, { recursive: true });
-    }
+    });
   });
 
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
     it(`blocks ${publishFunction} before publish when canonical artifact verification fails`, async () => {
-      const stateDir = await Deno.makeTempDir();
-      const artifactDir = `${stateDir}/artifact`;
-      const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
-      const callLog = `${stateDir}/calls.log`;
-      await Deno.mkdir(artifactDir);
-      await Deno.writeTextFile(tarball, "tampered tarball bytes");
-      await Deno.writeTextFile(
-        `${artifactDir}/manifest.json`,
-        JSON.stringify({
-          schemaVersion: 1,
-          rootPackage: "veryfront",
-          rootExtensionNames: [],
-          packages: [{
-            name: "veryfront",
-            version: "0.1.0",
-            file: "veryfront-0.1.0.tgz",
-            sha256: "0".repeat(64),
-          }],
-        }),
-      );
-      await Deno.writeTextFile(callLog, "");
+      await withTempDir(async (stateDir) => {
+        const artifactDir = `${stateDir}/artifact`;
+        const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
+        const callLog = `${stateDir}/calls.log`;
+        await Deno.mkdir(artifactDir);
+        await Deno.writeTextFile(tarball, "tampered tarball bytes");
+        await Deno.writeTextFile(
+          `${artifactDir}/manifest.json`,
+          JSON.stringify({
+            schemaVersion: 1,
+            rootPackage: "veryfront",
+            rootExtensionNames: [],
+            packages: [{
+              name: "veryfront",
+              version: "0.1.0",
+              file: "veryfront-0.1.0.tgz",
+              sha256: "0".repeat(64),
+            }],
+          }),
+        );
+        await Deno.writeTextFile(callLog, "");
 
-      try {
         const output = await runBash(
           [
             "set -euo pipefail",
@@ -129,9 +126,7 @@ describe("npm package publishing", () => {
           "",
           "Verification must fail before package enumeration or npm publish",
         );
-      } finally {
-        await Deno.remove(stateDir, { recursive: true });
-      }
+      });
     });
   }
 
