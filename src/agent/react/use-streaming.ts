@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 /** Options accepted by use streaming. */
 export interface UseStreamingOptions {
@@ -56,7 +57,12 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
       try {
         const response = await fetch(options.url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          // CSRF is enforced in every environment, local development included,
+          // so this POST has to echo the `__Host-vf_csrf` cookie the document
+          // response issued or the server answers 403.
+          headers: csrfMutationHeaders(options.url, {
+            headers: { "Content-Type": "application/json" },
+          }),
           body: body ? JSON.stringify(body) : undefined,
           signal: abortController.signal,
         });

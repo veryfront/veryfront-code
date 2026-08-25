@@ -1,6 +1,6 @@
 ---
 title: "Security headers and CSP"
-description: "Veryfront applies a Content-Security-Policy by default. Use this guide to allow analytics, embeds, and other third-party origins your site needs."
+description: "Veryfront applies a Content-Security-Policy and a CSRF check by default. Use this guide to allow the third-party origins your site needs and to send the token every mutating request must carry."
 order: 11
 ---
 
@@ -163,6 +163,92 @@ Ensure the origin you added appears in the directive you added it to, alongside 
 Then load the site with the browser console open. CSP violations name the directive that blocked the request, which maps directly onto the config key: a `style-src` violation is fixed with `styleSrc`, a `font-src` violation with `fontSrc`.
 
 Preview deployments serve the same policy as production, so a CSP problem shows up on your preview URL before it reaches your live site.
+
+## Cross-site request forgery
+
+Veryfront checks CSRF on every request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header. HTTPS and loopback origins use `__Host-vf_csrf`; plain-HTTP LAN development uses `vf_csrf`. A request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
+
+`veryfront dev` runs the same check as your deployed build. Earlier releases skipped it locally, so a mutating `fetch` you wrote by hand worked for as long as you were building the feature and then failed on the first deploy. It now fails on your machine instead, and the local `403` body names the cookie and the header your project expects.
+
+### Send the token
+
+Use `csrfMutationHeaders` from `veryfront/index.client`. It reads the cookie and returns the headers to hand to `fetch`:
+
+```ts
+import { csrfMutationHeaders } from "veryfront/index.client";
+
+const response = await fetch("/api/cases", {
+  method: "POST",
+  headers: csrfMutationHeaders("/api/cases", {
+    headers: { "content-type": "application/json" },
+  }),
+  body: JSON.stringify({ title: "Example case" }),
+});
+```
+
+Veryfront's own client hooks send the header for you. That covers `useChat`, `useAgent`, `useStreaming`, `useCompletion`, the upload hooks, and the workflow hooks. Reach for the helper when you write the request yourself.
+
+A machine client can satisfy the double-submit check by sending any matching
+cookie/header pair together with its real authentication, as the curl examples
+in this documentation do. Use `excludePaths` only when the entire route is
+intentionally outside browser CSRF protection, such as a dedicated webhook
+receiver, and authenticate that route independently.
+
+### Choose your own names
+
+Pass an object to `security.csrf` to rename either half of the pair, and give the browser helper the same names:
+
+```ts
+export default {
+  security: {
+    csrf: {
+      cookieName: "my_csrf",
+      headerName: "x-my-csrf",
+      excludePaths: ["/api/webhooks"],
+    },
+  },
+};
+```
+
+The server advertises configured names to Veryfront's browser hooks, so
+`useChat`, `useAgent`, `useStreaming`, and `useCompletion` continue to work
+without repeating them. For a hand-written request, discovery is automatic;
+you can also pass the names explicitly when you need to override it:
+
+```ts
+const headers = csrfMutationHeaders("/api/cases", {
+  cookieName: "my_csrf",
+  headerName: "x-my-csrf",
+  headers: { "content-type": "application/json" },
+});
+```
+
+`excludePaths` takes canonical absolute paths. A listed path and everything under it skips the check, which is what a third-party webhook receiver needs, because the sender holds no cookie of yours.
+
+On plain-HTTP LAN development origins, Veryfront uses the non-prefixed
+`vf_csrf` cookie because browsers reject `Secure` `__Host-` cookies there. The
+header remains `x-csrf-token`, and HTTPS (including deployed origins) keeps the
+hardened `__Host-vf_csrf` cookie.
+
+### Turn the check off
+
+Set `security.csrf` to `false`:
+
+```ts
+export default {
+  security: {
+    csrf: false,
+  },
+};
+```
+
+This is the only supported opt-out, and it applies in every environment. It stops the check and stops Veryfront issuing the cookie. Prefer `excludePaths` when only some routes need to be reachable without a token.
+
+### What Veryfront exempts
+
+- The CSP report endpoint, for the reason given in [Violation reports](#violation-reports).
+- Signed platform dispatches. Control-plane operations and channel invocations carry a signed envelope that the receiving handler verifies, and hold no cookie to echo.
+- Two framework-owned local development surfaces: the client log endpoint at `/_veryfront/log` and the dashboard API under `/_dev/api/`. Both admit only a direct loopback connection from a canonical local-development host, and the dashboard requires its own port-scoped session token on top of that. Your own routes get no such exemption, in development or anywhere else.
 
 ## Related
 

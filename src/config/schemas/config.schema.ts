@@ -13,6 +13,7 @@ import {
   EXAMPLE_CSP_DIRECTIVES,
   isCspDirectiveName,
 } from "#veryfront/security/http/csp-directives.ts";
+import { isReservedCsrfCookieName } from "#veryfront/security/csrf/names.ts";
 import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
@@ -209,6 +210,10 @@ const getCsrfSchema = defineSchema((v) =>
         .min(1)
         .max(MAX_CSRF_NAME_LENGTH)
         .regex(HTTP_TOKEN_PATTERN, "Expected a valid cookie name")
+        .refine(
+          (name) => !isReservedCsrfCookieName(name),
+          "Expected a cookie name other than the reserved CSRF names advertisement",
+        )
         .optional(),
       headerName: v
         .string()
@@ -600,11 +605,12 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           cors: getCorsSchema().optional(),
           /**
            * CSRF protection using the double-submit cookie pattern.
-           * Set `true` for defaults, or pass an object to customize.
+           * On by default in every environment, local development included.
+           * Pass an object to customize it, or `false` to switch it off.
            *
-           * When enabled, POST/PUT/PATCH/DELETE requests must include
-           * an `x-csrf-token` header matching the `__Host-vf_csrf` cookie.
-           * The cookie is set automatically on HTML document responses.
+           * Every request that is not GET, HEAD, or OPTIONS must include an
+           * `x-csrf-token` header matching the `__Host-vf_csrf` cookie. The
+           * cookie is set automatically on HTML document responses.
            * Custom names must use HTTP token syntax. Exclusions must be
            * canonical absolute URL paths without queries, fragments, or
            * trailing slashes.

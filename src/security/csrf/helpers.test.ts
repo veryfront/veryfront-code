@@ -1,7 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { applyCsrfCookie, csrfCookieSetting, generateCsrfToken, validateCsrf } from "./helpers.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import {
+  applyCsrfCookie,
+  browserFacingOrigin,
+  csrfCookieSetting,
+  generateCsrfToken,
+  validateCsrf,
+} from "./helpers.ts";
+import { csrfNamesCookieName } from "./names.ts";
 
 describe("security/csrf/helpers", () => {
   describe("generateCsrfToken", () => {
@@ -44,6 +57,15 @@ describe("security/csrf/helpers", () => {
     it("should use custom cookie name", () => {
       const result = generateCsrfToken({ cookieName: "my_csrf" });
       assertEquals(result.setCookie.startsWith("my_csrf="), true);
+    });
+
+    it("rejects cookie names reserved for configured-name discovery", () => {
+      assertThrows(
+        () => generateCsrfToken({ cookieName: "vf_csrf_names_forbidden" }),
+        TypeError,
+        "reserved",
+        "public token generation must not mint a cookie inside the advertisement namespace",
+      );
     });
 
     it("should use custom TTL", () => {
@@ -164,6 +186,23 @@ describe("security/csrf/helpers", () => {
       assertEquals(
         validateCsrf(req, { headerName: "" }),
         false,
+      );
+    });
+
+    it("fails closed for a cookie name reserved for configured-name discovery", () => {
+      const reservedName = "vf_csrf_names_forbidden";
+      const req = new Request("https://example.com/api", {
+        method: "POST",
+        headers: {
+          cookie: `${reservedName}=matching-token`,
+          "x-csrf-token": "matching-token",
+        },
+      });
+
+      assertEquals(
+        validateCsrf(req, { cookieName: reservedName }),
+        false,
+        "reserved names must not become valid merely because their values match",
       );
     });
   });
@@ -330,14 +369,30 @@ describe("security/csrf/helpers", () => {
       assertEquals(headers.get("set-cookie"), null);
     });
 
-    it("should skip asset paths with file extensions", () => {
-      const req = new Request("http://localhost/static/app.js", {
+    it("should issue a token for dotted HTML routes", () => {
+      const req = new Request("http://localhost/blog.post", {
         headers: { accept: "text/html" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
-      assertEquals(headers.get("set-cookie"), null);
+      assertEquals(
+        headers.get("set-cookie")?.startsWith("__Host-vf_csrf="),
+        true,
+        "a route suffix does not make an HTML document an asset",
+      );
+    });
+
+    it("uses a browser-compatible cookie on a plain-HTTP LAN origin", () => {
+      const req = new Request("http://192.168.1.20:3000/", {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, true);
+
+      const setCookie = headers.get("set-cookie") ?? "";
+      assertEquals(setCookie.startsWith("vf_csrf="), true);
+      assertEquals(setCookie.includes("; Secure"), false);
     });
 
     it("should skip when csrf config is false", () => {
@@ -377,6 +432,51 @@ describe("security/csrf/helpers", () => {
 
       const setCookie = headers.get("set-cookie");
       assertEquals(setCookie!.includes("Max-Age=600"), true);
+    });
+
+    it("should reject an invalid ttlSec even when the token cookie already exists", () => {
+      // The existing-token branch skips generateCsrfToken, so without its own
+      // validation an invalid TTL would be interpolated straight into the name
+      // advertisement cookie's Max-Age, expiring or corrupting it.
+      for (const ttlSec of [0, -1, 1.5, Number.NaN]) {
+        const req = new Request("http://localhost/", {
+          headers: {
+            accept: "text/html",
+            cookie: "my_csrf=existing-token",
+          },
+        });
+        const headers = new Headers();
+        assertThrows(
+          () =>
+            applyCsrfCookie(req, headers, {
+              cookieName: "my_csrf",
+              headerName: "x-my-csrf",
+              ttlSec,
+            }),
+          RangeError,
+        );
+        assertEquals(headers.get("set-cookie"), null);
+      }
+    });
+
+    it("should apply a valid ttlSec to the advertisement refresh on the existing-token branch", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          accept: "text/html",
+          cookie: "my_csrf=existing-token",
+        },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, {
+        cookieName: "my_csrf",
+        headerName: "x-my-csrf",
+        ttlSec: 600,
+      });
+
+      const setCookie = headers.get("set-cookie");
+      assertExists(setCookie);
+      assertStringIncludes(setCookie, csrfNamesCookieName("http://localhost"));
+      assertStringIncludes(setCookie, "Max-Age=600");
     });
 
     it("should issue fresh token on malformed cookie instead of throwing", () => {
@@ -459,5 +559,194 @@ describe("security/csrf/helpers", () => {
         "an explicit opt-out must not gain a token cookie from local development",
       );
     });
+  });
+});
+
+describe("applyCsrfCookie name advertisement", () => {
+  const origin = "https://example.test";
+  const advertisementCookieName = csrfNamesCookieName(origin);
+  const htmlGet = () => new Request(`${origin}/page`, { headers: { accept: "text/html" } });
+
+  function setCookies(headers: Headers): string[] {
+    return headers.getSetCookie ? headers.getSetCookie() : [];
+  }
+
+  it("publishes configured names so the browser helper can discover them", () => {
+    const headers = new Headers();
+    applyCsrfCookie(htmlGet(), headers, {
+      cookieName: "__Host-vf_project_csrf",
+      headerName: "x-project-csrf",
+    });
+
+    const advertisement = setCookies(headers).find((c) =>
+      c.startsWith(`${advertisementCookieName}=`)
+    );
+    assertExists(
+      advertisement,
+      "a configured project must advertise its names or the helper cannot discover them",
+    );
+    assertStringIncludes(
+      advertisement,
+      `${advertisementCookieName}=` +
+        "https%3A%2F%2Fexample.test%3A__Host-vf_project_csrf%3Ax-project-csrf",
+      "the advertisement must carry both configured names",
+    );
+    assertEquals(
+      advertisement.includes("HttpOnly"),
+      false,
+      "the advertisement must stay readable by the browser helper",
+    );
+  });
+
+  it("percent-encodes advertised names so cookie parsing round-trips percent characters", () => {
+    const headers = new Headers();
+    applyCsrfCookie(htmlGet(), headers, {
+      cookieName: "vf%2Eproject%2Ecsrf",
+      headerName: "x-project-csrf",
+    });
+
+    const advertisement = setCookies(headers).find((cookie) =>
+      cookie.startsWith(`${advertisementCookieName}=`)
+    );
+    assertExists(advertisement, "a configured project must receive an advertisement");
+    assertStringIncludes(
+      advertisement,
+      `${advertisementCookieName}=` +
+        "https%3A%2F%2Fexample.test%3Avf%252Eproject%252Ecsrf%3Ax-project-csrf",
+      "cookie decoding must recover the configured percent characters exactly once",
+    );
+  });
+
+  it("adds no advertisement cookie for a default project", () => {
+    const headers = new Headers();
+    applyCsrfCookie(htmlGet(), headers, true);
+
+    assertEquals(
+      setCookies(headers).some((c) => c.startsWith(`${advertisementCookieName}=`)),
+      false,
+      "a default project must not receive a cookie it has no use for",
+    );
+  });
+
+  it("expires a stale advertisement when a project returns to the default names", () => {
+    const headers = new Headers();
+    const req = new Request("https://example.test/page", {
+      headers: {
+        accept: "text/html",
+        cookie: `__Host-vf_csrf=existing-token; ${advertisementCookieName}=` +
+          "https://example.test:vf_old_csrf:x-old-csrf",
+      },
+    });
+
+    applyCsrfCookie(req, headers, true);
+
+    const advertisement = setCookies(headers).find((cookie) =>
+      cookie.startsWith(`${advertisementCookieName}=`)
+    );
+    assertExists(
+      advertisement,
+      "the stale discovery value must be replaced when defaults are restored",
+    );
+    assertStringIncludes(advertisement, "Max-Age=0", "the stale discovery value must be expired");
+  });
+  it("refreshes a stale advertisement even when the token cookie already exists", () => {
+    const headers = new Headers();
+    const req = new Request("https://example.test/page", {
+      headers: {
+        accept: "text/html",
+        cookie: `__Host-vf_csrf=existing-token; ${advertisementCookieName}=` +
+          "https://example.test:__Host-vf_csrf:x-old",
+      },
+    });
+    applyCsrfCookie(req, headers, { headerName: "x-new" });
+
+    const advertisement = (headers.getSetCookie ? headers.getSetCookie() : [])
+      .find((c) => c.startsWith(`${advertisementCookieName}=`));
+    assertExists(
+      advertisement,
+      "changing only headerName must still refresh the advertisement",
+    );
+    assertStringIncludes(
+      advertisement,
+      "x-new",
+      "the browser must be told the new header name, not the stale one",
+    );
+  });
+
+  it("retains a sibling application's advertisement on another port", () => {
+    const firstOrigin = "http://localhost:3000";
+    const secondOrigin = "http://localhost:4000";
+    const firstAdvertisement = csrfNamesCookieName(firstOrigin);
+    const secondAdvertisement = csrfNamesCookieName(secondOrigin);
+    const headers = new Headers();
+    const req = new Request(`${secondOrigin}/page`, {
+      headers: {
+        accept: "text/html",
+        cookie: `${firstAdvertisement}=${firstOrigin}:vf_first:x-first; vf_second=token`,
+      },
+    });
+
+    applyCsrfCookie(req, headers, {
+      cookieName: "vf_second",
+      headerName: "x-second",
+    });
+
+    const setCookie = setCookies(headers).find((cookie) =>
+      cookie.startsWith(`${secondAdvertisement}=`)
+    );
+    assertExists(setCookie, "the second origin must publish its own advertisement cookie");
+    assertEquals(
+      setCookies(headers).some((cookie) => cookie.startsWith(`${firstAdvertisement}=`)),
+      false,
+      "the response must not replace or expire the sibling origin's retained cookie",
+    );
+  });
+
+  it("refuses a configured cookie name reserved for the advertisement", () => {
+    assertThrows(
+      () =>
+        applyCsrfCookie(
+          new Request("https://example.test/page", { headers: { accept: "text/html" } }),
+          new Headers(),
+          { cookieName: "vf_csrf_names" },
+        ),
+      TypeError,
+      "reserved",
+      "the advertisement must never be able to overwrite the token cookie",
+    );
+  });
+
+  it("validates a header name supplied through the public API", () => {
+    assertThrows(
+      () =>
+        applyCsrfCookie(
+          new Request("https://example.test/page", { headers: { accept: "text/html" } }),
+          new Headers(),
+          { headerName: "x bad; Path=/" },
+        ),
+      TypeError,
+      "CSRF headerName",
+      "an unvalidated name would be interpolated straight into Set-Cookie",
+    );
+  });
+  it("advertises the browser-facing origin behind a trusted proxy", () => {
+    const req = new Request("http://internal.svc/page", {
+      headers: {
+        accept: "text/html",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "app.example.com",
+      },
+    });
+
+    assertEquals(
+      browserFacingOrigin(req, true),
+      "https://app.example.com",
+      "a proxied deployment must advertise the origin the document reports",
+    );
+    assertEquals(
+      browserFacingOrigin(req, false),
+      "http://internal.svc",
+      "forwarded headers are client-spoofable, so an untrusting deployment ignores them",
+    );
   });
 });
