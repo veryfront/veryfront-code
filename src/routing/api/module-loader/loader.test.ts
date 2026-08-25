@@ -3244,6 +3244,39 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("bundles relative imports when an inherited Deno import map is undecidable", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "base.json"),
+      JSON.stringify({
+        imports: {
+          "./helper.ts": `data:text/javascript,export const help = "inherited";`,
+        },
+      }),
+    );
+    await fs.writeTextFile(join(tmpDir, "deno.json"), `{ "extends": "./base.json" }\n`);
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const help = "local";`);
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [`import { help } from "./helper.ts";`, `export const GET = () => new Response(help);`].join(
+        "\n",
+      ),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(route),
+      "local",
+      "an inherited map the validator cannot flatten must not reach Deno direct loading",
+    );
+  });
+
   denoIt("vets encoded delimiter filenames after an import-map remap", async () => {
     for (
       const { target, actualFile, decoyFile } of [

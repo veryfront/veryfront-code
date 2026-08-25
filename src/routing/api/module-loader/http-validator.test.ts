@@ -632,6 +632,28 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "a later prototype mutation invalidates the plain-object constructor exemption",
       );
+      for (
+        const mutation of [
+          `Object.setPrototypeOf.call(null, holder, () => {});`,
+          `Reflect.setPrototypeOf.apply(null, [holder, () => {}]);`,
+          `Reflect.apply(Object.setPrototypeOf, null, [holder, () => {}]);`,
+          `const setProto = Reflect.setPrototypeOf;` +
+          ` let args = [{}, null]; args = [holder, () => {}]; setProto.apply(null, args);`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const holder = {}; ${mutation}` +
+                ` const make = holder.constructor;` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          "calling a borrowed setPrototypeOf mutator must invalidate the target object",
+        );
+      }
       await assertRejects(
         async () =>
           await validateHTTPImports(
@@ -835,6 +857,11 @@ describe("routing/api/module-loader/http-validator", () => {
           ` export const GET = () => new Response(String(table[key]));`,
         [],
       );
+      await validateHTTPImports(
+        `const items = ["safe"];` +
+          ` export const GET = () => new Response(items[0]);`,
+        [],
+      );
     });
 
     it("should track prototype mutations through aliases of Object and Reflect", async () => {
@@ -941,6 +968,19 @@ describe("routing/api/module-loader/http-validator", () => {
         "createRequire",
         "a createRequire load never appears in the module graph this validator walks",
       );
+      for (const moduleName of ["node:worker_threads", "worker_threads"]) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `import { Worker as Thread } from "${moduleName}";` +
+                ` new Thread(new URL("./helper.ts", import.meta.url));`,
+              [],
+            ),
+          Error,
+          "Worker module loading",
+          `${moduleName} starts an unchecked module graph`,
+        );
+      }
     });
 
     it("should not treat erased TypeScript declarations as runtime bindings", async () => {
@@ -1083,6 +1123,17 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "Worker",
         "aliasing the global Worker constructor must not bypass URL validation",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import RouteWorker = globalThis.Worker;` +
+              ` new RouteWorker("https://blocked.example/mod.js");`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "a TypeScript import-equals value alias must retain Worker URL checks",
       );
       await assertRejects(
         async () =>

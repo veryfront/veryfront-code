@@ -657,6 +657,11 @@ function inspectDirectModuleSpecifier(
   if (mappedTarget !== null) {
     return inspectDirectMappedTarget(mappedTarget, options);
   }
+  // A null map also means the project config may use features this reader
+  // cannot flatten, such as `extends`. Route every specifier through the
+  // controlled bundler instead of handing an inherited remap to Deno's direct
+  // loader after validating a different local path.
+  if (importMap === null) return "bundle";
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
     return "direct";
@@ -667,7 +672,7 @@ function inspectDirectModuleSpecifier(
   // Explicit installed-dependency schemes are safe to leave to the runtime;
   // every other absolute or custom scheme bundles.
   if (canDirectImportSpecifier(specifier)) return "direct";
-  if (!isBareModuleSpecifier(specifier) || importMap === null) return "reject";
+  if (!isBareModuleSpecifier(specifier)) return "reject";
   // An unmapped bare specifier can only resolve to an installed package.
   return "direct";
 }
