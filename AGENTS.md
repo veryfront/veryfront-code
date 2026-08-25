@@ -228,8 +228,9 @@ validates that reviewed head against the latest `main` and the pull requests ahe
 the required checks on the generated `merge_group` commit.
 
 - Do not update, rebase, or re-review a clean pull request only because `main` advanced.
-- Do not rerun pull request checks manually when the reviewed head SHA is unchanged. Let the merge
-  queue validate the current integration commit.
+- Do not rerun successful pull request checks manually only because `main` advanced. If a pull
+  request check fails, diagnose it and rerun the unchanged head after an infrastructure flake;
+  change the head and re-review when the failure exposes a real defect.
 - Re-review when the pull request head SHA changes, including after a conflict resolution or fix.
 - If a merge-group check fails without a code change, diagnose the failure. Requeue the same reviewed
   head after an infrastructure flake. Change the head and re-review it when the failure exposes a real
