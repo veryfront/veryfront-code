@@ -28,6 +28,13 @@ function namedStep(job: YamlRecord, name: string): YamlRecord {
   return step;
 }
 
+function tokenRepositories(job: YamlRecord): string[] {
+  const tokenStep = namedStep(job, "Create release GitHub App token");
+  const repositories = asRecord(tokenStep.with, "release token inputs").repositories;
+  assert(typeof repositories === "string", "release token repositories must be a string");
+  return repositories.trim().split("\n");
+}
+
 async function runReleaseDependencyGate(
   overrides: Record<string, string> = {},
 ): Promise<Deno.CommandOutput> {
@@ -113,6 +120,18 @@ describe("registry release workflow", () => {
         jobSteps.filter((step) => String(step.uses).startsWith("peter-evans/repository-dispatch@"))
           .length,
         0,
+      );
+      if (jobName === "prerelease") {
+        assertStringIncludes(
+          String(namedStep(job, "Compute RC version").run),
+          'BASE="${{ needs.version-check.outputs.version }}"',
+          "prerelease must quote the base version assignment",
+        );
+      }
+      assertEquals(
+        tokenRepositories(job),
+        ["veryfront"],
+        `${jobName} release token must only access the release repository`,
       );
       assert(
         Array.isArray(job.needs) &&
@@ -261,6 +280,15 @@ describe("registry release workflow", () => {
       "published version must be resolved before the release token is created",
     );
     assertEquals(dispatchActions.length, 3);
+    assertEquals(
+      tokenRepositories(dispatch),
+      [
+        "veryfront-server",
+        "veryfront-job-runner",
+        "veryfront-sandbox",
+      ],
+      "dispatch release token must only access downstream release repositories",
+    );
     assertEquals(
       dispatchActions.map((step) => asRecord(step.with, "repository dispatch inputs").repository),
       [

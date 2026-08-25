@@ -1133,7 +1133,7 @@ jobs:
       - name: Compute RC version
         id: version
         run: |
-          BASE=${{ needs.version-check.outputs.version }}
+          BASE="${{ needs.version-check.outputs.version }}"
           RC_VERSION="${BASE}.${{ github.run_number }}"
           echo "version=${RC_VERSION}" >> $GITHUB_OUTPUT
           echo "Publishing RC: ${RC_VERSION}"
@@ -1174,9 +1174,6 @@ jobs:
           owner: veryfront
           repositories: |
             veryfront
-            veryfront-server
-            veryfront-job-runner
-            veryfront-sandbox
           permission-contents: write
 
       - name: Create GitHub pre-release
@@ -1259,9 +1256,6 @@ jobs:
           owner: veryfront
           repositories: |
             veryfront
-            veryfront-server
-            veryfront-job-runner
-            veryfront-sandbox
           permission-contents: write
 
       - name: Ensure stable version is unpublished
