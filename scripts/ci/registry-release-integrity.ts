@@ -1,5 +1,6 @@
 export type RegistryFailureClassification =
   | "missing-version"
+  | "wrong-version"
   | "provenance"
   | "timeout"
   | "lookup";
@@ -85,7 +86,7 @@ function validateMetadata(
   const spec = `${options.packageName}@${options.version}`;
   if (metadata.version !== options.version) {
     throw new RegistryReleaseError(
-      "missing-version",
+      "wrong-version",
       `${spec} returned version ${metadata.version ?? "<missing>"}.`,
     );
   }

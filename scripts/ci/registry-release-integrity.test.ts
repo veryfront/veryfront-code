@@ -151,6 +151,27 @@ describe("registry release integrity polling", () => {
     assertStringIncludes(error.message, `${PACKAGE_NAME}@${VERSION}`);
   });
 
+  it("classifies returned metadata for the wrong version distinctly", async () => {
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1,
+        retryDelayMs: 0,
+        requestTimeoutMs: 100,
+        fetcher: () =>
+          Promise.resolve(
+            Response.json(publishedPackage({ version: "0.1.1252" })),
+          ),
+        delay: () => Promise.resolve(),
+      })
+    );
+
+    assertEquals(error.classification, "wrong-version");
+    assertStringIncludes(error.message, "returned version 0.1.1252");
+  });
+
   it("fails immediately when gitHead does not match the release commit", async () => {
     let attempts = 0;
     const error = await captureError(() =>

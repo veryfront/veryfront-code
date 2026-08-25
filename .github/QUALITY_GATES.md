@@ -6,12 +6,14 @@ protects a distinct delivery boundary.
 
 ## 1. Merge correctness
 
-`quality gate (merge)` requires source checks, unit tests, integration tests,
-and binary end-to-end tests to succeed for pull requests and merge queue runs.
-A failed, skipped, or cancelled dependency fails the aggregate check.
+`quality gate (merge)` requires source checks, unit tests, the existing
+eight-shard coverage dependency with its 80 percent floor, integration tests,
+binary end-to-end tests, and RSC browser end-to-end tests to succeed for pull
+requests and merge queue runs. A failed, skipped, or cancelled dependency fails
+the aggregate check. Codecov reporting remains advisory.
 
 Evidence: [CI workflow](workflows/cicd.yml) and
-[merge gate contract](../scripts/ci/merge-quality-gate-workflow.test.ts).
+[merge gate contract](../tests/integration/ci/merge-quality-gate-workflow.test.ts).
 
 ## 2. Same-build artifact compatibility
 
@@ -22,8 +24,8 @@ artifact, so compatibility results describe one build rather than separate
 rebuilds.
 
 Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
-[artifact contract](../scripts/ci/npm-compatibility-artifact.test.ts), and
-[workflow contract](../scripts/ci/npm-compatibility-artifact-workflow.test.ts).
+[artifact contract](../tests/integration/ci/npm-compatibility-artifact.test.ts),
+and [workflow contract](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts).
 
 ## 3. Registry release integrity
 
@@ -35,15 +37,14 @@ downstream deployment dispatch.
 
 Evidence: [registry verification](../scripts/ci/registry-release-integrity.ts),
 [registry smoke](../scripts/ci/registry-release-smoke.sh), and
-[release ordering contract](../scripts/ci/registry-release-workflow.test.ts).
+[release ordering contract](../tests/integration/ci/registry-release-workflow.test.ts).
 
 ## Supporting signals
 
-Coverage, CodeQL, and issue or pull request metrics remain useful supporting
-signals. They help maintainers find risk, security findings, test gaps, and
-process trends, but they are not additional mandatory quality gates.
+CodeQL and issue or pull request metrics remain useful supporting signals. They
+help maintainers find risk, security findings, and process trends, but they are
+not additional mandatory quality gates.
 
-- Coverage retains its eight shards, 80 percent floor, and Codecov reporting.
 - CodeQL continues to report security and quality findings in its dedicated
   workflow.
 - Issue and pull request metrics inform maintenance and process improvements.
@@ -60,5 +61,5 @@ builds with one. The estimate is four times the measured producer duration,
 or 80 percent of npm-build runner time before artifact transfer overhead. This
 is a build-reuse estimate, not an observed post-change end-to-end CI result.
 The [workflow summary calculation](workflows/cicd.yml) and
-[contract example](../scripts/ci/npm-compatibility-artifact-workflow.test.ts)
+[contract example](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts)
 record the estimate from the measured producer duration.

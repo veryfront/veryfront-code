@@ -5,7 +5,7 @@ import { parse } from "#std/yaml/parse";
 type YamlRecord = Record<string, unknown>;
 
 const WORKFLOW_PATH = new URL(
-  "../../.github/workflows/cicd.yml",
+  "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
 
@@ -20,6 +20,34 @@ function asRecord(value: unknown, context: string): YamlRecord {
 function steps(job: YamlRecord, context: string): YamlRecord[] {
   assert(Array.isArray(job.steps), `${context} steps must be an array`);
   return job.steps.map((step) => asRecord(step, `${context} step`));
+}
+
+function namedStep(job: YamlRecord, name: string): YamlRecord {
+  const step = steps(job, String(job.name)).find((step) => step.name === name);
+  assert(step, `${String(job.name)} must include ${name}`);
+  return step;
+}
+
+async function runReleaseDependencyGate(
+  overrides: Record<string, string> = {},
+): Promise<Deno.CommandOutput> {
+  const jobs = await readJobs();
+  const gate = asRecord(
+    jobs["quality-gate-registry"],
+    "registry quality gate job",
+  );
+  const step = namedStep(gate, "Require selected release publication");
+  return await new Deno.Command("bash", {
+    args: ["-c", String(step.run)],
+    env: {
+      IS_STABLE: "false",
+      PRERELEASE_RESULT: "success",
+      STABLE_RELEASE_RESULT: "skipped",
+      ...overrides,
+    },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
 }
 
 async function readJobs(): Promise<YamlRecord> {
@@ -48,9 +76,21 @@ describe("registry release workflow", () => {
       assertEquals(
         jobSteps.filter((step) =>
           String(step.uses).startsWith("peter-evans/repository-dispatch@")
-        ).length,
+        )
+          .length,
         0,
       );
+      assert(
+        Array.isArray(job.needs) &&
+          job.needs.includes("quality-gate-artifact"),
+        `${jobName} must require the canonical artifact quality gate`,
+      );
+      if (jobName === "release") {
+        assert(
+          job.needs.includes("coverage"),
+          "stable release must retain the coverage dependency",
+        );
+      }
     });
   }
 
@@ -67,8 +107,31 @@ describe("registry release workflow", () => {
 
     assertEquals(gate.needs, ["prerelease", "release", "version-check"]);
     assertEquals(
+      gateSteps[0].name,
+      "Require selected release publication",
+      "selected release dependency must be checked before checkout",
+    );
+    assert(
+      gateSteps.findIndex((step) =>
+        String(step.uses).startsWith("actions/checkout@")
+      ) > 0,
+      "registry checkout must follow the selected release dependency gate",
+    );
+    assertEquals(
       gate.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}",
+      "registry gate must run only when prerelease or stable publication is requested",
+    );
+    assertEquals(
+      asRecord(
+        namedStep(gate, "Require selected release publication").env,
+        "selected release dependency environment",
+      ),
+      {
+        IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+        PRERELEASE_RESULT: "${{ needs.prerelease.result }}",
+        STABLE_RELEASE_RESULT: "${{ needs.release.result }}",
+      },
     );
     assert(registryStep, "registry quality gate must run the smoke script");
     assertEquals(
@@ -84,6 +147,56 @@ describe("registry release workflow", () => {
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
       },
     );
+  });
+
+  it("may skip when no stable release is requested", async () => {
+    const jobs = await readJobs();
+    const gate = asRecord(
+      jobs["quality-gate-registry"],
+      "registry quality gate job",
+    );
+    const condition = String(gate.if);
+
+    assert(
+      condition.includes(
+        "needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true'",
+      ),
+      condition,
+    );
+    assertEquals(
+      condition.includes("needs.release.result == 'success'"),
+      false,
+    );
+    assertEquals(
+      condition.includes("needs.prerelease.result == 'success'"),
+      false,
+    );
+  });
+
+  it("fails closed for every non-success selected release result", async () => {
+    for (const selectedResult of ["failure", "skipped", "cancelled"]) {
+      for (const isStable of [false, true]) {
+        const selectedName = isStable
+          ? "STABLE_RELEASE_RESULT"
+          : "PRERELEASE_RESULT";
+        const output = await runReleaseDependencyGate({
+          IS_STABLE: String(isStable),
+          PRERELEASE_RESULT: isStable ? "skipped" : selectedResult,
+          STABLE_RELEASE_RESULT: isStable ? selectedResult : "skipped",
+        });
+        const stderr = new TextDecoder().decode(output.stderr);
+
+        assertEquals(
+          output.code,
+          1,
+          `${selectedName}=${selectedResult} must fail the registry gate`,
+        );
+        assert(
+          stderr.includes(`${selectedName} finished with ${selectedResult}`),
+          stderr,
+        );
+      }
+    }
   });
 
   it("dispatches exactly three downstream releases only after the registry gate", async () => {

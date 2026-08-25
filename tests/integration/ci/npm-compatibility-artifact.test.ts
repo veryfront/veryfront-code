@@ -10,7 +10,7 @@ import {
   createNpmCompatibilityArtifact,
   loadNpmCompatibilityArtifact,
   materializeNpmCompatibilityArtifact,
-} from "./npm-compatibility-artifact.ts";
+} from "../../../scripts/ci/npm-compatibility-artifact.ts";
 
 async function writePackage(
   directory: string,
@@ -108,6 +108,29 @@ describe("npm compatibility artifact", () => {
         () => loadNpmCompatibilityArtifact(destination),
         Error,
         "SHA-256 mismatch",
+      );
+    });
+  });
+
+  it("rejects a first-party package version that differs from the root", async () => {
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-output-",
+    ], async ([root, destination]) => {
+      await writePackage(root, {
+        name: "veryfront",
+        version: "1.2.3",
+        dependencies: { "@veryfront/ext-alpha": "1.2.3" },
+      });
+      await writePackage(join(root, "extensions", "ext-alpha"), {
+        name: "@veryfront/ext-alpha",
+        version: "1.2.2",
+      });
+
+      await assertRejects(
+        () => createNpmCompatibilityArtifact(root, destination),
+        Error,
+        "@veryfront/ext-alpha version 1.2.2 does not match root package version 1.2.3",
       );
     });
   });

@@ -5,12 +5,16 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
-const wrapperPath = new URL("./registry-release-smoke.sh", import.meta.url)
+const wrapperPath = new URL(
+  "../../../scripts/ci/registry-release-smoke.sh",
+  import.meta.url,
+)
   .pathname;
 const installSmokePath = new URL(
-  "../test/npm-install-smoke.sh",
+  "../../../scripts/test/npm-install-smoke.sh",
   import.meta.url,
 ).pathname;
+const repoRoot = new URL("../../../", import.meta.url);
 const decoder = new TextDecoder();
 
 async function writeExecutable(path: string, source: string): Promise<void> {
@@ -19,12 +23,14 @@ async function writeExecutable(path: string, source: string): Promise<void> {
 }
 
 async function workspacePackageNames(): Promise<string[]> {
-  const config = JSON.parse(await Deno.readTextFile("deno.json"));
+  const config = JSON.parse(
+    await Deno.readTextFile(new URL("deno.json", repoRoot)),
+  );
   const names = ["veryfront"];
   for (const member of config.workspace as string[]) {
     if (!member.startsWith("./extensions/")) continue;
     const manifest = JSON.parse(
-      await Deno.readTextFile(`${member}/deno.json`),
+      await Deno.readTextFile(new URL(`${member}/deno.json`, repoRoot)),
     );
     if (manifest.veryfront?.npm?.publish === false) continue;
     names.push(manifest.name);
@@ -169,7 +175,7 @@ exit 0
         stderr: "piped",
       }).output();
 
-      assertEquals(output.code, 86);
+      assertEquals(output.code, 20);
       const log = await Deno.readTextFile(npmLog);
       assertStringIncludes(
         log,
@@ -188,6 +194,49 @@ exit 0
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+
+  it("returns the behavior classification after a successful registry install", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-behavior-" });
+    const binDir = `${tempDir}/bin`;
+    await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/npm`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(`${binDir}/node`, "#!/bin/bash\nexit 1\n");
+
+    try {
+      const output = await new Deno.Command("/bin/bash", {
+        args: [installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_NPM_REGISTRY_PACKAGES:
+            "veryfront\n@veryfront/ext-parser-babel\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 21);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not expose an absolute artifact path when the artifact is missing", async () => {
+    const privatePath = new URL("missing-npm-artifact", import.meta.url)
+      .pathname;
+    const output = await new Deno.Command("/bin/bash", {
+      args: [installSmokePath],
+      env: { VF_NPM_PACK_DIR: privatePath },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    const stderr = decoder.decode(output.stderr);
+    assertEquals(output.code, 1);
+    assertStringIncludes(stderr, "canonical npm artifact directory missing");
+    assertEquals(stderr.includes(privatePath), false);
   });
 
   it("rejects credential-bearing registry URLs without leaking them", async () => {
@@ -243,6 +292,47 @@ exit 0
         decoder.decode(output.stderr).includes("must-not-appear"),
         false,
       );
+    }
+  });
+
+  it("emits phase-specific smoke classifications from the wrapper", async () => {
+    for (
+      const [status, classification] of [
+        [20, "install"],
+        [21, "behavior"],
+      ] as const
+    ) {
+      const tempDir = await makeTempDir({ prefix: "vf-registry-phase-" });
+      const binDir = `${tempDir}/bin`;
+      await Deno.mkdir(binDir);
+      await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+      await writeExecutable(
+        `${binDir}/bash`,
+        `#!/bin/bash\nexit ${status}\n`,
+      );
+
+      try {
+        const output = await new Deno.Command("/bin/bash", {
+          args: [wrapperPath],
+          env: {
+            GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+            IS_STABLE: "false",
+            PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+            RC_VERSION: "1.2.3-rc.45",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+
+        const stderr = decoder.decode(output.stderr);
+        assertEquals(output.code, 1);
+        assertStringIncludes(
+          stderr,
+          `Exact-version registry ${classification} smoke failed.`,
+        );
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
     }
   });
 

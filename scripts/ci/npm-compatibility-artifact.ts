@@ -139,6 +139,13 @@ export async function createNpmCompatibilityArtifact(
     manifest.name === "veryfront"
   );
   if (!root) throw new Error("npm compatibility artifact requires veryfront");
+  for (const { manifest } of packageSources) {
+    if (manifest.version !== root.manifest.version) {
+      throw new Error(
+        `${manifest.name} version ${manifest.version} does not match root package version ${root.manifest.version}`,
+      );
+    }
+  }
   const rootExtensionNames = Object.entries(root.manifest.dependencies)
     .filter(([name, version]) =>
       name.startsWith(EXTENSION_PREFIX) && version === root.manifest.version

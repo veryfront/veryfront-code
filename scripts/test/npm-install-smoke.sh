@@ -48,9 +48,16 @@ cleanup() {
 
 trap cleanup EXIT
 
+SMOKE_FAILURE_STATUS=1
+
 fail() {
   echo "SMOKE FAIL: $1" >&2
-  exit 1
+  exit "$SMOKE_FAILURE_STATUS"
+}
+
+fail_registry_install() {
+  echo "SMOKE FAIL: exact-version registry install failed" >&2
+  exit 20
 }
 
 REGISTRY_INSTALL_SPECS=()
@@ -87,7 +94,7 @@ if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
   [ -n "$REGISTRY_AUTH_SPEC" ] || fail "registry package list is missing @veryfront/ext-auth-jwt"
 else
   if [ -n "${VF_NPM_PACK_DIR:-}" ]; then
-    [ -d "$VF_NPM_PACK_DIR" ] || fail "canonical npm artifact directory missing: $VF_NPM_PACK_DIR"
+    [ -d "$VF_NPM_PACK_DIR" ] || fail "canonical npm artifact directory missing"
     deno run --config="$ROOT_DIR/scripts/test.deno.json" --allow-read \
       "$ROOT_DIR/scripts/ci/npm-compatibility-artifact.ts" verify "$VF_NPM_PACK_DIR" ||
       fail "canonical npm artifact verification failed"
@@ -115,11 +122,16 @@ else
   fi
 fi
 
+if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  SMOKE_FAILURE_STATUS=21
+fi
+
 cd "$WORKDIR"
 npm init -y >/dev/null 2>&1
 npm pkg set type=module >/dev/null
 if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
-  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "${REGISTRY_INSTALL_SPECS[@]}"
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "${REGISTRY_INSTALL_SPECS[@]}" ||
+    fail_registry_install
 else
   npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-[0-9]*.tgz ./veryfront-ext-bundler-esbuild-*.tgz ./veryfront-ext-content-mdx-*.tgz ./veryfront-ext-css-tailwind-*.tgz ./veryfront-ext-dev-ui-react-*.tgz ./veryfront-ext-node-websocket-ws-*.tgz ./veryfront-ext-parser-babel-*.tgz ./veryfront-ext-yaml-*.tgz
 fi
@@ -194,7 +206,8 @@ echo "$MISSING_OUTPUT" | grep -q "install @veryfront/ext-auth-jwt alongside very
 
 echo "== 4. with @veryfront/ext-auth-jwt installed: extension loads"
 if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
-  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "$REGISTRY_AUTH_SPEC"
+  NPM_CONFIG_REGISTRY="$REGISTRY_URL" npm install --no-fund --no-audit --silent --ignore-scripts "$REGISTRY_AUTH_SPEC" ||
+    fail_registry_install
 else
   npm install --no-fund --no-audit --silent --ignore-scripts ./veryfront-ext-auth-jwt-*.tgz
 fi

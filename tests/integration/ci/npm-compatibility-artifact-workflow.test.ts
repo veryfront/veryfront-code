@@ -9,7 +9,7 @@ import { parse } from "#std/yaml/parse";
 type YamlRecord = Record<string, unknown>;
 
 const WORKFLOW_PATH = new URL(
-  "../../.github/workflows/cicd.yml",
+  "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
 
@@ -162,7 +162,8 @@ describe("canonical npm artifact workflow", () => {
       assertEquals(
         jobSteps(job, label).filter((step) =>
           String(step.run).includes("deno task build:npm")
-        ).length,
+        )
+          .length,
         0,
         `${label} must not rebuild the canonical npm output`,
       );
@@ -202,7 +203,7 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
-  it("reports a reproducible five-to-one build runner-minute comparison", async () => {
+  it("reports a reproducible five-to-one estimated build runner-minute comparison", async () => {
     const jobs = await readJobs();
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
     const step = namedStep(gate, "Report npm build reuse");
@@ -228,9 +229,18 @@ describe("canonical npm artifact workflow", () => {
       }).output();
       assertEquals(result.code, 0);
       const report = await Deno.readTextFile(summary);
-      assertStringIncludes(report, "Before: 10.00 npm build runner-minutes");
-      assertStringIncludes(report, "After: 2.00 npm build runner-minutes");
-      assertStringIncludes(report, "Saved: 8.00 npm build runner-minutes");
+      assertStringIncludes(
+        report,
+        "Estimated before: 10.00 npm build runner-minutes",
+      );
+      assertStringIncludes(
+        report,
+        "Estimated after: 2.00 npm build runner-minutes",
+      );
+      assertStringIncludes(
+        report,
+        "Estimated savings: 8.00 npm build runner-minutes",
+      );
     } finally {
       await Deno.remove(summary);
     }

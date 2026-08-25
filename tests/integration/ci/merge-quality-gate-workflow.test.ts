@@ -9,20 +9,24 @@ import { parse } from "#std/yaml/parse";
 type YamlRecord = Record<string, unknown>;
 
 const WORKFLOW_PATH = new URL(
-  "../../.github/workflows/cicd.yml",
+  "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
 const REQUIRED_DEPENDENCIES = [
   "ci",
   "unit-tests",
+  "coverage",
   "tests",
   "tests-binary-e2e",
+  "tests-e2e-rsc-browser",
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
   UNIT_TESTS_RESULT: "${{ needs.unit-tests.result }}",
+  COVERAGE_RESULT: "${{ needs.coverage.result }}",
   INTEGRATION_TESTS_RESULT: "${{ needs.tests.result }}",
   BINARY_E2E_RESULT: "${{ needs.tests-binary-e2e.result }}",
+  RSC_BROWSER_E2E_RESULT: "${{ needs.tests-e2e-rsc-browser.result }}",
 } as const;
 
 function asRecord(value: unknown, context: string): YamlRecord {
@@ -41,7 +45,7 @@ async function readWorkflow(): Promise<YamlRecord> {
 }
 
 async function readRepoFile(path: string): Promise<string> {
-  return await Deno.readTextFile(new URL(`../../${path}`, import.meta.url));
+  return await Deno.readTextFile(new URL(`../../../${path}`, import.meta.url));
 }
 
 async function readMergeGate(): Promise<YamlRecord> {
@@ -144,22 +148,24 @@ describe("merge quality gate workflow", () => {
     assertEquals(result.code, 0);
   });
 
-  it("fails closed when a required dependency fails", async () => {
-    const result = await runGate({ INTEGRATION_TESTS_RESULT: "failure" });
-    const output = new TextDecoder().decode(result.stdout);
+  it("fails closed for every non-success dependency result", async () => {
+    for (const resultName of Object.keys(RESULT_ENV)) {
+      for (const dependencyResult of ["failure", "skipped", "cancelled"]) {
+        const result = await runGate({
+          [resultName]: dependencyResult,
+        });
+        const output = new TextDecoder().decode(result.stdout);
 
-    assertEquals(result.code, 1);
-    assertStringIncludes(
-      output,
-      "INTEGRATION_TESTS_RESULT finished with failure",
-    );
-  });
-
-  it("fails closed when a required dependency is skipped", async () => {
-    const result = await runGate({ BINARY_E2E_RESULT: "skipped" });
-    const output = new TextDecoder().decode(result.stdout);
-
-    assertEquals(result.code, 1);
-    assertStringIncludes(output, "BINARY_E2E_RESULT finished with skipped");
+        assertEquals(
+          result.code,
+          1,
+          `${resultName}=${dependencyResult} must fail the merge gate`,
+        );
+        assertStringIncludes(
+          output,
+          `${resultName} finished with ${dependencyResult}`,
+        );
+      }
+    }
   });
 });

@@ -630,22 +630,32 @@ jobs:
     name: quality gate (merge)
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    needs: [ci, unit-tests, tests, tests-binary-e2e]
+    needs:
+      - ci
+      - unit-tests
+      - coverage
+      - tests
+      - tests-binary-e2e
+      - tests-e2e-rsc-browser
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require merge correctness dependencies
         env:
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
+          RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
         run: |
           failed=0
           for result_name in \
             SOURCE_CHECKS_RESULT \
             UNIT_TESTS_RESULT \
+            COVERAGE_RESULT \
             INTEGRATION_TESTS_RESULT \
-            BINARY_E2E_RESULT
+            BINARY_E2E_RESULT \
+            RSC_BROWSER_E2E_RESULT
           do
             result="${!result_name}"
             if [ "$result" != "success" ]; then
@@ -778,9 +788,9 @@ jobs:
             echo "### Canonical npm build reuse"
             echo
             echo "Measured producer duration: ${BUILD_DURATION_SECONDS}s"
-            echo "Before: ${before} npm build runner-minutes"
-            echo "After: ${after} npm build runner-minutes"
-            echo "Saved: ${saved} npm build runner-minutes"
+            echo "Estimated before: ${before} npm build runner-minutes"
+            echo "Estimated after: ${after} npm build runner-minutes"
+            echo "Estimated savings: ${saved} npm build runner-minutes"
           } >> "$GITHUB_STEP_SUMMARY"
 
   tests-sentry-runtime-packages:
@@ -1084,9 +1094,7 @@ jobs:
     needs: [
       ci,
       tests,
-      # coverage is deliberately absent: it is a quality metric, not a
-      # correctness gate, and an npm publish cannot be taken back. Every
-      # remaining entry can fail the release for a reason a user would feel.
+      quality-gate-artifact,
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
@@ -1202,6 +1210,7 @@ jobs:
       ci,
       tests,
       coverage,
+      quality-gate-artifact,
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
@@ -1368,11 +1377,27 @@ jobs:
 
   quality-gate-registry:
     name: quality gate (registry)
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && (needs.version-check.outputs.is_stable == 'false' || needs.version-check.outputs.stable_release_requested == 'true') }}
     needs: [prerelease, release, version-check]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Require selected release publication
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          PRERELEASE_RESULT: ${{ needs.prerelease.result }}
+          STABLE_RELEASE_RESULT: ${{ needs.release.result }}
+        run: |
+          if [ "$IS_STABLE" = "true" ]; then
+            selected_result_name="STABLE_RELEASE_RESULT"
+          else
+            selected_result_name="PRERELEASE_RESULT"
+          fi
+          selected_result="${!selected_result_name}"
+          if [ "$selected_result" != "success" ]; then
+            echo "REGISTRY RELEASE FAIL [configuration]: $selected_result_name finished with $selected_result." >&2
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

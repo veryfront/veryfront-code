@@ -64,7 +64,10 @@ describe("npm smoke Node support contract", () => {
       jobs["tests-npm-install-smoke"],
       "npm install smoke job",
     );
-    assertEquals(smokeJob.needs, "npm-smoke-node-versions");
+    assertEquals(smokeJob.needs, [
+      "npm-smoke-node-versions",
+      "npm-compatibility-artifact",
+    ]);
     assertEquals(
       record(
         record(smokeJob.strategy, "npm smoke strategy").matrix,
