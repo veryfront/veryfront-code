@@ -312,6 +312,60 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("treats an edited Codex finding comment as newer than a later-created clean verdict", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:02Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:01Z",
+              updated_at: "2026-08-25T08:00:01Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("lets an edited old clean verdict supersede a finding after a base boundary", async () => {
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:03Z",
+            }),
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:02Z",
+              updated_at: "2026-08-25T08:00:02Z",
+            }),
+          ],
+          events: [{
+            event: "base_ref_changed",
+            created_at: "2026-08-25T08:00:01Z",
+          }],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+  });
+
   it("lets an exact-head Codex finding comment override a Codex approval", async () => {
     assertEquals(
       await findAutomatedReview(

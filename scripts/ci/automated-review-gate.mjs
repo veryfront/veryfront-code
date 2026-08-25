@@ -224,14 +224,10 @@ function evidenceFreshness(
   timeline,
 ) {
   if (boundary === undefined) return "newer";
-  const evidenceTime = Date.parse(
-    timelineEvent === "reviewed"
-      ? evidence?.submitted_at ?? ""
-      : evidence?.created_at ?? "",
-  );
-  if (!Number.isFinite(evidenceTime)) return "ambiguous";
-  if (evidenceTime < boundary.time) return "older";
-  if (evidenceTime > boundary.time) return "newer";
+  const time = evidenceTime(evidence, timelineEvent);
+  if (!Number.isFinite(time)) return "ambiguous";
+  if (time < boundary.time) return "older";
+  if (time > boundary.time) return "newer";
   if (boundary.timelineEvent === undefined) return "ambiguous";
   const boundaryPosition = timelinePosition(
     timeline,
@@ -250,11 +246,13 @@ function evidenceFreshness(
 }
 
 function evidenceTime(evidence, timelineEvent) {
-  return Date.parse(
-    timelineEvent === "reviewed"
-      ? evidence?.submitted_at ?? ""
-      : evidence?.created_at ?? "",
-  );
+  if (timelineEvent === "reviewed") {
+    return Date.parse(evidence?.submitted_at ?? "");
+  }
+  const updatedAt = Date.parse(evidence?.updated_at ?? "");
+  return Number.isFinite(updatedAt)
+    ? updatedAt
+    : Date.parse(evidence?.created_at ?? "");
 }
 
 function isEvidenceProvablyLater(candidate, current, timeline) {
