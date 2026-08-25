@@ -163,10 +163,7 @@ async function fetchEsmModuleWithin(
   const graphCached = graph.artifacts.get(url);
   if (graphCached) {
     const unwritten = unresolvedGraphDependencies(url, graph, esmCache);
-    if (
-      unwritten.length || graph.poisoned.has(url) ||
-      (graph.hadFailure && graph.provisional.has(url))
-    ) {
+    if (unwritten.length || graph.poisoned.has(url)) {
       throw MODULE_NOT_FOUND.create({
         detail: `Refusing incomplete graph-local artifact for ${url}`,
       });

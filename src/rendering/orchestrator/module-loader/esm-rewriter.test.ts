@@ -396,7 +396,7 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       );
     });
 
-    it("rejects a static sibling that reused a poisoned lazy cycle descendant", async () => {
+    it("reuses a materialized cycle descendant after an unrelated lazy failure", async () => {
       const esmCache = new Map<string, string>();
       const dWritten = Promise.withResolvers<void>();
       const gatedAdapter = {
@@ -443,20 +443,22 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         return new Response("not found", { status: 404 });
       }) as typeof fetch;
 
-      await assertRejects(
-        () => fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
-        Error,
+      const result = await fetchEsmModule(
+        "https://esm.sh/root",
+        tmpDir,
+        gatedAdapter,
+        esmCache,
       );
 
       assertEquals(
-        esmCache.has("https://esm.sh/x"),
-        false,
-        "a static sibling must not be cached after reusing a poisoned provisional cycle descendant",
+        files.has(result),
+        true,
+        "the root must resolve once every predicted cycle path has materialized",
       );
       assertEquals(
         esmCache.size,
         0,
-        "a graph with a failed lazy cyclic branch must not publish graph-local artifacts",
+        "the lazy failure still keeps provisional graph artifacts out of the shared cache",
       );
     });
 
