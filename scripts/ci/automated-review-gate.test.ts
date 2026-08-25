@@ -1017,6 +1017,26 @@ describe("automated review workflow", () => {
     assert("status" in triggers, "completion status must have a wakeup path");
     const jobs = record(workflow.jobs, "jobs");
     const targetJob = record(jobs.target, "target job");
+    const targetIf = String(targetJob.if);
+    for (
+      const condition of [
+        "github.event_name != 'status'",
+        "github.event.issue.pull_request",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.event_name == 'status'",
+        "github.event.context == 'CodeRabbit'",
+        "github.event.state == 'success'",
+        "github.event.description == 'Review completed'",
+        "github.event.sender.login == 'coderabbitai[bot]'",
+        "github.event.sender.id == 136622811",
+        "github.event.sender.type == 'Bot'",
+      ]
+    ) {
+      assert(
+        targetIf.includes(condition),
+        "target resolution must skip events that no publisher job can use",
+      );
+    }
     assertEquals(record(targetJob.permissions, "target permissions"), {
       "pull-requests": "read",
     });
