@@ -246,6 +246,28 @@ describe("commands/build/command", () => {
       }
     });
 
+    it("rejects an output symlink whose target remains inside the project", async () => {
+      const tempDir = await makeTempDir({ prefix: "veryfront-build-output-" });
+      const projectDir = join(tempDir, "project");
+      const artifactsDir = join(projectDir, "artifacts");
+      await mkdir(artifactsDir, { recursive: true });
+      await symlink(artifactsDir, join(projectDir, "output"));
+
+      try {
+        const adapter = await runtime.get();
+        await assertRejects(
+          () =>
+            assertConfiguredBuildOutputPhysicallyContained(adapter, projectDir, {
+              build: { outDir: "output" },
+            }),
+          Error,
+          "must not traverse symbolic links",
+        );
+      } finally {
+        await remove(tempDir, { recursive: true });
+      }
+    });
+
     it("accepts an absent output below the physical project directory", async () => {
       const tempDir = await makeTempDir({ prefix: "veryfront-build-output-" });
       const projectDir = join(tempDir, "project");

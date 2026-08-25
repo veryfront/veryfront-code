@@ -163,6 +163,39 @@ async function canonicalizeBuildOutputPath(
   }
 }
 
+/** Reject any existing symlink below the project on the configured output path. */
+async function assertBuildOutputPathIsSymlinkFree(
+  fs: RuntimeAdapter["fs"],
+  projectDir: string,
+  outputDir: string,
+): Promise<void> {
+  if (hasOwnSymlinkFreeSemantics(fs)) return;
+
+  const lstat = fs.lstat?.bind(fs);
+  if (!lstat) {
+    throw CONFIG_INVALID.create({
+      detail: "Cannot verify that build.outDir is free of symbolic links",
+    });
+  }
+
+  const relativeOutput = relative(resolve(projectDir), resolve(outputDir)).replace(/\\/g, "/");
+  let candidate = resolve(projectDir);
+  for (const segment of relativeOutput.split("/")) {
+    candidate = join(candidate, segment);
+    const info = await lstat(candidate).catch((error) => {
+      if (isNotFoundError(error)) return undefined;
+      throw error;
+    });
+    if (!info) return;
+    if (info.isSymlink) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "build.outDir must not traverse symbolic links because production static serving does not follow them",
+      });
+    }
+  }
+}
+
 /**
  * Verify configured production output containment against physical paths.
  *
@@ -196,6 +229,7 @@ export async function assertConfiguredBuildOutputPhysicallyContained(
       detail: "build.outDir must remain physically inside the project after resolving symlinks",
     });
   }
+  await assertBuildOutputPathIsSymlinkFree(adapter.fs, projectDir, configuredOutput);
 }
 
 /**
