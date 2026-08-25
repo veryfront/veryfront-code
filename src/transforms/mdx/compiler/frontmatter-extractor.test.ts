@@ -95,6 +95,35 @@ export const title = "Override";
       assertEquals(result.frontmatter.title, "Override");
     });
 
+    it("ranks export constants over provided frontmatter over YAML", () => {
+      const content = `---
+title: from-yaml
+---
+export const title = "from-export";
+# Hello`;
+      const result = extractFrontmatter(content, { title: "from-provided" });
+
+      assertEquals(
+        result.frontmatter.title,
+        "from-export",
+        "export const wins over both YAML and provided frontmatter",
+      );
+
+      const withoutExport = extractFrontmatter(
+        `---
+title: from-yaml
+---
+Body`,
+        { title: "from-provided" },
+      );
+
+      assertEquals(
+        withoutExport.frontmatter.title,
+        "from-provided",
+        "provided frontmatter wins over YAML",
+      );
+    });
+
     it("should handle empty content", () => {
       const result = extractFrontmatter("");
 

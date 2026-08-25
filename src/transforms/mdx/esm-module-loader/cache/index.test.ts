@@ -829,6 +829,148 @@ describe("lookupMdxEsmCache", () => {
     }
   });
 
+  it("invalidates cached modules whose file:// dependencies are missing", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-missing-dependency-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-missing-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const missingDependency = join(projectDir, "vf-missing-dependency.mjs");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("missingdep"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await writeTextFile(
+        cachedPath,
+        `import value from ${
+          JSON.stringify(toFileUrl(missingDependency).href)
+        }; export default value;`,
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      const result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+
+      assertEquals(
+        result.status,
+        "corrupted",
+        "a cached module with a missing file dependency must be reported corrupted",
+      );
+      assertEquals(
+        (result as { reason: string }).reason.startsWith("Missing file dependencies"),
+        true,
+        "reports the missing-dependency reason",
+      );
+      assertEquals(await exists(cachedPath), false, "the stale .mjs must be deleted");
+      assertEquals(
+        (await getModulePathCache(cacheDir)).get(key),
+        undefined,
+        "the dead path-cache entry must be dropped",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("invalidates cached modules carrying another environment's cache paths", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-foreign-paths-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-foreign-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("foreignpaths"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await writeTextFile(
+        cachedPath,
+        `import x from "file:///some-other-machine/.cache/veryfront-http-bundle/http-1.mjs"; export default x;`,
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      const result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+
+      assertEquals(
+        result.status,
+        "corrupted",
+        "a cached module carrying another environment's cache paths must not be served",
+      );
+      assertEquals(
+        (result as { reason: string }).reason,
+        "Incompatible cache paths from different environment",
+        "reports the incompatible-paths reason",
+      );
+      assertEquals(await exists(cachedPath), false, "the foreign-path .mjs must be deleted");
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("serves cached modules whose file:// dependencies live in the local cache dir", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-local-paths-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-local-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const dependencyDir = join(getMdxEsmCacheDir(), "vf-mdx-local-paths-dependency");
+    const dependencyPath = join(dependencyDir, "local-dep.mjs");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("localpaths"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await getLocalFs().mkdir(dependencyDir, { recursive: true });
+      await writeTextFile(dependencyPath, `export default "local";`);
+      await writeTextFile(
+        cachedPath,
+        `import x from ${JSON.stringify(toFileUrl(dependencyPath).href)}; export default x;`,
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      const result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+
+      assertEquals(
+        result,
+        { status: "hit", path: cachedPath },
+        "a dependency under the local MDX ESM cache dir must not be treated as foreign",
+      );
+    } finally {
+      await Promise.all([
+        remove(dependencyDir, { recursive: true }).catch(() => {}),
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
   it("isolates local path-cache entries by react version", async () => {
     clearModulePathCache();
 

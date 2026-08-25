@@ -2,7 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { getCacheBaseDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   findMissingFileDependenciesInCode,
@@ -69,6 +70,28 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       assertEquals(result, false);
     });
 
+    it("returns true for framework source paths from another environment", async () => {
+      const code = `import x from "file:///not-this-machine/src/react/router/index.tsx";`;
+      const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+      assertEquals(result, true, "framework source outside FRAMEWORK_ROOT is not portable");
+    });
+
+    it("returns true for a framework source path that does not exist locally", async () => {
+      const missingPath = join(
+        FRAMEWORK_ROOT,
+        "src",
+        "react",
+        `does-not-exist-${crypto.randomUUID()}.tsx`,
+      );
+      const code = `import x from "file://${missingPath}";`;
+      const result = await hasIncompatibleFrameworkPaths(code, noopLog);
+      assertEquals(
+        result,
+        true,
+        "a framework path missing on this machine must invalidate the cache",
+      );
+    });
+
     it("returns true for nested vf modules with esm.sh/_vf_modules URLs", async () => {
       const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
       const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
@@ -106,6 +129,44 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
         const result = await hasIncompatibleFrameworkPaths(code, noopLog);
 
         assertEquals(result, true);
+      } finally {
+        await remove(tempDir, { recursive: true });
+      }
+    });
+
+    it("keeps an incompatible verdict when a later sibling vf module is clean", async () => {
+      const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
+      const vfmodDir = join(tempDir, "veryfront-mdx-esm", "project-a", "preview-main");
+      const cleanPath = join(vfmodDir, "vfmod-clean.mjs");
+      const stalePath = join(vfmodDir, "vfmod-stale.mjs");
+
+      try {
+        await mkdir(vfmodDir, { recursive: true });
+        await writeTextFile(cleanPath, `export default 1;`);
+        await writeTextFile(
+          stalePath,
+          `import foo from "https://esm.sh/_vf_modules/lib.js"; export default foo;`,
+        );
+
+        // The visit queue is LIFO, so the clean sibling is imported first and
+        // therefore visited last: without the short-circuit its verdict would
+        // overwrite the stale sibling's.
+        const code = [
+          `import clean from "file://${cleanPath}";`,
+          `import stale from "file://${stalePath}";`,
+          `export default [clean, stale];`,
+        ].join("\n");
+
+        const result = await runWithCacheDir(
+          tempDir,
+          () => hasIncompatibleFrameworkPaths(code, noopLog),
+        );
+
+        assertEquals(
+          result,
+          true,
+          "a clean sibling visited after a stale one must not reset the incompatible verdict",
+        );
       } finally {
         await remove(tempDir, { recursive: true });
       }

@@ -54,9 +54,11 @@ import { bar } from "./local.js";
     it("strips file:// prefix from _vf_modules paths", () => {
       const code = `import { foo } from "file:///_vf_modules/lib/utils.js";`;
       const result = findNestedImports(code);
-      if (result.vfModules.length > 0) {
-        assertEquals(result.vfModules[0]!.path.startsWith("file://"), false);
-      }
+      assertEquals(
+        result.vfModules.map((module) => module.path),
+        ["_vf_modules/lib/utils.js"],
+        "a file://-prefixed _vf_modules import must be found with the prefix stripped",
+      );
     });
 
     it("finds bare side-effect _vf_modules imports", () => {

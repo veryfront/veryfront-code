@@ -13,7 +13,10 @@ import {
   tryResolve as tryResolveContract,
   unregister as unregisterContract,
 } from "#veryfront/extensions/contracts.ts";
-import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
+import type {
+  ContentCompileOptions,
+  ContentProcessor,
+} from "#veryfront/extensions/content/index.ts";
 import {
   type YamlParserProvider,
   YamlParserProviderName,
@@ -50,7 +53,28 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
         "server",
       );
       assertEquals(typeof result.compiledCode, "string");
-      assertEquals(result.frontmatter !== undefined, true);
+      assertEquals(
+        result.frontmatter.title,
+        "Test",
+        "YAML frontmatter must survive MDX compilation",
+      );
+    });
+
+    it("lets caller frontmatter override the YAML block", async () => {
+      const result = await compileMDXRuntime(
+        "production",
+        "/project",
+        "---\ntitle: From Body\n---\n# Hello",
+        { title: "From Caller" },
+        "test.mdx",
+        "server",
+      );
+
+      assertEquals(
+        result.frontmatter.title,
+        "From Caller",
+        "caller frontmatter must be forwarded and outrank the YAML block",
+      );
     });
 
     it("compiles MDX for browser target", async () => {
@@ -63,6 +87,59 @@ describe("transforms/mdx/compiler/mdx-compiler", () => {
         "browser",
       );
       assertEquals(typeof result.compiledCode, "string");
+    });
+
+    it("forwards every compile argument to the ContentProcessor", async () => {
+      const previous = tryResolveContract<ContentProcessor>("ContentProcessor");
+      let received: ContentCompileOptions | undefined;
+      registerContract(
+        "ContentProcessor",
+        {
+          compileMdx(options) {
+            received = options;
+            return Promise.resolve({ compiledCode: "", frontmatter: {}, globals: {} });
+          },
+          compileMarkdown() {
+            throw new Error("not used");
+          },
+          getRemarkPlugins() {
+            return [];
+          },
+          getRehypePlugins() {
+            return [];
+          },
+        } satisfies ContentProcessor,
+      );
+
+      try {
+        await compileMDXRuntime(
+          "production",
+          "/project",
+          "# Hello",
+          { title: "T" },
+          "test.mdx",
+          "browser",
+          "https://cdn.example.com",
+          true,
+        );
+
+        assertEquals(
+          received,
+          {
+            mode: "production",
+            projectDir: "/project",
+            content: "# Hello",
+            frontmatter: { title: "T" },
+            filePath: "test.mdx",
+            target: "browser",
+            baseUrl: "https://cdn.example.com",
+            studioEmbed: true,
+          },
+          "every compile argument must reach the ContentProcessor unchanged",
+        );
+      } finally {
+        registerContract("ContentProcessor", previous);
+      }
     });
 
     it("handles empty content", async () => {

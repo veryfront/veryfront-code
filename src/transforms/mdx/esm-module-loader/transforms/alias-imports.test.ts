@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { ESBUILD_JSX_FACTORY } from "../constants.ts";
 import type { FSAdapter } from "../types.ts";
 import { transformModuleServerImports, transformProjectAliasImports } from "./alias-imports.ts";
 
@@ -38,6 +39,21 @@ class MemoryFs implements FSAdapter {
 }
 
 describe("alias import transforms", () => {
+  // Transpiling a .tsx alias starts esbuild's child process; stop it so the
+  // handle does not leak into a later suite.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
+  function readEmittedModule(fs: MemoryFs, result: string): string {
+    const emittedPath = result.match(/"file:\/\/(\/cache\/alias-[^"]+)"/)?.[1];
+    assertExists(emittedPath, "the alias import must be rewritten to a cache module URL");
+    const written = fs.files.get(emittedPath);
+    assertExists(written, "the rewritten alias must be materialized in the cache");
+    return written;
+  }
+
   it("rewrites only real project alias imports", async () => {
     const fs = new MemoryFs({
       "components/Foo.js": `export default function Foo() { return null; }`,
@@ -95,6 +111,55 @@ describe("alias import transforms", () => {
     assertStringIncludes(moduleAlias, `import Bar from "file:///cache/vfmod-`);
     assertEquals(fs.files.has("components/Foo.js"), true);
     assertEquals(fs.files.has("components/Bar.js"), true);
+  });
+
+  it("transpiles tsx aliases and injects the React import", async () => {
+    const fs = new MemoryFs({
+      "components/Widget.tsx": `export default function Widget() { return <div id="w" />; }`,
+    });
+
+    const result = await transformProjectAliasImports(
+      `import Widget from "@/components/Widget";`,
+      fs,
+      "/cache",
+    );
+    const written = readEmittedModule(fs, result);
+
+    assertStringIncludes(written, ESBUILD_JSX_FACTORY);
+    assertStringIncludes(written, "import React from 'react'");
+    assertEquals(written.includes("<div"), false, "raw JSX must not reach the cache file");
+  });
+
+  it("transpiles tsx aliases that name the extension explicitly", async () => {
+    const fs = new MemoryFs({
+      "components/Widget.tsx": `export default function Widget() { return <div id="w" />; }`,
+    });
+
+    const result = await transformProjectAliasImports(
+      `import Widget from "@/components/Widget.tsx";`,
+      fs,
+      "/cache",
+    );
+    const written = readEmittedModule(fs, result);
+
+    assertStringIncludes(written, ESBUILD_JSX_FACTORY);
+    assertStringIncludes(written, "import React from 'react'");
+    assertEquals(written.includes("<div"), false, "raw JSX must not reach the cache file");
+  });
+
+  it("leaves an unresolvable alias in place and still rewrites the resolvable ones", async () => {
+    const fs = new MemoryFs({
+      "components/Foo.js": `export default function Foo() { return null; }`,
+    });
+
+    const result = await transformProjectAliasImports(
+      `import Missing from "@/components/Missing";\nimport Foo from "@/components/Foo";`,
+      fs,
+      "/cache",
+    );
+
+    assertStringIncludes(result, `import Missing from "@/components/Missing";`);
+    assertStringIncludes(result, `import Foo from "file:///cache/alias-`);
   });
 
   // The suffix is meaningless on a materialized `alias-<hash>.mjs` — `?raw` is

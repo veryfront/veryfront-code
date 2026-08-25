@@ -13,7 +13,11 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       };
       const body = `import { foo } from "./utils.js";`;
       const result = rewriteBodyImports(body, config);
-      assertEquals(result.includes("file://"), true);
+      assertEquals(
+        result,
+        `import { foo } from "file:///project/app/utils.js";`,
+        "relative SSR imports must resolve against the file's directory",
+      );
     });
 
     it("rewrites relative import for browser", () => {
@@ -23,7 +27,12 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       };
       const body = `import { foo } from "./utils.js";`;
       const result = rewriteBodyImports(body, config);
-      assertEquals(result.includes("/_veryfront/fs/"), true);
+      // base64url("/project/app/utils.js") — the directory-resolved absolute path.
+      assertEquals(
+        result,
+        `import { foo } from "/_veryfront/fs/L3Byb2plY3QvYXBwL3V0aWxzLmpz.js";`,
+        "browser fs specifier must encode the directory-resolved absolute path",
+      );
     });
 
     it("leaves bare imports unchanged", () => {
@@ -141,6 +150,48 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       assertEquals(result.split("file://").length - 1 >= 2, true);
       assertEquals(result.includes("const x = A"), true);
     });
+
+    it("rewrites a side-effect-only import for SSR", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      };
+      const body = `import "./setup.js";`;
+      const result = rewriteBodyImports(body, config);
+      assertEquals(
+        result,
+        `import "file:///project/app/setup.js";`,
+        "a side-effect-only import resolves against the file's directory",
+      );
+    });
+
+    it("rewrites a side-effect-only import for the browser", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "browser",
+      };
+      const body = `import "./setup.js";`;
+      const result = rewriteBodyImports(body, config);
+      // base64url("/project/app/setup.js")
+      assertEquals(
+        result,
+        `import "/_veryfront/fs/L3Byb2plY3QvYXBwL3NldHVwLmpz.js";`,
+        "a side-effect-only import is rewritten for the browser",
+      );
+    });
+
+    it("leaves a bare side-effect import unchanged", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      };
+      const body = `import "some-pkg";`;
+      assertEquals(
+        rewriteBodyImports(body, config),
+        body,
+        "a bare side-effect import must not be rewritten",
+      );
+    });
   });
 
   describe("rewriteCompiledImports", () => {
@@ -161,7 +212,11 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       };
       const code = `from "./utils.js"`;
       const result = rewriteCompiledImports(code, config);
-      assertEquals(result.includes("file://"), true);
+      assertEquals(
+        result,
+        `from "file:///project/app/utils.js"`,
+        "relative compiled imports must resolve against the file's directory",
+      );
     });
 
     it("rewrites file:// imports for browser", () => {
@@ -172,6 +227,45 @@ describe("transforms/mdx/compiler/import-rewriter", () => {
       const code = `from "file:///project/app/utils.js"`;
       const result = rewriteCompiledImports(code, config);
       assertEquals(result.includes("/_veryfront/fs/"), true);
+    });
+
+    it("rewrites dynamic @/ imports for browser", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "browser",
+      };
+      const result = rewriteCompiledImports(`import("@/components/Button")`, config);
+      assertEquals(
+        result,
+        `import("/_vf_modules/components/Button.js")`,
+        "dynamic alias imports are rewritten",
+      );
+    });
+
+    it("rewrites dynamic relative imports for SSR", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "server",
+      };
+      const result = rewriteCompiledImports(`import("./utils.js")`, config);
+      assertEquals(
+        result,
+        `import("file:///project/app/utils.js")`,
+        "dynamic relative imports are rewritten",
+      );
+    });
+
+    it("rewrites dynamic file:// imports for browser", () => {
+      const config: ImportRewriterConfig = {
+        filePath: "/project/app/page.mdx",
+        target: "browser",
+      };
+      const result = rewriteCompiledImports(`import("file:///project/app/utils.js")`, config);
+      assertEquals(
+        result,
+        `import("/_veryfront/fs/L3Byb2plY3QvYXBwL3V0aWxzLmpz.js")`,
+        "dynamic file:// imports are rewritten for the browser",
+      );
     });
   });
 });
