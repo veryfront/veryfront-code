@@ -1,4 +1,5 @@
 import type { Agent } from "#veryfront/agent";
+import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
 import {
   createRemoteMCPToolSource,
   type RemoteToolSource,
@@ -18,7 +19,12 @@ import {
   getRequestedUnresolvedBooleanToolNames,
   type RuntimeRemoteToolConfig,
   VERYFRONT_API_MCP_SOURCE_ID,
+  VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  type AgentServiceVeryfrontStudioMcpServerConfig,
+  createAgentServiceRemoteMcpConfig,
+} from "#veryfront/agent/service/mcp-server-config.ts";
 import {
   clientAllowsStudioMcp,
   resolveRuntimeClientProfile,
@@ -67,6 +73,7 @@ import {
 import { reportHandlerFailure } from "./report-handler-failure.ts";
 import { buildRuntimeShuttingDownResponse } from "./runtime-shutdown-response.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -508,6 +515,59 @@ async function withVeryfrontPlatformRemoteTools(input: {
   };
 }
 
+function isExplicitStudioMcpServer(
+  server: AgentMcpServerConfig,
+): server is AgentMcpServerConfig & AgentServiceVeryfrontStudioMcpServerConfig {
+  return server.kind === "veryfront-studio";
+}
+
+function withExplicitVeryfrontStudioRemoteTools(input: {
+  agent: Agent;
+  token?: string | null;
+  projectId?: string | null;
+  forwardedProps?: Record<string, unknown>;
+  conversationId?: string;
+}): Agent {
+  const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
+  if (configuredServers.length === 0 || !input.token) return input.agent;
+
+  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
+  const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+  if (!studioMcpUrl || !clientAllowsStudioMcp(clientProfile)) return input.agent;
+
+  const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
+  const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
+  const studioRemoteToolSources: RemoteToolSource[] = [];
+  for (const server of configuredServers) {
+    const remoteConfig = createAgentServiceRemoteMcpConfig({
+      server,
+      authToken: input.token,
+      apiMcpUrl: "",
+      studioMcpUrl,
+      clientProfile,
+      getProjectId: () => input.projectId ?? null,
+      conversationId: input.conversationId,
+      defaultSourceId: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    });
+    if (
+      remoteConfig &&
+      !remoteTools.some((source) => source.id === remoteConfig.id) &&
+      !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
+    ) {
+      studioRemoteToolSources.push(createRemoteMCPToolSource(remoteConfig));
+    }
+  }
+  if (studioRemoteToolSources.length === 0) return input.agent;
+
+  return {
+    ...input.agent,
+    config: {
+      ...input.agent.config,
+      __vfRemoteToolSources: [...remoteTools, ...studioRemoteToolSources],
+    } as Agent["config"],
+  };
+}
+
 function buildAgentStreamEnv(input: {
   envVars: Record<string, string>;
   proxyToken?: string | null;
@@ -802,7 +862,13 @@ export class AgentStreamHandler extends BaseHandler {
                   projectId: sourceScopedContext.projectId ?? null,
                   availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                 });
-                const runtimeAgent = platformRuntimeAgent;
+                const runtimeAgent = withExplicitVeryfrontStudioRemoteTools({
+                  agent: platformRuntimeAgent,
+                  token: apiAuthToken || null,
+                  projectId: sourceScopedContext.projectId ?? null,
+                  forwardedProps: runtimeInput.forwardedProps,
+                  conversationId: runtimeInput.threadId,
+                });
 
                 // Source-defined MCP tool headers resolve these via
                 // _getProjectEnv(); they are the same variables the source

@@ -11,7 +11,10 @@ import type { Agent, AgentMessage } from "#veryfront/agent";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
-import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  getRuntimeRemoteToolSources,
+  type RuntimeRemoteToolConfig,
+} from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -1389,6 +1392,109 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       assertEquals(capturedAllowedRemoteTools, undefined);
       assertEquals(capturedRemoteToolNames, []);
+    } finally {
+      restoreMockFetch();
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
+  it("injects the trusted Studio source for explicit Studio MCP configuration", async () => {
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    let capturedRemoteToolNames: string[] = [];
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch(
+      ((url, init) => {
+        assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
+        const headers = new Headers(observeFetchRequestInit(init).headers);
+        assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
+        assertEquals(headers.get("x-project-id"), "proj-1");
+        assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "studio-mcp:tools:list",
+              result: {
+                tools: [{
+                  name: "studio_todo_write",
+                  description: "Write the assistant task list",
+                  inputSchema: { type: "object", properties: {} },
+                }],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: { studio_todo_write: true },
+              mcpServers: [{
+                kind: "veryfront-studio",
+                toolPolicy: { allow: ["studio_todo_write"] },
+              }],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => ({
+          stream: async (_messages, _context, callbacks) => {
+            const studioSource = getRuntimeRemoteToolSources(runtimeAgent.config)?.find(
+              (source) => source.id === "studio-mcp",
+            );
+            capturedRemoteToolNames = (await studioSource?.listTools({ projectId: "proj-1" }))
+              ?.map((tool) => tool.name) ?? [];
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: {
+            client: { id: "veryfront-studio", type: "web", platform: "browser" },
+          },
+          runtimeOverrides: { allowedTools: ["studio_todo_write"] },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200, await result.response.clone().text());
+      assertEquals(capturedRemoteToolNames, ["studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
