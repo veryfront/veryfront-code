@@ -34,6 +34,7 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
   EvalAgentAdapter,
   EvalDefinition,
@@ -625,15 +626,16 @@ function createLocalEvalAgentFetch(input: {
   };
 }
 
-interface DurableEvalAgentFetchInput {
+interface DurableEvalAgentFetchInput extends
+  Pick<
+    ProjectRunExecuteRequest,
+    "runtimeTargetKind" | "runtimeTargetEnvironmentId" | "runtimeTargetBranchId"
+  > {
   apiBaseUrl: string;
   authToken: string;
   projectId: string;
   parentRunId: string;
   agentId: string;
-  runtimeTargetKind?: ProjectRunExecuteRequest["runtimeTargetKind"];
-  runtimeTargetEnvironmentId?: string | null;
-  runtimeTargetBranchId?: string | null;
 }
 
 function parseEvalAgentRequestBody(init: RequestInit | undefined): AgentServiceEvalRequestBody {
@@ -670,10 +672,33 @@ function createApiUrl(apiBaseUrl: string, path: string): URL {
   return new URL(relativePath, baseHref);
 }
 
+function createDurableEvalAgentForwardedProps(
+  request: AgentServiceEvalRequestBody,
+): Record<string, unknown> {
+  // The durable hosted runtime reads `model` and `runtimeOverrides` from the
+  // top level of the forwarded props, so promote the eval overrides out of the
+  // `veryfront` envelope while keeping the remaining metadata nested.
+  const veryfront = request.forwardedProps?.veryfront;
+  return {
+    ...request.forwardedProps,
+    ...(veryfront?.model !== undefined ? { model: veryfront.model } : {}),
+    ...(veryfront?.runtimeOverrides !== undefined
+      ? { runtimeOverrides: veryfront.runtimeOverrides }
+      : {}),
+    prompt: getEvalAgentPrompt(request),
+  };
+}
+
 function createDurableEvalAgentRunBody(
   input: DurableEvalAgentFetchInput,
   request: AgentServiceEvalRequestBody,
 ) {
+  const targets = resolveConversationRunTargets({
+    projectId: input.projectId,
+    runtimeTargetKind: input.runtimeTargetKind ?? null,
+    environmentId: input.runtimeTargetEnvironmentId ?? null,
+    branchId: input.runtimeTargetBranchId ?? null,
+  });
   return {
     kind: "agent",
     owner: { kind: "project", id: input.projectId },
@@ -684,19 +709,16 @@ function createDurableEvalAgentRunBody(
       mode: "agent",
       input: {
         agent_id: input.agentId,
-        source_target_kind: "project",
+        source_target_kind: targets.sourceTargetKind ?? "project",
         messages: [],
         tools: request.tools,
         context: request.context,
-        forwarded_props: {
-          ...request.forwardedProps,
-          prompt: getEvalAgentPrompt(request),
-        },
-        ...(input.runtimeTargetKind ? { runtime_target_kind: input.runtimeTargetKind } : {}),
-        ...(input.runtimeTargetEnvironmentId
-          ? { target_environment_id: input.runtimeTargetEnvironmentId }
+        forwarded_props: createDurableEvalAgentForwardedProps(request),
+        ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
+        ...(targets.targetEnvironmentId
+          ? { target_environment_id: targets.targetEnvironmentId }
           : {}),
-        ...(input.runtimeTargetBranchId ? { target_branch_id: input.runtimeTargetBranchId } : {}),
+        ...(targets.targetBranchId ? { target_branch_id: targets.targetBranchId } : {}),
       },
     },
   };

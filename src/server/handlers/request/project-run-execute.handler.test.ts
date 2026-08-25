@@ -1125,8 +1125,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const agentInput = createRunRequest.input as Record<string, unknown>;
     assertEquals(agentInput.agent_id, "researcher");
     assertEquals(agentInput.messages, []);
+    assertEquals(agentInput.source_target_kind, "project");
+    assertEquals(agentInput.runtime_target_kind, "main_branch");
+    assertEquals(agentInput.target_environment_id, undefined);
+    assertEquals(agentInput.target_branch_id, undefined);
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
+      runtimeOverrides: {
+        allowedTools: [],
+      },
       veryfront: {
         agentId: "researcher",
         projectId: "proj-1",
@@ -1139,6 +1146,118 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(requests[1]?.method, "GET");
     assertStringIncludes(requests[1]?.pathname ?? "", `/conversations/${conversationId}/runs/`);
     assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
+  });
+
+  it("targets environment agent sources and promotes eval overrides for durable eval runs", async () => {
+    const requests: Array<
+      { method: string; pathname: string; body: Record<string, unknown> | null }
+    > = [];
+    const conversationId = "22222222-2222-4222-8222-222222222222";
+    const environmentId = "33333333-3333-4333-8333-333333333333";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_durable_env_agent",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: environmentId,
+      config: { model: "model-override-1", max_steps: 3 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_durable_env_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+
+    const result = await withEnvValue(
+      "VERYFRONT_API_BASE_URL",
+      "https://api.example.test/",
+      () =>
+        withMockFetch(
+          async (input, init) => {
+            const url = new URL(String(input));
+            const method = init?.method ?? "GET";
+            const requestBody = requestJsonBody(init);
+            requests.push({ method, pathname: url.pathname, body: requestBody });
+
+            if (method === "POST" && url.pathname.endsWith("/runs")) {
+              const runId = String(requestBody?.public_id);
+              return Response.json({
+                accepted: true,
+                run: { run_id: runId },
+                conversation_id: conversationId,
+              }, { status: 202 });
+            }
+
+            if (method === "GET" && url.pathname.endsWith("/stream")) {
+              return new Response(
+                [
+                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
+                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
+                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                ].join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            }
+
+            return new Response("not found", { status: 404 });
+          },
+          () => handler.handle(request, createCtx(publicKeyPem)),
+        ),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+
+    assertEquals(requests.length, 2);
+    const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
+    const agentInput = createRunRequest.input as Record<string, unknown>;
+    assertEquals(agentInput.agent_id, "researcher");
+    assertEquals(agentInput.source_target_kind, "environment");
+    assertEquals(agentInput.runtime_target_kind, "environment");
+    assertEquals(agentInput.target_environment_id, environmentId);
+    assertEquals(agentInput.target_branch_id, undefined);
+    assertEquals(agentInput.forwarded_props, {
+      prompt: "France capital?",
+      model: "model-override-1",
+      runtimeOverrides: {
+        allowedTools: [],
+        maxSteps: 3,
+      },
+      veryfront: {
+        agentId: "researcher",
+        projectId: "proj-1",
+        model: "model-override-1",
+        runtimeOverrides: {
+          allowedTools: [],
+          maxSteps: 3,
+        },
+      },
+    });
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {
