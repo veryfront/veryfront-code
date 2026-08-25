@@ -6,6 +6,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 function createMockFs(existingFiles: Set<string>): FileSystemAdapter {
   return {
+    symlinkSemantics: "none",
     stat: async (path: string) => {
       if (existingFiles.has(path)) {
         return { isFile: true, isDirectory: false, size: 100 };
@@ -101,6 +102,34 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       const fs = createMockFs(new Set(["/project/frontend/about/page.tsx"]));
       const result = await resolveComponentPath("/about", "/project", fs, "frontend");
       assertEquals(result, "/project/frontend/about/page.tsx");
+    });
+
+    it("does not resolve routes from a configured app directory outside the project", async () => {
+      const fs = createMockFs(new Set(["/sibling/app/page.tsx"]));
+      const result = await resolveComponentPath("/", "/project", fs, "../sibling/app");
+      assertEquals(result, null);
+    });
+
+    it("resolves contained routes on a virtual adapter without realPath", async () => {
+      const fs = createMockFs(new Set(["/project/app/page.tsx"]));
+      // Virtual/remote adapters may omit both markers and realPath entirely;
+      // lexical containment must then be sufficient.
+      delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
+
+      const result = await resolveComponentPath("/", "/project", fs);
+
+      assertEquals(result, "/project/app/page.tsx");
+    });
+
+    it("does not resolve a lexical route whose canonical target escapes the project", async () => {
+      const fs = createMockFs(new Set(["/project/app/page.tsx"]));
+      delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
+      fs.realPath = (path) =>
+        Promise.resolve(path === "/project" ? "/canonical/project" : "/outside/page.tsx");
+
+      const result = await resolveComponentPath("/", "/project", fs);
+
+      assertEquals(result, null);
     });
   });
 

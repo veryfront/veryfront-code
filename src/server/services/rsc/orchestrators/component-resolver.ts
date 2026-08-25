@@ -1,6 +1,7 @@
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 
 const fs = createFileSystem();
 
@@ -38,11 +39,44 @@ async function findFirstExistingPath(
   patterns: string[],
   fsAdapter?: FileSystemAdapter,
 ): Promise<string | null> {
+  const projectRoot = pathHelper.resolve(projectDir);
   for (const pattern of patterns) {
-    const fullPath = pathHelper.join(projectDir, pattern);
+    const fullPath = pathHelper.resolve(projectDir, pattern);
+    if (!isWithinDirectory(projectRoot, fullPath)) continue;
+    if (!await isCanonicalCandidateContained(projectRoot, fullPath, fsAdapter)) continue;
     if (await fileExists(fullPath, fsAdapter)) return fullPath;
   }
   return null;
+}
+
+/**
+ * Confirm a lexically contained candidate stays inside the project once
+ * symlinks are resolved. Adapters that declare `symlinkSemantics: "none"` or
+ * omit `realPath` are virtual/symlink-free by the FileSystemAdapter contract
+ * (native/local adapters must provide `realPath`), so the caller's lexical
+ * containment check is sufficient for them.
+ */
+async function isCanonicalCandidateContained(
+  projectRoot: string,
+  candidate: string,
+  fsAdapter?: FileSystemAdapter,
+): Promise<boolean> {
+  const semantics = fsAdapter
+    ? Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics")
+    : undefined;
+  if (semantics && "value" in semantics && semantics.value === "none") return true;
+
+  const canonicalize = fsAdapter ? fsAdapter.realPath?.bind(fsAdapter) : realPath;
+  if (!canonicalize) return true;
+  try {
+    const [canonicalRoot, canonicalCandidate] = await Promise.all([
+      canonicalize(projectRoot),
+      canonicalize(candidate),
+    ]);
+    return isWithinDirectory(canonicalRoot, canonicalCandidate);
+  } catch {
+    return false;
+  }
 }
 
 async function fileExists(filePath: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
