@@ -78,5 +78,53 @@ describe("modules/import-map/resolver", () => {
       const map = { imports: { mylib: "/local/mylib.ts" } };
       assertEquals(resolveImport("mylib.mjs", map), "/local/mylib.ts");
     });
+
+    // This resolver backs the dev server's esbuild plugin, so the scoped
+    // subpath defect reported in #4098 reached production through here too,
+    // not only through the unified rewriter.
+    it("keeps the subpath of a scoped esm.sh specifier", () => {
+      const map = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+        "a scoped subpath must reach its own entry point here as well",
+      );
+    });
+
+    it("prefers an exact scoped package+subpath mapping", () => {
+      const map = {
+        imports: { "@scope/pkg": "https://cdn.example/pkg", "@scope/pkg/sub": "/local/sub.js" },
+      };
+      assertEquals(resolveImport("https://esm.sh/@scope/pkg@1/sub", map), "/local/sub.js");
+    });
+
+    it("gives a scoped package mapping precedence over a global subpath key", () => {
+      const map = {
+        imports: { "@scope/pkg/sub": "/global/sub.js" },
+        scopes: { "/app/": { "@scope/pkg": "https://cdn.example/scoped" } },
+      };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map, "/app/"),
+        "https://cdn.example/scoped/sub",
+        "a matching scope outranks the global imports, so its package mapping wins",
+      );
+    });
+
+    it("resolves a v-number package behind a legacy build prefix", () => {
+      const map = { imports: { v8: "https://cdn.example/v8" } };
+      assertEquals(
+        resolveImport("https://esm.sh/v135/v8/sub", map),
+        "https://cdn.example/v8/sub",
+        "the build prefix is stripped, leaving a package whose name looks like one",
+      );
+    });
+
+    it("returns the specifier unchanged when the map has no entry", () => {
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", { imports: {} }),
+        "https://esm.sh/@scope/pkg@1/sub",
+        "an unmapped esm.sh specifier is left alone rather than rewritten",
+      );
+    });
   });
 });
