@@ -1192,6 +1192,56 @@ describe("RedisBackend", () => {
       ]);
     });
 
+    it("preserves persisted order when a legacy approval follows a queued journal approval", async () => {
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-legacy-after-journal", { status: "waiting" });
+      await backend.createRun(run);
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.savePendingApproval(run.id, {
+        id: "apr-journaled-first",
+        nodeId: "first-review",
+        message: "First review",
+        payload: undefined,
+        requestedAt: new Date("2025-01-02T00:00:00.000Z"),
+        status: "pending",
+      });
+      await mockRedis.rpush(
+        "test:schema-v1:approvals:run-legacy-after-journal",
+        JSON.stringify({
+          id: "apr-legacy-second",
+          nodeId: "second-review",
+          message: "Second review",
+          requestedAt: "2025-01-02T00:01:00.000Z",
+          status: "pending",
+        }),
+      );
+      await backend.updateRun(run.id, { status: "completed" });
+
+      const events = [];
+      for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+        events.push(event);
+      }
+      assertEquals(events, [
+        {
+          type: "approval.pending",
+          runId: run.id,
+          approvalId: "apr-journaled-first",
+          nodeId: "first-review",
+          message: "First review",
+        },
+        {
+          type: "approval.pending",
+          runId: run.id,
+          approvalId: "apr-legacy-second",
+          nodeId: "second-review",
+          message: "Second review",
+        },
+        { type: "run.status", runId: run.id, status: "completed" },
+      ]);
+    });
+
     it("polls legacy approvals when a queued batch enters waiting after earlier revisions", async () => {
       const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
       const run = createTestRun("run-legacy-approval-first-waiting", { status: "running" });

@@ -319,12 +319,6 @@ function parseRunObservedApprovals(
   });
 }
 
-function projectPendingApprovals(
-  approvals: PendingApproval[],
-): NonNullable<WorkflowRunObservedState["approvals"]> {
-  return approvals.map((approval) => projectApproval(approval));
-}
-
 function projectApproval(
   approval: PendingApproval,
 ): NonNullable<WorkflowRunObservedState["approvals"]>[number] {
@@ -1782,11 +1776,12 @@ export class RedisBackend implements WorkflowBackend {
 
             const readLegacyApprovalState = async (
               baseState: WorkflowRunObservedState,
+              queuedRecords: ReturnType<typeof parseRunObservationRecords>,
             ): Promise<WorkflowRunObservedState | undefined> => {
               let approvals: PendingApproval[];
               const journaledApprovalIds = new Set<string>();
               try {
-                for (const record of records) {
+                for (const record of queuedRecords) {
                   if (record.approvals === undefined) continue;
                   for (const approval of parseRunObservedApprovals(record.approvals)) {
                     journaledApprovalIds.add(approval.id);
@@ -1796,22 +1791,45 @@ export class RedisBackend implements WorkflowBackend {
               } catch {
                 throw new Error("Workflow run observation failed");
               }
-              const unseen = approvals.filter((approval) =>
+              const boundaryIndex = approvals.findIndex((approval) =>
                 !observedApprovalIds.has(approval.id) &&
-                (approval.status !== "pending" || !journaledApprovalIds.has(approval.id))
+                journaledApprovalIds.has(approval.id)
+              );
+              const boundaryApproval = boundaryIndex === -1 ? undefined : approvals[boundaryIndex];
+              const eligibleEnd = boundaryIndex === -1
+                ? approvals.length
+                : boundaryIndex + (boundaryApproval?.status === "pending" ? 0 : 1);
+              const eligibleApprovals = approvals.slice(0, eligibleEnd);
+              const unseen = eligibleApprovals.filter((approval) =>
+                !observedApprovalIds.has(approval.id)
               );
               if (unseen.length > 0) {
-                for (const approval of unseen) observedApprovalIds.add(approval.id);
-                const projection = projectPendingApprovals(
-                  approvals.filter((approval) =>
-                    approval.status === "pending" &&
-                    (observedApprovalIds.has(approval.id) ||
-                      !journaledApprovalIds.has(approval.id))
-                  ),
+                const unseenIds = new Set(unseen.map((approval) => approval.id));
+                const eligibleIds = new Set(eligibleApprovals.map((approval) => approval.id));
+                const baseApprovals = new Map(
+                  (baseState.approvals ?? []).map((approval) => [approval.id, approval]),
                 );
-                const projectedIds = new Set(projection.map((approval) => approval.id));
-                for (const approval of unseen) {
-                  if (!projectedIds.has(approval.id)) projection.push(projectApproval(approval));
+                for (const approval of unseen) observedApprovalIds.add(approval.id);
+                const projection: NonNullable<WorkflowRunObservedState["approvals"]> = [];
+                const projectedIds = new Set<string>();
+                for (const approval of approvals) {
+                  const baseApproval = baseApprovals.get(approval.id);
+                  if (baseApproval !== undefined) {
+                    projection.push(baseApproval);
+                    projectedIds.add(approval.id);
+                    continue;
+                  }
+                  if (
+                    (approval.status === "pending" &&
+                      (observedApprovalIds.has(approval.id) || eligibleIds.has(approval.id))) ||
+                    unseenIds.has(approval.id)
+                  ) {
+                    projection.push(projectApproval(approval));
+                    projectedIds.add(approval.id);
+                  }
+                }
+                for (const approval of baseState.approvals ?? []) {
+                  if (!projectedIds.has(approval.id)) projection.push(approval);
                 }
                 return {
                   ...baseState,
@@ -1828,7 +1846,10 @@ export class RedisBackend implements WorkflowBackend {
             // preceding pending transition, even when a queued pending-only
             // projection already names it.
             if (lastObservedState.status === "waiting") {
-              const legacyApprovalState = await readLegacyApprovalState(lastObservedState);
+              const legacyApprovalState = await readLegacyApprovalState(
+                lastObservedState,
+                records,
+              );
               if (legacyApprovalState !== undefined) {
                 lastObservedState = legacyApprovalState;
                 yield legacyApprovalState;
@@ -1839,7 +1860,9 @@ export class RedisBackend implements WorkflowBackend {
               await waitForObservationPoll(controller.signal);
               continue;
             }
-            for (const record of records) {
+            for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
+              const record = records[recordIndex];
+              if (record === undefined) continue;
               lastStreamId = record.id;
               let state: WorkflowRunObservedState;
               try {
@@ -1855,9 +1878,15 @@ export class RedisBackend implements WorkflowBackend {
                 throw new Error("Workflow run observation failed");
               }
               expectedRevision++;
+              if (state.approvals !== undefined) {
+                for (const approval of state.approvals) observedApprovalIds.add(approval.id);
+              }
               let observedState = state;
               if (observedState.status === "waiting") {
-                observedState = await readLegacyApprovalState(observedState) ?? observedState;
+                observedState = await readLegacyApprovalState(
+                  observedState,
+                  records.slice(recordIndex + 1),
+                ) ?? observedState;
               }
               lastObservedState = observedState;
               if (observedState.approvals !== undefined) {
