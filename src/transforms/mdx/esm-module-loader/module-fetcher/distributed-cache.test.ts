@@ -1,9 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { remove, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { basename, join } from "#veryfront/compat/path/index.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import {
+  getHttpBundleCacheDir,
+  getMdxEsmCacheDir,
+  runWithCacheDir,
+} from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT } from "../constants.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { cacheModule } from "./module-cache.ts";
@@ -252,38 +256,38 @@ describe("module-fetcher/distributed-cache", () => {
 
   it("recovers a missing vfmod dependency from the distributed cache", async () => {
     await withTempDir(async (projectDir) => {
-      const cache = new FakeDistributedCache();
-      const { log } = createCapturingLogger();
-      const dependencyPath = join(
-        getMdxEsmCacheDir(),
-        "project-a",
-        "preview-main",
-        `vfmod-recovered-${crypto.randomUUID()}.mjs`,
-      );
-      const cachedCode = `import dep from "file://${dependencyPath}"; export default dep;`;
-      cache.values.set("transform:recoverable", cachedCode);
-      cache.values.set(
-        buildMdxEsmModuleRecoveryCacheKey(
-          "project-a",
-          "preview-main",
-          basename(dependencyPath),
-        ),
-        "export default 1;",
-      );
+      await withTempDir((cacheDir) =>
+        runWithCacheDir(cacheDir, async () => {
+          const cache = new FakeDistributedCache();
+          const { log } = createCapturingLogger();
+          const dependencyPath = join(
+            getMdxEsmCacheDir(),
+            "project-a",
+            "preview-main",
+            `vfmod-recovered-${crypto.randomUUID()}.mjs`,
+          );
+          const cachedCode = `import dep from "file://${dependencyPath}"; export default dep;`;
+          cache.values.set("transform:recoverable", cachedCode);
+          cache.values.set(
+            buildMdxEsmModuleRecoveryCacheKey(
+              "project-a",
+              "preview-main",
+              basename(dependencyPath),
+            ),
+            "export default 1;",
+          );
 
-      try {
-        const result = await readCache(cache, "transform:recoverable", projectDir, log);
+          const result = await readCache(cache, "transform:recoverable", projectDir, log);
 
-        // Surviving the missing-dependency check is only possible once the
-        // recovery entry has restored the vfmod file this code imports.
-        assertEquals(
-          result?.code,
-          cachedCode,
-          "recovered cached code must survive the missing-dependency check",
-        );
-      } finally {
-        await remove(dependencyPath).catch(() => {});
-      }
+          // Surviving the missing-dependency check is only possible once the
+          // recovery entry has restored the vfmod file this code imports.
+          assertEquals(
+            result?.code,
+            cachedCode,
+            "recovered cached code must survive the missing-dependency check",
+          );
+        })
+      );
     });
   });
 
