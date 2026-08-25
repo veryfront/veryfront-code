@@ -93,12 +93,16 @@ describe("canonical npm artifact workflow", () => {
       asRecord(producer.outputs, "producer outputs").build_duration_seconds,
       "${{ steps.build.outputs.build_duration_seconds }}",
     );
-    const rcStep = namedStep(producer, "Prepare RC compatibility build version");
-    assertEquals(rcStep.if, "github.ref == 'refs/heads/main'");
-    assertStringIncludes(String(rcStep.run), "BASE=$(jq -r '.version' deno.json)");
+    const buildStep = namedStep(producer, "Build and pack tested npm output");
+    const buildScript = String(buildStep.run);
     assertStringIncludes(
-      String(rcStep.run),
-      'VERSION="${BASE}.${{ github.run_number }}" deno run -A scripts/ci/prepare-rc-build.ts',
+      buildScript,
+      'VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"',
+    );
+    assert(
+      buildScript.indexOf("scripts/ci/prepare-rc-build.ts") <
+        buildScript.indexOf("deno task build:npm"),
+      "The producer must prepare the numbered RC version before it builds npm output",
     );
   });
 

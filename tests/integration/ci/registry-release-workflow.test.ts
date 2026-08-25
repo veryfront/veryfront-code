@@ -70,7 +70,10 @@ describe("registry release workflow", () => {
         "${{ steps.version.outputs.version }}",
       );
       assert(
-        jobSteps.some((step) => step.name === "Build and publish"),
+        jobSteps.some((step) =>
+          step.name ===
+            (jobName === "prerelease" ? "Publish tested RC npm artifact" : "Build and publish")
+        ),
         `${jobName} must publish npm packages`,
       );
       assertEquals(
