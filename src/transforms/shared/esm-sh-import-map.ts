@@ -18,10 +18,12 @@ import { isEsmShUrl, parseEsmShUrl } from "#veryfront/transforms/shared/esm-sh-s
  * channel segment is removed before parsing, leaving the package coordinate
  * that follows it.
  *
- * The trailing separator is required, so a bare `https://esm.sh/stable` is left
- * alone for `reservedNamePackage` to read as the package named `stable`.
+ * A channel introduces a package, so the segment counts as one only when
+ * something follows it. That leaves both `https://esm.sh/stable` and
+ * `https://esm.sh/stable/` for `reservedNamePackage` to read as the package
+ * named `stable`, the second being its root written as a directory.
  */
-const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\//;
+const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\/(?=.)/;
 
 /** Removes a trailing separator from the path component, if there is one. */
 function stripTrailingSlash(url: string): string {

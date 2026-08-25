@@ -373,6 +373,15 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("reads a trailing-slash stable segment as the package root", () => {
+      const map: ImportMapConfig = { imports: { stable: "/local/s.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/stable/", map),
+        "/local/s.js",
+        "a channel introduces a package, so a channel with nothing after it is a package",
+      );
+    });
+
     it("still reads a bare stable segment as the package named stable", () => {
       const map: ImportMapConfig = { imports: { stable: "/local/s.js" } };
       assertEquals(
