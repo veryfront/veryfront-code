@@ -91,12 +91,12 @@ describe("npm compatibility artifact", () => {
       const code = `import { createNpmCompatibilityArtifact } from ${
         JSON.stringify(moduleUrl)
       }; await createNpmCompatibilityArtifact(Deno.args[0], "dist/npm-compatibility");`;
-      const output = await new Deno.Command(Deno.execPath(), {
+      const output = await new Deno.Command("deno", {
         args: [
           "eval",
           "--unstable-sloppy-imports",
           `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
-          "--frozen",
+          "--no-lock",
           code,
           root,
         ],
