@@ -96,6 +96,9 @@ describe("npm compatibility artifact", () => {
           "eval",
           "--unstable-sloppy-imports",
           `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
+          // The outer test stays frozen. This child runs from a temporary cwd, where the
+          // config's workspace-linked lock cannot resolve. --no-lock isolates the relative-
+          // destination assertion without modifying the tracked lock.
           "--no-lock",
           code,
           root,
