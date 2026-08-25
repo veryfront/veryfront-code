@@ -628,6 +628,80 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         "the sibling must finish after the cycle owner materializes its predicted path",
       );
     });
+    it("does not await a cycle owner that is still unwinding up the caller's own stack", async () => {
+      // The root itself closes the cycle here: `d` points at the root's
+      // predicted path, and sibling `x` reuses `d` while the root is still
+      // inside its own `Promise.allSettled`. Waiting for the root to write
+      // would be waiting on the frame that is waiting for `x`.
+      const esmCache = new Map<string, string>();
+      const dWritten = Promise.withResolvers<void>();
+      const gatedAdapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            files.set(path, content);
+            if (content.includes("export const d = root")) dWritten.resolve();
+            return Promise.resolve();
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\n` +
+              `import { x } from "https://esm.sh/x";\n` +
+              `export const root = d + x;`,
+          );
+        }
+        if (url === "https://esm.sh/d") {
+          return jsonResponse(
+            `import { root } from "https://esm.sh/root";\nexport const d = root;`,
+          );
+        }
+        if (url === "https://esm.sh/x") {
+          await dWritten.promise;
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+          );
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlocked = new Promise<"deadlocked">((resolve) => {
+        timer = setTimeout(() => resolve("deadlocked"), 2000);
+      });
+      try {
+        const outcome = await Promise.race([
+          fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
+          deadlocked,
+        ]);
+
+        assertEquals(
+          outcome === "deadlocked",
+          false,
+          "a descendant must never wait on an ancestor that is itself waiting on that descendant",
+        );
+        assertEquals(
+          files.has(outcome),
+          true,
+          "the root artifact must still be written once its own cycle closes",
+        );
+        assertEquals(
+          esmCache.has("https://esm.sh/x"),
+          true,
+          "the sibling that reused the cyclic descendant must still be published",
+        );
+        assertEquals(
+          esmCache.has("https://esm.sh/root"),
+          true,
+          "the cycle owner must be published once it writes its own predicted path",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
 
     it("still throws when a nested URL is imported statically", async () => {
       // The emitted module's own import graph must be local before the runtime

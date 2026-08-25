@@ -171,7 +171,13 @@ async function fetchEsmModuleWithin(
   if (cached) return cached;
   const graphCached = graph.artifacts.get(url);
   if (graphCached) {
-    let unwritten = unresolvedGraphDependencies(url, graph, esmCache);
+    // A dependency still unwinding further up this call stack writes its own
+    // file only after this frame returns — its `Promise.allSettled` is waiting
+    // on us — so awaiting its materialization here would deadlock the render
+    // rather than fail it. Such a predicted path is validated once by
+    // `fetchEsmModule` after the root settles instead.
+    const settleable = (dependency: string) => !pending.has(dependency);
+    let unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
     if (unwritten.length) {
       const owners = [
         ...new Set(unwritten.flatMap((dependency) => {
@@ -181,7 +187,7 @@ async function fetchEsmModuleWithin(
       ];
       if (owners.length) {
         await Promise.all(owners);
-        unwritten = unresolvedGraphDependencies(url, graph, esmCache);
+        unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
       }
       if (unwritten.length) {
         throw MODULE_NOT_FOUND.create({
