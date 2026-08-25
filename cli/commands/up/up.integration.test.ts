@@ -288,7 +288,10 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
           return Response.json({ id: PROJECT_ID, slug: PROJECT_SLUG });
         }
         if (request.method === "GET" && url.pathname.endsWith("/files")) {
-          return Response.json({ data: [], page_info: {} });
+          return Response.json({
+            data: [...pushedFiles].map(([path, content]) => ({ path, content })),
+            page_info: {},
+          });
         }
         if (request.method === "PUT" && url.pathname.includes("/files/")) {
           const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
