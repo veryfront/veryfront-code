@@ -808,6 +808,26 @@ OAuth client credentials are also supported through
 `MLFLOW_OAUTH_TOKEN_URL`, `MLFLOW_OAUTH_CLIENT_ID`,
 `MLFLOW_OAUTH_CLIENT_SECRET`, and an optional `MLFLOW_OAUTH_SCOPE`.
 
+Programmatic transport overrides do not inherit host credentials. When an
+extension config sets `trackingUri`, `fetch`, or `oauthTokenUrl`, provide its
+`trackingToken`, basic-auth fields, or complete OAuth client-credentials fields
+in that same config. For example, migrate a configured endpoint that previously
+relied on `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
+
+```ts
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  extensions: [
+    extEvalReportMlflow({
+      trackingUri: "https://tenant-mlflow.example",
+      trackingToken: Deno.env.get("TENANT_MLFLOW_TOKEN"),
+    }),
+  ],
+});
+```
+
 When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports
 every completed eval report to MLflow. Set `VERYFRONT_EVAL_EXPORTERS=mlflow`
 explicitly when CI should make that selection visible in its environment:

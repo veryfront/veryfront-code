@@ -326,6 +326,38 @@ describe("ext-eval-report-mlflow", () => {
     assertExists(registry.get("mlflow"));
   });
 
+  it("registers from a configured tracking URI without a host activation URI", async () => {
+    clearMlflowEnv();
+    const registry = createEvalReportExporterRegistry();
+    const extension = factory({
+      trackingUri: "https://tenant-mlflow.test",
+      trackingToken: "tenant-token",
+    });
+
+    await extension.setup?.(createContext(registry));
+
+    assertEquals(registry.has("mlflow"), true);
+  });
+
+  it("treats an empty configured OAuth token URL as unset", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
+    Deno.env.set("MLFLOW_TRACKING_TOKEN", "host-token");
+    const registry = createEvalReportExporterRegistry();
+    const { requests, fetchImpl } = createMlflowFetchRecorder();
+    const extension = factory({ oauthTokenUrl: "", fetch: undefined });
+
+    await extension.setup?.(createContext(registry));
+    await registry.export(createReport(), {});
+
+    assertEquals(
+      requests.filter((request) => request.method !== "PUT").every((request) =>
+        request.headers.get("authorization") === "Bearer host-token"
+      ),
+      true,
+    );
+  });
+
   it("unregisters the MLflow eval report exporter during teardown", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
@@ -415,7 +447,7 @@ describe("ext-eval-report-mlflow", () => {
     createEvalReportMlflowExporter({ trackingUri: "http://localhost:5000" });
   });
 
-  it("rejects credential-bearing tracking URIs and supports standard auth env headers", async () => {
+  it("rejects credential-bearing tracking URIs and supports standard auth headers", async () => {
     assertThrows(
       () =>
         createEvalReportMlflowExporter({
@@ -428,10 +460,12 @@ describe("ext-eval-report-mlflow", () => {
 
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
-    Deno.env.set("MLFLOW_TRACKING_TOKEN", "secret-token");
     const registry = createEvalReportExporterRegistry();
     const { requests, fetchImpl } = createMlflowFetchRecorder();
-    const extension = factory({ fetch: fetchImpl });
+    const extension = factory({
+      trackingToken: "secret-token",
+      fetch: fetchImpl,
+    });
 
     await extension.setup?.(createContext(registry));
     const results = await registry.export(createReport(), {
@@ -464,6 +498,51 @@ describe("ext-eval-report-mlflow", () => {
     assertEquals(String(reportUpload.body).includes("secret-token"), false);
   });
 
+  it("does not pass host credentials to config-controlled MLflow transports", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://operator-mlflow.test");
+    Deno.env.set("MLFLOW_TRACKING_TOKEN", "operator-secret-token");
+    const registry = createEvalReportExporterRegistry();
+    const { requests, fetchImpl } = createMlflowFetchRecorder();
+    const extension = factory({
+      trackingUri: "https://tenant-mlflow.test",
+      fetch: fetchImpl,
+    });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {});
+
+    assertEquals(results[0]?.ok, true);
+    assertEquals(
+      requests
+        .filter((request) => request.method !== "PUT")
+        .every((request) => request.url.startsWith("https://tenant-mlflow.test/")),
+      true,
+    );
+    assertEquals(
+      requests.every((request) => !request.headers.has("authorization")),
+      true,
+    );
+  });
+
+  it("does not combine a configured OAuth endpoint with host credentials", () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://operator-mlflow.test");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_ID", "operator-client-id");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_SECRET", "operator-client-secret");
+
+    const extension = factory({
+      oauthTokenUrl: "https://tenant-identity.test/token",
+    });
+    const registry = createEvalReportExporterRegistry();
+
+    assertThrows(
+      () => extension.setup?.(createContext(registry)),
+      Error,
+      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together",
+    );
+  });
+
   it("exchanges generic OAuth client credentials before writing tracking data", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
@@ -489,7 +568,13 @@ describe("ext-eval-report-mlflow", () => {
       return fetchImpl(input, init);
     };
     const registry = createEvalReportExporterRegistry();
-    const extension = factory({ fetch: oauthFetch });
+    const extension = factory({
+      oauthTokenUrl: "https://identity.test/token",
+      oauthClientId: "client-id",
+      oauthClientSecret: "client-secret",
+      oauthScope: "all-apis",
+      fetch: oauthFetch,
+    });
 
     await extension.setup?.(createContext(registry));
     const results = await registry.export(createReport(), {

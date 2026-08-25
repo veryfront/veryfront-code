@@ -525,6 +525,11 @@ async function createOAuthTrackingAuthHeaders(
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
+  // Environment credentials may only use the environment-selected transport.
+  // Config-controlled endpoints and fetch implementations must provide their
+  // own credentials so host secrets never cross that trust boundary.
+  const allowEnvironmentCredentials = config.trackingUri === undefined &&
+    config.fetch === undefined && !config.oauthTokenUrl;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
@@ -532,13 +537,20 @@ function resolveExporterConfig(
     artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
     experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
     runName: config.runName ?? readEnv(ENV_RUN_NAME),
-    trackingToken: config.trackingToken ?? readEnv(ENV_TRACKING_TOKEN),
-    trackingUsername: config.trackingUsername ?? readEnv(ENV_TRACKING_USERNAME),
-    trackingPassword: config.trackingPassword ?? readEnv(ENV_TRACKING_PASSWORD),
-    oauthTokenUrl: config.oauthTokenUrl ?? readEnv(ENV_OAUTH_TOKEN_URL),
-    oauthClientId: config.oauthClientId ?? readEnv(ENV_OAUTH_CLIENT_ID),
-    oauthClientSecret: config.oauthClientSecret ?? readEnv(ENV_OAUTH_CLIENT_SECRET),
-    oauthScope: config.oauthScope ?? readEnv(ENV_OAUTH_SCOPE),
+    trackingToken: config.trackingToken ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_TOKEN) : undefined),
+    trackingUsername: config.trackingUsername ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_USERNAME) : undefined),
+    trackingPassword: config.trackingPassword ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_PASSWORD) : undefined),
+    oauthTokenUrl: config.oauthTokenUrl ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_TOKEN_URL) : undefined),
+    oauthClientId: config.oauthClientId ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_CLIENT_ID) : undefined),
+    oauthClientSecret: config.oauthClientSecret ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_CLIENT_SECRET) : undefined),
+    oauthScope: config.oauthScope ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_SCOPE) : undefined),
     exportArtifacts: config.exportArtifacts ?? readBooleanEnv(ENV_EXPORT_ARTIFACTS),
     requestTimeoutMs: config.requestTimeoutMs ?? readIntegerEnv(
       ENV_REQUEST_TIMEOUT_MS,
@@ -1811,7 +1823,7 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,
       );
-      const activationTrackingUri = readEnv(ENV_TRACKING_URI);
+      const activationTrackingUri = factoryConfig.trackingUri;
       if (!activationTrackingUri) {
         ctx.logger.debug(
           `[ext-eval-report-mlflow] Skipping EvalReportExporter "${factoryConfig.id}": no MLFLOW_TRACKING_URI configured`,
