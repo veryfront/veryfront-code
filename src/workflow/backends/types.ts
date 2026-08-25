@@ -60,7 +60,7 @@ export interface BackendConfig {
   url?: string;
   prefix?: string;
   /**
-   * Deprecated no-op retained for source compatibility.
+   * @deprecated No-op retained for source compatibility.
    *
    * Backends ignore this field. Use backend-specific TTL options, such as
    * `RedisBackendConfig.runTtl`, when retention behavior is required.
