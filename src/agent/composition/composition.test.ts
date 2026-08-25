@@ -320,10 +320,10 @@ describe("agentAsTool", () => {
       });
     };
     const published: unknown[] = [];
-    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+    const tool = agentAsTool(childAgent, "Run case ingest", { publishChildStream: true });
 
     await tool.execute(
-      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      { input: "Fetch" },
       {
         toolCallId: "parent-tool-call",
         publishDataEvent: (event) => {
@@ -356,10 +356,10 @@ describe("agentAsTool", () => {
       });
     };
     const published: unknown[] = [];
-    const tool = createInvokeAgentTool({ resolveAgent: () => childAgent });
+    const tool = agentAsTool(childAgent, "Run case ingest", { publishChildStream: true });
 
     await tool.execute(
-      { agent_id: "case-ingest", description: "Run case ingest", prompt: "Fetch", context: {} },
+      { input: "Fetch" },
       {
         toolCallId: "parent-tool-call",
         publishDataEvent: (event) => {
