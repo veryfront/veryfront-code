@@ -877,6 +877,24 @@ export default config as const;
         assertStringIncludes(error.message, "left-pad");
       });
 
+      it("classifies Bun resolver objects that do not inherit from Error", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-object-",
+          "const inherited = Object.create(null, {\n" +
+            "  code: { get() { throw new Error('inherited code getter'); } },\n" +
+            "  message: { get() { throw new Error('inherited message getter'); } },\n" +
+            "});\n" +
+            "const failure = Object.create(inherited, {\n" +
+            "  code: { value: 'ERR_MODULE_NOT_FOUND' },\n" +
+            "  message: { value: \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\" },\n" +
+            "});\n" +
+            "throw failure;\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
       it("contains a cause getter that throws", async () => {
         // A trusted config runs in the shared host realm and can define `cause`
         // as a throwing accessor. Walking the chain must not let that escape in

@@ -1744,6 +1744,7 @@ function isInstallableLegacyNpmPackageName(packageName: string): boolean {
  * spinning.
  */
 const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
+const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
 
 function isIntrinsicError(value: unknown): value is Error {
   if (typeof value !== "object" || value === null) return false;
@@ -1758,6 +1759,27 @@ function isIntrinsicError(value: unknown): value is Error {
     return false;
   }
   return false;
+}
+
+function readOwnDataString(value: object, key: PropertyKey): string | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+  if (descriptor === undefined || !("value" in descriptor)) return undefined;
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
+}
+
+function missingPackageNameFromBunResolveMessageObject(value: object): string | undefined {
+  if (readOwnDataString(value, "code") !== BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE) {
+    return undefined;
+  }
+  const message = readOwnDataString(value, "message");
+  if (message === undefined) return undefined;
+  const specifier = reportedMissingSpecifier(message);
+  return specifier === undefined ? undefined : missingPackageName(specifier);
 }
 
 /**
@@ -1778,12 +1800,15 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
   // Captured WeakSet, like the rest of this module: a trusted config can replace
   // `globalThis.Set` or poison its prototype before throwing, and a cycle guard
   // that invoked project code would leak that exception in place of the
-  // classification. `current` is narrowed to Error above, so a WeakSet fits.
+  // classification. The walker only tracks objects, so a WeakSet fits.
   const seen = new IntrinsicWeakSet<object>();
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
-    if (!isIntrinsicError(current)) return undefined;
+    if (typeof current !== "object" || current === null) return undefined;
     if (weakSetHas(seen, current)) return undefined;
     weakSetAdd(seen, current);
+    if (!isIntrinsicError(current)) {
+      return missingPackageNameFromBunResolveMessageObject(current);
+    }
     let message: string | undefined;
     try {
       message = typeof current.message === "string" ? current.message : undefined;
