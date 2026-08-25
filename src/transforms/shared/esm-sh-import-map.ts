@@ -212,19 +212,26 @@ function decodedCoordinateSegments(segments: readonly string[]): string[] {
   });
 }
 
+/** Treat a fully qualified DNS spelling as the same CDN hostname. */
+function coordinateHostname(url: URL): string {
+  return url.hostname.endsWith(".") ? url.hostname.slice(0, -1) : url.hostname;
+}
+
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
-  if (PACKAGE_ROUTE_HOSTS.has(url.hostname)) {
-    if (segments[0] === "gh") {
-      // jsDelivr's GitHub route is `gh/<owner>/<repo>`. The repository name is
-      // still a coordinate when it contains a dot, not a filename.
-      return 3;
-    }
+  const hostname = coordinateHostname(url);
+  if ((PACKAGE_ROUTE_HOSTS.has(hostname) || hostname === "esm.sh") && segments[0] === "gh") {
+    // Both jsDelivr and esm.sh use `gh/<owner>/<repo>`. The repository name is
+    // still a coordinate when it contains a dot, not a filename.
+    return 3;
+  }
+
+  if (PACKAGE_ROUTE_HOSTS.has(hostname)) {
     if (segments[0] !== undefined && PACKAGE_COORDINATE_ROUTES.has(segments[0])) {
       return isScopeSegment(segments[1]) ? 3 : 2;
     }
   }
 
-  if (PACKAGE_ROOT_HOSTS.has(url.hostname)) {
+  if (PACKAGE_ROOT_HOSTS.has(hostname)) {
     return isScopeSegment(segments[0]) ? 2 : 1;
   }
 

@@ -175,6 +175,19 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("normalizes trailing-dot CDN hostnames before classifying coordinates", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/auto", { pkg: "https://unpkg.com./chart.js" }),
+      "https://unpkg.com./chart.js/auto",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/auto", {
+        pkg: "https://cdn.jsdelivr.net./npm/chart.js",
+      }),
+      "https://cdn.jsdelivr.net./npm/chart.js/auto",
+    );
+  });
+
   it("does not treat an npm directory on an arbitrary host as a package route", () => {
     assertEquals(
       resolve("https://esm.sh/pkg@1/sub", { pkg: "https://example.com/npm/some.js" }),
@@ -290,6 +303,21 @@ describe("transforms/shared/esm-sh-import-map", () => {
       }),
       "https://cdn.jsdelivr.net/gh/mozilla/pdf.js/build/pdf.mjs",
       "a path below the repository coordinate already selects an export",
+    );
+  });
+
+  it("recognises an esm.sh GitHub repository as a coordinate", () => {
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/build/pdf.mjs", {
+        pkg: "https://esm.sh/gh/mozilla/pdf.js",
+      }),
+      "https://esm.sh/gh/mozilla/pdf.js/build/pdf.mjs",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/other", {
+        pkg: "https://esm.sh/gh/mozilla/pdf.js/build/pdf.mjs",
+      }),
+      "https://esm.sh/gh/mozilla/pdf.js/build/pdf.mjs",
     );
   });
 
