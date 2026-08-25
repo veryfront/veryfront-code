@@ -821,7 +821,9 @@ export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
       if (template === null) {
         return {
           specifiers,
-          hasUnconstrainedDynamicImport,
+          // An unreadable template hides whatever follows it, so this scan
+          // cannot claim the source names no unconstrained import.
+          hasUnconstrainedDynamicImport: true,
           requiresBundling,
           hasDynamicCodeGeneration,
         };
@@ -945,6 +947,49 @@ export function validateModuleSpecifierHosts(specifiers: string[], allowedHosts:
   }
 }
 
+/**
+ * Runtime modules whose exports evaluate source text: code handed to them
+ * exists only inside strings, so a vetted module can run a `new Worker(...)`
+ * or `import(...)` this validator never saw.
+ */
+const CODE_EVALUATION_MODULES = new Set(["node:vm", "vm"]);
+
+/**
+ * Runtime modules whose exports load other modules outside the graph this
+ * validator walks: `createRequire` from `node:module` executes a CommonJS
+ * module neither the graph walk nor the bundler's HTTP plugin ever reads.
+ */
+const UNVALIDATED_LOADER_MODULES = new Set(["node:module", "module"]);
+
+/**
+ * Why importing `specifier` cannot be checked against the allow-list, or null
+ * when the module is not restricted. URL schemes are case-insensitive, so the
+ * comparison is too.
+ */
+export function restrictedRuntimeModuleReason(specifier: string): string | null {
+  const normalized = specifier.toLowerCase();
+  if (CODE_EVALUATION_MODULES.has(normalized)) {
+    return `importing "${specifier}" enables code evaluation that cannot be checked against the remote import allow-list`;
+  }
+  if (UNVALIDATED_LOADER_MODULES.has(normalized)) {
+    return `importing "${specifier}" enables module loading (createRequire) that cannot be checked against the remote import allow-list`;
+  }
+  return null;
+}
+
+function assertNoRestrictedRuntimeModules(specifiers: readonly string[]): void {
+  for (const specifier of specifiers) {
+    const reason = restrictedRuntimeModuleReason(specifier);
+    if (reason === null) continue;
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] handler build failed: ${reason}.`,
+      }),
+    );
+  }
+}
+
 /** A worker URL that reaches the network or an inline payload the walk cannot vet. */
 const REMOTE_OR_INLINE_WORKER_URL = /^(?:https?|data|blob):/i;
 const FILE_WORKER_URL = /^file:/i;
@@ -1002,7 +1047,14 @@ function classifyWorkerUrlBase(
 
   const base = readConcatenatedStringLiteral(source, i);
   if (base === null) return DYNAMIC_WORKER;
-  return classifyWorkerUrlLiteral(base.value, null);
+  if (REMOTE_OR_INLINE_WORKER_URL.test(base.value)) return REMOTE_WORKER;
+  if (FILE_WORKER_URL.test(base.value)) return FILE_WORKER;
+  // A literal base this scanner does not resolve leaves the worker entry
+  // unknown: the URL constructor may still read it as remote (it trims
+  // whitespace, and accepts schemes these patterns do not name), and a
+  // relative base names an entry the graph walk cannot follow. Fail closed
+  // rather than report a local worker with no specifier to vet.
+  return DYNAMIC_WORKER;
 }
 
 /**
@@ -1088,6 +1140,9 @@ async function findModuleWorkerViolation(
   for (const classification of await workerUrlClassifications(source)) {
     if (classification.kind === "file") return "remote";
     if (classification.kind !== "local") return classification.kind;
+    // A local worker without a specifier names an entry no graph walk can
+    // vet, so it is as opaque as a non-literal URL.
+    if (classification.specifier === null) return "dynamic";
   }
   return null;
 }
@@ -1147,8 +1202,13 @@ export async function validateHTTPImports(
   const analysis = await analyzeSourceCapabilities(source);
   const specifiers = analysis?.moduleSpecifiers ?? scan.specifiers;
   validateModuleSpecifierHosts([...specifiers], allowedHosts);
+  assertNoRestrictedRuntimeModules(specifiers);
   const workers = analysis?.workers ?? fallbackWorkerUrlClassifications(source);
-  const workerViolation = workers.find((worker) => worker.kind !== "local");
+  // A local worker without a specifier has an entry no graph walk can vet, so
+  // it is as much a violation as a non-literal worker URL.
+  const workerViolation = workers.find((worker) =>
+    worker.kind !== "local" || worker.specifier === null
+  );
   if (workerViolation) {
     const detail = workerViolation.kind === "remote" || workerViolation.kind === "file"
       ? "a Worker() loading a remote, inline, or file URL bypasses the remote import allow-list"

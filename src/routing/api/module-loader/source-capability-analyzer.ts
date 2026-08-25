@@ -248,11 +248,17 @@ function buildScopes(program: ASTNode): {
   ): void => {
     if (parent && key) parents.set(node, { parent, key });
 
-    if (node.type === "FunctionDeclaration" && node.declare !== true && isNode(node.id)) {
+    if (
+      (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
+      node.declare !== true && isNode(node.id)
+    ) {
       registerPattern(incomingScope, node.id);
-    }
-    if (node.type === "ClassDeclaration" && node.declare !== true && isNode(node.id)) {
-      registerPattern(incomingScope, node.id);
+      // The declaration is the binding's value: computed property reads off it
+      // reach Function through `constructor`, so the binding must remember it
+      // is callable.
+      if (node.id.type === "Identifier" && typeof node.id.name === "string") {
+        ensureBinding(incomingScope, node.id.name).initializers.push(node);
+      }
     }
     if (node.type === "TSEnumDeclaration" && node.declare !== true && isNode(node.id)) {
       registerPattern(incomingScope, node.id);
@@ -335,6 +341,23 @@ function resolveBinding(scope: Scope, name: string): Binding | null {
 }
 
 function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope>): void {
+  // First record every alias assignment as an initializer, so a prototype
+  // mutation is resolved through aliases wherever the assignment sits in the
+  // source, not only when it happens to precede the mutating call.
+  const collectAliasAssignments = (node: ASTNode): void => {
+    const scope = nodeScopes.get(node) as Scope;
+    if (
+      node.type === "AssignmentExpression" &&
+      ALIAS_ASSIGNMENT_OPERATORS.has(String(node.operator)) &&
+      isNode(node.left) && node.left.type === "Identifier" &&
+      typeof node.left.name === "string" && isNode(node.right)
+    ) {
+      resolveBinding(scope, node.left.name)?.initializers.push(node.right);
+    }
+    forEachChild(node, collectAliasAssignments);
+  };
+  collectAliasAssignments(program);
+
   const markPrototypeMutation = (
     target: ASTNode,
     scope: Scope,
@@ -358,14 +381,6 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
   const visit = (node: ASTNode): void => {
     const scope = nodeScopes.get(node) as Scope;
     if (
-      node.type === "AssignmentExpression" &&
-      ALIAS_ASSIGNMENT_OPERATORS.has(String(node.operator)) &&
-      isNode(node.left) && node.left.type === "Identifier" &&
-      typeof node.left.name === "string" && isNode(node.right)
-    ) {
-      resolveBinding(scope, node.left.name)?.initializers.push(node.right);
-    }
-    if (
       node.type === "AssignmentExpression" && isNode(node.left) &&
       (node.left.type === "MemberExpression" ||
         node.left.type === "OptionalMemberExpression") &&
@@ -379,22 +394,86 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
         (callee.type === "MemberExpression" ||
           callee.type === "OptionalMemberExpression") && isNode(callee.object)
       ) {
-        const object = unwrapExpression(callee.object);
         const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
         const property = memberPropertyName(callee);
-        const isUnshadowedGlobal = object.type === "Identifier" &&
-          typeof object.name === "string" && resolveBinding(scope, object.name) === null;
-        const mutatesPrototype = isUnshadowedGlobal &&
-          (property === "setPrototypeOf" &&
-              (object.name === "Object" || object.name === "Reflect") ||
-            property === "set" && object.name === "Reflect" &&
-              staticString(args[1]) === "__proto__");
+        // The receiver may name Object or Reflect directly, through a local
+        // alias binding, or through a property read off the global object;
+        // each reaches the same prototype mutator.
+        const mutatesPrototype = property === "setPrototypeOf" &&
+            (resolvesToGlobalIntrinsic(callee.object, "Object", scope, nodeScopes) ||
+              resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes)) ||
+          property === "set" &&
+            resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes) &&
+            // A key this analysis cannot read may spell __proto__.
+            (staticString(args[1]) === "__proto__" || staticString(args[1]) === null);
         if (mutatesPrototype && args[0]) markPrototypeMutation(args[0], scope);
       }
     }
     forEachChild(node, visit);
   };
   visit(program);
+}
+
+/**
+ * Whether this expression resolves to the named unshadowed global intrinsic
+ * (such as `Object` or `Reflect`): named directly, reached through a local
+ * alias binding, or read as a property off the global object.
+ */
+function resolvesToGlobalIntrinsic(
+  node: ASTNode,
+  name: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null) return expression.name === name;
+    if (seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.initializers.some((initializer) =>
+      resolvesToGlobalIntrinsic(
+        initializer,
+        name,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        seen,
+      )
+    );
+  }
+  if (
+    (expression.type === "MemberExpression" || expression.type === "OptionalMemberExpression") &&
+    memberPropertyName(expression) === name && isNode(expression.object)
+  ) {
+    return isGlobalObject(expression.object, scope, nodeScopes);
+  }
+  if (
+    expression.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right)
+  ) {
+    return resolvesToGlobalIntrinsic(expression.right, name, scope, nodeScopes, seen);
+  }
+  if (
+    expression.type === "ConditionalExpression" && isNode(expression.consequent) &&
+    isNode(expression.alternate)
+  ) {
+    return resolvesToGlobalIntrinsic(
+      expression.consequent,
+      name,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) ||
+      resolvesToGlobalIntrinsic(expression.alternate, name, scope, nodeScopes, new Set(seen));
+  }
+  if (
+    expression.type === "LogicalExpression" && isNode(expression.left) && isNode(expression.right)
+  ) {
+    return resolvesToGlobalIntrinsic(expression.left, name, scope, nodeScopes, new Set(seen)) ||
+      resolvesToGlobalIntrinsic(expression.right, name, scope, nodeScopes, new Set(seen));
+  }
+  return false;
 }
 
 function unwrapExpression(node: ASTNode): ASTNode {
@@ -462,6 +541,28 @@ function isImportMetaUrl(node: ASTNode | undefined): boolean {
     isNode(object.property) && object.property.name === "meta";
 }
 
+const TS_EXPRESSION_WRAPPER_TYPES = new Set([
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+  "TSNonNullExpression",
+  "TSInstantiationExpression",
+]);
+
+/**
+ * TypeScript container nodes whose contents compile to executable JavaScript:
+ * namespace bodies, enum members, `export =` assignments, and constructor
+ * parameter properties all run at module evaluation, so a position inside one
+ * is not type-only.
+ */
+const EXECUTABLE_TS_CONTAINER_TYPES = new Set([
+  "TSModuleBlock",
+  "TSEnumBody",
+  "TSEnumMember",
+  "TSExportAssignment",
+  "TSParameterProperty",
+]);
+
 function isTypeOnlyPosition(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
   let current = node;
   while (true) {
@@ -469,14 +570,16 @@ function isTypeOnlyPosition(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>
     if (!link) return false;
     const parent = link.parent;
     if (parent.type.startsWith("TS")) {
+      if (TS_EXPRESSION_WRAPPER_TYPES.has(parent.type) && link.key === "expression") {
+        current = parent;
+        continue;
+      }
+      // A namespace or enum emits runtime code unless it is ambient, so its
+      // contents stay subject to capability analysis.
       if (
-        [
-          "TSAsExpression",
-          "TSSatisfiesExpression",
-          "TSTypeAssertion",
-          "TSNonNullExpression",
-          "TSInstantiationExpression",
-        ].includes(parent.type) && link.key === "expression"
+        EXECUTABLE_TS_CONTAINER_TYPES.has(parent.type) ||
+        ((parent.type === "TSModuleDeclaration" || parent.type === "TSEnumDeclaration") &&
+          parent.declare !== true)
       ) {
         current = parent;
         continue;
@@ -651,6 +754,14 @@ function isGlobalWorkerConstructor(
   ) {
     return isGlobalObject(expression.object, scope, nodeScopes);
   }
+  // `new (W = Worker)(...)` constructs whatever the assignment evaluates to,
+  // which is its right-hand side.
+  if (
+    expression.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right)
+  ) {
+    return isGlobalWorkerConstructor(expression.right, scope, nodeScopes, seen);
+  }
   if (expression.type === "CallExpression" && isNode(expression.callee)) {
     const callee = unwrapExpression(expression.callee);
     if (
@@ -713,6 +824,59 @@ function isPlainObjectValue(
       seen,
     )
   );
+}
+
+const CALLABLE_EXPRESSION_TYPES = new Set([
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "FunctionDeclaration",
+  "ClassExpression",
+  "ClassDeclaration",
+]);
+
+/**
+ * Whether this expression can evaluate to a callable value this analysis can
+ * see: a function or class written here, or a binding initialized from one. A
+ * callable's `constructor` property is the Function code generator, so a
+ * computed property read this analysis cannot resolve must fail closed on such
+ * a value.
+ */
+function isCallableValue(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (CALLABLE_EXPRESSION_TYPES.has(expression.type)) return true;
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.initializers.some((initializer) =>
+      isCallableValue(initializer, nodeScopes.get(initializer) ?? binding.scope, nodeScopes, seen)
+    );
+  }
+  if (
+    expression.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right)
+  ) {
+    return isCallableValue(expression.right, scope, nodeScopes, seen);
+  }
+  if (
+    expression.type === "ConditionalExpression" && isNode(expression.consequent) &&
+    isNode(expression.alternate)
+  ) {
+    return isCallableValue(expression.consequent, scope, nodeScopes, new Set(seen)) ||
+      isCallableValue(expression.alternate, scope, nodeScopes, new Set(seen));
+  }
+  if (
+    expression.type === "LogicalExpression" && isNode(expression.left) && isNode(expression.right)
+  ) {
+    return isCallableValue(expression.left, scope, nodeScopes, new Set(seen)) ||
+      isCallableValue(expression.right, scope, nodeScopes, new Set(seen));
+  }
+  return false;
 }
 
 function classifyLiteralWorkerUrl(
@@ -917,6 +1081,15 @@ export async function analyzeSourceCapabilities(
       if (
         property === "constructor" &&
         (!isNode(node.object) || !isPlainObjectValue(node.object, scope, nodeScopes))
+      ) {
+        hasDynamicCodeGeneration = true;
+      }
+      // A computed property name this analysis cannot resolve may spell
+      // "constructor"; on a callable value that read returns the Function
+      // code generator.
+      if (
+        node.computed === true && property === null && isNode(node.object) &&
+        isCallableValue(node.object, scope, nodeScopes)
       ) {
         hasDynamicCodeGeneration = true;
       }

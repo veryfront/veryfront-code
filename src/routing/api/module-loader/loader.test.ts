@@ -146,6 +146,35 @@ describe("readDenoImportMap", () => {
     }
   });
 
+  it("refuses to decide when an external import map meets inline imports or scopes", async () => {
+    // Deno applies its own precedence between an external `importMap` and
+    // inline `imports`/`scopes`. Reading only the external file could approve
+    // a direct load whose bare specifier Deno resolves through an unseen
+    // inline mapping, so the combination must stay undecidable.
+    for (
+      const inline of [
+        `"imports": { "dep": "https://blocked.example/mod.js" }`,
+        `"scopes": { "./lib/": { "dep": "https://blocked.example/mod.js" } }`,
+      ]
+    ) {
+      const projectDir = await makeTempDir();
+      await fs.writeTextFile(
+        join(projectDir, "deno.json"),
+        `{ "importMap": "./import_map.json", ${inline} }\n`,
+      );
+      await fs.writeTextFile(
+        join(projectDir, "import_map.json"),
+        `{ "imports": { "zod": "npm:zod@3" } }\n`,
+      );
+
+      assertEquals(
+        await readDenoImportMap(fs, projectDir),
+        null,
+        "a config declaring both mapping sources must be undecidable, not read one-sidedly",
+      );
+    }
+  });
+
   it("reads a config written in the JSONC a Deno config may use", async () => {
     // Comments and trailing commas are legal in `deno.json`, and Deno resolves
     // every alias such a config declares. Reporting it as undecidable would
@@ -2360,6 +2389,30 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
       Error,
       "dynamic code generation",
+    );
+  });
+
+  it("rejects an import-map alias that renames a restricted runtime module", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      `{ "imports": { "evaluator": "node:vm" } }\n`,
+    );
+
+    const modulePath = join(tmpDir, "aliased-vm-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { runInThisContext } from "evaluator";`,
+        `export const GET = () => new Response(String(runInThisContext("1 + 1")));`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "code evaluation",
+      "an import-map rename must not hand a route the node:vm evaluator",
     );
   });
 
