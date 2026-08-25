@@ -74,7 +74,9 @@ describe("registry release workflow", () => {
         `${jobName} must publish npm packages`,
       );
       assertEquals(
-        jobSteps.filter((step) => String(step.uses).startsWith("peter-evans/repository-dispatch@"))
+        jobSteps.filter((step) =>
+          String(step.uses).startsWith("peter-evans/repository-dispatch@")
+        )
           .length,
         0,
       );
@@ -99,7 +101,9 @@ describe("registry release workflow", () => {
       "registry quality gate job",
     );
     const gateSteps = steps(gate, "registry quality gate job");
-    const registryStep = gateSteps.find((step) => step.name === "Validate exact registry release");
+    const registryStep = gateSteps.find((step) =>
+      step.name === "Validate exact registry release"
+    );
 
     assertEquals(gate.needs, ["prerelease", "release", "version-check"]);
     assertEquals(
@@ -108,7 +112,9 @@ describe("registry release workflow", () => {
       "selected release dependency must be checked before checkout",
     );
     assert(
-      gateSteps.findIndex((step) => String(step.uses).startsWith("actions/checkout@")) > 0,
+      gateSteps.findIndex((step) =>
+        String(step.uses).startsWith("actions/checkout@")
+      ) > 0,
       "registry checkout must follow the selected release dependency gate",
     );
     assertEquals(
@@ -170,7 +176,9 @@ describe("registry release workflow", () => {
   it("fails closed for every non-success selected release result", async () => {
     for (const selectedResult of ["failure", "skipped", "cancelled"]) {
       for (const isStable of [false, true]) {
-        const selectedName = isStable ? "STABLE_RELEASE_RESULT" : "PRERELEASE_RESULT";
+        const selectedName = isStable
+          ? "STABLE_RELEASE_RESULT"
+          : "PRERELEASE_RESULT";
         const output = await runReleaseDependencyGate({
           IS_STABLE: String(isStable),
           PRERELEASE_RESULT: isStable ? "skipped" : selectedResult,
@@ -211,7 +219,9 @@ describe("registry release workflow", () => {
     );
     assertEquals(dispatchActions.length, 3);
     assertEquals(
-      dispatchActions.map((step) => asRecord(step.with, "repository dispatch inputs").repository),
+      dispatchActions.map((step) =>
+        asRecord(step.with, "repository dispatch inputs").repository
+      ),
       [
         "veryfront/veryfront-server",
         "veryfront/veryfront-job-runner",

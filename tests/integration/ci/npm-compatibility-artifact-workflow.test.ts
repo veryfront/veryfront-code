@@ -1,4 +1,8 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
@@ -31,7 +35,9 @@ async function readJobs(): Promise<YamlRecord> {
 }
 
 function namedStep(job: YamlRecord, name: string): YamlRecord {
-  const step = jobSteps(job, String(job.name)).find((step) => step.name === name);
+  const step = jobSteps(job, String(job.name)).find((step) =>
+    step.name === name
+  );
   assert(step, `${String(job.name)} must include ${name}`);
   return step;
 }
@@ -79,7 +85,9 @@ describe("canonical npm artifact workflow", () => {
       ),
       "The producer must create the package-version and SHA-256 manifest",
     );
-    const upload = steps.find((step) => String(step.uses).startsWith("actions/upload-artifact@"));
+    const upload = steps.find((step) =>
+      String(step.uses).startsWith("actions/upload-artifact@")
+    );
     assert(upload, "The producer must upload the canonical package set");
     assertEquals(
       asRecord(upload.with, "artifact upload inputs").name,
@@ -152,7 +160,9 @@ describe("canonical npm artifact workflow", () => {
       ] as const
     ) {
       assertEquals(
-        jobSteps(job, label).filter((step) => String(step.run).includes("deno task build:npm"))
+        jobSteps(job, label).filter((step) =>
+          String(step.run).includes("deno task build:npm")
+        )
           .length,
         0,
         `${label} must not rebuild the canonical npm output`,
