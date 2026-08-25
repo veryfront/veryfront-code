@@ -866,6 +866,12 @@ export default config as const;
           "vf-config-node-",
           `Cannot find package 'left-pad' imported from /app/veryfront.config.ts`,
         ],
+        [
+          // A version is legitimate here, unlike on a plain specifier.
+          "an npm: specifier carrying a version",
+          "vf-config-npm-version-",
+          `Module not found "npm:left-pad@1.3.0".`,
+        ],
       ];
 
       for (const [label, prefix, message] of missingPackageWordings) {
@@ -911,6 +917,22 @@ export default config as const;
           "an ordinary error that merely quotes a resolver phrase",
           "vf-config-quoted-",
           `throw new Error('Setup failed: Module not found "db"');\n`,
+        ],
+        [
+          // The first-line retry exists for Deno's `hint:`/`at` trailer. Without
+          // a guard it would defeat the end anchor for *any* multi-line message,
+          // and an application error's own second line would be discarded.
+          "an application error whose second line is not a runtime trailer",
+          "vf-config-multiline-",
+          `throw new Error("Cannot find module 'db'\\ninitialization failed");\n`,
+        ],
+        [
+          // Only npm:/jsr: specifiers carry a version; Node and Bun cannot
+          // resolve a plain `left-pad@1.3.0` at all, so this is invalid import
+          // syntax rather than an absent package.
+          "a version pinned onto a plain bare specifier",
+          "vf-config-versioned-",
+          `throw new Error("Cannot find module 'left-pad@1.3.0'");\n`,
         ],
       ];
 

@@ -1656,9 +1656,8 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  * `VeryfrontError.message` and its context, which callers log.
  */
 function missingPackageName(specifier: string): string | undefined {
-  const bare = specifier.startsWith("npm:") || specifier.startsWith("jsr:")
-    ? specifier.slice(4)
-    : specifier;
+  const hasRuntimePrefix = specifier.startsWith("npm:") || specifier.startsWith("jsr:");
+  const bare = hasRuntimePrefix ? specifier.slice(4) : specifier;
   if (bare.length === 0) return undefined;
   if (/^[./\\#]/.test(bare)) return undefined;
   if (bare.includes("\\")) return undefined;
@@ -1666,6 +1665,11 @@ function missingPackageName(specifier: string): string | undefined {
 
   const parsed = parseBarePackageSpecifier(bare);
   if (parsed === null) return undefined;
+
+  // Only `npm:`/`jsr:` specifiers carry a version. Node and Bun cannot resolve a
+  // plain `left-pad@1.3.0` at all, so installing `left-pad` would not help --
+  // that is invalid import syntax, not an absent package.
+  if (!hasRuntimePrefix && parsed.version !== null) return undefined;
 
   // A specifier with a subpath cannot be classified from the message alone.
   // Node reports `require("installed-pkg/missing")` for an *installed* package
@@ -1737,14 +1741,54 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
  * phrasing changes needs updating in both places.
  */
 function reportedMissingSpecifier(message: string): string | undefined {
-  for (const line of [message, message.split("\n", 1)[0]]) {
-    if (line === undefined) continue;
+  const candidates = [message];
+  const firstLine = firstLineIfOnlyRuntimeTrailerFollows(message);
+  if (firstLine !== undefined) candidates.push(firstLine);
+
+  for (const line of candidates) {
     for (const pattern of MISSING_SPECIFIER_PATTERNS) {
       const match = line.match(pattern);
       if (match?.[1] !== undefined) return match[1];
     }
   }
   return undefined;
+}
+
+/**
+ * What an ANSI SGR sequence leaves behind once its ESC is gone.
+ *
+ * Deno colours its hint and location lines. Stripping the escape with the
+ * existing {@link CONTROL_CHARACTERS} pass leaves `[36m`-shaped residue, which
+ * would otherwise sit between the indent and the keyword and defeat the trailer
+ * test below. Written without the control character itself so the regex stays
+ * within `no-control-regex`; it only ever gates that test, never the specifier
+ * that gets extracted.
+ */
+const SGR_RESIDUE = /\[[0-9;]*m/g;
+
+/** The only trailers a runtime appends to a resolution error. */
+const RUNTIME_TRAILER_LINE = /^\s*(?:hint:|at\s)/;
+
+/**
+ * The first line, but only when every line after it is a runtime trailer.
+ *
+ * Deno appends a `hint:` line and an `at <location>` line to its resolution
+ * errors, so the real message is three lines where the patterns expect one.
+ * Retrying on the first line unconditionally would defeat the end anchor for
+ * *any* multi-line message: `new Error("Cannot find module 'db'\ninitialization
+ * failed")` is an application error, and matching its first line would answer
+ * an uninstalled dependency for it. Requiring the remainder to be trailers
+ * keeps the anchor meaningful for everything else.
+ */
+function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
+  const lines = message.split("\n");
+  if (lines.length < 2) return undefined;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index]!.replace(CONTROL_CHARACTERS, "").replace(SGR_RESIDUE, "");
+    if (line.trim().length === 0) continue;
+    if (!RUNTIME_TRAILER_LINE.test(line)) return undefined;
+  }
+  return lines[0];
 }
 
 /** Anchored resolution-failure formats, per runtime. */
