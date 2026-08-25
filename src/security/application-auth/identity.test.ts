@@ -170,6 +170,20 @@ describe("security/application-auth/identity", () => {
     assertEquals(identity.groupsComplete, true);
   });
 
+  it("omits absent optional profile fields so the identity remains snapshot-safe", () => {
+    const identity = createApplicationIdentity({
+      issuer: "https://issuer.example.com",
+      expectedIssuer: "https://issuer.example.com",
+      subject: "user-without-profile",
+      claims: { sub: "user-without-profile" },
+      claimNames: { email: "email", name: "name" },
+    });
+
+    assertEquals(Object.hasOwn(identity, "email"), false);
+    assertEquals(Object.hasOwn(identity, "name"), false);
+    assertEquals(snapshotApplicationIdentity(identity).subject, "user-without-profile");
+  });
+
   it("deep-freezes the bounded JSON-safe claim snapshot and normalized arrays", () => {
     const identity = createApplicationIdentity({
       issuer: "https://issuer.example.com",

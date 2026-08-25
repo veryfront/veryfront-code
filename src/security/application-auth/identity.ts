@@ -553,20 +553,22 @@ function parseOptionalProfileClaims(
 ): Pick<ApplicationIdentity, "email" | "name"> {
   const output: { email?: string; name?: string } = {};
   if (claimNames.email !== undefined) {
-    output.email = parseOptionalStringClaim(
+    const email = parseOptionalStringClaim(
       claims,
       claimNames.email,
       "email",
       MAX_PROFILE_CLAIM_LENGTH,
     );
+    if (email !== undefined) output.email = email;
   }
   if (claimNames.name !== undefined) {
-    output.name = parseOptionalStringClaim(
+    const name = parseOptionalStringClaim(
       claims,
       claimNames.name,
       "name",
       MAX_PROFILE_CLAIM_LENGTH,
     );
+    if (name !== undefined) output.name = name;
   }
   return output;
 }
