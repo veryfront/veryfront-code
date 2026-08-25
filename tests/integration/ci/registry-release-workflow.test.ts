@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
@@ -43,6 +43,26 @@ async function runReleaseDependencyGate(
       IS_STABLE: "false",
       PRERELEASE_RESULT: "success",
       STABLE_RELEASE_RESULT: "skipped",
+      ...overrides,
+    },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
+async function runDispatchVersionResolution(
+  overrides: Record<string, string>,
+): Promise<Deno.CommandOutput> {
+  const jobs = await readJobs();
+  const dispatch = asRecord(jobs["dispatch-release"], "dispatch release job");
+  const step = namedStep(dispatch, "Resolve published version");
+  return await new Deno.Command("bash", {
+    args: ["-c", String(step.run)],
+    env: {
+      GITHUB_OUTPUT: "/dev/null",
+      IS_STABLE: "false",
+      RC_VERSION: "0.1.2-rc.3",
+      STABLE_VERSION: "0.1.2",
       ...overrides,
     },
     stdout: "piped",
@@ -214,6 +234,8 @@ describe("registry release workflow", () => {
     const dispatchActions = dispatchSteps.filter((step) =>
       String(step.uses).startsWith("peter-evans/repository-dispatch@")
     );
+    const versionStep = namedStep(dispatch, "Resolve published version");
+    const tokenStep = namedStep(dispatch, "Create release GitHub App token");
 
     assertEquals(dispatch.needs, [
       "quality-gate-registry",
@@ -224,6 +246,19 @@ describe("registry release workflow", () => {
     assertEquals(
       dispatch.if,
       "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}",
+    );
+    assertEquals(versionStep.id, "version");
+    assertEquals(
+      asRecord(versionStep.env, "dispatch version environment"),
+      {
+        IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+        RC_VERSION: "${{ needs.prerelease.outputs.version }}",
+        STABLE_VERSION: "${{ needs.release.outputs.version }}",
+      },
+    );
+    assert(
+      dispatchSteps.indexOf(versionStep) < dispatchSteps.indexOf(tokenStep),
+      "published version must be resolved before the release token is created",
     );
     assertEquals(dispatchActions.length, 3);
     assertEquals(
@@ -237,9 +272,72 @@ describe("registry release workflow", () => {
     for (const action of dispatchActions) {
       assertEquals(
         asRecord(action.with, "repository dispatch inputs")["client-payload"],
-        '{"version": "${{ needs.version-check.outputs.is_stable == \'true\' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}',
+        '{"version": "${{ steps.version.outputs.version }}"}',
       );
     }
+
+    for (
+      const [isStable, expected] of [
+        ["false", "version=0.1.2-rc.3"],
+        ["true", "version=0.1.2"],
+      ] as const
+    ) {
+      const outputFile = await Deno.makeTempFile({ prefix: "vf-release-version-" });
+      try {
+        const output = await runDispatchVersionResolution({
+          GITHUB_OUTPUT: outputFile,
+          IS_STABLE: isStable,
+        });
+        assertEquals(output.code, 0);
+        assertStringIncludes(await Deno.readTextFile(outputFile), expected);
+      } finally {
+        await Deno.remove(outputFile);
+      }
+    }
+
+    const missingSelectedVersions = [
+      {
+        IS_STABLE: "false",
+        RC_VERSION: "",
+        STABLE_VERSION: "0.1.2",
+      },
+      {
+        IS_STABLE: "true",
+        RC_VERSION: "0.1.2-rc.3",
+        STABLE_VERSION: "",
+      },
+    ];
+    for (const missingSelectedVersion of missingSelectedVersions) {
+      const missingVersion = await runDispatchVersionResolution(
+        missingSelectedVersion,
+      );
+      assertEquals(missingVersion.code, 1);
+      const missingVersionOutput = new TextDecoder().decode(
+        new Uint8Array([
+          ...missingVersion.stdout,
+          ...missingVersion.stderr,
+        ]),
+      );
+      assertStringIncludes(
+        missingVersionOutput,
+        "Selected published version is empty",
+      );
+    }
+  });
+
+  it("documents the five-build estimate against the current npm build consumers", async () => {
+    const jobs = await readJobs();
+    const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
+    const report = namedStep(gate, "Report npm build reuse");
+
+    assertEquals(
+      asRecord(report.env, "npm build reuse environment").LEGACY_BUILD_COUNT,
+      "5",
+    );
+    assertStringIncludes(
+      String(report.run),
+      "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)",
+    );
   });
 
   it("keeps stable production approval and publishing in the release job", async () => {

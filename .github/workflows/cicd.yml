@@ -793,6 +793,7 @@ jobs:
             echo "### Canonical npm build reuse"
             echo
             echo "Measured producer duration: ${BUILD_DURATION_SECONDS}s"
+            echo "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)"
             echo "Estimated before: ${before} npm build runner-minutes"
             echo "Estimated after: ${after} npm build runner-minutes"
             echo "Estimated savings: ${saved} npm build runner-minutes"
@@ -1441,6 +1442,27 @@ jobs:
     needs: [quality-gate-registry, prerelease, release, version-check]
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+          STABLE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *)
+              echo "::error::Unsupported release stability value: $IS_STABLE"
+              exit 1
+              ;;
+          esac
+          if [ -z "$version" ]; then
+            echo "::error::Selected published version is empty"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Create release GitHub App token
         id: release-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -1461,7 +1483,7 @@ jobs:
           repository: veryfront/veryfront-server
           event-type: veryfront-code-released
           client-payload: >-
-            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
+            {"version": "${{ steps.version.outputs.version }}"}
 
       - name: Trigger job-runner deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1470,7 +1492,7 @@ jobs:
           repository: veryfront/veryfront-job-runner
           event-type: veryfront-code-released
           client-payload: >-
-            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
+            {"version": "${{ steps.version.outputs.version }}"}
 
       - name: Trigger sandbox deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -1479,7 +1501,7 @@ jobs:
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
           client-payload: >-
-            {"version": "${{ needs.version-check.outputs.is_stable == 'true' && needs.release.outputs.version || needs.prerelease.outputs.version }}"}
+            {"version": "${{ steps.version.outputs.version }}"}
 
   # ============================================
   # CD: Update Homebrew (stable releases only)
