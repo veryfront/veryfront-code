@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
 import { ModuleResolver } from "./module-resolver.ts";
 
 describe("modules/module-resolver", () => {
@@ -135,6 +136,158 @@ describe("modules/module-resolver", () => {
       const resolver = createResolver({ projectDir: "/project" });
 
       const result = await resolver.resolve("./nonexistent");
+      assertEquals(result, null);
+    });
+
+    it("should block relative imports that escape the project root", async () => {
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: { "/outside.ts": "export const secret = true;" },
+      });
+
+      const result = await resolver.resolve("../../outside.ts", "/project/src/index.ts");
+
+      assertEquals(result, null);
+    });
+
+    it("should block relative imports that escape through a symlink", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Linked.tsx",
+        "export default function Linked() {}",
+      );
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve("/canonical/project");
+        if (path === "/project/components/Linked.tsx") {
+          return Promise.resolve("/canonical/outside/Linked.tsx");
+        }
+        return Promise.resolve(path);
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const result = await resolver.resolve(
+        "./components/Linked.tsx",
+        "/project/index.ts",
+      );
+
+      assertEquals(result, null);
+    });
+
+    it("should cache the canonical file path instead of a retargetable symlink path", async () => {
+      const adapter = createMockAdapter();
+      const linkedPath = "/project/components/Linked.tsx";
+      const canonicalPath = "/canonical/project/components/Linked.tsx";
+      adapter.fs.files.set(linkedPath, "export default function Linked() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      let canonicalCandidate = canonicalPath;
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve("/canonical/project");
+        if (path === linkedPath) return Promise.resolve(canonicalCandidate);
+        return Promise.resolve(path);
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const first = await resolver.resolve("./components/Linked.tsx", "/project/index.ts");
+      canonicalCandidate = "/canonical/outside/Secret.tsx";
+      const cached = await resolver.resolve("./components/Linked.tsx", "/project/index.ts");
+
+      assertEquals(first?.path, canonicalPath);
+      assertStrictEquals(
+        cached,
+        first,
+        "the cached result must retain the verified canonical path",
+      );
+    });
+
+    it("should normalize native Windows canonical paths before returning them", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "C:/project";
+      const componentPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(componentPath, "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      adapter.fs.realPath = (path: string) => {
+        if (path === projectDir) return Promise.resolve("C:\\project");
+        if (path === componentPath) {
+          return Promise.resolve("C:\\project\\components\\Button.tsx");
+        }
+        return Promise.resolve(path);
+      };
+      const resolver = new ModuleResolver({ projectDir, adapter });
+
+      const result = await resolver.resolve("./components/Button.tsx", `${projectDir}/index.ts`);
+
+      assertEquals(result?.path, componentPath);
+    });
+
+    it("should propagate canonicalization failures", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/components/Button.tsx", "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      const failure = {
+        code: "ENOENT",
+        message: "canonical path backend unavailable",
+      };
+      adapter.fs.realPath = () => Promise.reject(failure);
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const error = await assertRejects(() =>
+        resolver.resolve("./components/Button.tsx", "/project/index.ts")
+      );
+
+      assertEquals(error, failure);
+    });
+
+    it("should propagate an operational canonicalization failure masked by a concurrent not-found", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/project/components/Button.tsx", "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      const failure = new Error("canonical path backend unavailable");
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") {
+          return Promise.resolve().then(() => Promise.reject(failure));
+        }
+        return Promise.reject(
+          FILE_NOT_FOUND.create({
+            detail: "File not found during canonicalization",
+            context: { operation: "realPath" },
+          }),
+        );
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const error = await assertRejects(() =>
+        resolver.resolve("./components/Button.tsx", "/project/index.ts")
+      );
+
+      assertEquals(
+        error,
+        failure,
+        "an operational realPath failure must surface even when the other realPath call rejects with not-found first",
+      );
+    });
+
+    it("should return null when a file disappears during canonicalization", async () => {
+      const adapter = createMockAdapter();
+      const componentPath = "/project/components/Button.tsx";
+      adapter.fs.files.set(componentPath, "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      adapter.fs.realPath = (path: string) => {
+        if (path === "/project") return Promise.resolve(path);
+        return Promise.reject(
+          FILE_NOT_FOUND.create({
+            detail: "File not found during canonicalization",
+            context: { operation: "realPath" },
+          }),
+        );
+      };
+      const resolver = new ModuleResolver({ projectDir: "/project", adapter });
+
+      const result = await resolver.resolve(
+        "./components/Button.tsx",
+        "/project/index.ts",
+      );
+
       assertEquals(result, null);
     });
   });

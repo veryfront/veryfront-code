@@ -1172,13 +1172,22 @@ describe("ModuleResolver", () => {
       });
     });
 
-    it("should handle relative import attempting to escape project root", async () => {
+    it("should block relative imports that resolve to existing files outside the project", async () => {
       await withTestContext("relative-escape-root", async (context) => {
-        const r = await createTestResolver(context);
+        const projectDir = join(context.projectDir, "project");
+        await mkdir(join(projectDir, "src"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "outside.ts"),
+          "export const outside = true;",
+        );
+        const r = new ModuleResolver({
+          projectDir,
+          adapter: await getAdapter(),
+        });
 
         const resolved = await r.resolve(
-          "../../../../../../../../nonexistent-file-xyz.ts",
-          "src/main.ts",
+          "../../outside.ts",
+          join(projectDir, "src/main.ts"),
         );
         assertEquals(resolved, null);
       });
