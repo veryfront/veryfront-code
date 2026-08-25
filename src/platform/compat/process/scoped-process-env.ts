@@ -62,6 +62,30 @@ export function readProjectScopedEnv(
   return readScoped(snapshot, key);
 }
 
+/**
+ * Record a write against the active snapshot instead of the host environment.
+ *
+ * Exported so the mutating accessors (`setEnv()`) apply writes through exactly
+ * the same rule as the raw `process.env` view: while a project scope is
+ * active, its snapshot owns the whole environment and a write must stay
+ * contained to that scope rather than reaching the shared host process.
+ */
+export function writeProjectScopedEnv(
+  snapshot: ProjectEnvSnapshot,
+  key: string,
+  value: string,
+): void {
+  writesFor(snapshot).set(key, value);
+}
+
+/** Record a deletion against the active snapshot (masks the snapshot entry). */
+export function deleteProjectScopedEnv(
+  snapshot: ProjectEnvSnapshot,
+  key: string,
+): void {
+  writesFor(snapshot).set(key, null);
+}
+
 /** The scoped view as a plain record, for the bulk accessor. */
 export function projectScopedEnvRecord(
   snapshot: ProjectEnvSnapshot,

@@ -5,6 +5,7 @@ import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
   getFrameworkSourceLookupDirs,
+  isPrivilegedFrameworkSourceKey,
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
@@ -308,4 +309,45 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
     });
     assertEquals(result?.path, target);
   });
+});
+
+describe("framework-source-resolver — privileged source keys", () => {
+  const privilegedKeys = [
+    "platform/compat/process",
+    "platform/compat/process.ts",
+    "platform/compat/process.js",
+    "platform/compat/process/env",
+    "platform/compat/process/env.ts",
+    "platform/compat/process/env.js",
+    "platform/compat/process/env.ts.src",
+    "platform/compat/process/env.js?ssr=true",
+    "platform/compat/process/runtime-process.ts",
+    "platform/compat/process/scoped-process-env.ts",
+    "platform/compat/process/host-runtime.ts",
+    "platform/compat/process/lifecycle.ts",
+    "platform/compat/process/command.ts",
+  ];
+
+  for (const key of privilegedKeys) {
+    it(`marks ${key} as privileged`, () => {
+      assertEquals(isPrivilegedFrameworkSourceKey(key), true);
+    });
+  }
+
+  const publicKeys = [
+    "platform/env",
+    "platform/env.ts",
+    "platform/index",
+    "platform/compat/fs",
+    "platform/compat/path/index",
+    "platform/compat/processor", // sibling name must not match by prefix
+    "testing/index",
+    "react/runtime/core",
+  ];
+
+  for (const key of publicKeys) {
+    it(`keeps ${key} resolvable`, () => {
+      assertEquals(isPrivilegedFrameworkSourceKey(key), false);
+    });
+  }
 });

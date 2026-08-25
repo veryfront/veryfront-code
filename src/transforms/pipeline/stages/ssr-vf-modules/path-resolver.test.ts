@@ -106,6 +106,45 @@ describe("resolveFrameworkFile", () => {
   });
 
   for (
+    const privilegedPath of [
+      "/_vf_modules/_veryfront/platform/compat/process/env.js",
+      "/_vf_modules/_veryfront/platform/compat/process/env.js?ssr=true",
+      "/_vf_modules/_veryfront/platform/compat/process/env.ts",
+      "/_vf_modules/_veryfront/platform/compat/process/runtime-process.js",
+      "/_vf_modules/_veryfront/platform/compat/process/scoped-process-env.js",
+      "/_vf_modules/_veryfront/platform/compat/process.js",
+      "file:///_vf_modules/_veryfront/platform/compat/process/env.js?ssr=true",
+    ]
+  ) {
+    it(`refuses privileged framework module ${privilegedPath}`, async () => {
+      const fs = createMockFs(
+        new Proxy({}, {
+          has: () => true,
+          get: () => "export function getHostEnv() {}",
+        }) as Record<string, string>,
+      );
+
+      const result = await resolveFrameworkFile(privilegedPath, fs, async () => true);
+
+      assertEquals(result, null);
+    });
+  }
+
+  it("still resolves the public platform/env facade", async () => {
+    const sourcePath = join(FRAMEWORK_ROOT, "src", "platform", "env.ts");
+    const files: Record<string, string> = {
+      [sourcePath]: 'export { getEnv } from "./compat/process/env.ts";',
+    };
+    const fs = createMockFs(files);
+    const result = await resolveFrameworkFile(
+      "/_vf_modules/_veryfront/platform/env.js?ssr=true",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(result?.sourcePath, sourcePath);
+  });
+
+  for (
     const maliciousPath of [
       "/_vf_modules/_veryfront/../../secret.js",
       "/_vf_modules/_veryfront/%252e%252e/secret.js",

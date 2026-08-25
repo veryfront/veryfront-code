@@ -373,6 +373,53 @@ describe("module-fetcher", () => {
     assertEquals(resolved, false);
   });
 
+  describe("privileged framework modules", () => {
+    const untouchableAdapter = {
+      env: { get: (_key: string) => undefined },
+      fs: {
+        resolveFile: (_path: string) => {
+          throw new Error("resolveFile must not be called for a refused privileged module");
+        },
+        readFile: (_path: string) => {
+          throw new Error("readFile must not be called for a refused privileged module");
+        },
+      },
+    } as any;
+
+    it("refuses a tenant entry import of the host env implementation", async () => {
+      const ctx = createModuleFetcherContext(
+        "/cache",
+        untouchableAdapter,
+        "/project",
+        "proj-privileged",
+        { strictMissingModules: true },
+      );
+
+      const result = await fetchAndCacheModule(
+        "/_vf_modules/_veryfront/platform/compat/process/env.js",
+        ctx,
+      );
+      assertEquals(result, null);
+    });
+
+    it("refuses a privileged module imported from a tenant module", async () => {
+      const ctx = createModuleFetcherContext(
+        "/cache",
+        untouchableAdapter,
+        "/project",
+        "proj-privileged",
+        { strictMissingModules: true },
+      );
+
+      const result = await fetchAndCacheModule(
+        "/_vf_modules/_veryfront/platform/compat/process/scoped-process-env.js",
+        ctx,
+        "_vf_modules/components/page.js",
+      );
+      assertEquals(result, null);
+    });
+  });
+
   describe("strictMissingModules", () => {
     it("throws when module cannot be resolved", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-cache-" });

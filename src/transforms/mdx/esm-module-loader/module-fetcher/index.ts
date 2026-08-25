@@ -21,6 +21,8 @@ import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
+import { canonicalizeContainedModulePath } from "../resolution/module-path.ts";
+import { isPrivilegedFrameworkSourceKey } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { resolveNestedImportBase, resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
@@ -152,6 +154,46 @@ function unwrapDependencyPinningPath(
 }
 
 /**
+ * Return the framework-relative source key for a `_veryfront/` module path,
+ * or null when the path does not address framework source.
+ */
+function frameworkSourceKeyOf(modulePath: string): string | null {
+  const withoutVfModules = modulePath.startsWith("_vf_modules/")
+    ? modulePath.slice("_vf_modules/".length)
+    : modulePath;
+  if (!withoutVfModules.startsWith("_veryfront/")) return null;
+  return withoutVfModules.slice("_veryfront/".length);
+}
+
+/**
+ * Return whether a privileged framework module fetch must be refused.
+ *
+ * Privileged implementation modules (the host process env seam) may only be
+ * fetched as transitive dependencies of framework source — a fetch whose
+ * parent is itself a framework module. A fetch reached from tenant code
+ * (project module parent, or no parent at all) is refused before any cache
+ * lookup, so a copy cached for the framework graph is never handed to a
+ * tenant-requested import.
+ */
+function isRefusedPrivilegedModuleFetch(
+  normalizedPath: string,
+  parentModulePath: string | undefined,
+  expectedCacheKey: string | undefined,
+): boolean {
+  const frameworkKey = frameworkSourceKeyOf(normalizedPath);
+  if (frameworkKey === null || !isPrivilegedFrameworkSourceKey(frameworkKey)) {
+    return false;
+  }
+
+  if (parentModulePath === undefined) return true;
+  const normalizedParent = canonicalizeContainedModulePath(
+    unwrapDependencyPinningPath(parentModulePath, expectedCacheKey),
+  );
+  if (normalizedParent === null) return true;
+  return frameworkSourceKeyOf(normalizedParent) === null;
+}
+
+/**
  * Fetch and cache a module.
  * This is the main entry point for module fetching operations.
  */
@@ -168,6 +210,16 @@ export async function fetchAndCacheModule(
     parentModulePath ? unwrapDependencyPinningPath(parentModulePath, expectedCacheKey) : undefined,
   );
   const projectSlug = context.projectSlug || "unknown";
+
+  if (isRefusedPrivilegedModuleFetch(normalizedPath, parentModulePath, expectedCacheKey)) {
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Refusing privileged framework module for tenant import`, {
+      projectSlug,
+      normalizedPath,
+      parentModulePath,
+    });
+    return null;
+  }
+
   const moduleGraph = context.moduleGraph ??= new Set<string>();
   if (!moduleGraph.has(normalizedPath)) {
     if (moduleGraph.size >= MAX_MDX_MODULE_GRAPH_ENTRIES) {

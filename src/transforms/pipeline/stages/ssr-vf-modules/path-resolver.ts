@@ -9,6 +9,7 @@ import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
+  isPrivilegedFrameworkSourceKey,
   isSafeFrameworkSourceKey,
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -66,6 +67,19 @@ export async function resolveFrameworkFile(
     ? pathWithoutPrefix.slice("_veryfront/".length)
     : pathWithoutPrefix;
   if (!isSafeFrameworkSourceKey(frameworkRelativePath)) return null;
+  // /_vf_modules/ specifiers originate from tenant module graphs (either
+  // written literally or rewritten from tenant `#veryfront/*` imports), so a
+  // privileged implementation module must not be served as an entry point.
+  // The framework's own transitive imports resolve through
+  // resolveAndTransformVeryfrontImport / resolveRelativeFrameworkImport and
+  // are unaffected.
+  if (isPrivilegedFrameworkSourceKey(frameworkRelativePath)) {
+    logger.warn(`${LOG_PREFIX} Refusing privileged framework module for tenant import`, {
+      vfModulePath,
+      frameworkRelativePath,
+    });
+    return null;
+  }
 
   logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
     input: vfModulePath,

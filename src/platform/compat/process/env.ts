@@ -1,9 +1,11 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
 import {
+  deleteProjectScopedEnv,
   installProjectScopedProcessEnv,
   projectScopedEnvRecord,
   readProjectScopedEnv,
+  writeProjectScopedEnv,
 } from "./scoped-process-env.ts";
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
@@ -233,6 +235,15 @@ export function getEnvBoolean(
 
 /** Sets env. */
 export function setEnv(key: string, value: string): void {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  if (projectEnv !== undefined) {
+    // Same rule as getEnv() and the process.env view: while a project scope is
+    // active its snapshot is the whole environment, so a write stays contained
+    // to that scope instead of mutating the shared host process environment.
+    writeProjectScopedEnv(projectEnv, key, value);
+    return;
+  }
+
   const overlay = getEnvOverlayStore();
   if (overlay) {
     overlay.set(key, value);
@@ -253,6 +264,13 @@ export function setEnv(key: string, value: string): void {
 
 /** Delete a process environment variable. */
 export function deleteEnv(key: string): void {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  if (projectEnv !== undefined) {
+    // Contained to the active project scope for the same reason as setEnv().
+    deleteProjectScopedEnv(projectEnv, key);
+    return;
+  }
+
   const overlay = getEnvOverlayStore();
   if (overlay) {
     overlay.set(key, null);

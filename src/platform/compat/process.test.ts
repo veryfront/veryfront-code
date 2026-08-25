@@ -128,6 +128,32 @@ describe("Process Compat", () => {
       assertEquals(getEnv(testKey), specialValue);
     });
 
+    it("contains setEnv writes to the active project scope", () => {
+      setEnv(testKey, "host-value");
+
+      runWithProjectEnv({ [testKey]: "project-value" }, () => {
+        setEnv(testKey, "project-write");
+        assertEquals(getEnv(testKey), "project-write");
+        assertEquals(env()[testKey], "project-write");
+      });
+
+      assertEquals(getEnv(testKey), "host-value");
+      assertEquals(getHostEnv(testKey), "host-value");
+    });
+
+    it("contains deleteEnv to the active project scope", () => {
+      setEnv(testKey, "host-value");
+
+      runWithProjectEnv({ [testKey]: "project-value" }, () => {
+        deleteEnv(testKey);
+        assertEquals(getEnv(testKey), undefined);
+        assertEquals(env()[testKey], undefined);
+      });
+
+      assertEquals(getEnv(testKey), "host-value");
+      assertEquals(getHostEnv(testKey), "host-value");
+    });
+
     it("keeps direct env readers aligned inside the test overlay", () => {
       setEnv(testKey, testValue);
 

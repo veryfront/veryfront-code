@@ -33,6 +33,42 @@ export function isSafeFrameworkSourceKey(candidate: string): boolean {
   return !hasDangerousSegments(candidate);
 }
 
+/**
+ * Framework subtrees that tenant module loading must never resolve directly.
+ *
+ * `platform/compat/process` holds the host process seam: `getHostEnv()`, the
+ * captured host environment record, the scoped-write bookkeeping, and process
+ * mutators. Tenant code reaches framework source through supported package
+ * exports (for environment access, `veryfront/platform/env`), and the
+ * implementation modules stay reachable for the framework's own transform
+ * graph, which resolves transitive imports through separate trusted paths.
+ * Serving these modules as tenant-requested entry points would let a project
+ * import `getHostEnv` and read host-only secrets while its project
+ * environment overlay is active.
+ */
+const PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES = ["platform/compat/process"] as const;
+
+const FRAMEWORK_SOURCE_KEY_EXT_RE = /\.(?:src|tsx|ts|jsx|js|mjs|cjs|mdx|md|json)$/;
+
+/**
+ * Return whether a tenant-supplied framework source key names a privileged
+ * implementation module that must not be served to tenant module loading.
+ *
+ * The key is compared after stripping any query suffix and trailing module
+ * extensions (including `.src` embedded-source suffixes), so
+ * `platform/compat/process/env`, `platform/compat/process/env.ts`, and
+ * `platform/compat/process/env.js?ssr=true` all match.
+ */
+export function isPrivilegedFrameworkSourceKey(candidate: string): boolean {
+  let normalized = candidate.replace(/\?.*$/, "").replace(/\/+$/, "");
+  while (FRAMEWORK_SOURCE_KEY_EXT_RE.test(normalized)) {
+    normalized = normalized.replace(FRAMEWORK_SOURCE_KEY_EXT_RE, "");
+  }
+  return PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES.some((prefix) =>
+    normalized === prefix || normalized.startsWith(`${prefix}/`)
+  );
+}
+
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 export const FRAMEWORK_SRC_DIR = join(FRAMEWORK_ROOT, "src");
 export const FRAMEWORK_EMBEDDED_SRC_DIR = join(FRAMEWORK_ROOT, "dist", "framework-src");
