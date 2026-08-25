@@ -895,6 +895,50 @@ export default config as const;
         assertStringIncludes(error.message, "left-pad");
       });
 
+      it("classifies Bun ResolveMessage prototype accessors", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-prototype-",
+          "class ResolveMessage {}\n" +
+            "Object.defineProperties(ResolveMessage.prototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "  [Symbol.toStringTag]: { value: 'ResolveMessage', configurable: true },\n" +
+            "});\n" +
+            "throw new ResolveMessage();\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("does not invoke unbranded inherited resolver accessors", async () => {
+        const counterKey = "__veryfrontConfigHostileResolverAccessorReads";
+        try {
+          const error = await loadFailure(
+            "vf-config-unbranded-resolve-prototype-",
+            `globalThis.${counterKey} = 0;\n` +
+              "class ProjectResolveMessage {}\n" +
+              "Object.defineProperties(ProjectResolveMessage.prototype, {\n" +
+              "  code: { get() { globalThis.__veryfrontConfigHostileResolverAccessorReads += 1; return 'ERR_MODULE_NOT_FOUND'; } },\n" +
+              "  message: { get() { globalThis.__veryfrontConfigHostileResolverAccessorReads += 1; return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; } },\n" +
+              "});\n" +
+              "throw new ProjectResolveMessage();\n",
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(
+            (globalThis as Record<string, unknown>)[counterKey],
+            0,
+          );
+        } finally {
+          delete (globalThis as Record<string, unknown>)[counterKey];
+        }
+      });
+
       it("contains a cause getter that throws", async () => {
         // A trusted config runs in the shared host realm and can define `cause`
         // as a throwing accessor. Walking the chain must not let that escape in
