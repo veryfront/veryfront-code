@@ -8,7 +8,11 @@ import type {
 } from "../types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  type PersistedPendingApproval,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
@@ -114,7 +118,7 @@ export class ApprovalManager {
 
     const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
 
-    const approval: PendingApproval & { responseSchemaId?: string } = {
+    const approval: PersistedPendingApproval = {
       id: generateId("apr"),
       nodeId,
       message: waitConfig.message || "Approval required",
@@ -239,7 +243,7 @@ export class ApprovalManager {
   private async getPersistedApproval(
     runId: string,
     approvalId: string,
-  ): Promise<PendingApproval | null> {
+  ): Promise<PersistedPendingApproval | null> {
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }

@@ -1,8 +1,5 @@
 import type { PendingApproval, WorkflowRun } from "../types.ts";
-
-type PersistedPendingApproval = PendingApproval & {
-  responseSchemaId?: string;
-};
+import type { PersistedPendingApproval } from "../backends/types.ts";
 
 /** Read the internal schema identity retained by workflow backends. */
 export function getPendingApprovalResponseSchemaId(

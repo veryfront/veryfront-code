@@ -47,6 +47,7 @@ import {
   executeWorkflowRunControl,
   toPersistedWorkflowContext,
 } from "../runtime/workflow-run-control.ts";
+import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -696,7 +697,11 @@ export class WorkflowExecutor {
     return {
       runId,
       settled: () => settled,
-      status: () => this.config.backend.getRun(runId) as Promise<WorkflowRun>,
+      status: async () => {
+        const run = await this.config.backend.getRun(runId);
+        if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+        return projectRunPendingApprovals(run);
+      },
       result: () => this.waitForResult<TOutput>(runId),
       cancel: () => this.cancel(runId),
     };

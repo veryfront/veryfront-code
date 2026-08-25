@@ -10,6 +10,7 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { PersistedPendingApproval } from "../backends/types.ts";
 import { branch } from "../dsl/branch.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { loop } from "../dsl/loop.ts";
@@ -18,7 +19,10 @@ import { parallel } from "../dsl/parallel.ts";
 import { step } from "../dsl/step.ts";
 import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
-import { getPendingApprovalResponseSchemaId } from "../runtime/pending-approval-metadata.ts";
+import {
+  getPendingApprovalResponseSchemaId,
+  projectPendingApproval,
+} from "../runtime/pending-approval-metadata.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
@@ -41,6 +45,28 @@ class CountingApprovalReadsBackend extends MemoryBackend {
   override getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     this.approvalReads++;
     return super.getPendingApprovals(runId);
+  }
+}
+
+class NormalizingApprovalBackend extends MemoryBackend {
+  override savePendingApprovalIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean> {
+    const normalized: PersistedPendingApproval = {
+      ...projectPendingApproval(approval),
+      ...(approval.responseSchemaId === undefined
+        ? {}
+        : { responseSchemaId: approval.responseSchemaId }),
+    };
+    return super.savePendingApprovalIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      normalized,
+    );
   }
 }
 
@@ -410,6 +436,9 @@ describe("WorkflowClient", () => {
     });
 
     it("recovers a parent schema when a sub-workflow reuses its node id", async () => {
+      await client.destroy();
+      backend = new NormalizingApprovalBackend();
+      client = createWorkflowClient({ backend });
       const collidingSchemaWorkflow = workflow({
         id: "colliding-persisted-schema-workflow",
         steps: [
@@ -950,7 +979,7 @@ describe("WorkflowClient", () => {
           requestedAt: new Date(),
           status: "pending",
           responseSchemaId: '["steps","review"]',
-        } as PendingApproval & { responseSchemaId: string },
+        } satisfies PersistedPendingApproval,
       );
       const observation = await client.observeRunEvents(run.id);
       assertExists(observation);
@@ -1480,6 +1509,29 @@ describe("WorkflowClient", () => {
 
       assertExists(status);
       assertEquals(status.id, handle.runId);
+    });
+
+    it("does not expose backend-only approval metadata from status", async () => {
+      const handle = await client.start("test-workflow", {});
+      await backend.savePendingApproval(
+        handle.runId,
+        {
+          id: "approval-with-internal-schema-identity",
+          nodeId: "review",
+          message: "Review",
+          payload: undefined,
+          requestedAt: new Date(),
+          status: "pending",
+          responseSchemaId: '["steps","review"]',
+        } satisfies PersistedPendingApproval,
+      );
+
+      const status = await handle.status();
+
+      assertEquals(
+        Object.hasOwn(status.pendingApprovals[0]!, "responseSchemaId"),
+        false,
+      );
     });
 
     it("should provide cancel method", async () => {

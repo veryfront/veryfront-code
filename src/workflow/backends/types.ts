@@ -101,6 +101,11 @@ export interface WorkflowRunObservation {
   close(): Promise<void>;
 }
 
+/** Approval record persisted by workflow backends, including internal restart metadata. */
+export interface PersistedPendingApproval extends PendingApproval {
+  responseSchemaId?: string;
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
@@ -141,25 +146,25 @@ export interface WorkflowBackend {
   /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
-  savePendingApproval(runId: string, approval: PendingApproval): Promise<void>;
+  savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void>;
   /** Append an approval only while the run status and worker owner match. */
   savePendingApprovalIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
   ): Promise<boolean>;
   /** Patch metadata on an existing pending approval. */
   updatePendingApproval?(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: Partial<PersistedPendingApproval>,
   ): Promise<void>;
-  getPendingApprovals(runId: string): Promise<PendingApproval[]>;
+  getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]>;
   getPendingApproval?(
     runId: string,
     approvalId: string,
-  ): Promise<PendingApproval | null>;
+  ): Promise<PersistedPendingApproval | null>;
   /**
    * Apply an approval decision atomically, but only while the approval is still
    * pending. Atomic backends resolve `true` when the decision was written and
@@ -175,7 +180,7 @@ export interface WorkflowBackend {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
-  }): Promise<Array<{ runId: string; approval: PendingApproval }>>;
+  }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>>;
 
   enqueue?(job: WorkflowQueueItem): Promise<void>;
   dequeue?(): Promise<WorkflowQueueItem | null>;
