@@ -702,15 +702,66 @@ describe("Salesforce service-account integration source", () => {
       TypeError,
       "policy predicates",
     );
+    assertEquals(transport.captures, []);
+  });
+
+  it("permits advertised data category filters with bounded syntax", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(({ request }) =>
+      request.url.endsWith("/services/oauth2/token")
+        ? Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        })
+        : Response.json({ records: [] })
+    );
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases", "salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+    const projection =
+      "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online'";
+
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: `${projection} WITH DATA CATEGORY Geography__c AT Europe__c ORDER BY LastPublishedDate DESC LIMIT 25`,
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: `${projection} WITH DATA CATEGORY Geography__c AT (Europe__c, Asia__c) AND Product__c ABOVE_OR_BELOW Phones__c ORDER BY LastPublishedDate DESC LIMIT 25`,
+    });
+
     await assertRejects(
       () =>
         source.executeTool("salesforce__search_knowledge_articles", {
-          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' WITH DATA CATEGORY Confidential__c AT Internal__c ORDER BY LastPublishedDate DESC LIMIT 25",
+          q: `${projection} WITH DATA CATEGORY Geography__c AT Europe__c OR Product__c AT Phones__c LIMIT 25`,
         }),
       TypeError,
-      "authorized root-object fields",
+      "data category",
     );
-    assertEquals(transport.captures, []);
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: `${projection} WITH DATA CATEGORY A__c AT One__c AND B__c AT Two__c AND C__c AT Three__c AND D__c AT Four__c LIMIT 25`,
+        }),
+      TypeError,
+      "data category",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WITH DATA CATEGORY Geography__c AT Europe__c LIMIT 50",
+        }),
+      TypeError,
+      "does not allow data category",
+    );
+
+    const providerQueries = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    );
+    assertEquals(providerQueries.length, 2);
   });
 
   it("scans repeated negated policy predicates in one pass", async () => {
@@ -783,6 +834,14 @@ describe("Salesforce service-account integration source", () => {
       () =>
         source.executeTool("salesforce__list_cases", {
           q: `${projection} WHERE DAY_ONLY(SensitiveDate__c) = 2026-08-25`,
+        }),
+      TypeError,
+      "predicate functions",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE AT(Status) = 'Closed'`,
         }),
       TypeError,
       "predicate functions",

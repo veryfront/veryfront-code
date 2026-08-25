@@ -160,7 +160,8 @@ const CURATED_SOQL_RESTRICTIONS =
   "Custom queries must keep the default query's selected fields and object, may only filter or " +
   "sort by fields the default query already references, and must preserve the default query's " +
   "WHERE predicates (additional conditions can only be AND-ed). Functions, subqueries, and " +
-  "side-effecting clauses are rejected.";
+  "side-effecting clauses are rejected. DataCategory filters are allowed only where the " +
+  "parameter description advertises them.";
 
 function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
@@ -755,6 +756,41 @@ function extractSoqlWhereClause(query: string): string | undefined {
   return query.slice(contentStart, end ? end.index : query.length);
 }
 
+const SOQL_DATA_CATEGORY_IDENTIFIER = String.raw`[a-z][a-z0-9_]*`;
+const SOQL_DATA_CATEGORY_SELECTION =
+  `(?:${SOQL_DATA_CATEGORY_IDENTIFIER}|\\(\\s*${SOQL_DATA_CATEGORY_IDENTIFIER}` +
+  `(?:\\s*,\\s*${SOQL_DATA_CATEGORY_IDENTIFIER})*\\s*\\))`;
+const SOQL_DATA_CATEGORY_SPECIFICATION =
+  `${SOQL_DATA_CATEGORY_IDENTIFIER}\\s+(?:at|above|below|above_or_below)\\s+` +
+  SOQL_DATA_CATEGORY_SELECTION;
+const SOQL_DATA_CATEGORY_CLAUSE_PATTERN = new RegExp(
+  `^${SOQL_DATA_CATEGORY_SPECIFICATION}` +
+    `(?:\\s+and\\s+${SOQL_DATA_CATEGORY_SPECIFICATION}){0,2}$`,
+  "i",
+);
+
+function validateSoqlDataCategoryClause(tool: IntegrationToolMeta, query: string): void {
+  const clause = extractSoqlClause(
+    collapseSoqlWhitespace(maskSoqlStrings(query)),
+    /\bwith\s+data\s+category\b/i,
+    /\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b/gi,
+  );
+  if (clause === undefined) return;
+  if (getToolId(tool) !== "salesforce__search_knowledge_articles") {
+    throw new TypeError("Salesforce curated tool does not allow data category filters");
+  }
+  if (!SOQL_DATA_CATEGORY_CLAUSE_PATTERN.test(clause.trim())) {
+    throw new TypeError("Salesforce curated tool SOQL contains an invalid data category filter");
+  }
+}
+
+function omitSoqlDataCategoryClause(query: string): string {
+  return query.replace(
+    /\bwith\s+data\s+category\b.*?(?=\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b|$)/i,
+    "",
+  );
+}
+
 function* iterateSoqlClauseFields(query: string): Generator<string> {
   const masked = collapseSoqlWhitespace(maskSoqlStrings(query));
   for (const match of masked.matchAll(/[a-z][a-z0-9_.]*/gi)) {
@@ -784,18 +820,6 @@ function* iterateSoqlClauseFields(query: string): Generator<string> {
       if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) yield field.toLowerCase();
       if (separator === -1) break;
       entryStart = separator + 1;
-    }
-  }
-  const dataCategoryClause = extractSoqlClause(
-    masked,
-    /\bwith\s+data\s+category\b/i,
-    /\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b/gi,
-  );
-  if (dataCategoryClause) {
-    const syntaxKeywords = new Set(["and", "at", "above", "below", "above_or_below"]);
-    for (const match of dataCategoryClause.matchAll(/[a-z][a-z0-9_]*/gi)) {
-      const identifier = match[0].toLowerCase();
-      if (!syntaxKeywords.has(identifier)) yield identifier;
     }
   }
 }
@@ -834,7 +858,9 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
   if (/\bupdate\s+(?:tracking|viewstat)\b/i.test(supplied)) {
     throw new TypeError("Salesforce curated tool SOQL does not allow side-effecting clauses");
   }
-  for (const match of supplied.matchAll(/[a-z][a-z0-9_]*\s*\(/gi)) {
+  validateSoqlDataCategoryClause(tool, args.q);
+  const suppliedWithoutDataCategory = omitSoqlDataCategoryClause(supplied);
+  for (const match of suppliedWithoutDataCategory.matchAll(/[a-z][a-z0-9_]*\s*\(/gi)) {
     const token = match[0].replace("(", "").trim().toLowerCase();
     if (!["where", "and", "or", "not", "in", "includes", "excludes"].includes(token)) {
       throw new TypeError("Salesforce curated tool SOQL does not allow predicate functions");
