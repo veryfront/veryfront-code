@@ -558,7 +558,6 @@ describe("environment URL readiness", () => {
     environmentName: "production",
     url: "https://my-project.production.veryfront.com",
     protected: false,
-    apiToken: "test-token",
   };
 
   it("retries a transient 404 before accepting the environment URL", async () => {
@@ -617,7 +616,7 @@ describe("environment URL readiness", () => {
     assertEquals(requests, 0);
   });
 
-  it("authenticates a protected Veryfront environment with the stored token", async () => {
+  it("does not send the API token to a protected Veryfront environment", async () => {
     let cookie: string | null = null;
 
     await withMockFetch(
@@ -633,10 +632,10 @@ describe("environment URL readiness", () => {
         }),
     );
 
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, null);
   });
 
-  it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
+  it("upgrades protected Veryfront environment probes to HTTPS", async () => {
     let requestedUrl = "";
     let cookie: string | null = null;
 
@@ -656,7 +655,7 @@ describe("environment URL readiness", () => {
     );
 
     assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
-    assertEquals(cookie, "authToken=test-token");
+    assertEquals(cookie, null);
   });
 
   it("does not send credentials to a mismatched Veryfront project host", async () => {
@@ -693,12 +692,12 @@ describe("environment URL readiness", () => {
       },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: null,
       },
     ]);
   });
 
-  it("authenticates a protected veryfront.org environment directly", async () => {
+  it("does not send the API token to a protected veryfront.org environment", async () => {
     const requests: Array<{ url: string; cookie: string | null }> = [];
 
     await withMockFetch(
@@ -720,7 +719,7 @@ describe("environment URL readiness", () => {
 
     assertEquals(requests, [{
       url: "https://my-project.production.veryfront.org/",
-      cookie: "authToken=test-token",
+      cookie: null,
     }]);
   });
 
@@ -755,7 +754,7 @@ describe("environment URL readiness", () => {
       { url: "https://app.example.com/", cookie: null },
       {
         url: "https://my-project.production.veryfront.com/",
-        cookie: "authToken=test-token",
+        cookie: null,
       },
     ]);
   });
@@ -807,7 +806,7 @@ describe("environment URL readiness", () => {
     );
   });
 
-  it("reports an actionable authentication error for sign-in redirects", async () => {
+  it("accepts the sign-in challenge for a protected environment", async () => {
     await withMockFetch(
       () =>
         Promise.resolve(
@@ -817,15 +816,10 @@ describe("environment URL readiness", () => {
           }),
         ),
       () =>
-        assertRejects(
-          () =>
-            waitForEnvironmentReady({
-              ...hostedTarget,
-              protected: true,
-            }),
-          Error,
-          "veryfront login",
-        ),
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+        }),
     );
   });
 
