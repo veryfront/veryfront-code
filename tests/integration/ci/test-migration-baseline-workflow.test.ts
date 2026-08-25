@@ -1,8 +1,8 @@
+import { join } from "#std/path";
+import { parse } from "#std/yaml/parse";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#std/path";
-import { parse } from "#std/yaml/parse";
 
 type YamlRecord = Record<string, unknown>;
 
