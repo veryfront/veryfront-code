@@ -31,6 +31,15 @@ function isReactComponentObject(value: unknown): boolean {
   return typeof tag === "symbol" && REACT_COMPONENT_OBJECT_TAGS.has(tag);
 }
 
+/** Reports whether an object carries a React-style symbol marker. */
+function hasSymbolTypeTag(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  return typeof (value as { $$typeof?: unknown }).$$typeof === "symbol";
+}
+
 /**
  * The built-in components React exports as bare symbols.
  *
@@ -96,7 +105,12 @@ function firstRenderableExport(moduleObj: Record<string, unknown>): unknown {
     ) {
       return value;
     }
-    if (untaggedObject === undefined && typeof value === "object" && value !== null) {
+    if (
+      untaggedObject === undefined &&
+      typeof value === "object" &&
+      value !== null &&
+      !hasSymbolTypeTag(value)
+    ) {
       untaggedObject = value;
     }
   }

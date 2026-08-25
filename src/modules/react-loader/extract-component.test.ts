@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createElement } from "react";
+import { isValidElementType, SuspenseList } from "npm:react-is@19.2.4";
 import { extractComponent } from "./extract-component.ts";
 
 describe("modules/react-loader/extract-component", () => {
@@ -117,6 +119,28 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("rejects an unrecognized tagged object when no component exists", () => {
+    const marker = { $$typeof: Symbol.for("react.not-a-component") };
+
+    assertThrows(
+      () => extractComponent({ __esModule: true, marker }, "marker-only.tsx"),
+      Error,
+      "No component exported from marker-only.tsx",
+      "an unrecognized tagged object must not use the untagged fallback",
+    );
+  });
+
+  it("rejects a rendered React element when no component exists", () => {
+    const element = createElement("div");
+
+    assertThrows(
+      () => extractComponent({ __esModule: true, element }, "element-only.tsx"),
+      Error,
+      "No component exported from element-only.tsx",
+      "a rendered React element must not use the untagged fallback",
+    );
+  });
+
   it("keeps a context provider declared before a helper function", () => {
     const Ctx = { $$typeof: Symbol.for("react.context"), Provider: () => null };
     const helper = () => null;
@@ -160,8 +184,13 @@ describe("modules/react-loader/extract-component", () => {
   });
 
   it("keeps React's SuspenseList built-in declared before a helper", () => {
-    const SuspenseList = Symbol.for("react.suspense_list");
     const helper = () => null;
+
+    assertEquals(
+      isValidElementType(SuspenseList),
+      true,
+      "react-is must characterize SuspenseList as a bare element type",
+    );
     assertEquals(
       extractComponent({ __esModule: true, SuspenseList, helper }, "suspense-list.tsx") as unknown,
       SuspenseList,
