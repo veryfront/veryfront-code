@@ -22,6 +22,10 @@ const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
   import.meta.url,
 );
+const WAKEUP_WORKFLOW_PATH = new URL(
+  "../../.github/workflows/automated-review-wakeup.yml",
+  import.meta.url,
+);
 
 const bot = (login: string, id: number) => ({ login, id, type: "Bot" });
 
@@ -270,6 +274,32 @@ describe("automated review evidence", () => {
         () => Promise.resolve(false),
       ),
       undefined,
+    );
+  });
+
+  it("honors each trusted human reviewer's latest exact-head state", async () => {
+    const human = { login: "trusted-maintainer", id: 7, type: "User" };
+    const approval = review({ user: human, state: "APPROVED" });
+    const withdrawal = review({ user: human, state: "CHANGES_REQUESTED" });
+    const isTrusted = () => Promise.resolve(true);
+
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [approval, withdrawal], comments: [] },
+        HEAD,
+        undefined,
+        isTrusted,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [withdrawal, approval], comments: [] },
+        HEAD,
+        undefined,
+        isTrusted,
+      ))?.source,
+      "human-approval",
     );
   });
 
@@ -879,6 +909,14 @@ describe("automated review workflow", () => {
       ["created", "edited", "deleted"],
     );
     assertEquals(
+      record(triggers.workflow_run, "review wakeup trigger"),
+      {
+        workflows: ["Automated review wakeup"],
+        types: ["completed"],
+      },
+    );
+    assertEquals("pull_request_review" in triggers, false);
+    assertEquals(
       record(triggers.merge_group, "merge group trigger").types,
       ["checks_requested"],
     );
@@ -889,7 +927,8 @@ describe("automated review workflow", () => {
     for (
       const condition of [
         "github.event.issue.pull_request",
-        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.event.workflow_run.event == 'pull_request_review'",
+        "github.event.workflow_run.pull_requests[0]",
       ]
     ) {
       assert(
@@ -918,6 +957,8 @@ describe("automated review workflow", () => {
         "context.payload.sha",
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
+        "context.payload.workflow_run?.pull_requests",
+        "context.payload.workflow_run?.head_sha",
         "github.rest.pulls.get",
         "Could not resolve a valid review target commit",
       ]
@@ -951,10 +992,8 @@ describe("automated review workflow", () => {
       "deleted issue comments must still be guarded by the issue PR marker",
     );
     assert(
-      String(job.if).includes(
-        "github.event.pull_request.head.repo.full_name == github.repository",
-      ),
-      "fork pull request review events must remain skipped",
+      String(job.if).includes("github.event.workflow_run.pull_requests[0]"),
+      "a completed review wakeup must reconcile through the privileged default-branch workflow",
     );
     const steps = job.steps;
     assert(Array.isArray(steps));
@@ -1054,5 +1093,28 @@ describe("automated review workflow", () => {
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",
     );
+  });
+
+  it("uses an unprivileged review-event wakeup for fork-safe reconciliation", async () => {
+    const workflow = record(
+      parse(await Deno.readTextFile(WAKEUP_WORKFLOW_PATH)),
+      "wakeup workflow",
+    );
+    assertEquals(workflow.name, "Automated review wakeup");
+    assertEquals(record(workflow.permissions, "wakeup permissions"), {});
+    assertEquals(
+      record(
+        record(workflow.on, "wakeup triggers").pull_request_review,
+        "review trigger",
+      ).types,
+      ["submitted", "dismissed"],
+    );
+    const jobs = record(workflow.jobs, "wakeup jobs");
+    const job = record(jobs.review_event, "review event job");
+    assertEquals(record(job.permissions, "review event permissions"), {});
+    assertEquals("uses" in job, false);
+    const steps = job.steps;
+    assert(Array.isArray(steps));
+    assertEquals(record(steps[0], "wakeup step").run, "true");
   });
 });

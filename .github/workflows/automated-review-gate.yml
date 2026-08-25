@@ -3,10 +3,11 @@ name: Automated review gate
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-  pull_request_review:
-    types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
+  workflow_run:
+    workflows: [Automated review wakeup]
+    types: [completed]
   merge_group:
     types: [checks_requested]
 
@@ -20,8 +21,10 @@ jobs:
     if: >-
       github.event_name != 'merge_group' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-       (github.event_name != 'pull_request_review' ||
-        github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.event == 'pull_request_review' &&
+        github.event.workflow_run.pull_requests[0] &&
+        !github.event.workflow_run.pull_requests[1]))
     permissions:
       pull-requests: read
     runs-on: ubuntu-latest
@@ -36,11 +39,17 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            let headSha = context.payload.sha;
+            const workflowPulls = context.payload.workflow_run?.pull_requests;
+            const workflowPull = Array.isArray(workflowPulls) &&
+                workflowPulls.length === 1
+              ? workflowPulls[0]
+              : undefined;
+            let headSha = context.payload.workflow_run?.head_sha ??
+              context.payload.sha;
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
-                : undefined);
+                : workflowPull?.number);
             if (!headSha && pullNumber) {
               const response = await github.rest.pulls.get({
                 owner: context.repo.owner,
@@ -71,14 +80,17 @@ jobs:
       pull-requests: read
       statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
-    # pull_request_review hands fork pull requests a read-only token that cannot
-    # write a commit status, so skip it there and let the trusted
-    # pull_request_target and issue_comment runs publish the decision instead.
+    # Fork pull_request_review events have read-only tokens. The unprivileged
+    # wakeup workflow observes them, then workflow_run invokes this trusted
+    # default-branch reconciler with write permission. This job never reads
+    # wakeup artifacts or executes pull request code.
     if: >-
       github.event_name != 'merge_group' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-      (github.event_name != 'pull_request_review' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.event == 'pull_request_review' &&
+        github.event.workflow_run.pull_requests[0] &&
+        !github.event.workflow_run.pull_requests[1]))
     needs: target
     concurrency:
       # Every pull request event for one head must serialize on the same key so
@@ -110,7 +122,9 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
             const pullNumber = context.payload.pull_request?.number ??
-              context.payload.issue.number;
+              (context.payload.issue?.pull_request
+                ? context.payload.issue.number
+                : context.payload.workflow_run.pull_requests[0].number);
             const response = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,

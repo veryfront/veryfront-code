@@ -35,6 +35,7 @@ export async function findAutomatedReview(
   {
     let codexApproval;
     let codexFinding = false;
+    const latestHumanReviews = new Map();
     for (const review of reviews) {
       const state = typeof review?.state === "string"
         ? review.state.toUpperCase()
@@ -63,17 +64,22 @@ export async function findAutomatedReview(
         continue;
       }
       if (
-        exactHead && state === "APPROVED" &&
-        review?.user?.type === "User" &&
-        typeof review?.user?.login === "string" &&
-        await isTrustedHuman(review.user.login)
+        exactHead && review?.user?.type === "User" &&
+        typeof review?.user?.login === "string"
       ) {
+        // GitHub returns reviews in chronological order. Replacing the entry
+        // makes an approval withdrawable by that reviewer's later state.
+        latestHumanReviews.set(review.user.login, { review, state });
+      }
+    }
+    for (const [login, latest] of latestHumanReviews) {
+      if (latest.state === "APPROVED" && await isTrustedHuman(login)) {
         return {
-          reviewer: review.user.login,
+          reviewer: login,
           source: "human-approval",
-          state,
-          url: typeof review.html_url === "string"
-            ? review.html_url
+          state: latest.state,
+          url: typeof latest.review.html_url === "string"
+            ? latest.review.html_url
             : undefined,
         };
       }
