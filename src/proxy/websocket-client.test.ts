@@ -80,7 +80,73 @@ function identityHeaders(): Headers {
   });
 }
 
+/**
+ * A stream whose readable never produces a frame, so the client's read stays
+ * pending until something settles it. `close()` resolves `closed`, which is all
+ * a real `WebSocketStream` does: it does not settle a read already awaiting the
+ * next frame.
+ */
+function silentStream(): {
+  stream: UpstreamWebSocketStream;
+  readCancelled: () => boolean;
+} {
+  let cancelled = false;
+  let resolveClosed: (info: { closeCode?: number; reason?: string }) => void = () => {};
+  const closed = new Promise<{ closeCode?: number; reason?: string }>((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const readable = new ReadableStream<string | Uint8Array>({
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  return {
+    stream: {
+      opened: Promise.resolve({
+        readable,
+        writable: new WritableStream<string | Uint8Array>(),
+      }),
+      closed,
+      close(closeInfo) {
+        resolveClosed(closeInfo ?? {});
+      },
+    },
+    readCancelled: () => cancelled,
+  };
+}
+
 describe("upstream WebSocket client", () => {
+  it("settles a pending read when the socket closes", async () => {
+    // Regression guard for a leak that surfaced as an intermittent CI failure on
+    // unrelated pull requests: closing left `read()` awaiting the next frame, so
+    // `--trace-leaks` reported an async operation outliving the test.
+    const { stream, readCancelled } = silentStream();
+    const socket = new UpstreamWebSocket(
+      "ws://upstream.test/_ws",
+      identityHeaders(),
+      () => stream,
+    );
+
+    await new Promise<void>((resolve) => {
+      socket.onopen = () => resolve();
+    });
+    assertEquals(readCancelled(), false, "the read is pending while the socket is open");
+
+    const closed = new Promise<void>((resolve) => {
+      socket.onclose = () => resolve();
+    });
+    socket.close(1000, "done");
+    await closed;
+
+    assertEquals(
+      readCancelled(),
+      true,
+      "closing must settle the read, or the operation outlives the connection",
+    );
+  });
+
   it("presents the proxy identity headers on the handshake", async () => {
     const server = startUpstreamServer();
     try {

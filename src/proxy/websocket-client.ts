@@ -71,6 +71,7 @@ async function toChunk(
 export class UpstreamWebSocket {
   #stream: UpstreamWebSocketStream;
   #writer: WritableStreamDefaultWriter<string | Uint8Array> | null = null;
+  #reader: ReadableStreamDefaultReader<string | Uint8Array> | null = null;
   #readyState: number = WebSocket.CONNECTING;
   #writes: Promise<void> = Promise.resolve();
   #settled = false;
@@ -137,6 +138,7 @@ export class UpstreamWebSocket {
 
   async #pump(readable: ReadableStream<string | Uint8Array>): Promise<void> {
     const reader = readable.getReader();
+    this.#reader = reader;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -146,6 +148,7 @@ export class UpstreamWebSocket {
     } catch (error) {
       this.#fail(error);
     } finally {
+      this.#reader = null;
       reader.releaseLock();
     }
   }
@@ -161,6 +164,11 @@ export class UpstreamWebSocket {
     if (this.#settled) return;
     this.#settled = true;
     this.#readyState = WebSocket.CLOSED;
+    // Settle the read still pending on the socket. Closing the stream resolves
+    // `closed` and fires this handler, but it does not settle a `read()` that is
+    // already awaiting the next frame, so the operation would outlive the
+    // connection it belongs to.
+    this.#reader?.cancel().catch(() => {});
     this.onclose?.(new CloseEvent("close", { code, reason, wasClean }));
   }
 }
