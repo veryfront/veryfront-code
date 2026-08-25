@@ -646,7 +646,7 @@ function occupiedCodePoints(code: string): Set<number> {
           continue;
         }
       }
-      const codeUnit = code.charCodeAt(cursor);
+      const codeUnit = code.codePointAt(cursor)!;
       recordSurrogateCodeUnit(codeUnit, cursor, cursor + 1);
       cursor++;
     }
