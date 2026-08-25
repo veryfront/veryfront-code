@@ -21,6 +21,13 @@ permissions:
   pull-requests: write
   statuses: write
 
+# One publisher at a time repo-wide, processing every event in order. `queue`
+# is a workflow-level key; placing this block on the jobs made them fail before
+# any step ran, which took the gate down for every pull request.
+concurrency:
+  group: automated-review-status-publishers
+  queue: max
+
 jobs:
   review:
     name: publish automated review status
@@ -33,9 +40,6 @@ jobs:
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    concurrency:
-      group: automated-review-status-publishers
-      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -167,9 +171,6 @@ jobs:
       github.event.sender.login == 'coderabbitai[bot]' &&
       github.event.sender.id == 136622811 &&
       github.event.sender.type == 'Bot'
-    concurrency:
-      group: automated-review-status-publishers
-      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
