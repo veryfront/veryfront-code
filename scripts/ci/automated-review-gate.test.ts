@@ -321,6 +321,34 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("treats a same-second verdict after an edited finding as ambiguous", async () => {
+    const finding = codexFindingComment(HEAD.slice(0, 10), {
+      id: 100,
+      created_at: "2026-08-25T08:00:00Z",
+      updated_at: "2026-08-25T08:00:02Z",
+    });
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: 101,
+      created_at: "2026-08-25T08:00:02Z",
+      updated_at: "2026-08-25T08:00:02Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [finding, verdict],
+          timeline: [
+            { event: "commented", id: finding.id },
+            { event: "commented", id: verdict.id },
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
   it("does not let an edited clean verdict grant success", async () => {
     assertEquals(
       await findAutomatedReview(

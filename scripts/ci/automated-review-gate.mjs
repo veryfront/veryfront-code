@@ -270,6 +270,13 @@ function isProvablyUneditedComment(comment) {
     updatedAt === createdAt;
 }
 
+function isEditedComment(comment) {
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  return Number.isFinite(createdAt) && Number.isFinite(updatedAt) &&
+    updatedAt !== createdAt;
+}
+
 function isEvidenceProvablyLater(candidate, current, timeline) {
   const candidateTime = candidate.time ?? evidenceTime(
     candidate.evidence,
@@ -281,6 +288,12 @@ function isEvidenceProvablyLater(candidate, current, timeline) {
     return false;
   }
   if (candidateTime !== currentTime) return candidateTime > currentTime;
+  // The timeline records a comment's creation position, not its later edit.
+  // It therefore cannot order a same-second success against an edited finding.
+  if (
+    current.timelineEvent === "commented" &&
+    isEditedComment(current.evidence)
+  ) return false;
   const candidatePosition = timelinePosition(
     timeline,
     candidate.timelineEvent,
