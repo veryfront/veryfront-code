@@ -300,10 +300,29 @@ describe("server/handlers/request/module/module.handler", () => {
       );
 
       for (
-        const pathname of [
-          "/_veryfront/modules/runtime.js",
-          "/_veryfront/data/page.json",
-          "/_veryfront/page-data/page.json",
+        const { pathname, expectedStatus, expectedBody } of [
+          {
+            pathname: "/_veryfront/modules/runtime.js",
+            expectedStatus: 404,
+            expectedBody: "Virtual module not found",
+          },
+          {
+            pathname: "/_veryfront/data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({ slug: "page", frontmatter: {}, html: "" }),
+          },
+          {
+            pathname: "/_veryfront/page-data/page.json",
+            expectedStatus: 200,
+            expectedBody: JSON.stringify({
+              slug: "page",
+              frontmatter: {},
+              props: {},
+              params: {},
+              layoutProps: {},
+              buildVersion: { framework: "test", serverStart: 1 },
+            }),
+          },
         ]
       ) {
         const result = await handler.handle(
@@ -330,9 +349,19 @@ describe("server/handlers/request/module/module.handler", () => {
           `${pathname} denied execution to a granted host`,
         );
         assertEquals(
-          (result.response?.status ?? 0) < 500,
+          result.response instanceof Response,
           true,
-          `${pathname} refused a granted host with ${result.response?.status}`,
+          `${pathname} did not return a response for a granted host`,
+        );
+        assertEquals(
+          result.response!.status,
+          expectedStatus,
+          `${pathname} returned the wrong status for a granted host`,
+        );
+        assertEquals(
+          await result.response!.text(),
+          expectedBody,
+          `${pathname} returned the wrong body for a granted host`,
         );
       }
     });
