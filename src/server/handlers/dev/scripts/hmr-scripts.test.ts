@@ -200,6 +200,42 @@ describe("server/handlers/dev/scripts/hmr-scripts", () => {
     }
   });
 
+  it("ignores a page-owned reload hook and reloads the window itself", async () => {
+    const harness = createHMRDom("<!doctype html><html><head></head><body></body></html>");
+    const { dom } = harness;
+    let projectReloads = 0;
+
+    try {
+      // A project script (or one of its dependencies) may already own this name;
+      // project script tags render before the mode scripts that carry the HMR
+      // client, so honouring it would let the page hijack every HMR reload.
+      Object.defineProperty(dom.window, "__veryfrontHMRReload", {
+        configurable: true,
+        value: () => {
+          projectReloads++;
+        },
+      });
+      dom.window.eval(getHMRScript(3000));
+      harness.send({ type: "update", path: "styles/collision.css" });
+
+      await waitFor(() => harness.reloadCount() > 0, {
+        message: "the CSS update never reloaded the window",
+      });
+      assertEquals(
+        harness.reloadCount(),
+        1,
+        "the HMR client must reload the window itself, once",
+      );
+      assertEquals(
+        projectReloads,
+        0,
+        "a page-owned __veryfrontHMRReload must never receive the HMR reload",
+      );
+    } finally {
+      dom.window.close();
+    }
+  });
+
   it("threads the latest stylesheet href through batched JS updates", async () => {
     const script = getHMRScript(3000);
     assertStringIncludes(script, "let pendingStyleHref = null;");
