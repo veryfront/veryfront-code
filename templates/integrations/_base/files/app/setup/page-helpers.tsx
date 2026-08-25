@@ -554,10 +554,10 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     category: "finance",
     steps: [
       "Go to Intuit Developer Portal",
-      "Create new app",
+      "Create or open an app with production access",
       "Add redirect URI: http://localhost:3000/api/auth/quickbooks/callback",
       "Select Accounting scope",
-      "Copy Client ID and Secret to .env",
+      "Copy production Client ID and Client Secret to .env",
     ],
     link: "https://developer.intuit.com/app/developer/dashboard",
     envVars: ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET"],

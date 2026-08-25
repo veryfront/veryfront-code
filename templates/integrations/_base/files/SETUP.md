@@ -512,7 +512,7 @@ STRIPE_PUBLISHABLE_KEY=pk_test_your-publishable-key
 ### QuickBooks
 
 1. Go to [Intuit Developer](https://developer.intuit.com/)
-2. Create app and get OAuth credentials
+2. Create or open an app with production access, then copy the production Client ID and Client Secret
 3. Redirect URI: `http://localhost:3000/api/auth/quickbooks/callback`
 
 ```env

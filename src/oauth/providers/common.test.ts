@@ -175,7 +175,7 @@ describe("oauth provider configs", () => {
     ]);
   });
 
-  it("keeps Slack setup documentation aligned with runtime OAuth scopes", async () => {
+  it("keeps scaffolded setup documentation aligned with provider requirements", async () => {
     const setupMarkdown = await Deno.readTextFile(
       "templates/integrations/_base/files/SETUP.md",
     );
@@ -186,6 +186,14 @@ describe("oauth provider configs", () => {
     for (const scope of slackConfig.defaultScopes) {
       assertEquals(setupMarkdown.includes(scope), true, `${scope} missing from SETUP.md`);
       assertEquals(setupHelpers.includes(scope), true, `${scope} missing from setup helper`);
+    }
+
+    for (const setupSurface of [setupMarkdown, setupHelpers]) {
+      assertEquals(
+        setupSurface.includes("production Client ID and Client Secret"),
+        true,
+        "QuickBooks setup must require credentials for the pinned production API origin",
+      );
     }
   });
 });
