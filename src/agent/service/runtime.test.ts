@@ -1,5 +1,5 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import {
@@ -45,6 +45,29 @@ describe("agent/agent-service-runtime", () => {
 
     assertEquals(bundle.runtime.contract.serviceName, "test-agent-service");
     assertEquals(ready.status, 200);
+
+    const allowed = await bundle.runtime.request("/readiness", {
+      headers: { Origin: "https://studio.example.test" },
+    });
+    assertEquals(
+      allowed.headers.get("Access-Control-Allow-Origin"),
+      "https://studio.example.test",
+      "the runtime allow-list must come from config.ALLOWED_ORIGINS",
+    );
+    assertEquals(
+      allowed.headers.get("Access-Control-Allow-Credentials"),
+      "true",
+      "credentialed CORS stays enabled",
+    );
+
+    const denied = await bundle.runtime.request("/readiness", {
+      headers: { Origin: "https://evil.example" },
+    });
+    assertEquals(
+      denied.headers.get("Access-Control-Allow-Origin"),
+      null,
+      "an unlisted origin must never be reflected on a credentialed response",
+    );
   });
 
   it("assembles agent service auth, routes, lifecycle, and runtime shell", async () => {
@@ -215,5 +238,62 @@ describe("agent/agent-service-runtime", () => {
 
     assertEquals(rejected, shutdownError);
     assertEquals(events, ["primary-stop", "secondary-stop"]);
+  });
+
+  it("fans shutdown notice out to both lifecycles", () => {
+    const events: string[] = [];
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        setShuttingDown: () => {
+          events.push("primary-setShuttingDown");
+        },
+      },
+      {
+        setShuttingDown: () => {
+          events.push("secondary-setShuttingDown");
+        },
+      },
+    );
+
+    lifecycle.setShuttingDown?.();
+
+    assertEquals(
+      events,
+      ["primary-setShuttingDown", "secondary-setShuttingDown"],
+      "both lifecycles must learn the service is draining",
+    );
+  });
+
+  it("fans shutdown notice out to both lifecycles even when the primary throws", () => {
+    const events: string[] = [];
+    const shutdownError = new Error("primary shutdown failed");
+    const lifecycle = combineAgentServiceLifecycle(
+      {
+        setShuttingDown: () => {
+          events.push("primary-setShuttingDown");
+          throw shutdownError;
+        },
+      },
+      {
+        setShuttingDown: () => {
+          events.push("secondary-setShuttingDown");
+        },
+      },
+    );
+
+    const thrown = assertThrows(
+      () => {
+        lifecycle.setShuttingDown?.();
+      },
+      Error,
+      "primary shutdown failed",
+    );
+
+    assertEquals(thrown, shutdownError, "the primary failure must still surface to the caller");
+    assertEquals(
+      events,
+      ["primary-setShuttingDown", "secondary-setShuttingDown"],
+      "both lifecycles must learn the service is draining",
+    );
   });
 });

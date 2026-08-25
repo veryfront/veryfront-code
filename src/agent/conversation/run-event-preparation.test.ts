@@ -52,6 +52,39 @@ describe("agent/conversation-run-event-preparation", () => {
         finishReason: "stop",
       },
     );
+
+    assertEquals(
+      toConversationRunStreamEvent({
+        type: "finish",
+        finishReason: "tool-calls",
+      }),
+      {
+        type: "finish",
+        finishReason: "tool-calls",
+      },
+      "whitelisted finish reasons must pass through",
+    );
+
+    assertEquals(
+      toConversationRunStreamEvent({
+        type: "finish",
+        finishReason: "abort",
+      }),
+      { type: "finish" },
+      "a non-canonical finish reason must be dropped rather than forwarded",
+    );
+
+    assertEquals(
+      toConversationRunStreamEvent({
+        type: "message-metadata",
+        messageMetadata: { modelId: "openai/gpt-5.4" },
+      }),
+      {
+        type: "message-metadata",
+        messageMetadata: { modelId: "openai/gpt-5.4" },
+      },
+      "message metadata chunks must map verbatim",
+    );
   });
 
   it("encodes and normalizes hosted UI chunks in one step", () => {

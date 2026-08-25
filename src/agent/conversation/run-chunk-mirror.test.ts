@@ -568,4 +568,56 @@ describe("agent/conversation-run-chunk-mirror", () => {
       message: "Stopping durable run mirroring because the run is already terminal",
     }]);
   });
+
+  it("records an oversized-event stop instead of disabling mirroring silently", async () => {
+    const errors: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const oversizedEventFetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ detail: "Agent run event payload must be less than 256 KB" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      )) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run-1",
+      latestEventId: 10,
+      latestExternalEventSequence: 20,
+      fetch: oversizedEventFetch,
+      instrumentation: {
+        error: (message, metadata) => {
+          errors.push({ message, metadata });
+        },
+      },
+    });
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    const snapshot = await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(snapshot.disabled, true, "an oversized event permanently stops mirroring");
+    assertEquals(
+      snapshot.disableReason,
+      "payload_too_large",
+      "an oversized event must record the payload_too_large stop reason",
+    );
+    assertEquals(snapshot.pendingEventCount, 0, "the rejected event is dropped, not retried");
+    assertEquals(snapshot.hasRetryTimer, false, "a permanent rejection schedules no retry");
+    assertEquals(
+      errors,
+      [{
+        message: "Disabling durable run mirroring after an oversized event was rejected; " +
+          "an event exceeded the durable payload limit despite normalization",
+        metadata: {
+          conversationId: "11111111-1111-4111-8111-111111111111",
+          runId: "run-1",
+          latestEventId: 10,
+          latestExternalEventSequence: 20,
+        },
+      }],
+      "an oversized-event stop must be reported at error level with the cursor metadata",
+    );
+  });
 });
