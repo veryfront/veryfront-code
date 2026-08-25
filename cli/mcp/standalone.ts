@@ -46,11 +46,6 @@ interface StandaloneTool {
   execute: (args: Record<string, unknown>) => Promise<unknown>;
 }
 
-function getStringArg(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
-}
-
 function isScaffoldHttpMethod(value: unknown): value is ScaffoldHttpMethod {
   return typeof value === "string" && HTTP_METHODS.includes(value as ScaffoldHttpMethod);
 }
@@ -64,7 +59,66 @@ function getMethodsArg(args: Record<string, unknown>): ScaffoldHttpMethod[] | un
     if (!isScaffoldHttpMethod(method)) return undefined;
     methods.push(method);
   }
-  return methods.length ? methods : undefined;
+  return methods;
+}
+
+type ScaffoldToolArgs =
+  | { type: "auth"; name: typeof AUTH_PRESETS[number]; projectPath?: string }
+  | {
+    type: typeof SCAFFOLD_TYPES[number];
+    name: string;
+    projectPath?: string;
+    methods?: ScaffoldHttpMethod[];
+  };
+
+function parseScaffoldToolArgs(args: Record<string, unknown>): ScaffoldToolArgs {
+  const type = args.type;
+  const name = args.name;
+  const projectPath = args.projectPath;
+
+  if (typeof type !== "string") {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: type must be a string");
+  }
+  if (typeof name !== "string") {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: name must be a string");
+  }
+  if (
+    Object.hasOwn(args, "projectPath") &&
+    projectPath !== undefined &&
+    typeof projectPath !== "string"
+  ) {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: projectPath must be a string");
+  }
+  const parsedProjectPath = typeof projectPath === "string" ? projectPath : undefined;
+
+  if (type === "auth") {
+    if (!isAuthPreset(name)) {
+      throw new JsonRpcError(
+        -32602,
+        `Invalid vf_scaffold arguments: name must be one of ${AUTH_PRESETS.join(", ")}`,
+      );
+    }
+    return { type, name, projectPath: parsedProjectPath };
+  }
+
+  if (!isScaffoldType(type)) {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: unknown scaffold type");
+  }
+
+  if (Object.hasOwn(args, "methods") && !Array.isArray(args.methods)) {
+    throw new JsonRpcError(
+      -32602,
+      "Invalid vf_scaffold arguments: methods must be valid HTTP methods",
+    );
+  }
+  const methods = getMethodsArg(args);
+  if (Array.isArray(args.methods) && methods === undefined) {
+    throw new JsonRpcError(
+      -32602,
+      "Invalid vf_scaffold arguments: methods must be valid HTTP methods",
+    );
+  }
+  return { type, name, projectPath: parsedProjectPath, methods };
 }
 
 export interface StandaloneMCPConfig {
@@ -150,6 +204,7 @@ export class StandaloneMCPServer {
 
     const tool = this.tools.find((t) => t.name === toolName);
     if (!tool) throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    if (toolName === "vf_scaffold") parseScaffoldToolArgs(args ?? {});
 
     try {
       const result = await tool.execute(args ?? {});
@@ -393,36 +448,19 @@ export class StandaloneMCPServer {
           ],
         },
         async execute(args) {
-          const type = getStringArg(args, "type");
-          const name = getStringArg(args, "name");
-          const projectPath = getStringArg(args, "projectPath");
-          const projectDir = projectPath ?? Deno.cwd();
-          const methods = getMethodsArg(args);
+          const parsed = parseScaffoldToolArgs(args);
+          const projectDir = parsed.projectPath ?? Deno.cwd();
 
-          if (!type || !name) {
-            return { success: false, files: [], message: "type and name are required" };
-          }
-
-          if (type === "auth") {
-            if (!isAuthPreset(name)) {
-              return {
-                success: false,
-                files: [],
-                message: `Unknown auth preset "${name}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
-              };
-            }
-            return scaffoldAuthFiles({ projectDir, preset: name });
-          }
-
-          if (!isScaffoldType(type)) {
-            return { success: false, files: [], message: `Unknown scaffold type: ${type}` };
+          if (parsed.type === "auth") {
+            return scaffoldAuthFiles({ projectDir, preset: parsed.name });
           }
 
           return scaffoldProjectFile({
             projectDir,
-            type,
-            name,
-            methods,
+            type: parsed.type,
+            name: parsed.name,
+            methods: parsed.methods,
+            resultPathMode: "relative",
           });
         },
       },

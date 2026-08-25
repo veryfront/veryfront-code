@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join, relative } from "#std/path.ts";
+import { join, relative, resolve } from "#std/path.ts";
 import { filenameToId } from "#veryfront/discovery/discovery-utils.ts";
 import {
   planAuthScaffold,
@@ -191,6 +191,29 @@ describe("scaffold engine", () => {
     assertStringIncludes(plan.files[4]!.content, "oidc:");
   });
 
+  it("plans auth preset targets against a resolved project directory", async () => {
+    const originalCwd = Deno.cwd();
+    const parentDir = await Deno.makeTempDir({ prefix: "vf-auth-relative-parent-" });
+    try {
+      await Deno.mkdir(join(parentDir, "project"));
+      Deno.chdir(parentDir);
+
+      const plan = await planAuthScaffold({ projectDir: "./project", preset: "authelia" });
+      const resolvedProjectDir = resolve(Deno.cwd(), "project");
+
+      assertEquals(plan.files.map((file) => file.path), [
+        resolve(resolvedProjectDir, ".env.auth.example"),
+        resolve(resolvedProjectDir, "AUTH_PROVIDER_SETUP.md"),
+        resolve(resolvedProjectDir, "AUTH_SETUP.md"),
+        resolve(resolvedProjectDir, "authelia.client.example.yml"),
+        resolve(resolvedProjectDir, "veryfront.auth.config.example.ts"),
+      ]);
+    } finally {
+      Deno.chdir(originalCwd);
+      await Deno.remove(parentDir, { recursive: true });
+    }
+  });
+
   it("rejects unknown auth presets without falling back to another scaffold", async () => {
     await withTempProject(async (projectDir) => {
       const result = await scaffoldAuthFiles({
@@ -278,7 +301,21 @@ describe("scaffold engine", () => {
   it("rejects absolute and reserved auth template paths before planning targets", async () => {
     await withTempProject(async (projectDir) => {
       for (
-        const path of ["/absolute.txt", "../escape.txt", "docs//setup.md", "docs/./setup.md", ""]
+        const path of [
+          "/absolute.txt",
+          "../escape.txt",
+          "docs//setup.md",
+          "docs/./setup.md",
+          "docs/setup.md",
+          "CON",
+          "aux.md",
+          "COM\u00B9",
+          "name.",
+          "name ",
+          "existing.txt:scaffold",
+          "docs\\setup.md",
+          "",
+        ]
       ) {
         const result = await scaffoldAuthFiles({
           projectDir,
@@ -300,6 +337,12 @@ describe("scaffold engine", () => {
           `${projectDir}/docs//setup.md`,
           `${projectDir}/docs/./setup.md`,
           `${projectDir}/docs/`,
+          join(projectDir, "CON"),
+          join(projectDir, "aux.md"),
+          join(projectDir, "LPT\u00B2.txt"),
+          join(projectDir, "name."),
+          join(projectDir, "name "),
+          join(projectDir, "existing.txt:scaffold"),
         ]
       ) {
         const result = await scaffoldAuthFiles({
@@ -363,6 +406,34 @@ describe("scaffold engine", () => {
       assertStringIncludes(result.message, "Unsafe scaffold path");
       assertEquals(await exists(join(projectDir, "safe.txt")), false);
     });
+  });
+
+  it("rejects symlinked project roots before writing auth files", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-auth-root-" });
+    const outside = await Deno.makeTempDir({ prefix: "vf-auth-root-outside-" });
+    const linkedRoot = `${projectDir}-link`;
+    try {
+      await Deno.symlink(outside, linkedRoot);
+    } catch (error) {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+      if (error instanceof Deno.errors.PermissionDenied) return;
+      throw error;
+    }
+    try {
+      const result = await scaffoldAuthFiles({
+        projectDir: linkedRoot,
+        preset: "oidc",
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "Unsafe scaffold project root");
+      assertEquals(await exists(join(outside, "AUTH_SETUP.md")), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(linkedRoot);
+      await Deno.remove(outside, { recursive: true });
+    }
   });
 
   it("rejects symlinked target parents before writing", async () => {
@@ -477,6 +548,159 @@ describe("scaffold engine", () => {
       assertStringIncludes(result.message, "Failed to create scaffold");
       assertEquals(await exists(join(projectDir, "first.txt")), false);
       assertEquals(await exists(join(projectDir, "second.txt")), false);
+    });
+  });
+
+  it("does not remove a created file path after another writer replaces it before rollback", async () => {
+    await withTempProject(async (projectDir) => {
+      const firstPath = join(projectDir, "first.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: firstPath, content: "first" },
+          { path: join(projectDir, "second.txt"), content: "second" },
+        ],
+        beforeWriteForTesting: async (file) => {
+          if (file.path.endsWith("second.txt")) {
+            await Deno.remove(firstPath);
+            await Deno.writeTextFile(firstPath, "replacement");
+            throw new Error("simulated write failure");
+          }
+        },
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(await Deno.readTextFile(firstPath), "replacement");
+    });
+  });
+
+  it("fails closed when the project root identity changes after opening a target", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-auth-root-race-" });
+    const outside = await Deno.makeTempDir({ prefix: "vf-auth-root-race-outside-" });
+    let replacedRoot = false;
+    try {
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: join(projectDir, "first.txt"), content: "first" }],
+        afterOpenForTesting: async () => {
+          await Deno.remove(projectDir, { recursive: true });
+          await Deno.symlink(outside, projectDir);
+          replacedRoot = true;
+        },
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "filesystem write failed");
+      assertEquals(await exists(join(outside, "first.txt")), false);
+    } finally {
+      if (replacedRoot) await Deno.remove(projectDir);
+      else await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(outside, { recursive: true });
+    }
+  });
+
+  it("writes no content when the project root changes between the final check and open", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-auth-root-open-race-" });
+    const outside = await Deno.makeTempDir({ prefix: "vf-auth-root-open-race-outside-" });
+    const outsideTarget = join(outside, "first.txt");
+    let replacedRoot = false;
+    try {
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: join(projectDir, "first.txt"), content: "first" }],
+        beforeOpenForTesting: async () => {
+          await Deno.remove(projectDir, { recursive: true });
+          await Deno.symlink(outside, projectDir);
+          replacedRoot = true;
+        },
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "filesystem write failed");
+      if (await exists(outsideTarget)) {
+        assertEquals(await Deno.readTextFile(outsideTarget), "");
+      }
+    } finally {
+      if (replacedRoot) await Deno.remove(projectDir);
+      else await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(outside, { recursive: true });
+    }
+  });
+
+  it("does not remove rollback paths when filesystem identity cannot be proven", async () => {
+    await withTempProject(async (projectDir) => {
+      const firstPath = join(projectDir, "first.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: firstPath, content: "first" },
+          { path: join(projectDir, "second.txt"), content: "second" },
+        ],
+        beforeWriteForTesting: (file) => {
+          if (file.path.endsWith("second.txt")) throw new Error("simulated write failure");
+          return Promise.resolve();
+        },
+        identityForTesting: () => null,
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "Rollback could not remove: first.txt");
+      assertEquals(await Deno.readTextFile(firstPath), "first");
+    });
+  });
+
+  it("removes a partially written file created by the same invocation", async () => {
+    await withTempProject(async (projectDir) => {
+      const partialPath = join(projectDir, "partial.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: partialPath, content: "partial content" },
+          { path: join(projectDir, "second.txt"), content: "second" },
+        ],
+        failWriteAfterBytesForTesting: 4,
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "filesystem write failed");
+      assertEquals(await exists(partialPath), false);
+      assertEquals(await exists(join(projectDir, "second.txt")), false);
+    });
+  });
+
+  it("bounds auth scaffold file paths, per-file bytes, and total bytes", async () => {
+    await withTempProject(async (projectDir) => {
+      const longName = `${"a".repeat(241)}.txt`;
+      const tooLongPath = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: join(projectDir, longName), content: "no" }],
+      });
+      const tooLargeFile = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: join(projectDir, "large.txt"), content: "x".repeat(262_145) }],
+      });
+      const tooLargePlan = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: join(projectDir, "one.txt"), content: "x".repeat(200_000) },
+          { path: join(projectDir, "two.txt"), content: "x".repeat(200_000) },
+        ],
+      });
+
+      assertEquals(tooLongPath.success, false);
+      assertStringIncludes(tooLongPath.message, "path is too long");
+      assertEquals(tooLargeFile.success, false);
+      assertStringIncludes(tooLargeFile.message, "file is too large");
+      assertEquals(tooLargePlan.success, false);
+      assertStringIncludes(tooLargePlan.message, "plan is too large");
     });
   });
 

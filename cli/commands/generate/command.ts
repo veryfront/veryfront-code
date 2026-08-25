@@ -1,6 +1,6 @@
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
-import { ALREADY_EXISTS, createError, toError } from "veryfront/errors";
+import { ALREADY_EXISTS, CONFIG_INVALID, createError, toError } from "veryfront/errors";
 import { parseExtensionManifest } from "veryfront/extensions";
 import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
@@ -9,6 +9,7 @@ import {
   isScaffoldType,
   scaffoldAuthFiles,
   scaffoldProjectFile,
+  type ScaffoldResult,
 } from "../../scaffold/engine.ts";
 
 const MDX_EXTENSION_PACKAGE = "@veryfront/ext-content-mdx";
@@ -125,10 +126,7 @@ export async function generateCommand(
     });
 
     if (!result.success) {
-      throw ALREADY_EXISTS.create({
-        detail: result.message,
-        context: { paths: result.files.map((file) => file.path) },
-      });
+      throw scaffoldFailureToError(result);
     }
 
     for (const file of result.files) cliLogger.info(`Created ${file.path}`);
@@ -154,14 +152,22 @@ export async function generateCommand(
   });
 
   if (!result.success) {
-    throw ALREADY_EXISTS.create({
+    throw scaffoldFailureToError(result);
+  }
+
+  for (const file of result.files) cliLogger.info(`Created ${file.path}`);
+  await warnIfMdxExtensionMissing(projectDir, result.files.map((file) => file.path));
+}
+
+function scaffoldFailureToError(result: ScaffoldResult): Error {
+  if (result.failureKind === "conflict") {
+    return ALREADY_EXISTS.create({
       detail: result.message,
       context: { paths: result.files.map((file) => file.path) },
     });
   }
 
-  for (const file of result.files) cliLogger.info(`Created ${file.path}`);
-  await warnIfMdxExtensionMissing(projectDir, result.files.map((file) => file.path));
+  return CONFIG_INVALID.create({ detail: result.message });
 }
 
 /**

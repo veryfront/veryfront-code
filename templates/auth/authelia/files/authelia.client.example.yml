@@ -12,8 +12,6 @@ identity_providers:
           - "https://<APP_HOST>/_veryfront/auth/callback"
         scopes:
           - "openid"
-          - "profile"
-          - "email"
         response_types:
           - "code"
         grant_types:

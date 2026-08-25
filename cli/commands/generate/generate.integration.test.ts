@@ -106,10 +106,51 @@ describe("CLI generate command", () => {
 
   it("rejects unknown auth presets as a usage error", async () => {
     await withTestContext("generate-auth-unknown", async (context: TestContext) => {
-      const error = await assertRejects(() => generateCommand(context.projectDir, "auth", "ldap"));
+      const error = (await assertRejects(() =>
+        generateCommand(context.projectDir, "auth", "ldap")
+      )) as Error;
 
       assertStringIncludes(error.message, "Unknown auth preset");
       assertStringIncludes(error.message, "authelia, oidc, microsoft-entra");
+    });
+  });
+
+  it("classifies auth scaffold conflicts separately from unsafe setup failures", async () => {
+    await withTestContext("generate-auth-error-classification", async (context: TestContext) => {
+      await writeTextFile(join(context.projectDir, "AUTH_SETUP.md"), "existing\n");
+
+      const conflict = (await assertRejects(() =>
+        generateCommand(context.projectDir, "auth", "oidc")
+      )) as Error & { slug?: string };
+
+      assertEquals(conflict.slug, "already-exists");
+
+      await remove(join(context.projectDir, "AUTH_SETUP.md"));
+      const outside = await makeTempDir({ prefix: "generate-auth-symlink-outside-" });
+      const linkedRoot = `${context.projectDir}-link`;
+      try {
+        await Deno.symlink(outside, linkedRoot);
+      } catch (error) {
+        await remove(outside, { recursive: true });
+        if (error instanceof Deno.errors.PermissionDenied) {
+          return;
+        }
+        throw error;
+      }
+
+      try {
+        const unsafe = (await assertRejects(() =>
+          generateCommand(linkedRoot, "auth", "oidc")
+        )) as
+          & Error
+          & { slug?: string };
+
+        assertEquals(unsafe.slug, "config-invalid");
+        assertStringIncludes(unsafe.message, "Unsafe scaffold project root");
+      } finally {
+        await remove(linkedRoot);
+        await remove(outside, { recursive: true });
+      }
     });
   });
 

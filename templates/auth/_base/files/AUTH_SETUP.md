@@ -25,7 +25,7 @@ export default defineConfig({
         clientIdEnvVar: "OIDC_CLIENT_ID",
         clientSecretEnvVar: "OIDC_CLIENT_SECRET",
         sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
-        scopes: ["openid", "profile", "email", "groups"],
+        scopes: ["openid"],
         claims: {
           email: "email",
           name: "name",
@@ -65,6 +65,8 @@ Veryfront validates state, nonce, ID token signature, exact issuer, audience/cli
 Use `(iss, sub)` as the stable external identity key. Do not use email, display name, username, or group labels as account keys.
 
 Use one exact issuer per app. Dynamic issuer templates are not part of this scaffold.
+
+Active Directory users integrate through a standards-compatible OIDC issuer such as Microsoft Entra ID, OIDC-enabled AD FS, Authelia connected to a directory backend, or another IdP connected to the directory. Do not add LDAP bind credentials, NTLM, Kerberos, provider-specific callback handlers, or directory lookup code to this scaffold.
 
 Cloud and self-hosted deployments use the same declarative OIDC configuration. Horizontally scaled instances must share the same `APP_URL`, issuer, client ID, client secret, and `VERYFRONT_AUTH_SESSION_SECRET`. No sticky sessions, database session store, or distributed cache is required for admission because transactions and sessions are authenticated self-contained cookies.
 

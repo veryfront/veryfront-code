@@ -1,12 +1,4 @@
-import {
-  dirname,
-  isAbsolute,
-  join,
-  normalize,
-  relative,
-  resolve,
-  sep,
-} from "veryfront/platform/path";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
@@ -38,6 +30,7 @@ export interface ScaffoldInput {
   name: string;
   router?: ScaffoldRouter;
   methods?: ScaffoldHttpMethod[];
+  resultPathMode?: "absolute" | "relative";
 }
 
 export interface ScaffoldFilePlan {
@@ -55,7 +48,15 @@ export interface ScaffoldResult {
   success: boolean;
   files: Array<{ path: string; created: boolean }>;
   message: string;
+  failureKind?: ScaffoldFailureKind;
 }
+
+export type ScaffoldFailureKind =
+  | "conflict"
+  | "filesystem"
+  | "invalid"
+  | "limit"
+  | "unsafe-path";
 
 export interface AuthScaffoldInput {
   projectDir: string;
@@ -63,6 +64,10 @@ export interface AuthScaffoldInput {
   filesForTesting?: ScaffoldFilePlan[];
   templateFilesForTesting?: ScaffoldFilePlan[];
   beforeWriteForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  failWriteAfterBytesForTesting?: number;
+  beforeOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  afterOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  identityForTesting?: (info: Deno.FileInfo) => FileIdentity;
   removeForTesting?: (path: string) => Promise<void>;
 }
 
@@ -71,7 +76,8 @@ interface ScaffoldDefinition {
   getContent: (input: ResolvedScaffoldInput) => string;
 }
 
-interface ResolvedScaffoldInput extends Required<Omit<ScaffoldInput, "methods">> {
+interface ResolvedScaffoldInput
+  extends Required<Omit<ScaffoldInput, "methods" | "resultPathMode">> {
   slug: string;
   componentName: string;
   methods: ScaffoldHttpMethod[];
@@ -79,6 +85,9 @@ interface ResolvedScaffoldInput extends Required<Omit<ScaffoldInput, "methods">>
 
 const DEFAULT_METHODS: ScaffoldHttpMethod[] = ["GET"];
 const MAX_AUTH_SCAFFOLD_FILES = 32;
+const MAX_SCAFFOLD_PATH_BYTES = 240;
+const MAX_SCAFFOLD_FILE_BYTES = 256 * 1024;
+const MAX_SCAFFOLD_TOTAL_BYTES = 384 * 1024;
 
 const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   page: {
@@ -185,6 +194,7 @@ export async function writeScaffoldPlan(plan: ScaffoldPlan): Promise<ScaffoldRes
       success: false,
       files: conflicts.map((path) => ({ path, created: false })),
       message: `${plan.type} already exists at ${conflicts.join(", ")}`,
+      failureKind: "conflict",
     };
   }
 
@@ -203,7 +213,14 @@ export async function writeScaffoldPlan(plan: ScaffoldPlan): Promise<ScaffoldRes
 }
 
 export async function scaffoldProjectFile(input: ScaffoldInput): Promise<ScaffoldResult> {
-  return writeScaffoldPlan(planScaffold(input));
+  return writeGuardedMultiFilePlan(
+    planScaffold(input),
+    input.projectDir,
+    {
+      allowNestedPaths: true,
+      resultPathMode: input.resultPathMode ?? "absolute",
+    },
+  );
 }
 
 export async function planAuthScaffold(input: AuthScaffoldInput): Promise<ScaffoldPlan> {
@@ -223,8 +240,9 @@ export async function planAuthScaffold(input: AuthScaffoldInput): Promise<Scaffo
   if (template?.some((file) => !isSafeAuthTemplatePath(file.path))) {
     throw new UnsafeAuthTemplatePathError();
   }
+  const projectDir = resolve(input.projectDir);
   const files = (template ?? []).map((file) => ({
-    path: join(input.projectDir, file.path),
+    path: join(projectDir, file.path),
     content: file.content,
   }));
 
@@ -241,6 +259,7 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
       success: false,
       files: [],
       message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+      failureKind: "invalid",
     };
   }
 
@@ -249,7 +268,7 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
     plan = await planAuthScaffold(input);
   } catch (error) {
     if (error instanceof UnsafeAuthTemplatePathError) {
-      return failure([], "Unsafe auth template path");
+      return failure([], "Unsafe auth template path", "unsafe-path");
     }
     return failure([], "Failed to load auth template");
   }
@@ -258,38 +277,67 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
       success: false,
       files: [],
       message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+      failureKind: "invalid",
     };
   }
 
   return writeGuardedMultiFilePlan(
     plan,
     input.projectDir,
-    input.beforeWriteForTesting,
-    input.removeForTesting,
+    {
+      allowNestedPaths: input.filesForTesting !== undefined,
+      resultPathMode: "relative",
+      beforeWrite: input.beforeWriteForTesting,
+      failWriteAfterBytes: input.failWriteAfterBytesForTesting,
+      beforeOpen: input.beforeOpenForTesting,
+      afterOpen: input.afterOpenForTesting,
+      identity: input.identityForTesting ?? fileIdentity,
+      remove: input.removeForTesting,
+    },
   );
 }
 
 async function writeGuardedMultiFilePlan(
   plan: ScaffoldPlan,
   projectDir: string,
-  beforeWrite?: (file: ScaffoldFilePlan) => Promise<void>,
-  remove?: (path: string) => Promise<void>,
+  options: {
+    allowNestedPaths: boolean;
+    resultPathMode: "absolute" | "relative";
+    beforeWrite?: (file: ScaffoldFilePlan) => Promise<void>;
+    failWriteAfterBytes?: number;
+    beforeOpen?: (file: ScaffoldFilePlan) => Promise<void>;
+    afterOpen?: (file: ScaffoldFilePlan) => Promise<void>;
+    identity?: (info: Deno.FileInfo) => FileIdentity;
+    remove?: (path: string) => Promise<void>;
+  },
 ): Promise<ScaffoldResult> {
   const root = resolve(projectDir);
-  const normalizedFiles = validatePlanPaths(plan, root);
+  const identity = options.identity ?? fileIdentity;
+  const normalizedFiles = validatePlanPaths(plan, root, {
+    allowNestedPaths: options.allowNestedPaths,
+  });
   if ("error" in normalizedFiles) return normalizedFiles.error;
 
   const conflicts: string[] = [];
+  let rootGuard: RootGuard;
   try {
-    const rootStat = await Deno.stat(root);
-    if (!rootStat.isDirectory) return failure([], "Unsafe scaffold project root");
+    const rootStat = await Deno.lstat(root);
+    if (!rootStat.isDirectory || rootStat.isSymlink) {
+      return failure([], "Unsafe scaffold project root", "unsafe-path");
+    }
+    rootGuard = {
+      identity: identity(rootStat),
+      realPath: await Deno.realPath(root),
+    };
 
     for (const file of normalizedFiles.files) {
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
       if (unsafe) {
-        return failure([], `Unsafe scaffold path: ${unsafe}`);
+        return failure([], `Unsafe scaffold path: ${unsafe}`, "unsafe-path");
       }
-      if (await pathExists(file.path)) conflicts.push(file.relativePath);
+      if (await pathExists(file.path)) {
+        conflicts.push(formatResultPath(file, options.resultPathMode));
+      }
     }
   } catch {
     return failure([], "Scaffold filesystem preflight failed");
@@ -300,50 +348,69 @@ async function writeGuardedMultiFilePlan(
       success: false,
       files: conflicts.map((path) => ({ path, created: false })),
       message: `${plan.type} already exists at ${conflicts.join(", ")}`,
+      failureKind: "conflict",
     };
   }
 
-  const createdFiles: string[] = [];
-  const createdDirs: string[] = [];
+  const createdFiles: OwnedPath[] = [];
+  const createdDirs: OwnedPath[] = [];
   const defaultWriter = async (file: ScaffoldFilePlan) => {
+    await assertRootIdentity(root, rootGuard, identity);
+    await options.beforeOpen?.(file);
     const handle = await Deno.open(file.path, { write: true, createNew: true });
-    createdFiles.push(file.path);
     try {
+      await options.afterOpen?.(file);
+      const opened = await verifyOpenedTarget(root, rootGuard, file.path, handle, identity);
       const content = new TextEncoder().encode(file.content);
+      createdFiles.push(opened);
       let offset = 0;
       while (offset < content.byteLength) {
-        const written = await handle.write(content.subarray(offset));
+        const remainingBeforeFailure = options.failWriteAfterBytes === undefined
+          ? content.byteLength - offset
+          : options.failWriteAfterBytes - offset;
+        if (remainingBeforeFailure <= 0) throw new Error("simulated partial write failure");
+        const chunk = content.subarray(
+          offset,
+          Math.min(content.byteLength, offset + remainingBeforeFailure),
+        );
+        const written = await handle.write(chunk);
         if (written === 0) throw new Error("filesystem write made no progress");
         offset += written;
+        if (options.failWriteAfterBytes !== undefined && offset >= options.failWriteAfterBytes) {
+          throw new Error("simulated partial write failure");
+        }
       }
     } finally {
       handle.close();
     }
   };
-  const removeCreatedPath = remove ?? ((path: string) => Deno.remove(path));
+  const removeCreatedPath = options.remove ?? ((path: string) => Deno.remove(path));
 
   try {
     for (const file of normalizedFiles.files) {
-      await ensureSafeParentDirectories(root, dirname(file.path), createdDirs);
-      await beforeWrite?.(file);
+      await assertRootIdentity(root, rootGuard, identity);
+      await ensureSafeParentDirectories(root, dirname(file.path), createdDirs, identity);
+      await options.beforeWrite?.(file);
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
       if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
       await defaultWriter(file);
     }
   } catch (error) {
     const cleanupErrors: string[] = [];
-    for (const path of createdFiles.toReversed()) {
+    for (const owned of createdFiles.toReversed()) {
       try {
-        await removeCreatedPath(path);
+        const removed = await removeOwnedPath(root, rootGuard, owned, removeCreatedPath, identity);
+        if (!removed) cleanupErrors.push(relative(root, owned.path));
       } catch {
-        cleanupErrors.push(relative(root, path));
+        cleanupErrors.push(relative(root, owned.path));
       }
     }
-    for (const path of createdDirs.toReversed()) {
+    for (const owned of createdDirs.toReversed()) {
       try {
-        await removeCreatedPath(path);
+        const removed = await removeOwnedPath(root, rootGuard, owned, removeCreatedPath, identity);
+        if (!removed) cleanupErrors.push(relative(root, owned.path));
       } catch {
-        cleanupErrors.push(relative(root, path));
+        cleanupErrors.push(relative(root, owned.path));
       }
     }
 
@@ -358,9 +425,19 @@ async function writeGuardedMultiFilePlan(
 
   return {
     success: true,
-    files: normalizedFiles.files.map((file) => ({ path: file.relativePath, created: true })),
+    files: normalizedFiles.files.map((file) => ({
+      path: formatResultPath(file, options.resultPathMode),
+      created: true,
+    })),
     message: `Created ${plan.type} "${plan.name}" successfully`,
   };
+}
+
+function formatResultPath(
+  file: NormalizedFilePlan,
+  mode: "absolute" | "relative",
+): string {
+  return mode === "relative" ? file.relativePath : file.path;
 }
 
 interface NormalizedFilePlan extends ScaffoldFilePlan {
@@ -370,28 +447,50 @@ interface NormalizedFilePlan extends ScaffoldFilePlan {
 function validatePlanPaths(
   plan: ScaffoldPlan,
   root: string,
+  options: { allowNestedPaths: boolean },
 ): { files: NormalizedFilePlan[] } | { error: ScaffoldResult } {
-  if (plan.files.length === 0) return { error: failure([], "Scaffold plan must contain files") };
+  if (plan.files.length === 0) {
+    return { error: failure([], "Scaffold plan must contain files", "invalid") };
+  }
   if (plan.files.length > MAX_AUTH_SCAFFOLD_FILES) {
-    return { error: failure([], "Scaffold plan contains too many files") };
+    return { error: failure([], "Scaffold plan contains too many files", "limit") };
   }
 
   const seen = new Set<string>();
   const normalized: NormalizedFilePlan[] = [];
+  let totalBytes = 0;
   for (const file of plan.files) {
     if (!isSafeAbsoluteTargetPath(file.path, root)) {
-      return { error: failure([], "Unsafe scaffold path") };
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
     }
 
     const absolute = normalize(file.path);
     const rel = relative(root, absolute);
+    const relativeParts = pathParts(rel);
     if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
-      return { error: failure([], "Unsafe scaffold path") };
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
     }
-    if (rel.split("/").some((part) => !part || part === "." || part === "..")) {
-      return { error: failure([], "Unsafe scaffold path") };
+    if (!options.allowNestedPaths && relativeParts.length !== 1) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
     }
-    if (seen.has(absolute)) return { error: failure([], "Duplicate scaffold path") };
+    if (relativeParts.some((part) => !isSafePathComponent(part))) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
+    }
+    const pathBytes = new TextEncoder().encode(rel).byteLength;
+    if (pathBytes > MAX_SCAFFOLD_PATH_BYTES) {
+      return { error: failure([], "Scaffold path is too long", "limit") };
+    }
+    const contentBytes = new TextEncoder().encode(file.content).byteLength;
+    if (contentBytes > MAX_SCAFFOLD_FILE_BYTES) {
+      return { error: failure([], "Scaffold file is too large", "limit") };
+    }
+    totalBytes += contentBytes;
+    if (totalBytes > MAX_SCAFFOLD_TOTAL_BYTES) {
+      return { error: failure([], "Scaffold plan is too large", "limit") };
+    }
+    if (seen.has(absolute)) {
+      return { error: failure([], "Duplicate scaffold path", "invalid") };
+    }
     seen.add(absolute);
     normalized.push({ path: absolute, relativePath: rel, content: file.content });
   }
@@ -403,25 +502,124 @@ function validatePlanPaths(
 
 function isSafeAuthTemplatePath(path: string): boolean {
   if (!path || isAbsolute(path) || path.includes("\\")) return false;
-  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  const parts = path.split("/");
+  if (parts.length !== 1) return false;
+  return parts.every(isSafePathComponent);
 }
 
 function isSafeAbsoluteTargetPath(path: string, root: string): boolean {
   if (!path || !isAbsolute(path)) return false;
-  const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  const rootPrefix = root.endsWith("/") ? root : `${root}/`;
   if (!path.startsWith(rootPrefix)) return false;
 
   const relativePath = path.slice(rootPrefix.length);
-  if (!relativePath || relativePath.includes(sep === "/" ? "\\" : "/")) return false;
-  return relativePath.split(sep).every((part) => part !== "" && part !== "." && part !== "..");
+  if (!relativePath || relativePath.includes("\\")) return false;
+  return relativePath.split(/[\\/]/).every(isSafePathComponent);
+}
+
+function pathParts(path: string): string[] {
+  return path.split(/[\\/]+/).filter((part) => part.length > 0);
+}
+
+function isSafePathComponent(part: string): boolean {
+  if (!part || part === "." || part === ".." || part.includes(":")) return false;
+  if (/[. ]$/.test(part)) return false;
+  const base = part.split(".")[0] ?? part;
+  return !/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i.test(base);
 }
 
 class UnsafeAuthTemplatePathError extends Error {}
 
+export type FileIdentity = {
+  dev: number;
+  ino: number;
+} | null;
+
+interface RootGuard {
+  identity: FileIdentity;
+  realPath: string;
+}
+
+interface OwnedPath {
+  path: string;
+  identity: FileIdentity;
+}
+
+function fileIdentity(info: Deno.FileInfo): FileIdentity {
+  if (typeof info.dev === "number" && typeof info.ino === "number") {
+    return { dev: info.dev, ino: info.ino };
+  }
+  return null;
+}
+
+function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  if (a === null || b === null) return false;
+  return a.dev === b.dev && a.ino === b.ino;
+}
+
+async function assertRootIdentity(
+  root: string,
+  expected: RootGuard,
+  identity: (info: Deno.FileInfo) => FileIdentity,
+): Promise<void> {
+  const current = await Deno.lstat(root);
+  if (!current.isDirectory || current.isSymlink) {
+    throw new Error("Unsafe scaffold project root");
+  }
+  const currentIdentity = identity(current);
+  if (expected.identity !== null && !sameIdentity(currentIdentity, expected.identity)) {
+    throw new Error("Unsafe scaffold project root");
+  }
+  if (expected.identity === null && await Deno.realPath(root) !== expected.realPath) {
+    throw new Error("Unsafe scaffold project root");
+  }
+}
+
+async function verifyOpenedTarget(
+  root: string,
+  rootGuard: RootGuard,
+  path: string,
+  handle: Deno.FsFile,
+  identity: (info: Deno.FileInfo) => FileIdentity,
+): Promise<OwnedPath> {
+  await assertRootIdentity(root, rootGuard, identity);
+  const rootRealPath = rootGuard.realPath.endsWith("/")
+    ? rootGuard.realPath
+    : `${rootGuard.realPath}/`;
+  const targetRealPath = await Deno.realPath(path);
+  if (!targetRealPath.startsWith(rootRealPath)) {
+    throw new Error("Unsafe scaffold path");
+  }
+  const handleIdentity = identity(await handle.stat());
+  const pathIdentity = identity(await Deno.lstat(path));
+  if (
+    handleIdentity !== null && pathIdentity !== null &&
+    !sameIdentity(handleIdentity, pathIdentity)
+  ) {
+    throw new Error("Unsafe scaffold path");
+  }
+  return { path, identity: handleIdentity };
+}
+
+async function removeOwnedPath(
+  root: string,
+  rootGuard: RootGuard,
+  owned: OwnedPath,
+  remove: (path: string) => Promise<void>,
+  identity: (info: Deno.FileInfo) => FileIdentity,
+): Promise<boolean> {
+  if (owned.identity === null) return false;
+  await assertRootIdentity(root, rootGuard, identity);
+  const current = await Deno.lstat(owned.path);
+  if (!sameIdentity(identity(current), owned.identity)) return false;
+  await remove(owned.path);
+  return true;
+}
+
 async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {
   const relativeTarget = relative(root, target);
   let current = root;
-  for (const part of relativeTarget.split("/").filter(Boolean)) {
+  for (const part of pathParts(relativeTarget)) {
     current = join(current, part);
     try {
       const stat = await Deno.lstat(current);
@@ -438,11 +636,12 @@ async function findUnsafeExistingPrefix(root: string, target: string): Promise<s
 async function ensureSafeParentDirectories(
   root: string,
   parent: string,
-  createdDirs: string[],
+  createdDirs: OwnedPath[],
+  identity: (info: Deno.FileInfo) => FileIdentity,
 ): Promise<void> {
   const relativeParent = relative(root, parent);
   let current = root;
-  for (const part of relativeParent.split("/").filter(Boolean)) {
+  for (const part of pathParts(relativeParent)) {
     current = join(current, part);
     try {
       const stat = await Deno.lstat(current);
@@ -452,7 +651,10 @@ async function ensureSafeParentDirectories(
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
       await Deno.mkdir(current);
-      createdDirs.push(current);
+      createdDirs.push({
+        path: current,
+        identity: identity(await Deno.lstat(current)),
+      });
     }
   }
 }
@@ -467,8 +669,12 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function failure(files: ScaffoldResult["files"], message: string): ScaffoldResult {
-  return { success: false, files, message };
+function failure(
+  files: ScaffoldResult["files"],
+  message: string,
+  failureKind: ScaffoldFailureKind = "filesystem",
+): ScaffoldResult {
+  return { success: false, files, message, failureKind };
 }
 
 function sanitizeError(error: unknown): string {
@@ -482,7 +688,7 @@ function sanitizeError(error: unknown): string {
 function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {
   const slug = toSlug(input.name);
   return {
-    projectDir: input.projectDir,
+    projectDir: resolve(input.projectDir),
     type: input.type,
     name: input.name,
     router: input.router ?? "app-router",

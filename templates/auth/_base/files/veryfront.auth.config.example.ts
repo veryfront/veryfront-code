@@ -8,7 +8,7 @@ export default defineConfig({
         clientIdEnvVar: "OIDC_CLIENT_ID",
         clientSecretEnvVar: "OIDC_CLIENT_SECRET",
         sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
-        scopes: ["openid", "profile", "email", "groups"],
+        scopes: ["openid"],
         claims: {
           email: "email",
           name: "name",

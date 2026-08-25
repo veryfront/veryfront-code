@@ -122,10 +122,6 @@ async function createTemplateManifestFixture(): Promise<string> {
     "base setup\n",
   );
   await Deno.writeTextFile(
-    join(root, "templates/auth/oidc/files/AUTH_SETUP.md"),
-    "provider override\n",
-  );
-  await Deno.writeTextFile(
     join(root, "templates/auth/oidc/files/AUTH_PROVIDER_SETUP.md"),
     "provider setup\n",
   );
@@ -135,6 +131,18 @@ async function createTemplateManifestFixture(): Promise<string> {
     generated.code,
     0,
     new TextDecoder().decode(generated.stderr),
+  );
+  return root;
+}
+
+async function createInvalidAuthManifestFixture(
+  invalidPath: string,
+): Promise<string> {
+  const root = await createTemplateManifestFixture();
+  await Deno.mkdir(join(root, invalidPath, "files"), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, invalidPath, "files", "AUTH_SETUP.md"),
+    "invalid auth file\n",
   );
   return root;
 }
@@ -219,7 +227,41 @@ describe("generated artifact checks", () => {
     );
   });
 
-  it("layers auth base files before deterministic provider overrides", async () => {
+  it("rejects unknown auth preset directories when generating the template manifest", async () => {
+    const root = await createInvalidAuthManifestFixture(
+      "templates/auth/custom-provider",
+    );
+    try {
+      const result = await runTemplateManifestGenerator(root, []);
+      const stderr = new TextDecoder().decode(result.stderr);
+
+      assert(
+        result.code !== 0,
+        "unknown auth preset directories must fail manifest generation",
+      );
+      assertStringIncludes(stderr, "Unknown auth preset directory");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects provider auth files that override shared base files", async () => {
+    const root = await createInvalidAuthManifestFixture("templates/auth/oidc");
+    try {
+      const result = await runTemplateManifestGenerator(root, []);
+      const stderr = new TextDecoder().decode(result.stderr);
+
+      assert(
+        result.code !== 0,
+        "auth provider overrides must fail manifest generation",
+      );
+      assertStringIncludes(stderr, "Auth provider file overrides base file");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("layers auth base files before deterministic provider additions", async () => {
     const root = await createTemplateManifestFixture();
     try {
       const manifest: unknown = JSON.parse(
@@ -234,7 +276,7 @@ describe("generated artifact checks", () => {
       const files = isRecord(oidc?.files) ? oidc.files : undefined;
 
       assertEquals(files?.[".env.auth.example"], "BASE_ENV=<VALUE>\n");
-      assertEquals(files?.["AUTH_SETUP.md"], "provider override\n");
+      assertEquals(files?.["AUTH_SETUP.md"], "base setup\n");
       assertEquals(files?.["AUTH_PROVIDER_SETUP.md"], "provider setup\n");
     } finally {
       await Deno.remove(root, { recursive: true });

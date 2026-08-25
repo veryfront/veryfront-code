@@ -39,6 +39,18 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
   return files;
 }
 
+function hasEmbeddedCredential(content: string): boolean {
+  const credentialPatterns = [
+    /=sk-[A-Za-z0-9]/,
+    /Bearer [A-Za-z0-9._-]+/,
+    /client[_-]?secret\s*[:=]\s*["']?(?!<)[A-Za-z0-9._~+/=-]{12,}/i,
+    /-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----/,
+    /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/,
+    /[A-Za-z0-9+/]{48,}={0,2}/,
+  ];
+  return credentialPatterns.some((pattern) => pattern.test(content));
+}
+
 describe("templates", () => {
   it("keeps starter npm dependencies out of root package template files", async () => {
     const offenders: string[] = [];
@@ -1089,8 +1101,13 @@ describe("templates", () => {
       const files = await getAuthTemplate(preset);
       assert(files !== null, `${preset} must exist`);
       const paths = files.map((file) => file.path);
-      assertEquals(paths.some((path) => path.includes("app/api/auth")), false);
-      assertEquals(paths.some((path) => path.includes("pages/api/auth")), false);
+      const forbiddenPathPattern =
+        /(^|\/)(?:middleware|proxy)\.[cm]?[tj]sx?$|(^|\/)(?:app|pages)\/api\/auth(?:\/|$)|(^|\/)(?:callback|token|session|logout)(?:\.|\/)/;
+      assertEquals(
+        paths.filter((path) => forbiddenPathPattern.test(path)),
+        [],
+        `${preset} must not generate auth handlers, middleware, callbacks, token, session, logout, or proxy files`,
+      );
 
       const config = files.find((file) => file.path === "veryfront.auth.config.example.ts")
         ?.content ?? "";
@@ -1105,8 +1122,19 @@ describe("templates", () => {
         joined,
         "VERYFRONT_AUTH_SESSION_SECRET=<RANDOM_32_BYTE_OR_LONGER_SECRET>",
       );
-      assertEquals(/=sk-[A-Za-z0-9]/.test(joined), false);
-      assertEquals(/Bearer [A-Za-z0-9._-]+/.test(joined), false);
+      assertEquals(hasEmbeddedCredential(joined), false, `${preset} must not embed credentials`);
+      assertStringIncludes(joined, "issuer");
+      assertStringIncludes(joined, "callback");
+      assertStringIncludes(joined, "PKCE");
+      assertStringIncludes(joined, "Active Directory");
+      assertStringIncludes(joined, "AD FS");
+      if (preset === "authelia") {
+        assertStringIncludes(joined, "Authelia");
+        assertStringIncludes(joined, "openid");
+      }
+      if (preset === "microsoft-entra") {
+        assertStringIncludes(joined, "Microsoft Entra");
+      }
     }
   });
 
