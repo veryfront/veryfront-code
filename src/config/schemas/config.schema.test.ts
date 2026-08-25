@@ -478,7 +478,13 @@ describe("configSchema", () => {
       const [trustedProxy, message] of [
         [{ trustedPeers: [] }, "security.auth.trustedProxy.trustedPeers"],
         [{ trustedPeers: ["proxy.internal"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["::192.0.2.1"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["2001:db8::192.0.2.1"] }, "security.auth.trustedProxy.trustedPeers.0"],
         [{ trustedPeers: ["127.0.0.1", "127.0.0.1"] }, "Trusted proxy peers must be unique"],
+        [
+          { trustedPeers: ["192.0.2.1", "::ffff:192.0.2.1"] },
+          "Trusted proxy peers must be unique",
+        ],
         [
           { headers: { ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers, subject: "" } },
           "security.auth.trustedProxy.headers.subject",

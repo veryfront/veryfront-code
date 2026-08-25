@@ -154,6 +154,13 @@ groups must be fetched elsewhere, Veryfront sets `groupsComplete: false`.
 Application authorization that depends on groups must treat incomplete groups
 as not enough information.
 
+Application sessions remain inside a bounded encrypted cookie. If raw provider
+claims do not fit, Veryfront keeps the stable identity, normalized email and
+name, normalized groups and roles when they fit, and only the protocol claims
+needed to validate the session. If the normalized groups and roles still do
+not fit, Veryfront clears both arrays and sets `groupsComplete: false`. Treat
+missing raw claims, groups, and roles as unavailable, never as authorization.
+
 ## Add auth to an existing app
 
 From your existing project root, run the scaffold:
@@ -222,6 +229,7 @@ provenance, not `Forwarded`, `X-Forwarded-For`, or any caller-controlled header.
 - Use the minimum scopes your app needs. Keep `openid`.
 - Treat `(issuer, subject)` as the external identity key.
 - Treat `groupsComplete: false` as not authorized for group-dependent actions.
+- Treat missing claims, groups, and roles as unavailable for authorization.
 - Keep app authorization in middleware or routes after the Veryfront login boundary.
 - Rotate session secrets intentionally and expect existing sessions to be cleared.
 

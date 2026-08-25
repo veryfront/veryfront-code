@@ -69,6 +69,7 @@ export interface AuthScaffoldInput {
   afterOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
   identityForTesting?: (info: Deno.FileInfo) => FileIdentity;
   removeForTesting?: (path: string) => Promise<void>;
+  realPathForTesting?: (path: string) => Promise<string>;
 }
 
 interface ScaffoldDefinition {
@@ -293,6 +294,7 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
       afterOpen: input.afterOpenForTesting,
       identity: input.identityForTesting ?? fileIdentity,
       remove: input.removeForTesting,
+      realPath: input.realPathForTesting,
     },
   );
 }
@@ -309,10 +311,12 @@ async function writeGuardedMultiFilePlan(
     afterOpen?: (file: ScaffoldFilePlan) => Promise<void>;
     identity?: (info: Deno.FileInfo) => FileIdentity;
     remove?: (path: string) => Promise<void>;
+    realPath?: (path: string) => Promise<string>;
   },
 ): Promise<ScaffoldResult> {
   const root = resolve(projectDir);
   const identity = options.identity ?? fileIdentity;
+  const realPath = options.realPath ?? Deno.realPath;
   const normalizedFiles = validatePlanPaths(plan, root, {
     allowNestedPaths: options.allowNestedPaths,
   });
@@ -327,7 +331,7 @@ async function writeGuardedMultiFilePlan(
     }
     rootGuard = {
       identity: identity(rootStat),
-      realPath: await Deno.realPath(root),
+      realPath: await realPath(root),
     };
 
     for (const file of normalizedFiles.files) {
@@ -355,12 +359,19 @@ async function writeGuardedMultiFilePlan(
   const createdFiles: OwnedPath[] = [];
   const createdDirs: OwnedPath[] = [];
   const defaultWriter = async (file: ScaffoldFilePlan) => {
-    await assertRootIdentity(root, rootGuard, identity);
+    await assertRootIdentity(root, rootGuard, identity, realPath);
     await options.beforeOpen?.(file);
     const handle = await Deno.open(file.path, { write: true, createNew: true });
     try {
       await options.afterOpen?.(file);
-      const opened = await verifyOpenedTarget(root, rootGuard, file.path, handle, identity);
+      const opened = await verifyOpenedTarget(
+        root,
+        rootGuard,
+        file.path,
+        handle,
+        identity,
+        realPath,
+      );
       const content = new TextEncoder().encode(file.content);
       createdFiles.push(opened);
       let offset = 0;
@@ -388,7 +399,7 @@ async function writeGuardedMultiFilePlan(
 
   try {
     for (const file of normalizedFiles.files) {
-      await assertRootIdentity(root, rootGuard, identity);
+      await assertRootIdentity(root, rootGuard, identity, realPath);
       await ensureSafeParentDirectories(root, dirname(file.path), createdDirs, identity);
       await options.beforeWrite?.(file);
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
@@ -399,7 +410,14 @@ async function writeGuardedMultiFilePlan(
     const cleanupErrors: string[] = [];
     for (const owned of createdFiles.toReversed()) {
       try {
-        const removed = await removeOwnedPath(root, rootGuard, owned, removeCreatedPath, identity);
+        const removed = await removeOwnedPath(
+          root,
+          rootGuard,
+          owned,
+          removeCreatedPath,
+          identity,
+          realPath,
+        );
         if (!removed) cleanupErrors.push(relative(root, owned.path));
       } catch {
         cleanupErrors.push(relative(root, owned.path));
@@ -407,7 +425,14 @@ async function writeGuardedMultiFilePlan(
     }
     for (const owned of createdDirs.toReversed()) {
       try {
-        const removed = await removeOwnedPath(root, rootGuard, owned, removeCreatedPath, identity);
+        const removed = await removeOwnedPath(
+          root,
+          rootGuard,
+          owned,
+          removeCreatedPath,
+          identity,
+          realPath,
+        );
         if (!removed) cleanupErrors.push(relative(root, owned.path));
       } catch {
         cleanupErrors.push(relative(root, owned.path));
@@ -561,6 +586,7 @@ async function assertRootIdentity(
   root: string,
   expected: RootGuard,
   identity: (info: Deno.FileInfo) => FileIdentity,
+  realPath: (path: string) => Promise<string>,
 ): Promise<void> {
   const current = await Deno.lstat(root);
   if (!current.isDirectory || current.isSymlink) {
@@ -570,7 +596,7 @@ async function assertRootIdentity(
   if (expected.identity !== null && !sameIdentity(currentIdentity, expected.identity)) {
     throw new Error("Unsafe scaffold project root");
   }
-  if (expected.identity === null && await Deno.realPath(root) !== expected.realPath) {
+  if (expected.identity === null && await realPath(root) !== expected.realPath) {
     throw new Error("Unsafe scaffold project root");
   }
 }
@@ -581,13 +607,11 @@ async function verifyOpenedTarget(
   path: string,
   handle: Deno.FsFile,
   identity: (info: Deno.FileInfo) => FileIdentity,
+  realPath: (path: string) => Promise<string>,
 ): Promise<OwnedPath> {
-  await assertRootIdentity(root, rootGuard, identity);
-  const rootRealPath = rootGuard.realPath.endsWith("/")
-    ? rootGuard.realPath
-    : `${rootGuard.realPath}/`;
-  const targetRealPath = await Deno.realPath(path);
-  if (!targetRealPath.startsWith(rootRealPath)) {
+  await assertRootIdentity(root, rootGuard, identity, realPath);
+  const targetRealPath = await realPath(path);
+  if (!isRealPathInsideRoot(rootGuard.realPath, targetRealPath)) {
     throw new Error("Unsafe scaffold path");
   }
   const handleIdentity = identity(await handle.stat());
@@ -607,13 +631,21 @@ async function removeOwnedPath(
   owned: OwnedPath,
   remove: (path: string) => Promise<void>,
   identity: (info: Deno.FileInfo) => FileIdentity,
+  realPath: (path: string) => Promise<string>,
 ): Promise<boolean> {
   if (owned.identity === null) return false;
-  await assertRootIdentity(root, rootGuard, identity);
+  await assertRootIdentity(root, rootGuard, identity, realPath);
   const current = await Deno.lstat(owned.path);
   if (!sameIdentity(identity(current), owned.identity)) return false;
   await remove(owned.path);
   return true;
+}
+
+function isRealPathInsideRoot(root: string, target: string): boolean {
+  const relativePath = relative(root, target);
+  if (relativePath === "." || isAbsolute(relativePath)) return false;
+  const firstPart = pathParts(relativePath)[0];
+  return firstPart !== undefined && firstPart !== "..";
 }
 
 async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {

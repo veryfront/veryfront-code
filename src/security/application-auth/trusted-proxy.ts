@@ -381,7 +381,7 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-function canonicalizePeerAddress(hostname: string): string | null {
+export function canonicalizePeerAddress(hostname: string): string | null {
   if (hostname.length === 0 || hostname !== (apply(stringTrim, hostname, []) as string)) {
     return null;
   }

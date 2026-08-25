@@ -207,6 +207,7 @@ async function successfulCallback(
   nonce: string,
   cookie: string,
   code = "ok",
+  callbackSuffix = "",
 ): Promise<Response> {
   const signed = await createSignedIdToken({
     iss: ISSUER,
@@ -230,9 +231,12 @@ async function successfulCallback(
     },
     () =>
       runtime.handleAuthRoute(
-        new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=${code}`, {
-          headers: { cookie },
-        }),
+        new Request(
+          `${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=${code}${callbackSuffix}`,
+          {
+            headers: { cookie },
+          },
+        ),
       ),
   );
   assert(response);
@@ -373,6 +377,9 @@ describe("security/application-auth OIDC runtime", () => {
         `state=${state}&code=ok&iss=https%3A%2F%2Fother.example.test`,
         `state=${state}&code=ok&scope=openid&scope=email`,
         `state=${state}&code=ok&scope=${encodeURIComponent("openid\nemail")}`,
+        `state=${state}&code=ok&session_state=one&session_state=two`,
+        `state=${state}&code=ok&session_state=${"s".repeat(513)}`,
+        `state=${state}&code=ok&session_state=${encodeURIComponent("keycloak\nsession")}`,
       ]
     ) {
       const response = await runtime.handleAuthRoute(
@@ -387,6 +394,23 @@ describe("security/application-auth OIDC runtime", () => {
         true,
       );
     }
+  });
+
+  it("accepts one bounded Keycloak session_state callback parameter", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+
+    const callback = await successfulCallback(
+      runtime,
+      state,
+      nonce,
+      cookie,
+      "ok",
+      "&session_state=6f730d5d-55d0-48e7-a02e-fdbcf849a4f7",
+    );
+
+    assertEquals(callback.status, 303);
+    assertEquals(callback.headers.get("Location"), "/");
+    assertEquals((callback.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="), true);
   });
 
   it("fails callback query and transaction boundaries closed without reflecting secrets", async () => {
@@ -769,6 +793,81 @@ describe("security/application-auth OIDC runtime", () => {
       (hugeSession.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
       false,
     );
+  });
+
+  it("compacts moderate Entra group claims into a fail-closed stateless session", async () => {
+    const runtime = createRuntimeAt(
+      NOW,
+      {
+        APP_URL: APP_ORIGIN,
+        OIDC_ISSUER: ISSUER,
+        OIDC_CLIENT_ID: "client-id",
+        OIDC_CLIENT_SECRET: CLIENT_SECRET,
+        OIDC_SESSION_SECRET: SESSION_SECRET,
+      },
+      {
+        claims: {
+          email: "email",
+          name: "name",
+          groups: "groups",
+          roles: "roles",
+        },
+      },
+    );
+    const { state, nonce, cookie } = await startTransaction(runtime);
+    const signed = await createSignedIdToken({
+      iss: ISSUER,
+      sub: "entra-subject",
+      aud: "client-id",
+      nonce,
+      iat: NOW,
+      exp: NOW + 300,
+      email: "user@example.test",
+      name: "Example User",
+      groups: Array.from(
+        { length: 199 },
+        (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      ),
+      roles: ["application-admin"],
+    });
+
+    const callback = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url.endsWith("/.well-known/openid-configuration")) {
+          return Promise.resolve(oidcMetadata());
+        }
+        if (url === `${ISSUER}/token`) {
+          return Promise.resolve(Response.json({ id_token: signed.token }));
+        }
+        if (url === `${ISSUER}/jwks`) {
+          return Promise.resolve(Response.json({ keys: [signed.jwk] }));
+        }
+        return Promise.reject(new Error("unexpected Entra claims fetch"));
+      },
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=ok`, {
+            headers: { cookie },
+          }),
+        ),
+    );
+
+    assert(callback);
+    assertEquals(callback.status, 303);
+    const admitted = await runtime.admitRequest(
+      new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: sessionCookie(callback) } }),
+    );
+    assert(!(admitted instanceof Response));
+    assertEquals(admitted.subject, "entra-subject");
+    assertEquals(admitted.email, "user@example.test");
+    assertEquals(admitted.name, "Example User");
+    assertEquals(admitted.groups, []);
+    assertEquals(admitted.roles, []);
+    assertEquals(admitted.groupsComplete, false);
+    assertEquals(admitted.claims.aud, "client-id");
+    assertEquals(admitted.claims.groups, undefined);
+    assertEquals(admitted.claims.roles, undefined);
   });
 
   it("rejects a scope-only policy change after Array.sort is poisoned", async () => {

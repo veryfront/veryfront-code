@@ -22,7 +22,7 @@ import {
   readSessionCookie,
   readTransactionCookie,
 } from "./cookies.ts";
-import { createApplicationIdentity } from "./identity.ts";
+import { createApplicationIdentity, snapshotApplicationIdentity } from "./identity.ts";
 import { validateOidcAudienceClaims, verifyOidcIdToken } from "./id-token.ts";
 import { createJwksCache, type JwksCache } from "./jwks-cache.ts";
 import {
@@ -32,8 +32,8 @@ import {
   parseStrictJsonObject,
 } from "./oidc-metadata.ts";
 import { parseApplicationAuthReturnPath } from "./return-path.ts";
-import type { ApplicationIdentity } from "./types.ts";
-import type { AuthCookiePayload } from "./crypto.ts";
+import type { ApplicationIdentity, AuthClaimValue } from "./types.ts";
+import { type AuthCookiePayload, AuthCookieSizeLimitError } from "./crypto.ts";
 import { MAX_APPLICATION_AUTH_SCOPE_COUNT, MAX_APPLICATION_AUTH_SCOPE_LENGTH } from "./policy.ts";
 
 const AUTH_ROUTE_ROOT = "/_veryfront/auth";
@@ -49,6 +49,7 @@ const MAX_SESSION_TTL_SECONDS = 2_592_000;
 const MAX_ENV_VALUE_LENGTH = 4_096;
 const MAX_CALLBACK_QUERY_LENGTH = 4_096;
 const MAX_CALLBACK_VALUE_LENGTH = 2_048;
+const MAX_CALLBACK_SESSION_STATE_LENGTH = 512;
 const MAX_ID_TOKEN_LENGTH = 16_384;
 const MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
 const TOKEN_TIMEOUT_MS = 5_000;
@@ -322,17 +323,34 @@ export function createOidcApplicationAuthRuntime(
         claimNames: options.config.claims,
         allowInsecureLoopback: runtime.allowInsecureLoopback,
       });
-      sessionCookie = await createSessionCookie({
+      const binding = await sessionConfigurationBinding(runtime, options.config);
+      const cookieOptions = {
         secret: runtime.sessionSecret,
-        payload: sessionPayload(
-          identity,
-          await sessionConfigurationBinding(runtime, options.config),
-        ),
         maxAgeSeconds: runtime.sessionTtlSeconds,
         now: now(),
         cookieName: runtime.cookieName,
         randomBytes,
-      });
+      } as const;
+      try {
+        sessionCookie = await createSessionCookie({
+          ...cookieOptions,
+          payload: sessionPayload(identity, binding),
+        });
+      } catch (error) {
+        if (!(error instanceof AuthCookieSizeLimitError)) throw error;
+        try {
+          sessionCookie = await createSessionCookie({
+            ...cookieOptions,
+            payload: compactSessionPayload(identity, binding, true),
+          });
+        } catch (compactError) {
+          if (!(compactError instanceof AuthCookieSizeLimitError)) throw compactError;
+          sessionCookie = await createSessionCookie({
+            ...cookieOptions,
+            payload: compactSessionPayload(identity, binding, false),
+          });
+        }
+      }
       returnTo = tx.returnTo;
     } catch {
       const response = hardenedText("Bad request", 400);
@@ -406,6 +424,7 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   const iss = readSingleParam(url, "iss", false);
   readSingleParam(url, "error_description", false);
   validateCallbackScope(readSingleParam(url, "scope", false));
+  validateCallbackSessionState(readSingleParam(url, "session_state", false));
   if ((code === undefined) === (error === undefined)) {
     throw new TypeError("OIDC callback must contain exactly one result");
   }
@@ -417,13 +436,27 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
 
 function isAllowedCallbackParameter(value: string): boolean {
   return value === "state" || value === "code" || value === "error" ||
-    value === "error_description" || value === "iss" || value === "scope";
+    value === "error_description" || value === "iss" || value === "scope" ||
+    value === "session_state";
 }
 
 function validateCallbackScope(value: string | undefined): void {
   if (value === undefined) return;
   if (!/^[\x21\x23-\x5B\x5D-\x7E]+(?: [\x21\x23-\x5B\x5D-\x7E]+)*$/u.test(value)) {
     throw new TypeError("OIDC callback scope is invalid");
+  }
+}
+
+function validateCallbackSessionState(value: string | undefined): void {
+  if (value === undefined) return;
+  if (value.length > MAX_CALLBACK_SESSION_STATE_LENGTH) {
+    throw new TypeError("OIDC callback session_state exceeds the size limit");
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code <= 0x1f || code === 0x7f) {
+      throw new TypeError("OIDC callback session_state contains a control character");
+    }
   }
 }
 
@@ -637,22 +670,64 @@ function sessionPayload(identity: ApplicationIdentity, binding: string): AuthCoo
   };
 }
 
+function compactSessionPayload(
+  identity: ApplicationIdentity,
+  binding: string,
+  preserveAuthorizationClaims: boolean,
+): AuthCookiePayload {
+  const audience = identity.claims.aud;
+  if (audience === undefined) throw new TypeError("OIDC audience claim is missing");
+  const claims: { [key: string]: AuthClaimValue } = {
+    iss: identity.issuer,
+    sub: identity.subject,
+    aud: audience,
+  };
+  const authorizedParty = identity.claims.azp;
+  if (authorizedParty !== undefined) claims.azp = authorizedParty;
+
+  return {
+    v: 3,
+    binding,
+    issuer: identity.issuer,
+    subject: identity.subject,
+    truncated: true,
+    claims,
+    groups: preserveAuthorizationClaims ? identity.groups : [],
+    roles: preserveAuthorizationClaims ? identity.roles : [],
+    groupsComplete: preserveAuthorizationClaims ? identity.groupsComplete : false,
+    ...(identity.email === undefined ? {} : { email: identity.email }),
+    ...(identity.name === undefined ? {} : { name: identity.name }),
+  };
+}
+
 function identityFromSessionPayload(
   value: JsonObject,
   runtime: RuntimeConfig,
   claimNames: OidcAuthConfig["claims"],
   expectedBinding: string,
 ): ApplicationIdentity {
-  if (value.v !== 2) throw new TypeError("session version mismatch");
+  if (value.v !== 2 && value.v !== 3) throw new TypeError("session version mismatch");
   if (value.binding !== expectedBinding) throw new TypeError("session binding mismatch");
   if (!isPlainObject(value.claims)) throw new TypeError("session claims must be an object");
   validateOidcAudienceClaims(value.claims.aud, value.claims.azp, runtime.clientId);
-  return createApplicationIdentity({
+  const identity = createApplicationIdentity({
     issuer: value.issuer,
     expectedIssuer: runtime.issuer,
     subject: value.subject,
     claims: value.claims,
-    claimNames: canonicalClaimNames(claimNames),
+    claimNames: value.v === 2 ? canonicalClaimNames(claimNames) : undefined,
+  });
+  if (value.v === 2) return identity;
+  if (value.truncated !== true) throw new TypeError("compacted session marker is invalid");
+  return snapshotApplicationIdentity({
+    issuer: identity.issuer,
+    subject: identity.subject,
+    ...(value.email === undefined ? {} : { email: value.email }),
+    ...(value.name === undefined ? {} : { name: value.name }),
+    groups: value.groups,
+    roles: value.roles,
+    groupsComplete: value.groupsComplete,
+    claims: identity.claims,
   });
 }
 

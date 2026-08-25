@@ -332,6 +332,44 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 0);
   });
 
+  it("applies the configured CORS policy to terminal application auth responses", async () => {
+    const allowedOrigin = "https://client.example";
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          cors: { origin: [allowedOrigin], credentials: true },
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const allowed = await handler(
+      new Request("http://localhost/api/private", {
+        headers: { origin: allowedOrigin },
+      }),
+    );
+    assertEquals(allowed.status, 401);
+    assertEquals(allowed.headers.get("Access-Control-Allow-Origin"), allowedOrigin);
+    assertEquals(allowed.headers.get("Access-Control-Allow-Credentials"), "true");
+    assertEquals(allowed.headers.get("Vary"), "Origin");
+
+    const denied = await handler(
+      new Request("http://localhost/api/private", {
+        headers: { origin: "https://untrusted.example" },
+      }),
+    );
+    assertEquals(denied.status, 401);
+    assertEquals(denied.headers.get("Access-Control-Allow-Origin"), null);
+    assertEquals(denied.headers.get("Access-Control-Allow-Credentials"), null);
+  });
+
   it("keeps CORS preflight ahead of application auth admission", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {

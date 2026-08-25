@@ -25,6 +25,7 @@ import {
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
 
 // Re-export is at the bottom of the file
@@ -637,7 +638,17 @@ export function createVeryfrontHandler(
             const authResult = await runInRequestProjectEnv(() =>
               handleApplicationAuthRequest(request, ctx)
             );
-            if (authResult?.response) return authResult.response;
+            if (authResult?.response) {
+              const terminalResponse = authResult.response;
+              const response = await runInRequestProjectEnv(() =>
+                applyCORSHeaders({
+                  request,
+                  response: terminalResponse,
+                  config: ctx.securityConfig?.cors,
+                })
+              );
+              return response ?? terminalResponse;
+            }
             ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
             ctx.applicationIdentityHeaderNames =
               authResult?.metadata?.applicationIdentityHeaderNames ?? [];

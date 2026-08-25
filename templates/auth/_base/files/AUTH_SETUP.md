@@ -64,6 +64,8 @@ Veryfront validates state, nonce, ID token signature, exact issuer, audience/cli
 
 Use `(iss, sub)` as the stable external identity key. Do not use email, display name, username, or group labels as account keys.
 
+Application sessions use a bounded encrypted cookie. If raw provider claims do not fit, Veryfront keeps the stable identity and normalized fields that fit. If normalized groups and roles still do not fit, Veryfront clears both arrays and sets `groupsComplete: false`. Treat missing claims, groups, and roles as unavailable for authorization.
+
 Use one exact issuer per app. Dynamic issuer templates are not part of this scaffold.
 
 Active Directory users integrate through a standards-compatible OIDC issuer such as Microsoft Entra ID, OIDC-enabled AD FS, Authelia connected to a directory backend, or another IdP connected to the directory. Do not add LDAP bind credentials, NTLM, Kerberos, provider-specific callback handlers, or directory lookup code to this scaffold.

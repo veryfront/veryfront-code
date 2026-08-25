@@ -72,6 +72,7 @@ import {
   MAX_APPLICATION_AUTH_SCOPE_LENGTH,
   MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH,
 } from "#veryfront/security/application-auth/policy.ts";
+import { canonicalizePeerAddress } from "#veryfront/security/application-auth/trusted-proxy.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
@@ -334,29 +335,14 @@ function isValidAuthCookieName(value: string): boolean {
     HTTP_TOKEN_PATTERN.test(value);
 }
 
-function isIPv4Address(value: string): boolean {
-  const parts = value.split(".");
-  if (parts.length !== 4) return false;
-  for (const part of parts) {
-    if (!/^(?:0|[1-9][0-9]{0,2})$/.test(part)) return false;
-    const octet = Number(part);
-    if (octet > 255) return false;
-  }
-  return true;
-}
-
-function isIPv6Address(value: string): boolean {
-  if (!value.includes(":") || value.includes("[") || value.includes("]")) return false;
-  try {
-    const url = new URL(`http://[${value}]/`);
-    return url.hostname.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function isTrustedProxyPeerAddress(value: string): boolean {
-  return isIPv4Address(value) || isIPv6Address(value);
+  return canonicalizePeerAddress(value) !== null;
+}
+
+function hasUniqueTrustedProxyPeerAddresses(values: readonly string[]): boolean {
+  const canonical = values.map(canonicalizePeerAddress);
+  return canonical.every((value): value is string => value !== null) &&
+    new Set(canonical).size === canonical.length;
 }
 
 const getOidcClaimMappingSchema = defineSchema((v) =>
@@ -473,7 +459,7 @@ const getTrustedProxyAuthSchema = defineSchema((v) =>
       )
       .min(1)
       .max(MAX_TRUSTED_PROXY_PEERS)
-      .refine(hasUniqueStrings, "Trusted proxy peers must be unique"),
+      .refine(hasUniqueTrustedProxyPeerAddresses, "Trusted proxy peers must be unique"),
     headers: getTrustedProxyHeadersSchema(),
   }).strict()
 );

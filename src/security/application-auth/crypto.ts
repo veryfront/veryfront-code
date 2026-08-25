@@ -17,6 +17,9 @@ const AUTH_COOKIE_SALT = textEncoder.encode("Veryfront auth-cookie v1");
 export type AuthCookiePurpose = "session" | "transaction";
 export type AuthCookiePayload = Readonly<{ readonly [key: string]: AuthClaimValue }>;
 
+/** Raised only when a newly sealed auth cookie cannot fit its bounded envelope. */
+export class AuthCookieSizeLimitError extends TypeError {}
+
 export interface OpenedAuthCookieEnvelope {
   readonly issuedAt: number;
   readonly expiresAt: number;
@@ -64,7 +67,7 @@ export async function sealAuthCookieEnvelope(
   });
   const plaintextBytes = textEncoder.encode(plaintext);
   if (plaintextBytes.byteLength > MAX_PLAINTEXT_JSON_BYTES) {
-    throw new TypeError("Auth cookie plaintext exceeds the JSON size limit");
+    throw new AuthCookieSizeLimitError("Auth cookie plaintext exceeds the JSON size limit");
   }
 
   const iv = readRandomBytes(options.randomBytes, IV_BYTES);
@@ -83,7 +86,7 @@ export async function sealAuthCookieEnvelope(
     encodeAuthBase64Url(new Uint8Array(encrypted))
   }`;
   if (value.length > MAX_ENVELOPE_CHARS) {
-    throw new TypeError("Auth cookie envelope exceeds the size limit");
+    throw new AuthCookieSizeLimitError("Auth cookie envelope exceeds the size limit");
   }
   return value;
 }

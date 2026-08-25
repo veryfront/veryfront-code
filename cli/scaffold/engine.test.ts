@@ -268,6 +268,26 @@ describe("scaffold engine", () => {
     });
   });
 
+  it("accepts Windows real paths when the opened target remains inside the project root", async () => {
+    await withTempProject(async (projectDir) => {
+      const target = join(projectDir, "first.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: target, content: "first" }],
+        realPathForTesting: (path) =>
+          Promise.resolve(
+            path === projectDir
+              ? String.raw`C:\projects\veryfront-app`
+              : String.raw`C:\projects\veryfront-app\first.txt`,
+          ),
+      });
+
+      assertEquals(result.success, true);
+      assertEquals(await Deno.readTextFile(target), "first");
+    });
+  });
+
   it("rejects unsafe multi-file plan paths before writing", async () => {
     await withTempProject(async (projectDir) => {
       for (
