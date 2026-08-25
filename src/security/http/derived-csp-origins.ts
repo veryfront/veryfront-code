@@ -35,8 +35,9 @@
  * @module security/http/derived-csp-origins
  */
 
-/** Directives this module is permitted to contribute to. */
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+/** Directives this module is permitted to contribute to. */
 export const DERIVABLE_CSP_DIRECTIVES = Object.freeze(
   ["img-src", "media-src", "font-src"] as const,
 );
