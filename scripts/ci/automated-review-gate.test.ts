@@ -927,7 +927,6 @@ describe("automated review workflow", () => {
     for (
       const condition of [
         "github.event.issue.pull_request",
-        "github.event.workflow_run.name == 'Automated review wakeup'",
         "github.event.workflow_run.event == 'pull_request_review'",
         "github.event.workflow_run.conclusion == 'success'",
       ]
@@ -963,6 +962,8 @@ describe("automated review workflow", () => {
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
         "workflowRun?.display_title",
+        "workflowRun?.path",
+        ".github/workflows/automated-review-wakeup.yml",
         "automated-review-wakeup-pr-",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
@@ -982,6 +983,10 @@ describe("automated review workflow", () => {
     assert(
       !targetScript.includes("workflow_run?.pull_requests"),
       "fork wakeups must not depend on workflow_run.pull_requests, which GitHub can leave empty",
+    );
+    assert(
+      !targetScript.includes("workflowRun?.name"),
+      "a dynamic run-name must not be mistaken for the stable workflow identity",
     );
 
     const job = record(jobs.review, "review job");
