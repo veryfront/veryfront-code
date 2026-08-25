@@ -167,14 +167,13 @@ async function readBoundedText(
 }
 
 /**
- * Reduce raw subprocess stderr to a stable, redacted failure summary. Deno
- * stderr commonly contains absolute cache or home paths and stack traces;
- * those are machine-specific implementation details that must stay out of
- * thrown errors and logs. Keep the first meaningful line, drop stack frames,
- * and replace path-like tokens with a placeholder.
+ * Reduce subprocess stderr or protocol errors to a stable, redacted failure
+ * summary. Native diagnostics commonly contain absolute cache or home paths
+ * and stack traces. Keep the first meaningful line, drop stack frames, and
+ * replace path-like tokens with a placeholder.
  */
-function sanitizeNativeProcessStderr(stderr: string): string {
-  const line = stderr
+function sanitizeNativeProcessDiagnostic(diagnostic: string): string {
+  const line = diagnostic
     .split("\n")
     .map((entry) => entry.trim())
     .find((entry) => entry.length > 0 && !entry.startsWith("at "));
@@ -360,11 +359,15 @@ export async function extractWithNativeProcessDeno(
 
   if (timeoutError) throw timeoutError;
   if (callbackError) throw callbackError;
-  if (childError !== undefined) throw new Error(childError);
+  if (childError !== undefined) {
+    throw new Error(
+      sanitizeNativeProcessDiagnostic(childError) || "Native extraction process failed",
+    );
+  }
   if (content !== undefined) return content;
 
   const signalSuffix = status.signal ? `, signal ${status.signal}` : "";
-  const stderrSummary = sanitizeNativeProcessStderr(stderrText);
+  const stderrSummary = sanitizeNativeProcessDiagnostic(stderrText);
   const stderrSuffix = stderrSummary ? `: ${stderrSummary}` : "";
   throw new Error(
     `Native extraction process exited without a result (code ${status.code}${signalSuffix})${stderrSuffix}`,

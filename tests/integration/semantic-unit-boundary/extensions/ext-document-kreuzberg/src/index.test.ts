@@ -1,16 +1,22 @@
 /**
- * ext-document-kreuzberg extension tests.
+ * ext-document-kreuzberg extension integration tests.
  *
  * Exercises the extension factory lifecycle without loading kreuzberg.
  *
  * @module extensions/ext-document-kreuzberg/test
  */
 
-import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
-import { toFileUrl } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import JSZip from "jszip";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { toFileUrl } from "#std/path";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import JSZip from "npm:jszip@3.10.1";
+import { PDFDocument, StandardFonts } from "npm:pdf-lib@1.17.1";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import factory, {
@@ -19,9 +25,9 @@ import factory, {
   KreuzbergDocumentExtractor,
   type KreuzbergDocumentExtractorDeps,
   type NativeExtractionMode,
-} from "./index.ts";
-import { extractionConfigForMimeType } from "./extraction-config.ts";
-import { loadKreuzbergNative } from "./kreuzberg.ts";
+} from "../../../../../../extensions/ext-document-kreuzberg/src/index.ts";
+import { extractionConfigForMimeType } from "../../../../../../extensions/ext-document-kreuzberg/src/extraction-config.ts";
+import { loadKreuzbergNative } from "../../../../../../extensions/ext-document-kreuzberg/src/kreuzberg.ts";
 
 function silentLogger(): ExtensionLogger {
   return {
@@ -259,9 +265,13 @@ async function extractPptxWithProgressWorker(buffer: ArrayBuffer): Promise<{
   content: string;
   events: DocumentExtractionProgressEvent[];
 }> {
-  const worker = new Worker(new URL("./native-progress-extraction-worker.ts", import.meta.url), {
-    type: "module",
-  });
+  const worker = new Worker(
+    new URL(
+      "../../../../../../extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
+      import.meta.url,
+    ),
+    { type: "module" },
+  );
   const events: DocumentExtractionProgressEvent[] = [];
 
   try {
@@ -307,13 +317,13 @@ async function writeFixtureProcessScript(source: string): Promise<{
   scriptUrl: URL;
   cleanup: () => Promise<void>;
 }> {
-  const dir = await Deno.makeTempDir({ prefix: "kreuzberg-process-fixture-" });
+  const dir = await makeTempDir({ prefix: "kreuzberg-process-fixture-" });
   const path = `${dir}/fixture-process.ts`;
-  await Deno.writeTextFile(path, source);
+  await writeTextFile(path, source);
   return {
     scriptUrl: toFileUrl(path),
     cleanup: async () => {
-      await Deno.remove(dir, { recursive: true });
+      await remove(dir, { recursive: true });
     },
   };
 }
@@ -864,6 +874,35 @@ describe("ext-document-kreuzberg extension", () => {
       assertStringIncludes(error.message, "<REDACTED>");
       assertEquals(error.message.includes("fixture-user"), false);
       assertEquals(error.message.includes("loader.js"), false);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("redacts machine-specific paths from subprocess protocol errors", async () => {
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      const line = JSON.stringify({
+        type: "error",
+        error: "Cannot load binding from /home/fixture-user/.cache/deno/npm/binding.node",
+      }) + "\\n";
+      Deno.stdout.writeSync(new TextEncoder().encode(line));
+      Deno.exit(1);
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      const error = await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(buffer, "application/pdf", {}, "whole-file", {
+            scriptUrl: fixture.scriptUrl,
+          }),
+        Error,
+        "Cannot load binding",
+      );
+      assertStringIncludes(error.message, "<REDACTED>");
+      assertEquals(error.message.includes("fixture-user"), false);
+      assertEquals(error.message.includes("binding.node"), false);
     } finally {
       await fixture.cleanup();
     }
