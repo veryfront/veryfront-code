@@ -2045,10 +2045,31 @@ describe("review wakeup identity", () => {
 
 describe("automated review workflow", () => {
   it("uses the tested gate from the trusted default branch", async () => {
+    const workflowText = await Deno.readTextFile(WORKFLOW_PATH);
     const workflow = record(
-      parse(await Deno.readTextFile(WORKFLOW_PATH)),
+      parse(workflowText),
       "workflow",
     );
+    assert(
+      !workflowText.includes("actions/checkout@"),
+      "a privileged workflow must not check out pull request repository contents",
+    );
+    const assertTrustedGateLoad = (script: string) => {
+      for (
+        const required of [
+          "github.rest.repos.getContent",
+          "scripts/ci/automated-review-gate.mjs",
+          "context.payload.repository.default_branch",
+          'encoding !== "base64"',
+          "data:text/javascript;base64",
+        ]
+      ) {
+        assert(
+          script.includes(required),
+          "gate code must load through the API from the base repository default branch",
+        );
+      }
+    };
     assertEquals(record(workflow.permissions, "permissions"), {});
 
     assertEquals(workflow.concurrency, undefined);
@@ -2112,18 +2133,14 @@ describe("automated review workflow", () => {
     );
     const targetSteps = targetJob.steps;
     assert(Array.isArray(targetSteps));
-    const targetCheckout = record(targetSteps[0], "target checkout");
-    assertEquals(
-      record(targetCheckout.with, "target checkout inputs").ref,
-      "${{ github.event.repository.default_branch }}",
-    );
     const targetScript = String(
       record(
-        record(targetSteps[1], "target resolver").with,
+        record(targetSteps[0], "target resolver").with,
         "target resolver inputs",
       )
         .script,
     );
+    assertTrustedGateLoad(targetScript);
     for (
       const required of [
         "context.payload.pull_request?.number",
@@ -2184,13 +2201,9 @@ describe("automated review workflow", () => {
     assertEquals(job.if, "github.event_name != 'merge_group'");
     const steps = job.steps;
     assert(Array.isArray(steps));
-    const checkout = record(steps[0], "checkout");
-    assertEquals(
-      record(checkout.with, "checkout inputs").ref,
-      "${{ github.event.repository.default_branch }}",
-    );
-    const gate = record(steps[1], "gate");
+    const gate = record(steps[0], "gate");
     const script = String(record(gate.with, "gate inputs").script);
+    assertTrustedGateLoad(script);
     assertEquals(
       record(gate.env, "gate environment").TARGET_SHA,
       "${{ needs.target.outputs.key }}",
@@ -2225,7 +2238,7 @@ describe("automated review workflow", () => {
       "the published state must land in the step output as a plain string",
     );
 
-    const request = record(steps[2], "request step");
+    const request = record(steps[1], "request step");
     const requestCondition = String(request.if);
     for (
       const guard of [
@@ -2250,6 +2263,7 @@ describe("automated review workflow", () => {
     const requestScript = String(
       record(request.with, "request inputs").script,
     );
+    assertTrustedGateLoad(requestScript);
     assert(
       requestScript.includes("requestAutomatedReview"),
       "the workflow must post review requests through the tested gate helper",
@@ -2308,20 +2322,13 @@ describe("automated review workflow", () => {
       Array.isArray(invalidateSteps),
       "the invalidate job must run steps of its own",
     );
-    assertEquals(
-      record(
-        record(invalidateSteps[0], "invalidate checkout").with,
-        "invalidate checkout inputs",
-      ).ref,
-      "${{ github.event.repository.default_branch }}",
-      "the invalidator must read the gate from the trusted default branch",
-    );
     const invalidateScript = String(
       record(
-        record(invalidateSteps[1], "invalidate gate").with,
+        record(invalidateSteps[0], "invalidate gate").with,
         "invalidate inputs",
       ).script,
     );
+    assertTrustedGateLoad(invalidateScript);
     for (
       const required of [
         "invalidateReviewProof",
@@ -2359,10 +2366,11 @@ describe("automated review workflow", () => {
     assert(Array.isArray(mergeGroupSteps));
     const mergeGroupScript = String(
       record(
-        record(mergeGroupSteps[1], "merge group gate").with,
+        record(mergeGroupSteps[0], "merge group gate").with,
         "merge group inputs",
       ).script,
     );
+    assertTrustedGateLoad(mergeGroupScript);
     assert(mergeGroupScript.includes("parseMergeQueuePullNumber"));
     assert(mergeGroupScript.includes("publishMergeGroupReviewStatus"));
     assert(mergeGroupScript.includes("process.env.SOURCE_HEAD_SHA"));
