@@ -15,13 +15,16 @@ interface HMRDom {
   sockets: FakeSocket[];
   /** Debug log lines emitted by the HMR client (VERYFRONT_DEBUG_HMR is enabled). */
   logs: string[];
+  /** How many full-page reloads the HMR client has attempted. */
   reloadCount(): number;
   send(message: Record<string, unknown>): void;
 }
 
 /**
- * Boots the HMR client inside a JSDOM window with a fake WebSocket and an
- * injected reload operation so tests observe the user-visible action directly.
+ * Boots the HMR client inside a JSDOM window with a fake WebSocket. Reloads are
+ * observed through jsdom's unimplemented-navigation report, so the tests watch
+ * the real `window.location.reload()` call the shipped client makes instead of
+ * a seam the production script would have to honour.
  */
 function createHMRDom(html: string): HMRDom {
   const sockets: FakeSocket[] = [];
@@ -42,6 +45,12 @@ function createHMRDom(html: string): HMRDom {
   }
 
   const virtualConsole = new VirtualConsole();
+  // jsdom cannot actually navigate, so every `window.location.reload()` surfaces
+  // as a "Not implemented: navigation ..." jsdomError. Counting those observes
+  // the reload the shipped client performs, with nothing injected into the page.
+  virtualConsole.on("jsdomError", (error: Error) => {
+    if (/navigation/i.test(error.message)) reloads++;
+  });
 
   const dom = new JSDOM(html, {
     url: "http://localhost/",
@@ -66,12 +75,6 @@ function createHMRDom(html: string): HMRDom {
   Object.defineProperty(dom.window, "WebSocket", {
     configurable: true,
     value: FakeWebSocket,
-  });
-  Object.defineProperty(dom.window, "__veryfrontHMRReload", {
-    configurable: true,
-    value: () => {
-      reloads++;
-    },
   });
 
   return {
