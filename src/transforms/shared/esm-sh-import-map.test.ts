@@ -257,4 +257,19 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "the separator the dot segment normalises to belongs to the subpath",
     );
   });
+
+  it("recovers a reserved-name package behind a build channel", () => {
+    // esm.sh does not nest channels, so once one has been stripped a leading
+    // reserved word is a package name even with a subpath after it.
+    assertEquals(
+      resolve("https://esm.sh/v135/stable/sub", { stable: "/local/s.js" }),
+      "/local/s.js",
+      "v135/stable/sub names the package stable",
+    );
+    assertEquals(
+      resolve("https://esm.sh/stable/sub", { sub: "/local/sub.js", stable: "/local/s.js" }),
+      "/local/sub.js",
+      "without a channel ahead of it, stable is the channel and sub is the package",
+    );
+  });
 });

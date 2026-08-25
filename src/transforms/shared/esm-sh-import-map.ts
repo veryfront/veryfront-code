@@ -78,6 +78,7 @@ const ESM_SH_RESERVED_SEGMENTS: ReadonlySet<string> = new Set([
  */
 function reservedNamePackage(
   url: string,
+  afterBuildChannel: boolean,
 ): { packageName: string; subpath: string; version: null } | null {
   let pathname: string;
   try {
@@ -92,7 +93,11 @@ function reservedNamePackage(
   const subpath = separator === -1 ? "" : pathname.slice(separator);
 
   if (/^v\d+$/.test(packageName)) return { packageName, subpath, version: null };
-  if (subpath === "" && ESM_SH_RESERVED_SEGMENTS.has(packageName)) {
+
+  // A reserved word introduces a source, so only a lone segment can be a
+  // package name. Behind a build channel it is unambiguous either way, since
+  // esm.sh does not nest channels: `v135/stable/sub` is the package `stable`.
+  if (ESM_SH_RESERVED_SEGMENTS.has(packageName) && (afterBuildChannel || subpath === "")) {
     return { packageName, subpath, version: null };
   }
 
@@ -123,7 +128,8 @@ export function parseEsmShSpecifier(
   const stripped = stripTrailingSlash(normalized);
   const hadTrailingSeparator = stripped !== normalized;
 
-  const coordinates = reservedNamePackage(stripped) ?? parseEsmShUrl(stripped);
+  const coordinates = reservedNamePackage(stripped, withoutBuildPrefix !== url) ??
+    parseEsmShUrl(stripped);
   if (!coordinates) return null;
 
   const { packageName, subpath } = coordinates;
