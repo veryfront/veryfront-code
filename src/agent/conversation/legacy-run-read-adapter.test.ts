@@ -9,7 +9,7 @@ import fixture from "./fixtures/legacy-content-after-end.json" with {
 import { createLifecycleRunEventAdapter } from "./lifecycle-run-event-adapter.ts";
 import { readConversationRunLifecycleFrames } from "./legacy-run-read-adapter.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
-import type { ConversationRunEvent } from "./run-events.ts";
+import { type ConversationRunEvent, normalizeEncodedConversationRunEvents } from "./run-events.ts";
 
 function frames(
   entries: readonly {
@@ -392,6 +392,201 @@ describe("conversation run lifecycle read adapter", () => {
         providerExecuted: true,
       }],
       "a stored v1 plain-text result must survive decoding unchanged",
+    );
+  });
+
+  it("replays a provider-executed tool result written by the version 1 writer", () => {
+    // Drive the real version 1 writer rather than hand-writing durable events:
+    // it is the only producer of version 1 history, so a fixture it could never
+    // emit would prove nothing about replaying real runs.
+    const stored = normalizeEncodedConversationRunEvents([
+      {
+        type: "tool-input-start",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        input: { url: "https://docs.example/page" },
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "legacy-fetch",
+        output: { ok: true },
+        providerExecuted: true,
+      },
+    ]);
+
+    assertEquals(
+      stored.find((event) => event.type === "TOOL_CALL_START")?.providerExecuted,
+      true,
+      "the version 1 writer must record that the started call was provider-executed",
+    );
+    assertEquals(
+      stored.find((event) => event.type === "TOOL_CALL_RESULT")?.content,
+      '{"ok":true}',
+      "the version 1 writer must store structured tool output as JSON text",
+    );
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: stored,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.repairs,
+      [],
+      "a stored result must suppress the legacy_missing_tool_result repair",
+    );
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ).map((frame) => frame.event),
+      [{
+        type: "provider_tool_result",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        output: { ok: true },
+        isError: false,
+        providerExecuted: true,
+      }],
+      "a provider result written by the v1 writer must replay as a provider tool result",
+    );
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "custom" &&
+        (frame.event as { name?: string }).name === "legacy-tool-result"
+      ).length,
+      0,
+      "a provider-executed v1 result must not fall back to the legacy custom path",
+    );
+  });
+
+  it("keeps a result-only provider marker on the version 1 compatibility path", () => {
+    // The version 2 writer marks provider execution on the result alone. The
+    // lifecycle reducer only admits a provider start for a call that was itself
+    // recorded as provider-executed, so inferring the marker from the result
+    // would turn benign legacy history into a protocol failure.
+    const stored = writeDurableEvents(frames([
+      {
+        event: {
+          type: "tool_input_start",
+          toolCallId: "v2-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "tool_input_ready",
+          toolCallId: "v2-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://docs.example/page" },
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "v2-fetch",
+          toolName: "web_fetch",
+          output: { ok: true },
+          isError: false,
+          providerExecuted: true,
+        },
+      },
+    ]));
+
+    assertEquals(
+      stored.find((event) => event.type === "TOOL_CALL_START")?.providerExecuted,
+      undefined,
+      "the version 2 writer records no provider marker on the tool call start",
+    );
+    assertEquals(
+      stored.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+      true,
+      "the version 2 writer marks provider execution on the result",
+    );
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: stored,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "custom" &&
+        (frame.event as { name?: string }).name === "legacy-tool-result"
+      ).length,
+      1,
+      "a result-only marker must stay on the legacy custom compatibility path",
+    );
+    assertEquals(
+      result.frames.filter((frame) => frame.event.type === "provider_part_rejected").length,
+      0,
+      "replaying a result-only marker must never raise a protocol rejection",
+    );
+  });
+
+  it("keeps a version 1 tool output that cannot be JSON encoded verbatim", () => {
+    // `JSON.stringify` throws on a bigint, so the writer falls back to
+    // `String(value)`. That rendering is itself valid JSON text, so an unmarked
+    // fallback would decode back into a number that cannot hold the value.
+    const stored = normalizeEncodedConversationRunEvents([
+      {
+        type: "tool-input-start",
+        toolCallId: "legacy-count",
+        toolName: "counter",
+        providerExecuted: true,
+      },
+      {
+        type: "tool-input-available",
+        toolCallId: "legacy-count",
+        toolName: "counter",
+        input: {},
+        providerExecuted: true,
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "legacy-count",
+        output: 9007199254740993n,
+        providerExecuted: true,
+      },
+    ]);
+
+    const storedResult = stored.find((event) => event.type === "TOOL_CALL_RESULT");
+    assertEquals(
+      storedResult?.content,
+      "9007199254740993",
+      "the writer must fall back to the textual rendering of an unencodable value",
+    );
+    assertEquals(
+      storedResult?.contentEncoding,
+      "text",
+      "the unencodable fallback must be marked as text so readers never decode it",
+    );
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: stored,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ).map((frame) => (frame.event as { output?: unknown }).output),
+      ["9007199254740993"],
+      "the textual fallback must replay verbatim rather than as an imprecise number",
     );
   });
 

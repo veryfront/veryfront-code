@@ -62,8 +62,24 @@ export function serializeConversationToolResultContent(value: unknown): {
   try {
     return { content: JSON.stringify(value ?? null) };
   } catch {
-    return { content: String(value) };
+    // `String(value)` is a lossy rendering, not a JSON encoding: a bigint
+    // renders as bare digits that a reader would decode back into a number it
+    // cannot represent. Mark it text so replay returns the stored characters.
+    return { content: String(value), contentEncoding: "text" };
   }
+}
+
+/**
+ * Carry a chunk's provider-execution marker into the durable record.
+ *
+ * The version 1 reader replays a stored result as a provider tool result only
+ * when the durable call records that it was provider-executed; a call that
+ * dropped the marker replays as an opaque legacy custom event instead.
+ */
+function providerExecutionMarker(
+  chunk: { providerExecuted?: boolean },
+): { providerExecuted?: true } {
+  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
 }
 
 function encodeCustomDataEvent(
@@ -266,6 +282,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallStart,
           toolCallId: chunk.toolCallId,
           toolCallName: chunk.toolName,
+          ...providerExecutionMarker(chunk),
         }];
 
       case "tool-input-delta":
