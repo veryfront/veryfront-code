@@ -3657,7 +3657,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("keeps local Worker entries resolvable when the route must bundle", async () => {
+  denoIt("keeps local Worker entries resolvable when the route must bundle", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(
       join(tmpDir, "worker.ts"),
@@ -3806,7 +3806,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("runs bundled helper Worker entries against the route-relative execution base", async () => {
+  denoIt("runs bundled helper Worker entries against the route-relative execution base", async () => {
     const tmpDir = await makeTempDir();
     await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
     await fs.writeTextFile(
