@@ -10,7 +10,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module modules/server/module-transform.test
  */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -18,7 +18,11 @@ import { transformModuleToServable } from "./module-transform.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+} from "../../release-assets/constants.ts";
 import {
   clearReactVersionCache,
   createDependencyPinningSource,
@@ -39,6 +43,12 @@ export const value = child;
 
 /** Trivial TypeScript source with no imports. */
 const SOURCE_NO_IMPORTS = `export const greeting = "hello";
+`;
+
+/** Source importing a local http bundle, which the release rewrite must inspect. */
+const SOURCE_WITH_BUNDLE_IMPORT =
+  `import bundle from "file:///test-project/veryfront-http-bundle/http-abcdef01.mjs";
+export const greeting = bundle;
 `;
 
 describe(
@@ -66,6 +76,24 @@ describe(
         // applySSRImportRewritesAsync appends ?ssr=true&project=<slug> to relative imports
         assertStringIncludes(code, "ssr=true");
         assertStringIncludes(code, "project=test");
+      });
+
+      it("throws when isSSR is true without ssrRewriteOptions", async () => {
+        await assertRejects(
+          () =>
+            transformModuleToServable({
+              source: SOURCE_WITH_IMPORT,
+              sourceFile: "/test-project/page.ts",
+              projectDir,
+              adapter,
+              transformOpts: { projectId: "test", dev: true, ssr: true },
+              isSSR: true,
+              // ssrRewriteOptions intentionally omitted: the transform must refuse
+              // to serve an SSR module with un-rewritten relative imports.
+            }),
+          VeryfrontError,
+          "requires ssrRewriteOptions when isSSR is true",
+        );
       });
 
       it("does not apply SSR rewrites when isSSR=false", async () => {
@@ -99,25 +127,43 @@ describe(
         assertStringIncludes(code, "greeting");
       });
 
-      it("enters the non-SSR release branch without throwing when releaseRewriteOptions is provided", async () => {
-        // No real manifest → rewriteReleaseDependencyImportsForModule returns code
-        // unchanged (releaseId required; without it the function bails early).
-        // This test verifies the non-SSR branch is entered without throwing.
-        const code = await transformModuleToServable({
-          source: SOURCE_NO_IMPORTS,
-          sourceFile: "/test-project/greet.ts",
-          projectDir,
-          adapter,
-          transformOpts: { projectId: "test", dev: false, ssr: false },
-          isSSR: false,
-          releaseRewriteOptions: {
-            releaseId: null, // null → rewriteReleaseDependencyImportsForModule returns early
-            dependencyCacheRoot: projectDir,
-            readDependencySource: (_path) => Promise.resolve(""),
-          },
-        });
+      it("runs the release dependency rewrite when releaseRewriteOptions is provided", async () => {
+        // The rewrite only reaches the dependency reader when the flag is on and
+        // the module imports a local http bundle, so this pins the wiring rather
+        // than merely observing that the branch does not throw.
+        const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+        const readCalls: string[] = [];
 
-        assertStringIncludes(code, "greeting");
+        try {
+          setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+
+          await transformModuleToServable({
+            source: SOURCE_WITH_BUNDLE_IMPORT,
+            sourceFile: "/test-project/greet.ts",
+            projectDir,
+            adapter,
+            transformOpts: { projectId: "test", dev: false, ssr: false },
+            isSSR: false,
+            releaseRewriteOptions: {
+              releaseId: "rel-1",
+              // null manifest keeps getReadyManifestForRenderAsync out of it.
+              manifest: null,
+              dependencyCacheRoot: projectDir,
+              readDependencySource: (path) => {
+                readCalls.push(path);
+                return Promise.resolve("");
+              },
+            },
+          });
+        } finally {
+          setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
+        }
+
+        assertEquals(
+          readCalls,
+          ["/test-project/veryfront-http-bundle/http-abcdef01.mjs"],
+          "non-SSR release branch must run the dependency import rewrite",
+        );
       });
     });
 

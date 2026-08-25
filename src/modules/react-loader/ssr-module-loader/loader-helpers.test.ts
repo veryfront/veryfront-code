@@ -40,6 +40,17 @@ describe("ssr-module-loader helpers", () => {
   it("creates build capacity errors with the requested message", () => {
     const error = createTransformCapacityError("build", "Too busy", "/tmp/file.tsx");
     assertEquals(error.message, "Too busy");
-    assertEquals(error.name.length > 0, true);
+    assertEquals(
+      error.name,
+      "VeryfrontError[build]",
+      "build mode must carry the build classification",
+    );
+
+    const data = (error as Error & {
+      context?: { type?: string; context?: { file?: string; phase?: string } };
+    }).context;
+    assertEquals(data?.type, "build", "build mode must attach VeryfrontError build data");
+    assertEquals(data?.context?.file, "/tmp/file.tsx", "the failing file must be attached");
+    assertEquals(data?.context?.phase, "transform", "the build phase must be attached");
   });
 });

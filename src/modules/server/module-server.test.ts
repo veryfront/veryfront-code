@@ -291,6 +291,43 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(defaultedBody.includes(secret), false);
   });
 
+  it("returns a JSON error body when a JSON module fails to transform", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-error-json";
+    const sourcePath = `${projectDir}/lib/data.json`;
+    const secret = "sensitive json failure";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(sourcePath, `{ "value": 1 }`);
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === sourcePath) return Promise.reject(new Error(secret));
+      return originalReadFile(path, byteLimit);
+    };
+
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/lib/data.json"),
+      {
+        projectId: "module-error-json",
+        projectDir,
+        adapter,
+        dev: true,
+      },
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(
+      response.headers.get("content-type"),
+      "application/json; charset=utf-8",
+      "a failing JSON module must keep its JSON content type",
+    );
+    const body = await response.text();
+    assertEquals(
+      JSON.parse(body),
+      { error: secret },
+      "a failing JSON module must return a JSON error object, not a JavaScript throw",
+    );
+  });
+
   it("does not expose project metadata or server route roots as browser modules", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-private-" });
 
@@ -1901,6 +1938,62 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not cache HMR-timestamped requests as immutable release modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-hmr-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const response = await serveProductionModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/components/App.js?vf_release=rel-1&vf_runtime=${VERSION}&t=123`,
+        ),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "no-cache",
+        "an HMR-timestamped request must not be cached as an immutable release module",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not cache studio-embed requests as immutable release modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-studio-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const response = await serveProductionModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/components/App.js?vf_release=rel-1&vf_runtime=${VERSION}&studio_embed=true`,
+        ),
+        projectDir,
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "no-cache",
+        "a studio-embed request must not be cached as an immutable release module",
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

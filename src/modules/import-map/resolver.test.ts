@@ -46,6 +46,24 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should not append the esm.sh subpath to a local file mapping", () => {
+      const map = { imports: { react: "/local/react.ts" } };
+      assertEquals(
+        resolveImport("https://esm.sh/react@18/jsx-runtime", map),
+        "/local/react.ts",
+        "a local file mapping must not have the esm.sh subpath appended",
+      );
+    });
+
+    it("should append the esm.sh subpath to an http mapping", () => {
+      const map = { imports: { react: "https://esm.sh/react@19" } };
+      assertEquals(
+        resolveImport("https://esm.sh/react@18/jsx-runtime", map),
+        "https://esm.sh/react@19/jsx-runtime",
+        "an http mapping must carry the subpath through",
+      );
+    });
+
     it("should resolve prefix mappings with trailing slash", () => {
       const map = { imports: { "@lib/": "/src/lib/" } };
       assertEquals(resolveImport("@lib/utils.ts", map), "/src/lib/utils.ts");

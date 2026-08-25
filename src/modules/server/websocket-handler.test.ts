@@ -34,6 +34,10 @@ class StallingWebSocket {
     this.readyState = WebSocket.CLOSED;
     this.onclose?.(new Event("close") as CloseEvent);
   }
+
+  emitError(): void {
+    this.onerror?.(new Event("error"));
+  }
 }
 
 function createContext(maxMessageSize: number, rateLimitOk = true): {
@@ -120,6 +124,25 @@ describe("modules/server/websocket-handler", () => {
     }]);
     assertEquals(context.clients.size, 0);
     assertEquals(cleanups.length, 1);
+  });
+
+  it("deregisters a client whose socket errors without a close event", () => {
+    const { context, cleanups, checks } = createContext(1024);
+    const socket = new StallingWebSocket();
+    setupWebSocketHandlers(socket as unknown as WebSocket, context);
+    assertEquals(context.clients.size, 1);
+
+    socket.emitError();
+
+    assertEquals(context.clients.size, 0, "an errored socket must be deregistered eagerly");
+    assertEquals(
+      cleanups,
+      [socket as unknown as WebSocket],
+      "an errored socket must release its rate-limit entry",
+    );
+
+    socket.emitMessage(JSON.stringify({ type: "ping" }));
+    assertEquals(checks, [], "messages after an error must be ignored");
   });
 
   it("stays consistent when a late close event arrives after eager cleanup", () => {

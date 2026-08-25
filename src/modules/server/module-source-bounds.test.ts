@@ -16,6 +16,35 @@ async function serve(pathname: string): Promise<Response> {
   );
 }
 
+interface RecordedReads {
+  bounded: Array<{ path: string; byteLimit: number }>;
+  unbounded: string[];
+}
+
+/** denoAdapter with its read surface instrumented, so the reader used is observable. */
+function createRecordingAdapter(): { adapter: typeof denoAdapter; reads: RecordedReads } {
+  const reads: RecordedReads = { bounded: [], unbounded: [] };
+  const baseFs = denoAdapter.fs;
+  const fs = Object.create(baseFs) as typeof baseFs;
+
+  fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
+    reads.bounded.push({ path, byteLimit });
+    return baseFs.readFileBytesWithinLimit!(path, byteLimit);
+  };
+  fs.readFile = (path: string) => {
+    reads.unbounded.push(path);
+    return baseFs.readFile(path);
+  };
+  fs.readFileBytes = (path: string) => {
+    reads.unbounded.push(path);
+    return baseFs.readFileBytes(path);
+  };
+
+  const adapter = Object.create(denoAdapter) as typeof denoAdapter;
+  Object.defineProperty(adapter, "fs", { value: fs, enumerable: true });
+  return { adapter, reads };
+}
+
 describe("serveModule source size bounds", () => {
   beforeAll(async () => {
     projectDir = await Deno.makeTempDir({ prefix: "vf-source-bounds-" });
@@ -46,5 +75,28 @@ describe("serveModule source size bounds", () => {
 
     assertEquals(response.status, 500);
     assertEquals(JSON.parse(body), { error: "Module source exceeds 5242880 bytes" });
+  });
+
+  it("reads a module source through the exact bounded reader", async () => {
+    const { adapter, reads } = createRecordingAdapter();
+    const { serveModule } = await import("./module-server.ts");
+
+    const response = await serveModule(
+      new Request("http://localhost/_vf_modules/components/Huge.json"),
+      { projectId: "test", projectDir, adapter, dev: true },
+    );
+    await response.text();
+
+    assertEquals(response.status, 500);
+    assertEquals(
+      reads.bounded.at(-1)?.byteLimit,
+      MAX_SERVABLE_MODULE_SOURCE_BYTES,
+      "module source must be read through the exact bounded reader at the servable limit",
+    );
+    assertEquals(
+      reads.unbounded.some((path) => path.endsWith("/components/Huge.json")),
+      false,
+      "an oversized module source must never be fully buffered",
+    );
   });
 });

@@ -654,6 +654,21 @@ function createBatchBundleStream(
 }
 
 /**
+ * Emit an untrusted value as a JavaScript string literal. Module paths come
+ * straight from the request's `paths` parameter and transform error messages
+ * can carry arbitrary text, so raw interpolation would let either close the
+ * literal and execute as same-origin script.
+ */
+function jsStringLiteral(value: string): string {
+  return JSON.stringify(value);
+}
+
+/** Keep an untrusted value inside its `//` comment line. */
+function commentText(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ");
+}
+
+/**
  * Generate the batch bundle code chunks.
  * Creates a module that exports all loaded modules by path.
  */
@@ -674,7 +689,7 @@ function* generateBatchBundleChunks(
     const { path, code } = item;
     const varName = `__mod_${i}`;
 
-    yield `// Module: ${path}`;
+    yield `// Module: ${commentText(path)}`;
     yield `const ${varName} = await (async () => {`;
     yield "  const exports = {};";
     yield "  const module = { exports };";
@@ -683,13 +698,15 @@ function* generateBatchBundleChunks(
     yield "  // --- Module code end ---";
     yield "  return exports;";
     yield "})();";
-    yield `__vf_batch_modules.set("${path}", ${varName});`;
+    yield `__vf_batch_modules.set(${jsStringLiteral(path)}, ${varName});`;
     yield "";
   }
 
   for (const { path, error } of failures) {
-    yield `// Failed: ${path} - ${error}`;
-    yield `__vf_batch_modules.set("${path}", { __vf_error: "${error}" });`;
+    yield `// Failed: ${commentText(path)} - ${commentText(error)}`;
+    yield `__vf_batch_modules.set(${jsStringLiteral(path)}, { __vf_error: ${
+      jsStringLiteral(error)
+    } });`;
   }
 
   yield "";

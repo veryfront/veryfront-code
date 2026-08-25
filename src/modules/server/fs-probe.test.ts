@@ -3,6 +3,13 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { findFirstExistingFile } from "./fs-probe.ts";
 
+function namedError(name: string, message: string): Error {
+  const error = new Error(message) as Error & { code?: string };
+  error.name = name;
+  if (name === "NotFound") error.code = "ENOENT";
+  return error;
+}
+
 describe("modules/server/fs-probe", () => {
   it("uses candidate order rather than probe completion order", async () => {
     const found = await findFirstExistingFile(
@@ -23,7 +30,7 @@ describe("modules/server/fs-probe", () => {
       {
         stat(path) {
           if (path === "missing") {
-            return Promise.reject(new Deno.errors.NotFound("missing"));
+            return Promise.reject(namedError("NotFound", "missing"));
           }
           return Promise.resolve({ isFile: true });
         },
@@ -34,8 +41,47 @@ describe("modules/server/fs-probe", () => {
     assertEquals(found, "present");
   });
 
+  it("returns null when no candidate exists", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat(path) {
+          return Promise.reject(namedError("NotFound", path));
+        },
+      },
+      ["a.tsx", "a.ts", "a.jsx"],
+    );
+
+    assertEquals(found, null, "a fully missing candidate list must resolve to null, not a path");
+  });
+
+  it("treats a directory candidate as a miss", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat(path) {
+          return Promise.resolve({ isFile: path !== "directory" });
+        },
+      },
+      ["directory", "file"],
+    );
+
+    assertEquals(found, "file", "a candidate that stats as a directory must not win the probe");
+  });
+
+  it("returns null when every candidate is a directory", async () => {
+    const found = await findFirstExistingFile(
+      {
+        stat() {
+          return Promise.resolve({ isFile: false });
+        },
+      },
+      ["components", "components/nested"],
+    );
+
+    assertEquals(found, null, "directory-only candidates must resolve to null");
+  });
+
   it("propagates operational probe failures", async () => {
-    const denied = new Deno.errors.PermissionDenied("denied");
+    const denied = namedError("PermissionDenied", "denied");
     await assertRejects(
       () =>
         findFirstExistingFile(
@@ -46,7 +92,7 @@ describe("modules/server/fs-probe", () => {
           },
           ["denied", "present"],
         ),
-      Deno.errors.PermissionDenied,
+      Error,
       "denied",
     );
   });
@@ -57,7 +103,7 @@ describe("modules/server/fs-probe", () => {
         stat(path) {
           return path === "preferred"
             ? Promise.resolve({ isFile: true })
-            : Promise.reject(new Deno.errors.PermissionDenied("irrelevant fallback"));
+            : Promise.reject(namedError("PermissionDenied", "irrelevant fallback"));
         },
       },
       ["preferred", "fallback"],
