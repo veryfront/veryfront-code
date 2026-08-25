@@ -646,6 +646,7 @@ function githubFixture(options: {
   failAfterFirstPage?: string;
   pullError?: Error;
   permission?: string;
+  permissionError?: Error;
   pullAuthor?: string;
 } = {}) {
   const endpoints = {
@@ -711,12 +712,14 @@ function githubFixture(options: {
             ? Promise.reject(options.commitError)
             : Promise.resolve({ data: { sha: options.commit } }),
         getCollaboratorPermissionLevel: () =>
-          Promise.resolve({
-            data: {
-              permission: options.permission ?? "read",
-              user: { login: "trusted-maintainer" },
-            },
-          }),
+          options.permissionError
+            ? Promise.reject(options.permissionError)
+            : Promise.resolve({
+              data: {
+                permission: options.permission ?? "read",
+                user: { login: "trusted-maintainer" },
+              },
+            }),
         createCommitStatus: (value: Record<string, unknown>) => {
           published.push(value);
           return Promise.resolve({ data: value });
@@ -775,6 +778,56 @@ describe("automated review publication", () => {
     });
     assertEquals(result.state, "success");
     assertEquals(result.review?.source, "human-approval");
+  });
+
+  it("fails visibly when a collaborator permission lookup fails", async () => {
+    const permissionError = Object.assign(
+      new Error("collaborator permission unavailable"),
+      { status: 500 },
+    );
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({
+          user: { login: "trusted-maintainer", id: 7, type: "User" },
+          state: "APPROVED",
+        })]],
+      },
+      permissionError,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(result.failure, permissionError);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("treats a missing collaborator as untrusted review evidence", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({
+          user: { login: "external-reviewer", id: 7, type: "User" },
+          state: "APPROVED",
+        })]],
+      },
+      permissionError: Object.assign(new Error("not found"), { status: 404 }),
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(result.failure, undefined);
+    assertEquals(fixture.published[0]?.state, "pending");
   });
 
   it("holds an unreviewed head at pending until proof arrives", async () => {

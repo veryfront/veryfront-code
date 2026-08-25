@@ -384,8 +384,11 @@ async function isCurrentlyTrustedHuman(
       username: login,
     });
     return TRUSTED_PERMISSIONS.has(response?.data?.permission);
-  } catch {
-    return false;
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null && error.status === 404
+    ) return false;
+    throw error;
   }
 }
 
