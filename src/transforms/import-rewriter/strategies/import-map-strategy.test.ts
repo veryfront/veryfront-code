@@ -411,6 +411,33 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("does not append below an esm.sh package whose name is a reserved segment", () => {
+      // Appending would produce https://esm.sh/stable/sub, which this module
+      // reads back as the package `sub` on the stable channel rather than the
+      // `stable` package's /sub export. The round trip below is the real
+      // assertion: whatever is produced must re-read as the same package.
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://esm.sh/stable" } };
+      const resolved = resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map);
+
+      assertEquals(resolved, "https://esm.sh/stable", "the mapping stays exact");
+      assertEquals(
+        resolveImportWithMap(String(resolved), { imports: { stable: "IS-STABLE", sub: "IS-SUB" } }),
+        "IS-STABLE",
+        "the resolved URL must still name the package it was mapped to",
+      );
+    });
+
+    it("does not append below an esm.sh package named like a build prefix", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://esm.sh/v8" } };
+      const resolved = resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map);
+
+      assertEquals(
+        resolveImportWithMap(String(resolved), { imports: { v8: "IS-V8", sub: "IS-SUB" } }),
+        "IS-V8",
+        "a v-number package name has the same collision as a reserved segment",
+      );
+    });
+
     it("keeps a remote wasm mapping as a single module", () => {
       const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/module.wasm" } };
       assertEquals(

@@ -97,6 +97,11 @@ function reservedNamePackage(url: string): { packageName: string; subpath: strin
   return null;
 }
 
+/** Reports whether a package name collides with a segment esm.sh reserves. */
+function isReservedCoordinateName(packageName: string): boolean {
+  return /^v\d+$/.test(packageName) || ESM_SH_RESERVED_SEGMENTS.has(packageName);
+}
+
 export function parseEsmShSpecifier(url: string): { packageName: string; subpath: string } | null {
   const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
   const stripped = stripTrailingSlash(withoutBuildPrefix);
@@ -165,7 +170,17 @@ function isSingleModuleMapping(mapping: string): boolean {
   // already names an export has nothing to append to. Same rule as npm and jsr.
   if (isEsmShUrl(mapping)) {
     const parsed = parseEsmShSpecifier(mapping);
-    if (parsed) return parsed.subpath !== "";
+    if (parsed) {
+      // A reserved name cannot carry a subpath on esm.sh. Appending one to
+      // `https://esm.sh/stable` yields `https://esm.sh/stable/sub`, which this
+      // module reads back as the package `sub` on the stable channel, so the
+      // URL would address something else entirely. Keeping the mapping exact
+      // resolves the package root, which is wrong in a recoverable way rather
+      // than silently pointing at a different package.
+      if (isReservedCoordinateName(parsed.packageName)) return true;
+
+      return parsed.subpath !== "";
+    }
   }
 
   const boundary = mapping.search(/[?#]/);
