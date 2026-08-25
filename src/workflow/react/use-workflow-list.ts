@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
 import { normalizeWorkflowApiBase, useStableWorkflowHeaders } from "./mutation-headers.ts";
@@ -53,6 +53,10 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   } = options;
   const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
   const stableHeaders = useStableWorkflowHeaders(headers);
+  const authorizationContext = useMemo(
+    () => ({ credentials, normalizedApiBase, stableHeaders }),
+    [credentials, normalizedApiBase, stableHeaders],
+  );
 
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [totalCount, setTotalCount] = useState<number | undefined>();
@@ -60,6 +64,9 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
+  const [dataAuthorizationContext, setDataAuthorizationContext] = useState(
+    authorizationContext,
+  );
   const requestSequence = useRef(0);
   const activeRequestCount = useRef(0);
 
@@ -121,6 +128,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
 
         if (sequence !== requestSequence.current) return;
 
+        setDataAuthorizationContext(authorizationContext);
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
         setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
@@ -133,8 +141,27 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         activeRequestCount.current--;
       }
     },
-    [buildQueryString, credentials, cursor, filter, normalizedApiBase, stableHeaders],
+    [
+      authorizationContext,
+      buildQueryString,
+      credentials,
+      cursor,
+      filter,
+      normalizedApiBase,
+      stableHeaders,
+    ],
   );
+
+  useEffect(() => {
+    // Data from one authorization context must not remain visible while a
+    // replacement request is pending or after it fails.
+    requestSequence.current++;
+    setRuns([]);
+    setCursor(undefined);
+    setHasMore(false);
+    setTotalCount(undefined);
+    setError(null);
+  }, [authorizationContext]);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,12 +217,14 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     }));
   }, []);
 
+  const hasCurrentAuthorizationData = dataAuthorizationContext === authorizationContext;
+
   return {
-    runs,
-    totalCount,
+    runs: hasCurrentAuthorizationData ? runs : [],
+    totalCount: hasCurrentAuthorizationData ? totalCount : undefined,
     isLoading,
     error,
-    hasMore,
+    hasMore: hasCurrentAuthorizationData ? hasMore : false,
     loadMore,
     refresh,
     setFilter,

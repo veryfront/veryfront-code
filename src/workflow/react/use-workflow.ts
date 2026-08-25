@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NodeState,
   PendingApproval,
@@ -63,14 +63,28 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   } = options;
   const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
   const stableHeaders = useStableWorkflowHeaders(headers);
+  const requestContext = useMemo(
+    () => ({ credentials, normalizedApiBase, runId, stableHeaders }),
+    [credentials, normalizedApiBase, runId, stableHeaders],
+  );
 
   const [run, setRun] = useState<WorkflowRun | null>(null);
+  const [runRequestContext, setRunRequestContext] = useState(requestContext);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   const previousStatusRef = useRef<WorkflowStatus | null>(null);
   const previousApprovalsRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    // Run details and approval identities belong to one request context. Clear
+    // them before a replacement fetch can fail and leave old session data.
+    setRun(null);
+    setError(null);
+    previousStatusRef.current = null;
+    previousApprovalsRef.current.clear();
+  }, [requestContext]);
 
   const calculateProgress = useCallback((workflowRun: WorkflowRun | null): number => {
     const states = Object.values(workflowRun?.nodeStates ?? {});
@@ -125,6 +139,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         onApprovalRequired?.(approval);
       }
 
+      setRunRequestContext(requestContext);
       setRun(workflowRun);
       setError(null);
     } catch (err) {
@@ -141,6 +156,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     onComplete,
     onError,
     onStatusChange,
+    requestContext,
     runId,
     stableHeaders,
   ]);
@@ -236,13 +252,15 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     };
   }, [autoRefresh, fetchRun, pollInterval, refresh]);
 
+  const visibleRun = runRequestContext === requestContext ? run : null;
+
   return {
-    run,
-    status: run?.status ?? "pending",
-    progress: calculateProgress(run),
-    currentNodes: run?.currentNodes ?? [],
-    nodeStates: run?.nodeStates ?? {},
-    pendingApprovals: run?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
+    run: visibleRun,
+    status: visibleRun?.status ?? "pending",
+    progress: calculateProgress(visibleRun),
+    currentNodes: visibleRun?.currentNodes ?? [],
+    nodeStates: visibleRun?.nodeStates ?? {},
+    pendingApprovals: visibleRun?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
     refresh,
     cancel,
     retry,

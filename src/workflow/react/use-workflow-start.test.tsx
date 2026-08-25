@@ -127,6 +127,99 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("clears workflow list data when authorization changes and refetch fails", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let hook: UseWorkflowListResult | null = null;
+
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (authorization === "Bearer old") {
+        return Promise.resolve(Response.json({
+          runs: [{ id: "old-run", status: "running" }],
+          cursor: "old-cursor",
+          totalCount: 1,
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 401 }));
+    }) as typeof fetch;
+
+    function Capture({ token }: { token: string }): null {
+      hook = useWorkflowList({
+        autoRefresh: false,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.runs.map((run) => run.id), ["old-run"]);
+      assertEquals(hook!.totalCount, 1);
+
+      flushSync(() => root.render(<Capture token="new" />));
+      assertEquals(hook!.runs, [], "old authorization data must be hidden immediately");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.runs, []);
+      assertEquals(hook!.totalCount, undefined);
+      assertEquals(hook!.hasMore, false);
+      assertEquals(hook!.error !== null, true);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("clears workflow run data when credentials change and refetch fails", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let hook: UseWorkflowResult | null = null;
+
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.credentials === "include") {
+        return Promise.resolve(Response.json({
+          id: "old-run",
+          status: "running",
+          nodeStates: {},
+          currentNodes: [],
+          pendingApprovals: [{ id: "old-approval", status: "pending" }],
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 403 }));
+    }) as typeof fetch;
+
+    function Capture({ credentials }: { credentials: RequestCredentials }): null {
+      hook = useWorkflow({
+        runId: "run-1",
+        autoRefresh: false,
+        credentials,
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture credentials="include" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.run?.id, "old-run");
+      assertEquals(hook!.pendingApprovals.map((approval) => approval.id), ["old-approval"]);
+
+      flushSync(() => root.render(<Capture credentials="omit" />));
+      assertEquals(hook!.run, null, "old credential data must be hidden immediately");
+      assertEquals(hook!.pendingApprovals, []);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.run, null);
+      assertEquals(hook!.error !== null, true);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("does not overlap slow workflow list polls", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
