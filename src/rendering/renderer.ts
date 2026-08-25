@@ -1032,9 +1032,22 @@ export class Renderer {
           const allReady = getStreamAllReady(result.stream);
           if (allReady) {
             // Keep admission and the render deadline active through streamed
-            // work. The SSR boundary classifies the original promise's
-            // rejection after this method returns.
-            await allReady.catch(() => {});
+            // work. A readiness rejection reports an error, not producer
+            // completion, so cancel the stream before releasing either slot.
+            try {
+              await allReady;
+            } catch (error) {
+              renderAbortController.abort(error);
+              try {
+                await result.stream?.cancel(error);
+              } catch (cancelError) {
+                logger.warn("Failed to cancel streamed render after readiness failure", {
+                  slug,
+                  projectId: ctx.projectId,
+                  error: cancelError instanceof Error ? cancelError.message : cancelError,
+                });
+              }
+            }
           }
         }
         return result;

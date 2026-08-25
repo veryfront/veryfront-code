@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -630,6 +631,85 @@ describe("Renderer response metadata", () => {
       assertEquals(projectRenderCounts.has(projectId), false);
     } finally {
       allReady.resolve();
+      await render.catch(() => {});
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+    }
+  });
+
+  it("cancels a failed uncached stream before releasing render admission", async () => {
+    const projectId = `failed-stream-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
+    };
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const shellReady = Promise.withResolvers<void>();
+    const allReady = Promise.withResolvers<void>();
+    allReady.promise.catch(() => {});
+    const finishCancellation = Promise.withResolvers<void>();
+    let cancellationStarted = false;
+    let cancellationReason: unknown;
+    let renderSignal: AbortSignal | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      async cancel(reason) {
+        cancellationStarted = true;
+        cancellationReason = reason;
+        await finishCancellation.promise;
+      },
+    });
+    Object.defineProperty(stream, "allReady", { value: allReady.promise });
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            _slug: string,
+            options?: { abortSignal?: AbortSignal },
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renderSignal = options?.abortSignal;
+          shellReady.resolve();
+          return Promise.resolve({ html: "", frontmatter: {}, stream });
+        },
+      },
+    });
+
+    const render = renderer.renderPage("/failed-private-stream", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      delivery: "stream",
+      request: new Request("https://example.test/failed-private-stream", {
+        headers: { authorization: "Bearer secret" },
+      }),
+    });
+    const readinessError = new Error("late suspense branch failed");
+
+    try {
+      await shellReady.promise;
+      allReady.reject(readinessError);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(cancellationStarted, true);
+      assertStrictEquals(cancellationReason, readinessError);
+      assertEquals(renderSignal?.aborted, true);
+      assertStrictEquals(renderSignal?.reason, readinessError);
+      assertEquals(projectRenderCounts.get(projectId), 1);
+
+      finishCancellation.resolve();
+      assertEquals((await render).stream, stream);
+      assertEquals(projectRenderCounts.has(projectId), false);
+    } finally {
+      allReady.reject(readinessError);
+      finishCancellation.resolve();
       await render.catch(() => {});
       while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
         await releaseProjectSlot(projectId);
