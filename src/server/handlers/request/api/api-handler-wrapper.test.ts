@@ -225,20 +225,51 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(events.includes("source-fresh"), false);
   });
 
-  it("does not refresh a document route that SSR will shed for memory pressure", async () => {
+  it("does not refresh a page document that SSR will shed for memory pressure", async () => {
     const ctx = createCtx({});
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
+    ctx.config = { router: "pages" };
     let refreshes = 0;
+    let pageClassifications = 0;
     const fs = ctx.adapter.fs as unknown as {
       runWithContext: (
         slug: string,
         token: string,
         fn: () => Promise<unknown>,
       ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
       refreshSourceSnapshot: () => Promise<void>;
     };
     fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      pageClassifications++;
+      return Promise.resolve(
+        path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Review() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
     fs.refreshSourceSnapshot = () => {
       refreshes++;
       return Promise.resolve();
@@ -252,6 +283,67 @@ describe("ApiHandlerWrapper", () => {
       );
       assertEquals(result, { continue: true });
       assertEquals(refreshes, 0);
+      assertEquals(
+        pageClassifications > 0,
+        true,
+        "the shed shortcut must rest on real page ownership, not on the path shape alone",
+      );
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("still classifies and serves an API-owned path under critical memory pressure", async () => {
+    // An extensionless GET path can be owned by an API route
+    // (app/webhook/route.ts). SSR's shed response only ever covers pages, so
+    // deferring such a request to SSR would turn renderer overload into an
+    // outage for API routes that never render anything.
+    let refreshes = 0;
+    const ctx = createCtx({});
+    ctx.projectSlug = "pressured-api-project";
+    ctx.config = { router: "pages" };
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      readFile: (path: string) => Promise<string>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = () => Promise.resolve(null);
+    fs.readFile = () => Promise.reject(new Error("File not found"));
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/new-webhook"),
+        ctx,
+      );
+
+      // The wrapper must keep ownership of the request instead of deferring
+      // to SSR's shed response: this shared runtime answers with its own
+      // typed execution guard, proving the API flow ran.
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+      const problem = await result.response!.json();
+      assertEquals(
+        problem.type,
+        "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+      );
+      assertEquals(refreshes, 1, "an API-owned path keeps its leased freshness under pressure");
     } finally {
       injectMemoryPressureDeps(null);
     }
@@ -453,6 +545,83 @@ describe("ApiHandlerWrapper", () => {
       filesystemReads > 0,
       true,
       "the request must reach source resolution instead of failing at the guard",
+    );
+  });
+
+  it("enters the requested branch before preview freshness and page classification", async () => {
+    // A non-multi-project contextual adapter is reused across requests and
+    // still points at the previous request's branch. Both the strict refresh
+    // and the page/API ownership classification must run in the branch this
+    // request addresses — the same context SSR later renders from.
+    const events: string[] = [];
+    let adapterBranch: string | null = "main"; // left over from the previous request
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.requestContext!.branch = "feature";
+    ctx.releaseId = undefined;
+    ctx.config = { router: "pages" };
+    ctx.parsedDomain = { branch: "feature" } as unknown as HandlerContext["parsedDomain"];
+    const fs = ctx.adapter.fs as unknown as {
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      setRequestToken: (token: string) => void;
+      setRequestBranch: (branch: string | null) => void;
+      setProductionMode: (enabled: boolean, releaseId?: string | null) => void;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.isMultiProjectMode = () => false;
+    fs.isContextualMode = () => true;
+    fs.setRequestToken = () => {};
+    fs.setRequestBranch = (branch) => {
+      adapterBranch = branch;
+      events.push(`branch:${branch}`);
+    };
+    fs.setProductionMode = () => {};
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      events.push(`resolve:${adapterBranch}`);
+      return Promise.resolve(
+        path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Review() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.refreshSourceSnapshot = () => {
+      events.push(`refresh:${adapterBranch}`);
+      return Promise.resolve();
+    };
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+
+    const result = await handler.handle(new Request("http://localhost/review"), ctx);
+
+    assertEquals(result, { continue: true });
+    assertEquals(events[0], "branch:feature", "the adapter context must be entered first");
+    assertEquals(events.includes("refresh:feature"), true);
+    assertEquals(events.includes("resolve:feature"), true);
+    assertEquals(
+      events.some((event) => event.endsWith(":main")),
+      false,
+      "freshness and classification must see the requested branch, not the leftover one",
     );
   });
 
