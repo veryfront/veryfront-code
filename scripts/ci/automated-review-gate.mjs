@@ -9,9 +9,9 @@ const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const REVIEW_REQUEST_MARKER =
-  /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([A-Za-z0-9-]{1,64}))? -->\n@codex review$/i;
+  /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([a-z0-9-]{1,64}))? -->\n@codex review$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
-const REQUEST_KEY = /^[A-Za-z0-9-]{1,64}$/;
+const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
@@ -54,7 +54,7 @@ export function parseReviewWakeupRun(run) {
   const displayTitle = typeof run?.display_title === "string"
     ? run.display_title
     : "";
-  const titleMatch = /^automated-review-wakeup-pr-([1-9][0-9]*)$/.exec(
+  const titleMatch = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(
     displayTitle,
   );
   const pullNumber = titleMatch ? Number(titleMatch[1]) : undefined;
@@ -120,35 +120,45 @@ function isLaterReview(candidate, current, candidateIndex, currentIndex) {
   return candidateIndex > currentIndex;
 }
 
+function reviewRequestCandidate(comment, headSha, index) {
+  if (
+    !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
+    typeof comment?.body !== "string"
+  ) return undefined;
+  const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
+  if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) return undefined;
+  // A normal synchronize request is only an idempotency marker. The head SHA
+  // already excludes proof for earlier commits, so treating the marker as a
+  // freshness boundary can erase a valid exact-head review that lands while
+  // the publisher is still running. Only keyed base-edit markers establish a
+  // same-head reset boundary.
+  if (marker[2] === undefined) return undefined;
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  if (!Number.isFinite(createdAt)) {
+    return { time: Number.POSITIVE_INFINITY, id: undefined, index };
+  }
+  const id = Number.isSafeInteger(comment?.id) && comment.id > 0
+    ? comment.id
+    : undefined;
+  return { time: createdAt, id, index };
+}
+
+function isLaterReviewRequest(candidate, current) {
+  if (current === undefined || candidate.time > current.time) return true;
+  if (candidate.time < current.time) return false;
+  if (candidate.id !== undefined && current.id !== undefined) {
+    return candidate.id > current.id;
+  }
+  return candidate.index > current.index;
+}
+
 function latestReviewRequest(comments, headSha) {
   let latest;
   for (const [index, comment] of comments.entries()) {
-    if (
-      !isPinnedBot(comment?.user, GITHUB_ACTIONS_LOGIN) ||
-      typeof comment?.body !== "string"
-    ) continue;
-    const marker = REVIEW_REQUEST_MARKER.exec(comment.body);
-    if (marker?.[1]?.toLowerCase() !== headSha.toLowerCase()) continue;
-    // A normal synchronize request is only an idempotency marker. The head
-    // SHA already excludes proof for earlier commits, so treating the marker
-    // as a freshness boundary can erase a valid exact-head review that lands
-    // while the publisher is still running. Only keyed base-edit markers can
-    // establish a same-head reset boundary.
-    if (marker[2] === undefined) continue;
-    const createdAt = Date.parse(comment?.created_at ?? "");
-    if (!Number.isFinite(createdAt)) {
-      return { time: Number.POSITIVE_INFINITY, id: undefined, index };
+    const candidate = reviewRequestCandidate(comment, headSha, index);
+    if (candidate && isLaterReviewRequest(candidate, latest)) {
+      latest = candidate;
     }
-    const id = Number.isSafeInteger(comment?.id) && comment.id > 0
-      ? comment.id
-      : undefined;
-    if (
-      latest === undefined || createdAt > latest.time ||
-      (createdAt === latest.time &&
-        (id !== undefined && latest.id !== undefined
-          ? id > latest.id
-          : index > latest.index))
-    ) latest = { time: createdAt, id, index };
   }
   return latest;
 }
@@ -658,16 +668,24 @@ export async function publishAutomatedReviewStatus({
   // like a failure and resolves once proof for the head arrives. Malformed
   // heads, pagination caps, ambiguous status ownership, head drift, and API
   // failures stay failures so they are looked at, not waited out.
-  const state = failure ? "failure" : review ? "success" : "pending";
-  const description = failure
-    ? `PR#${pullNumber} review status unavailable`
-    : resetPending
-    ? reviewResetDescription(pullNumber, baseBinding, reviewResetKey)
-    : review
-    ? `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`
-    : isDraft
-    ? `PR#${pullNumber} draft waits for review`
-    : `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
+  let state = "pending";
+  if (failure) state = "failure";
+  else if (review) state = "success";
+
+  let description;
+  if (failure) description = `PR#${pullNumber} review status unavailable`;
+  else if (resetPending) {
+    description = reviewResetDescription(
+      pullNumber,
+      baseBinding,
+      reviewResetKey,
+    );
+  } else if (review) {
+    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
+  } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
+  else {
+    description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
+  }
   await github.rest.repos.createCommitStatus({
     owner,
     repo,

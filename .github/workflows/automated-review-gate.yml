@@ -41,10 +41,6 @@ jobs:
       key: ${{ steps.resolve.outputs.result }}
       pull_number: ${{ steps.resolve.outputs.pull-number }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Resolve the current head commit
         id: resolve
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -52,14 +48,25 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
             let matchesReviewWakeupPullRequest;
             let parseMergeQueuePullNumber;
             let parseReviewWakeupRun;
             try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
               ({
                 matchesReviewWakeupPullRequest,
                 parseMergeQueuePullNumber,
@@ -189,14 +196,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # This workflow has pull_request_target authority. Check out only the
-      # trusted default branch and never execute files from the PR head. The
-      # base commit of an older pull request predates this gate, so reading the
-      # gate from the default branch is what keeps the status computable.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Require an automated review for the current commit
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -207,10 +206,6 @@ jobs:
           retries: 3
           result-encoding: string
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
             const pullNumber = Number(process.env.PULL_NUMBER);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed("The resolved pull request number is invalid");
@@ -225,6 +220,21 @@ jobs:
             let publishReviewResolutionFailure;
             let reconcileActiveMergeGroupReviewStatuses;
             try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
               ({
                 publishAutomatedReviewStatus,
                 publishReviewResolutionFailure,
@@ -324,10 +334,21 @@ jobs:
         with:
           retries: 3
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
+            const response = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const file = response.data;
+            if (
+              Array.isArray(file) || file?.type !== "file" ||
+              file?.encoding !== "base64" ||
+              typeof file?.content !== "string"
+            ) throw new Error("Trusted review gate content is malformed");
+            const gateUrl = `data:text/javascript;base64,${
+              Buffer.from(file.content, "base64").toString("base64")
+            }`;
             const { requestAutomatedReview } = await import(gateUrl);
             const pullRequest = context.payload.pull_request;
             const result = await requestAutomatedReview({
@@ -377,19 +398,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Close the gate on the unreconciled head
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           retries: 3
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
+            const response = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const file = response.data;
+            if (
+              Array.isArray(file) || file?.type !== "file" ||
+              file?.encoding !== "base64" ||
+              typeof file?.content !== "string"
+            ) throw new Error("Trusted review gate content is malformed");
+            const gateUrl = `data:text/javascript;base64,${
+              Buffer.from(file.content, "base64").toString("base64")
+            }`;
             const {
               invalidateReviewProof,
               parseReviewWakeupRun,
@@ -449,10 +477,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
       - name: Reuse the source pull request review
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -461,13 +485,24 @@ jobs:
         with:
           retries: 3
           script: |
-            const { pathToFileURL } = require("node:url");
-            const gateUrl = pathToFileURL(
-              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
-            ).href;
             let parseMergeQueuePullNumber;
             let publishMergeGroupReviewStatus;
             try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
               ({
                 parseMergeQueuePullNumber,
                 publishMergeGroupReviewStatus,
