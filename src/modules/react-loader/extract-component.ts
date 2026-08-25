@@ -28,6 +28,23 @@ function isReactComponentObject(value: unknown): boolean {
 }
 
 /**
+ * Detects React's symbol-valued built-in types.
+ *
+ * `Fragment`, `Suspense`, `StrictMode`, `Profiler` and friends are registered
+ * symbols rather than functions or tagged objects, and a layout is allowed to
+ * be one. Matching on the registry key covers them all, and any type React adds
+ * later, without pinning a list that would silently fall behind.
+ *
+ * A bare symbol cannot be an element, so this does not reopen the element case
+ * that `REACT_COMPONENT_TAGS` exists to exclude.
+ */
+function isReactBuiltinType(value: unknown): boolean {
+  if (typeof value !== "symbol") return false;
+
+  return Symbol.keyFor(value)?.startsWith("react.") ?? false;
+}
+
+/**
  * Picks the first named export that can be rendered.
  *
  * The `__esModule` marker is skipped explicitly. Transpilers place that boolean
@@ -59,7 +76,12 @@ function firstRenderableExport(moduleObj: Record<string, unknown>): unknown {
       continue;
     }
 
-    if (typeof value === "function" || isReactComponentObject(value)) return value;
+    if (
+      typeof value === "function" || isReactComponentObject(value) ||
+      isReactBuiltinType(value)
+    ) {
+      return value;
+    }
     if (untaggedObject === undefined && typeof value === "object" && value !== null) {
       untaggedObject = value;
     }

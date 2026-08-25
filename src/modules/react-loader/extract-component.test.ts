@@ -137,6 +137,28 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("keeps a symbol-valued React built-in declared before a helper", () => {
+    // Fragment, Suspense, StrictMode and Profiler are registered symbols, and a
+    // passthrough layout is allowed to be one.
+    const Layout = Symbol.for("react.fragment");
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Layout, helper }, "fragment-layout.tsx") as unknown,
+      Layout,
+      "a built-in React type must not lose to a helper declared after it",
+    );
+  });
+
+  it("skips a symbol that is not a React type", () => {
+    const marker = Symbol.for("app.marker");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, marker, Page }, "marker.tsx"),
+      Page,
+      "an unrelated registered symbol is not a component",
+    );
+  });
+
   it("skips an export that throws when it is read", () => {
     const Page = () => null;
     const moduleObj: Record<string, unknown> = { __esModule: true };
