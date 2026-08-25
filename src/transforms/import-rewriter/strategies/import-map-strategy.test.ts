@@ -319,6 +319,42 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("keeps a trailing separator on a v-number package subpath", () => {
+      const map: ImportMapConfig = { imports: { v8: "https://cdn.example/v8" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/v135/v8/sub/", map),
+        "https://cdn.example/v8/sub/",
+        "the recovery path must preserve the separator like the ordinary one does",
+      );
+    });
+
+    it("treats an esm.sh target as a package root even when the name ends in .js", () => {
+      const map: ImportMapConfig = { imports: { charts: "https://esm.sh/chart.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/charts@1/auto", map),
+        "https://esm.sh/chart.js/auto",
+        "npm names such as chart.js end in a module suffix but still name a package",
+      );
+    });
+
+    it("resolves a package whose name is a reserved esm.sh segment", () => {
+      const map: ImportMapConfig = { imports: { gh: "/local/gh.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/gh", map),
+        "/local/gh.js",
+        "a lone reserved segment is a package name, not a source prefix",
+      );
+    });
+
+    it("does not resolve a GitHub source URL as the package named gh", () => {
+      const map: ImportMapConfig = { imports: { gh: "/local/gh.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/gh/owner/repo", map),
+        null,
+        "gh/owner/repo names a source, so the gh package mapping must not capture it",
+      );
+    });
+
     it("resolves a legacy build-prefixed esm.sh URL", () => {
       const map: ImportMapConfig = { imports: { react: "/local/react.js" } };
       assertEquals(

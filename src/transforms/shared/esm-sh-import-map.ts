@@ -46,7 +46,31 @@ function stripTrailingSlash(url: string): string {
  * precedes a package, though, so a lone `v<digits>` with nothing after it names
  * a package rather than a prefix, and `https://esm.sh/v8` must keep resolving.
  */
-function bareVersionLikePackage(url: string): { packageName: string; subpath: string } | null {
+/**
+ * esm.sh reserves some leading path segments, and `parseEsmShUrl` rejects any
+ * specifier starting with one. npm package names can collide with them.
+ */
+const ESM_SH_RESERVED_SEGMENTS: ReadonlySet<string> = new Set([
+  "stable",
+  "gh",
+  "jsr",
+  "pr",
+  "node",
+]);
+
+/**
+ * Recovers a package whose name collides with a reserved esm.sh segment.
+ *
+ * Two shapes need it, and they differ in whether a subpath is allowed:
+ *
+ * - `v<digits>` is the build prefix. One has already been stripped by the time
+ *   this runs and esm.sh does not nest them, so a leading `v<digits>` here is a
+ *   package name and whatever follows is its subpath.
+ * - `stable`, `gh`, `jsr`, `pr` and `node` introduce a *source*, as in
+ *   `gh/owner/repo`. Only a lone segment can be a package name; anything
+ *   further along belongs to the source, so it is left unresolved.
+ */
+function reservedNamePackage(url: string): { packageName: string; subpath: string } | null {
   let pathname: string;
   try {
     pathname = new URL(url).pathname.slice(1);
@@ -57,54 +81,31 @@ function bareVersionLikePackage(url: string): { packageName: string; subpath: st
 
   const separator = pathname.indexOf("/");
   const packageName = separator === -1 ? pathname : pathname.slice(0, separator);
-  if (!/^v\d+$/.test(packageName)) return null;
+  const subpath = separator === -1 ? "" : pathname.slice(separator);
 
-  return { packageName, subpath: separator === -1 ? "" : pathname.slice(separator) };
+  if (/^v\d+$/.test(packageName)) return { packageName, subpath };
+  if (subpath === "" && ESM_SH_RESERVED_SEGMENTS.has(packageName)) {
+    return { packageName, subpath };
+  }
+
+  return null;
 }
 
 export function parseEsmShSpecifier(url: string): { packageName: string; subpath: string } | null {
   const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
   const stripped = stripTrailingSlash(withoutBuildPrefix);
+  const hadTrailingSeparator = stripped !== withoutBuildPrefix;
 
-  const bareName = bareVersionLikePackage(stripped);
-  if (bareName) return bareName;
+  const coordinates = reservedNamePackage(stripped) ?? parseEsmShUrl(stripped);
+  if (!coordinates) return null;
 
-  const parsed = parseEsmShUrl(stripped);
-  if (!parsed) return null;
-
-  const keepsTrailingSeparator = stripped !== withoutBuildPrefix && parsed.subpath !== "";
+  const { packageName, subpath } = coordinates;
   return {
-    packageName: parsed.packageName,
-    subpath: keepsTrailingSeparator ? `${parsed.subpath}/` : parsed.subpath,
+    packageName,
+    // The separator was removed only so the parse would accept the package-root
+    // form; on a non-empty subpath it is part of the subpath.
+    subpath: hadTrailingSeparator && subpath !== "" ? `${subpath}/` : subpath,
   };
-}
-
-function extractEsmShPackage(url: string): string | null {
-  if (!isEsmShUrl(url)) return null;
-  return parseEsmShSpecifier(url)?.packageName ?? null;
-}
-
-function extractEsmShSubpath(url: string): string {
-  return parseEsmShSpecifier(url)?.subpath ?? "";
-}
-
-/**
- * Appends a subpath to a mapping, keeping it inside the path component.
- *
- * esm.sh mappings routinely carry a query, as in
- * `https://esm.sh/@scope/pkg@2?target=es2022`. Concatenating the subpath onto
- * the whole string would fold it into the last parameter value and request the
- * package root, so the subpath goes in ahead of the query or fragment.
- */
-function appendSubpath(mapping: string, subpath: string): string {
-  const boundary = mapping.search(/[?#]/);
-  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
-  const query = boundary === -1 ? "" : mapping.slice(boundary);
-  // A mapping that names a directory already ends in the separator the subpath
-  // starts with, and not every CDN collapses "//" back to "/".
-  const joined = path.endsWith("/") ? path.slice(0, -1) + subpath : path + subpath;
-
-  return joined + query;
 }
 
 /**
@@ -125,8 +126,32 @@ function isSingleModuleMapping(mapping: string): boolean {
   const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
   if (!isRemote) return !mapping.startsWith("npm:") && !mapping.startsWith("jsr:");
 
+  // An esm.sh target is a package coordinate rather than a path to a file, and
+  // npm names such as "chart.js" end in a module suffix, so the suffix test
+  // would otherwise strip the subpath from `chart.js/auto`.
+  if (isEsmShUrl(mapping) && parseEsmShSpecifier(mapping)?.subpath === "") return false;
+
   const boundary = mapping.search(/[?#]/);
   return MODULE_FILE_SUFFIX.test(boundary === -1 ? mapping : mapping.slice(0, boundary));
+}
+
+/**
+ * Appends a subpath to a mapping, keeping it inside the path component.
+ *
+ * esm.sh mappings routinely carry a query, as in
+ * `https://esm.sh/@scope/pkg@2?target=es2022`. Concatenating the subpath onto
+ * the whole string would fold it into the last parameter value and request the
+ * package root, so the subpath goes in ahead of the query or fragment.
+ */
+function appendSubpath(mapping: string, subpath: string): string {
+  const boundary = mapping.search(/[?#]/);
+  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
+  const query = boundary === -1 ? "" : mapping.slice(boundary);
+  // A mapping that names a directory already ends in the separator the subpath
+  // starts with, and not every CDN collapses "//" back to "/".
+  const joined = path.endsWith("/") ? path.slice(0, -1) + subpath : path + subpath;
+
+  return joined + query;
 }
 
 /**
