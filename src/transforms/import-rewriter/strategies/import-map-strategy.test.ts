@@ -283,6 +283,24 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("preserves a trailing separator that belongs to the subpath", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub/", map),
+        "https://cdn.example/pkg/sub/",
+        "a directory-style subpath addresses something different from the same path without the separator",
+      );
+    });
+
+    it("preserves a trailing separator on an unscoped subpath", () => {
+      const map: ImportMapConfig = { imports: { lodash: "https://cdn.example/lodash" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/fp/", map),
+        "https://cdn.example/lodash/fp/",
+        "the separator was preserved before this change and must stay preserved",
+      );
+    });
+
     it("appends a subpath to a jsr package mapping", () => {
       const map: ImportMapConfig = { imports: { "@scope/pkg": "jsr:@std/path@1.1.4" } };
       assertEquals(

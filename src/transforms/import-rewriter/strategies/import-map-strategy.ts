@@ -15,12 +15,7 @@ import { isEsmShUrl, parseEsmShUrl } from "../url-builder.ts";
  */
 const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)v\d+\//;
 
-/**
- * Removes a trailing separator from the path component.
- *
- * `parseEsmShUrl` rejects an empty final path segment, so `@scope/pkg@1/` would
- * otherwise stop resolving through the import map entirely.
- */
+/** Removes a trailing separator from the path component, if there is one. */
 function stripTrailingSlash(url: string): string {
   const boundary = url.search(/[?#]/);
   const path = boundary === -1 ? url : url.slice(0, boundary);
@@ -29,8 +24,23 @@ function stripTrailingSlash(url: string): string {
   return path.slice(0, -1) + (boundary === -1 ? "" : url.slice(boundary));
 }
 
+/**
+ * Parses an esm.sh specifier, tolerating a trailing separator.
+ *
+ * `parseEsmShUrl` rejects an empty final path segment, so `@scope/pkg@1/` would
+ * otherwise stop resolving through the import map entirely. The separator is
+ * removed only for the parse and then restored, because on a non-empty subpath
+ * it is part of the subpath: `@scope/pkg@1/sub/` and `@scope/pkg@1/sub` address
+ * different things once appended to a mapping.
+ */
 function parseEsmShSpecifier(url: string) {
-  return parseEsmShUrl(stripTrailingSlash(url.replace(ESM_SH_BUILD_PREFIX, "$1")));
+  const withoutBuildPrefix = url.replace(ESM_SH_BUILD_PREFIX, "$1");
+  const stripped = stripTrailingSlash(withoutBuildPrefix);
+  const parsed = parseEsmShUrl(stripped);
+
+  if (!parsed || stripped === withoutBuildPrefix || parsed.subpath === "") return parsed;
+
+  return { ...parsed, subpath: `${parsed.subpath}/` };
 }
 
 function extractEsmShPackage(url: string): string | null {
