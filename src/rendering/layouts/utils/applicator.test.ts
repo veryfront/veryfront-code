@@ -615,7 +615,8 @@ describe(
       });
 
       it("redacts nested layout paths from legacy-bundle migration errors", async () => {
-        const privatePath = "/Users/alice/private-project/app/blog/layout.mdx";
+        const projectDir = "/<PROJECT_DIR>";
+        const privatePath = `${projectDir}/app/blog/layout.mdx`;
         const error = await assertRejects(() =>
           applyLayoutsFunctionBody(
             React.createElement("p", { id: "page-body" }, "Text"),
@@ -629,7 +630,7 @@ describe(
             } as LayoutItem],
             {},
             createLayoutComponentCache(),
-            "/Users/alice/private-project",
+            projectDir,
             createMockAdapter(),
             undefined,
             "project-fb-private-layout",

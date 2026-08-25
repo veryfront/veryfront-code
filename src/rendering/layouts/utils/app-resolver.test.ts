@@ -120,7 +120,8 @@ describe("rendering/layouts/utils/app-resolver", () => {
     });
 
     it("sanitizes app component canonicalization failures", async () => {
-      const privatePath = "/Users/alice/private-project/src/app.tsx";
+      const projectDir = "/<PROJECT_DIR>";
+      const privatePath = `${projectDir}/src/app.tsx`;
       const failure = Object.assign(
         new Error(`EACCES: permission denied, realpath '${privatePath}'`),
         { code: "EACCES" },
@@ -130,9 +131,7 @@ describe("rendering/layouts/utils/app-resolver", () => {
         path === privatePath ? Promise.reject(failure) : Promise.resolve(path);
       const config = { app: privatePath } as unknown as VeryfrontConfig;
 
-      const error = await assertRejects(() =>
-        resolveAppComponentPath("/Users/alice/private-project", adapter, config)
-      );
+      const error = await assertRejects(() => resolveAppComponentPath(projectDir, adapter, config));
 
       if (!(error instanceof Error)) throw error;
       assertEquals(error.message, "Failed to canonicalize app component path");

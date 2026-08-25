@@ -51,7 +51,8 @@ describe("rendering/app-reserved", () => {
   });
 
   it("sanitizes reserved component compilation failures", async () => {
-    const privatePath = "/Users/alice/private-project/app/loading.tsx";
+    const projectDir = "/<PROJECT_DIR>";
+    const privatePath = `${projectDir}/app/loading.tsx`;
     const failure = new Error(`No component exported from ${privatePath}`);
     const adapter = {
       fs: {
@@ -69,9 +70,9 @@ describe("rendering/app-reserved", () => {
 
     const error = await assertRejects(() =>
       loadReservedWithPath(
-        ["/project/app"],
+        [`${projectDir}/app`],
         "loading",
-        "/project",
+        projectDir,
         { compileMode: "production", environment: "production" },
         adapter,
         undefined,
@@ -95,7 +96,8 @@ describe("rendering/app-reserved", () => {
   });
 
   it("sanitizes reserved component read failures", async () => {
-    const privatePath = "/Users/alice/private-project/app/loading.tsx";
+    const projectDir = "/<PROJECT_DIR>";
+    const privatePath = `${projectDir}/app/loading.tsx`;
     const failure = Object.assign(new Error(`EACCES: permission denied, open '${privatePath}'`), {
       code: "EACCES",
     });
@@ -107,9 +109,9 @@ describe("rendering/app-reserved", () => {
 
     const error = await assertRejects(() =>
       loadReservedWithPath(
-        ["/Users/alice/private-project/app"],
+        [`${projectDir}/app`],
         "loading",
-        "/Users/alice/private-project",
+        projectDir,
         { compileMode: "production", environment: "production" },
         adapter,
       )
