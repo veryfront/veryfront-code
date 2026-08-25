@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
@@ -237,9 +234,7 @@ describe("npm package publishing", () => {
 
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
     for (const artifactGitHead of [undefined, "f".repeat(40)]) {
-      const identityCase = artifactGitHead === undefined
-        ? "missing"
-        : "mismatched";
+      const identityCase = artifactGitHead === undefined ? "missing" : "mismatched";
       it(`blocks ${publishFunction} before publish when canonical tarball gitHead is ${identityCase}`, async () => {
         await withTempDir(async (stateDir) => {
           const packageDir = `${stateDir}/npm`;
@@ -1245,9 +1240,7 @@ describe("npm package publishing", () => {
       assertEquals(
         publishes.length,
         1,
-        `the retry must stop once the version exists, but issued: ${
-          publishes.join(", ")
-        }`,
+        `the retry must stop once the version exists, but issued: ${publishes.join(", ")}`,
       );
     });
   });
@@ -1441,6 +1434,83 @@ describe("npm package publishing", () => {
         "already exists, and gitHead matches this commit; continuing.",
       );
       assertStringIncludes(stdout, "RECOVERY_REACHED");
+    });
+  });
+
+  // npm's write side can reject a reused name/version while its read replica
+  // still reports the package absent. The RC path has no stable-release
+  // fallback, so it has to poll instead of trusting one absent lookup.
+  it("polls for metadata when a raced retry is rejected as already published", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          // wait_for_npm_git_head sleeps between polls; keep the test bounded
+          "sleep() { :; }",
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "publish" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
+          '      printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "      return 1",
+          "    fi",
+          // the conflicted write landed, so npm refuses the immutable version
+          '    printf "%s\\n" "npm error code E403"',
+          '    printf "%s\\n" "npm error 403 You cannot publish over the previously published versions: 0.1.0"',
+          "    return 1",
+          "  fi",
+          // the read replica never exposes the version itself
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 3 ]; then return 1; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_ATTEMPTS: "3",
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(
+        output.code,
+        0,
+        `an already-published rejection after a handled conflict must poll for gitHead instead of failing the RC publish: ${
+          decoder.decode(output.stderr)
+        }`,
+      );
+      assertStringIncludes(
+        decoder.decode(output.stdout),
+        "landed despite an npm registry conflict",
+      );
+      const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(
+        publishes.length,
+        2,
+        `the RC publish must stop republishing once npm reports the version already exists, but issued: ${
+          publishes.join(", ")
+        }`,
+      );
     });
   });
 });

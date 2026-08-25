@@ -130,6 +130,16 @@ is_transient_publish_conflict() {
     | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
 }
 
+# npm rejects a reused name/version with "You cannot publish over the
+# previously published versions". That answer comes from the registry's write
+# side, so it is authoritative that the version exists even while the read
+# replica still reports it absent.
+is_npm_version_already_published() {
+  ALREADY_PUBLISHED_OUTPUT_CANDIDATE="$1"
+  printf '%s\n' "${ALREADY_PUBLISHED_OUTPUT_CANDIDATE}" \
+    | grep -Fq "previously published versions: ${VERSION}"
+}
+
 # 0: landed for GITHUB_SHA. 1: exists but cannot match. 2: still absent.
 inspect_publish_conflict_result() {
   CONFLICT_PACKAGE_NAME="$1"
@@ -196,6 +206,18 @@ publish_npm_package_with_retry() {
       if [[ "${PUBLISH_SAW_CONFLICT}" -eq 1 ]] \
         && inspect_publish_conflict_result "${PUBLISH_PACKAGE_NAME}"; then
         return 0
+      fi
+      # The read replica can lag behind that write. When npm itself says the
+      # version already exists, one absent lookup is not evidence of failure,
+      # so fall back to the bounded metadata poll the stable path already uses.
+      if [[ "${PUBLISH_SAW_CONFLICT}" -eq 1 ]] \
+        && is_npm_version_already_published "${PUBLISH_OUTPUT}"; then
+        if wait_for_npm_git_head "${PUBLISH_PACKAGE_NAME}"; then
+          echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed despite an npm registry conflict; continuing."
+          return 0
+        fi
+        echo "::error::${PUBLISH_PACKAGE_NAME}@${VERSION} already exists after a registry conflict, but its gitHead is \"${PUBLISHED_GIT_HEAD}\" instead of ${GITHUB_SHA}." >&2
+        return 1
       fi
       return "${PUBLISH_STATUS}"
     fi
