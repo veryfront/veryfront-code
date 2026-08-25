@@ -40,6 +40,23 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("restricts Datadog API hosts to supported sites", () => {
+    const datadog = getConnector("datadog");
+    const supportedSites = [
+      "datadoghq.com",
+      "us3.datadoghq.com",
+      "us5.datadoghq.com",
+      "datadoghq.eu",
+      "ap1.datadoghq.com",
+      "ap2.datadoghq.com",
+      "ddog-gov.com",
+    ];
+
+    for (const tool of datadog.tools) {
+      assertEquals(tool.endpoint?.params?.site?.enum, supportedSites);
+    }
+  });
+
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",

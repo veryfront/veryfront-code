@@ -306,6 +306,10 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Fixed allowlist enforced at execution time before endpoint interpolation.
+    // Authority path params (e.g. a provider site/region domain) must use this
+    // so credentials never reach hosts outside the declared set.
+    enum: v.array(v.string()).optional(),
     // Opts this execution default into the model-facing tool input schema.
     // Use only when the value is safe and useful as model guidance.
     exposeDefault: v.boolean().optional(),

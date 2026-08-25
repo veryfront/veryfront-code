@@ -381,6 +381,7 @@ function inputPropertySchema(
     type: string;
     description: string;
     default?: unknown;
+    enum?: string[];
     exposeDefault?: boolean;
   },
   credentialNames: readonly string[],
@@ -396,6 +397,9 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
+  if (field.type === "string" && field.enum !== undefined) {
+    schema.enum = field.enum;
+  }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
   }

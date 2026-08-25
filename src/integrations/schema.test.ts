@@ -15,4 +15,16 @@ describe("IntegrationEndpointParamSchema", () => {
 
     assertEquals(parsed.exposeDefault, true);
   });
+
+  it("preserves a declared value allowlist", () => {
+    const parsed = getIntegrationEndpointParamSchema().parse({
+      type: "string",
+      in: "path",
+      description: "Datadog site domain",
+      default: "datadoghq.com",
+      enum: ["datadoghq.com", "datadoghq.eu"],
+    });
+
+    assertEquals(parsed.enum, ["datadoghq.com", "datadoghq.eu"]);
+  });
 });
