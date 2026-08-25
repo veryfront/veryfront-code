@@ -73,6 +73,7 @@ const logger = serverLogger.component("api");
  * one place and resolved as a project path in another.
  */
 const REMOTE_URL_SPECIFIER = /^https?:\/\//i;
+const INLINE_MODULE_URL_SPECIFIER = /^(?:data|blob):/i;
 const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
@@ -649,12 +650,12 @@ function inspectDirectModuleSpecifier(
   specifier: string,
   options: DirectSpecifierOptions,
 ): DirectSpecifierResult {
-  const { importMap, filePath, projectRoot, allowedHosts, pending } = options;
+  const { importMap, filePath, projectRoot, pending } = options;
   const mappedTarget = importMap === null
     ? null
     : lookupImportMapEntry(importMap, specifier, filePath);
   if (mappedTarget !== null) {
-    return inspectDirectMappedTarget(mappedTarget, allowedHosts, pending);
+    return inspectDirectMappedTarget(mappedTarget, options);
   }
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
@@ -673,9 +674,9 @@ function inspectDirectModuleSpecifier(
 
 function inspectDirectMappedTarget(
   target: string,
-  allowedHosts: string[],
-  pending: string[],
+  options: DirectSpecifierOptions,
 ): DirectSpecifierResult {
+  const { filePath, projectRoot, allowedHosts, pending } = options;
   // An import map can hide a restricted runtime module behind an ordinary alias.
   const restrictedReason = restrictedRuntimeModuleReason(target);
   if (restrictedReason !== null) {
@@ -687,7 +688,7 @@ function inspectDirectMappedTarget(
     );
   }
   if (pathHelper.isAbsolute(target)) {
-    pending.push(modulePathOfSpecifier(target));
+    pending.push(resolveContainedLocalModule(projectRoot, filePath, target));
     return "direct";
   }
   if (canDirectImportSpecifier(target)) return "direct";
@@ -958,6 +959,21 @@ function resolveImportMapRelativePath(value: string, baseDir: string): string {
   return pathHelper.fromFileUrl(new URL(value, importMapBaseUrl(baseDir)));
 }
 
+function preserveEncodedUrlPathDelimiters(pathname: string): string {
+  return pathname.replace(/%(?:23|3[fF])/g, (encoded) => `%25${encoded.slice(1)}`);
+}
+
+function fromFileUrlPreservingEncodedUrlPathDelimiters(url: URL): string {
+  const preservedUrl = new URL(url.href);
+  preservedUrl.pathname = preserveEncodedUrlPathDelimiters(preservedUrl.pathname);
+  return pathHelper.fromFileUrl(preservedUrl);
+}
+
+function resolveImportMapTargetPath(target: string, baseDir: string): string {
+  const url = new URL(encodedModulePathOfSpecifier(target), importMapBaseUrl(baseDir));
+  return fromFileUrlPreservingEncodedUrlPathDelimiters(url);
+}
+
 function withTrailingPathSeparator(path: string): string {
   return path.endsWith(pathHelper.sep) ? path : `${path}${pathHelper.sep}`;
 }
@@ -965,8 +981,7 @@ function withTrailingPathSeparator(path: string): string {
 function normalizeImportMapTarget(target: string, baseDir: string): string | null {
   if (/^file:/i.test(target)) return normalizeFileUrlSpecifier(target);
   if (!target.startsWith("./") && !target.startsWith("../")) return target;
-  const modulePath = modulePathOfSpecifier(target);
-  const resolved = resolveImportMapRelativePath(modulePath, baseDir) +
+  const resolved = resolveImportMapTargetPath(target, baseDir) +
     moduleSuffixOfSpecifier(target);
   return target.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
 }
@@ -984,7 +999,7 @@ function normalizeFileUrlSpecifier(specifier: string): string | null {
   const moduleUrl = modulePathOfSpecifier(specifier);
   try {
     const url = new URL(moduleUrl);
-    const resolved = pathHelper.fromFileUrl(url);
+    const resolved = fromFileUrlPreservingEncodedUrlPathDelimiters(url);
     const normalizedPath = url.pathname.endsWith("/")
       ? withTrailingPathSeparator(resolved)
       : resolved;
@@ -1139,7 +1154,9 @@ function createImportMapPlugin(
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
 
         if (
-          args.path.includes("bundle-manifest-kv") || args.path.includes("bundle-manifest-redis")
+          !REMOTE_URL_SPECIFIER.test(args.path) &&
+          (args.path.includes("bundle-manifest-kv") ||
+            args.path.includes("bundle-manifest-redis"))
         ) {
           return { path: args.path, external: true };
         }
@@ -1179,6 +1196,16 @@ function createImportMapPlugin(
           return { path: resolvedPath, external: true };
         }
 
+        if (INLINE_MODULE_URL_SPECIFIER.test(resolvedPath)) {
+          try {
+            validateModuleSpecifierHosts([resolvedPath], allowedHosts);
+          } catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            return { errors: [{ text }] };
+          }
+          return { path: resolvedPath, external: true };
+        }
+
         if (REMOTE_URL_SPECIFIER.test(resolvedPath)) {
           // Hand it to the HTTP plugin's namespace rather than to esbuild's
           // default resolver, which cannot fetch a URL: that plugin is what
@@ -1188,8 +1215,8 @@ function createImportMapPlugin(
         }
 
         const mappedModulePath = modulePathOfSpecifier(resolvedPath);
-        const absolutePath = pathHelper.isAbsolute(mappedModulePath)
-          ? mappedModulePath
+        const absolutePath = pathHelper.isAbsolute(resolvedPath)
+          ? resolveContainedLocalModule(projectDir, args.importer || projectDir, resolvedPath)
           : pathHelper.resolve(projectDir, mappedModulePath);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {

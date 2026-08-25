@@ -509,6 +509,22 @@ function protoCallMutationTarget(
     nodeScopes,
   );
   if (mutationTarget) return mutationTarget;
+  const borrowedSetterTarget = borrowedProtoSetterCallTarget(
+    property,
+    callee.object,
+    args,
+    scope,
+    nodeScopes,
+  );
+  if (borrowedSetterTarget) return borrowedSetterTarget;
+  const reflectApplyTarget = reflectApplyBorrowedProtoSetterTarget(
+    property,
+    callee.object,
+    args,
+    scope,
+    nodeScopes,
+  );
+  if (reflectApplyTarget) return reflectApplyTarget;
   if (isObjectAssignCopyingProto(property, callee.object, args, scope, nodeScopes)) return args[0];
   return undefined;
 }
@@ -536,6 +552,107 @@ function prototypeMutatorTarget(
   // Reflect.set applies an inherited setter to its explicit receiver, when
   // supplied, rather than necessarily mutating the target.
   return args[3] ?? args[0];
+}
+
+function borrowedProtoSetterCallTarget(
+  property: string | null,
+  object: ASTNode,
+  args: readonly ASTNode[],
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): ASTNode | undefined {
+  if (property !== "call" && property !== "apply") return undefined;
+  if (!resolvesToObjectPrototypeProtoSetter(object, scope, nodeScopes)) return undefined;
+  return args[0];
+}
+
+function reflectApplyBorrowedProtoSetterTarget(
+  property: string | null,
+  object: ASTNode,
+  args: readonly ASTNode[],
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): ASTNode | undefined {
+  if (
+    property !== "apply" ||
+    !resolvesToGlobalIntrinsic(object, "Reflect", scope, nodeScopes) ||
+    args[0] === undefined ||
+    !resolvesToObjectPrototypeProtoSetter(args[0], scope, nodeScopes)
+  ) return undefined;
+  return args[1];
+}
+
+function resolvesToObjectPrototypeProtoSetter(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.initializers.some((initializer) =>
+      resolvesToObjectPrototypeProtoSetter(
+        initializer,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        seen,
+      )
+    );
+  }
+  if (isMemberExpressionWithObject(expression) && memberPropertyName(expression) === "set") {
+    return readsObjectPrototypeProtoDescriptor(expression.object, scope, nodeScopes);
+  }
+  if (
+    expression.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right)
+  ) {
+    return resolvesToObjectPrototypeProtoSetter(expression.right, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  if (branches !== null) {
+    return resolvesToObjectPrototypeProtoSetter(branches[0], scope, nodeScopes, new Set(seen)) ||
+      resolvesToObjectPrototypeProtoSetter(branches[1], scope, nodeScopes, new Set(seen));
+  }
+  return false;
+}
+
+function readsObjectPrototypeProtoDescriptor(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type !== "CallExpression" || !isNode(expression.callee)) return false;
+  const callee = unwrapExpression(expression.callee);
+  if (
+    !isMemberExpressionWithObject(callee) ||
+    memberPropertyName(callee) !== "getOwnPropertyDescriptor"
+  ) {
+    return false;
+  }
+  if (
+    !resolvesToGlobalIntrinsic(callee.object, "Object", scope, nodeScopes) &&
+    !resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes)
+  ) return false;
+  const args = callArguments(expression);
+  const descriptorKey = staticString(args[1]);
+  return args[0] !== undefined &&
+    isObjectPrototypeReference(args[0], scope, nodeScopes) &&
+    (descriptorKey === null || descriptorKey === "__proto__");
+}
+
+function isObjectPrototypeReference(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  const expression = unwrapExpression(node);
+  return isMemberExpressionWithObject(expression) &&
+    memberPropertyName(expression) === "prototype" &&
+    resolvesToGlobalIntrinsic(expression.object, "Object", scope, nodeScopes);
 }
 
 function isObjectAssignCopyingProto(
@@ -698,22 +815,34 @@ function descriptorDefinesEnumerableProperty(node: ASTNode | undefined): boolean
   return false;
 }
 
-function objectPropertyDefinesProto(property: ASTNode): boolean {
+function objectPropertyIsProtoSetter(property: ASTNode): boolean {
   if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.key)) {
     return false;
   }
-  if (property.computed === true) {
-    const key = staticString(property.key);
-    return key === null || key === "__proto__";
-  }
-  return staticPropertyKey(property) === "__proto__";
+  return property.computed !== true && staticPropertyKey(property) === "__proto__";
 }
 
-function objectLiteralDefinesProto(node: ASTNode): boolean {
+function objectPropertyMayDefineEnumerableProto(property: ASTNode): boolean {
+  if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.key)) {
+    return false;
+  }
+  if (property.computed !== true) return false;
+  const key = staticString(property.key);
+  return key === null || key === "__proto__";
+}
+
+function objectLiteralMutatesPrototype(node: ASTNode): boolean {
   const expression = unwrapExpression(node);
   if (expression.type !== "ObjectExpression") return false;
   const properties = Array.isArray(expression.properties) ? expression.properties : [];
-  return properties.some(objectPropertyDefinesProto);
+  return properties.some(objectPropertyIsProtoSetter);
+}
+
+function objectLiteralMayDefineEnumerableProto(node: ASTNode): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type !== "ObjectExpression") return false;
+  const properties = Array.isArray(expression.properties) ? expression.properties : [];
+  return properties.some(objectPropertyMayDefineEnumerableProto);
 }
 
 function isImportMetaUrl(node: ASTNode | undefined): boolean {
@@ -1028,7 +1157,7 @@ function isPlainObjectValue(
 ): boolean {
   const expression = unwrapExpression(node);
   if (expression.type === "ObjectExpression") {
-    return !objectLiteralDefinesProto(expression);
+    return !objectLiteralMutatesPrototype(expression);
   }
   if (expression.type !== "Identifier" || typeof expression.name !== "string") return false;
   const binding = resolveBinding(scope, expression.name);
@@ -1055,7 +1184,9 @@ function mayCopyEnumerableProtoProperty(
 ): boolean {
   const expression = unwrapExpression(node);
   if (enumerableProtoDefinitionTarget(expression, scope, nodeScopes) !== undefined) return true;
-  if (expression.type === "ObjectExpression") return objectLiteralDefinesProto(expression);
+  if (expression.type === "ObjectExpression") {
+    return objectLiteralMayDefineEnumerableProto(expression);
+  }
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
     if (binding === null || seen.has(binding)) return false;
@@ -1271,7 +1402,9 @@ function isAliasInitializerUse(
       isSafeGlobalObjectDestructuring(link.parent.id))) ||
     (link.parent.type === "AssignmentExpression" && link.key === "right" &&
       ALIAS_ASSIGNMENT_OPERATORS.has(String(link.parent.operator)) &&
-      isNode(link.parent.left) && link.parent.left.type === "Identifier");
+      isNode(link.parent.left) &&
+      (link.parent.left.type === "Identifier" ||
+        isSafeGlobalObjectDestructuring(link.parent.left)));
 }
 
 function isSafeGlobalObjectDestructuring(pattern: ASTNode): boolean {
@@ -1502,11 +1635,47 @@ function applyDescriptorReadCapability(
 
 function applyObjectPatternCapability(
   node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
   parents: WeakMap<ASTNode, ParentLink>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
   if (node.type !== "ObjectProperty" || parents.get(node)?.parent.type !== "ObjectPattern") return;
-  if (staticPropertyKey(node) === "constructor") analysis.hasDynamicCodeGeneration = true;
+  const key = staticPropertyKey(node);
+  if (!destructuredKeyMayExposeGenerator(key)) return;
+  const source = objectPatternSource(node, parents);
+  if (source === undefined) return;
+  if (isGlobalObject(source, scope, nodeScopes)) {
+    analysis.hasDynamicCodeGeneration = true;
+    return;
+  }
+  if ((key === null || key === "constructor") && !isPlainObjectValue(source, scope, nodeScopes)) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
+function destructuredKeyMayExposeGenerator(key: string | null): boolean {
+  return key === null || key === "eval" || key === "Function" || key === "constructor";
+}
+
+function objectPatternSource(
+  property: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): ASTNode | undefined {
+  const pattern = parents.get(property)?.parent;
+  if (!pattern || pattern.type !== "ObjectPattern") return undefined;
+  const link = parents.get(pattern);
+  if (!link) return undefined;
+  if (
+    link.parent.type === "VariableDeclarator" && link.key === "id" &&
+    isNode(link.parent.init)
+  ) return link.parent.init;
+  if (
+    link.parent.type === "AssignmentExpression" && link.key === "left" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(link.parent.operator)) &&
+    isNode(link.parent.right)
+  ) return link.parent.right;
+  return undefined;
 }
 
 function applyWorkerConstructionCapability(
@@ -1553,7 +1722,7 @@ export async function analyzeSourceCapabilities(
     applyModuleSpecifierCapability(node, analysis);
     applyMemberCapability(node, scope, nodeScopes, parents, analysis);
     applyCallCapability(node, scope, nodeScopes, analysis);
-    applyObjectPatternCapability(node, parents, analysis);
+    applyObjectPatternCapability(node, scope, nodeScopes, parents, analysis);
     applyWorkerConstructionCapability(node, scope, nodeScopes, analysis);
 
     forEachChild(node, visit);
