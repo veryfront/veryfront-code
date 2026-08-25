@@ -58,18 +58,33 @@ export async function POST(request: Request) {
       "Use 'use server' directive for server actions",
       "Split component into server and client parts",
     ],
-    example: `// ❌ Wrong - database import in client component
+    example: `// ❌ Wrong: app/dashboard/page.tsx
 'use client';
-import { db } from './database'; // Error!
+import { db } from './database'; // A Client Component cannot reach the database
 
-import { db } from './database';
-export default async function ServerComponent() {
-  const data = await db.query('...');
-  return <ClientComponent data={data} />;
+export default async function DashboardPage() {
+  const { rows } = await db.query<{ id: number; name: string }>('SELECT id, name FROM users');
+  return <ul>{rows.map((user) => <li key={user.id}>{user.name}</li>)}</ul>;
 }
 
+// ✅ Correct: app/dashboard/page.tsx (Server Component, no directive)
+import { db } from './database';
+import { UserList } from './user-list';
+
+export default async function DashboardPage() {
+  const { rows } = await db.query<{ id: number; name: string }>('SELECT id, name FROM users');
+  return <UserList users={rows} />;
+}
+
+// ✅ Correct: app/dashboard/user-list.tsx (Client Component)
 'use client';
-export default function ClientComponent({ data }) {
+
+export function UserList({ users }: { users: { id: number; name: string }[] }) {
+  return (
+    <ul>
+      {users.map((user) => <li key={user.id}>{user.name}</li>)}
+    </ul>
+  );
 }`,
     docs: buildErrorDocsUrl("client-boundary-violation"),
   },
