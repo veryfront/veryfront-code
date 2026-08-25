@@ -3,10 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 
-// Match every absolute scheme form, not only hierarchical `://` spellings:
-// the URL parser canonicalizes single-slash (`https:/host/x`) and opaque
-// (`file:/x`, `mailto:x`) forms into absolute URLs just the same.
-const EXPLICIT_URL_PATTERN = /[a-z][a-z0-9+.-]*:[^\s"\\]+/gi;
+// Match every explicit scheme form plus network-path references. The URL
+// parser canonicalizes single-slash (`https:/host/x`), opaque (`file:/x`), and
+// protocol-relative (`//host/x`) spellings into URLs with the supplied base.
+const RECOVERY_URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:|\/\/)[^\s"\\]+/gi;
 const PUBLIC_RECOVERY_ORIGIN = "https://veryfront.com";
 
 describe("errors/catalog/server-errors", () => {
@@ -62,8 +62,8 @@ describe("errors/catalog/server-errors", () => {
       assertEquals(serialized.includes("kubectl"), false);
       assertEquals(solution?.example?.includes("veryfront clean --cache"), true);
 
-      for (const match of serialized.matchAll(EXPLICIT_URL_PATTERN)) {
-        const normalized = new URL(match[0]);
+      for (const match of serialized.matchAll(RECOVERY_URL_PATTERN)) {
+        const normalized = new URL(match[0], PUBLIC_RECOVERY_ORIGIN);
         assertEquals(
           normalized.username,
           "",
@@ -112,7 +112,7 @@ describe("errors/catalog/server-errors", () => {
           "Open https:/private-control-plane.example/runbook or file:/home/alice/runbook instead",
       });
 
-      const matches = [...serialized.matchAll(EXPLICIT_URL_PATTERN)].map((match) => match[0]);
+      const matches = [...serialized.matchAll(RECOVERY_URL_PATTERN)].map((match) => match[0]);
       assertEquals(matches, [
         "https:/private-control-plane.example/runbook",
         "file:/home/alice/runbook",
@@ -126,11 +126,24 @@ describe("errors/catalog/server-errors", () => {
       }
     });
 
+    it("should match protocol-relative recovery URLs", () => {
+      const serialized = JSON.stringify({
+        step: "Open //private-control-plane.example/runbook",
+      });
+      const matches = [...serialized.matchAll(RECOVERY_URL_PATTERN)].map((match) => match[0]);
+
+      assertEquals(matches, ["//private-control-plane.example/runbook"]);
+      assertEquals(
+        new URL(matches[0]!, PUBLIC_RECOVERY_ORIGIN).origin === PUBLIC_RECOVERY_ORIGIN,
+        false,
+      );
+    });
+
     it("should recognize URL schemes case-insensitively", () => {
       const serialized = JSON.stringify({ step: "Open HTTPS://internal.example/recovery" });
 
       assertEquals(
-        [...serialized.matchAll(EXPLICIT_URL_PATTERN)].map((match) => match[0]),
+        [...serialized.matchAll(RECOVERY_URL_PATTERN)].map((match) => match[0]),
         ["HTTPS://internal.example/recovery"],
       );
     });
