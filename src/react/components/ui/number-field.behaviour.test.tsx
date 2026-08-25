@@ -176,6 +176,59 @@ describe("NumberField behaviour", () => {
     }
   });
 
+  it("keyboard stepping clamps to the bounds", () => {
+    const committed: Array<number | null> = [];
+    const atMax = mount({
+      defaultValue: 10,
+      max: 10,
+      step: 1,
+      onValueChange: (value) => committed.push(value),
+    });
+    try {
+      atMax.keyDown("ArrowUp");
+      assertEquals(atMax.input.value, "10", "ArrowUp is capped at max");
+      assertEquals(
+        atMax.input.getAttribute("aria-valuenow"),
+        "10",
+        "the capped value is published to assistive tech",
+      );
+      assertEquals(committed, [10], "the capped step commits the ceiling, never past it");
+    } finally {
+      atMax.cleanup();
+    }
+
+    const atMin = mount({ defaultValue: 0, min: 0, step: 1 });
+    try {
+      atMin.keyDown("ArrowDown");
+      assertEquals(atMin.input.value, "0", "ArrowDown is floored at min");
+      assertEquals(
+        atMin.input.getAttribute("aria-valuenow"),
+        "0",
+        "the floored value is published to assistive tech",
+      );
+    } finally {
+      atMin.cleanup();
+    }
+  });
+
+  it("publishes the disabled state on the input itself", () => {
+    const off = mount({ defaultValue: 1, disabled: true });
+    try {
+      assertEquals(
+        off.input.disabled,
+        true,
+        "a disabled NumberField blocks input at the platform level",
+      );
+      assertEquals(
+        off.input.getAttribute("data-disabled"),
+        "",
+        "the disabled state is published for styling",
+      );
+    } finally {
+      off.cleanup();
+    }
+  });
+
   it("steps from a parseable draft and clears the draft", () => {
     const committed: Array<number | null> = [];
     const h = mount({ step: 1, onValueChange: (value) => committed.push(value) });

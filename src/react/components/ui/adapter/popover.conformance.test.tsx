@@ -320,21 +320,39 @@ export function runPopoverConformance(
     });
 
     it("controlled open is honoured (open prop drives visibility)", () => {
+      const calls: boolean[] = [];
       function Controlled({ open }: { open: boolean }): React.ReactElement {
         return (
           <Wrap>
-            <Popover open={open} onOpenChange={() => {}}>
+            <Popover open={open} onOpenChange={(next) => calls.push(next)}>
               <PopoverTrigger>Open</PopoverTrigger>
               <PopoverContent>Body</PopoverContent>
             </Popover>
           </Wrap>
         );
       }
-      const { scope, root, cleanup } = mountInScope(<Controlled open={false} />);
+      const { scope, root, clickTrigger, cleanup } = mountInScope(
+        <Controlled open={false} />,
+      );
       try {
         assertEquals(scope.querySelector('[role="dialog"]'), null, "closed when open=false");
+        // The controlled round-trip: a trigger click REPORTS the requested state
+        // and changes nothing on its own - the parent owns visibility.
+        clickTrigger();
+        assertEquals(calls, [true], "a controlled Popover reports the requested open state");
+        assertEquals(
+          scope.querySelector('[role="dialog"]'),
+          null,
+          "a controlled Popover must not open itself",
+        );
         flushSync(() => root.render(<Controlled open />));
         assert(scope.querySelector('[role="dialog"]'), "opens when open=true");
+        clickTrigger();
+        assertEquals(calls, [true, false], "the controlled toggle reports closing too");
+        assert(
+          scope.querySelector('[role="dialog"]'),
+          "the parent still owns visibility - the surface stays open until open=false",
+        );
       } finally {
         cleanup();
       }
@@ -468,3 +486,65 @@ function AltWrap({ children }: { children: React.ReactNode }): React.ReactElemen
 }
 
 runPopoverConformance("independent adapter (contract-is-a-real-seam proof)", AltWrap);
+
+// ---------------------------------------------------------------------------
+// Skin-level default. `PopoverContent` pins `align="end"` (the engine's own
+// default is `"start"`), and the shared suite above cannot observe alignment
+// because the surface position is computed by the engine. A spy adapter reads
+// the value the skin hands to the adapter's `Content` instead.
+// ---------------------------------------------------------------------------
+let recordedAlign: "start" | "end" | undefined;
+
+function SpyContent(
+  { align }: { align?: "start" | "end" },
+): null {
+  recordedAlign = align;
+  return null;
+}
+
+const alignSpyPopover: PopoverParts = {
+  ...builtinPopover,
+  Content: SpyContent as PopoverParts["Content"],
+};
+
+function AlignSpyWrap({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
+    <UIAdapterProvider adapter={{ name: "align-spy", popover: alignSpyPopover }}>
+      {children}
+    </UIAdapterProvider>
+  );
+}
+
+describe("Popover skin defaults", () => {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("PopoverContent aligns to end unless the consumer says otherwise", () => {
+    recordedAlign = undefined;
+    const { root, cleanup } = mountInScope(
+      <AlignSpyWrap>
+        <Popover defaultOpen>
+          <PopoverTrigger>Open</PopoverTrigger>
+          <PopoverContent>Body</PopoverContent>
+        </Popover>
+      </AlignSpyWrap>,
+    );
+    try {
+      assertEquals(recordedAlign, "end", "PopoverContent defaults align to end");
+      flushSync(() =>
+        root.render(
+          <AlignSpyWrap>
+            <Popover defaultOpen>
+              <PopoverTrigger>Open</PopoverTrigger>
+              <PopoverContent align="start">Body</PopoverContent>
+            </Popover>
+          </AlignSpyWrap>,
+        )
+      );
+      assertEquals(recordedAlign, "start", "an explicit align overrides the default");
+    } finally {
+      cleanup();
+    }
+  });
+});

@@ -132,6 +132,42 @@ describe("message-parts", () => {
         { title: "knowledge/handbook.md" },
       ]);
     });
+
+    it("maps tool-result documents through the fallbacks, guards, and content slice", () => {
+      const parts = [
+        {
+          type: "tool-result",
+          result: {
+            documents: [
+              {
+                name: "Doc",
+                url: "https://example.com/doc",
+                score: 0.5,
+                content: "a".repeat(300),
+              },
+              null,
+              { title: "Titled", url: 42, score: "high", snippet: "short" },
+              {},
+            ],
+          },
+        },
+      ] as unknown as ChatMessagePart[];
+
+      assertEquals(
+        extractSourcesFromParts(parts),
+        [
+          {
+            title: "Doc",
+            url: "https://example.com/doc",
+            score: 0.5,
+            snippet: "a".repeat(200),
+          },
+          { title: "Titled", url: undefined, score: undefined, snippet: "short" },
+          { title: "Source", url: undefined, score: undefined, snippet: undefined },
+        ],
+        "tool-result documents map through the name fallback, the type guards, and the 200-char content slice, skipping non-object entries",
+      );
+    });
   });
 
   describe("groupPartsInOrder", () => {

@@ -129,6 +129,20 @@ describe("react/components/ui/color-mode", () => {
     assertStringIncludes(script, `\\u003c/script\\u003e`);
     assertStringIncludes(script, `localStorage.getItem("vf\\";\\u003c/script`);
     assertStringIncludes(script, `m!=="light"&&m!=="dark"&&m!=="system"`);
+
+    const themeAttributeScript = readSingleInlineScript(
+      renderToString(<ColorModeScript defaultMode="dark" attribute="data-theme" />),
+    );
+    assertStringIncludes(
+      themeAttributeScript,
+      'd.setAttribute("data-theme",r)',
+      "the pre-hydration script honours the data-theme variant",
+    );
+    assertEquals(
+      themeAttributeScript.includes("classList"),
+      false,
+      "the data-theme variant never touches the class list",
+    );
   });
 
   it("updates the html color-scheme inline style when toggling color mode", async () => {
@@ -164,6 +178,45 @@ describe("react/components/ui/color-mode", () => {
 
       await waitFor(() => document.documentElement.classList.contains("light"));
       assertEquals(document.documentElement.style.colorScheme, "light");
+      assertEquals(
+        localStorage.getItem(storageKey),
+        "light",
+        "toggling persists the explicit mode for the next load",
+      );
+
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
+  });
+
+  it("applies the data-theme attribute variant instead of the class list", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const media = createMutableMatchMedia(false);
+    const restore = installDomGlobals(dom, media.matchMedia);
+    const storageKey = `vf-color-mode-attribute-${crypto.randomUUID()}`;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ColorModeProvider defaultMode="dark" attribute="data-theme" storageKey={storageKey}>
+            <ToggleFixture />
+          </ColorModeProvider>,
+        );
+      });
+
+      await waitFor(() => document.documentElement.getAttribute("data-theme") === "dark");
+      assert(
+        !document.documentElement.classList.contains("dark"),
+        "the data-theme variant does not also toggle classes",
+      );
+      assertEquals(document.documentElement.style.colorScheme, "dark");
 
       await unmountReactRoot(root);
     } finally {

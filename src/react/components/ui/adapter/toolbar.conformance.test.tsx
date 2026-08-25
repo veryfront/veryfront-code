@@ -184,6 +184,64 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
       }
     });
 
+    it("wraps at both ends and honours Home/End", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <Toolbar>
+            <ToolbarButton>A</ToolbarButton>
+            <ToolbarButton>B</ToolbarButton>
+            <ToolbarButton>C</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, , last] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        last!.focus();
+        keydown(bar, "ArrowRight");
+        assert(
+          document.activeElement === first,
+          "ArrowRight wraps from the last item to the first",
+        );
+        keydown(bar, "End");
+        assert(document.activeElement === last, "End jumps to the last item");
+        keydown(bar, "Home");
+        assert(document.activeElement === first, "Home jumps to the first item");
+        keydown(bar, "ArrowLeft");
+        assert(document.activeElement === last, "ArrowLeft wraps backwards to the last item");
+      } finally {
+        await unmount();
+      }
+    });
+
+    it("navigates a vertical toolbar with Up/Down and ignores the cross-axis arrows", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <Toolbar orientation="vertical">
+            <ToolbarButton>A</ToolbarButton>
+            <ToolbarButton>B</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      try {
+        const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+        const [first, second] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        first!.focus();
+        keydown(bar, "ArrowDown");
+        assert(document.activeElement === second, "ArrowDown moves to the next vertical item");
+        keydown(bar, "ArrowUp");
+        assert(document.activeElement === first, "ArrowUp moves back to the previous item");
+        keydown(bar, "ArrowRight");
+        assert(document.activeElement === first, "the cross-axis arrow leaves focus unchanged");
+      } finally {
+        await unmount();
+      }
+    });
+
     it("skips disabled items and honors a consumer-cancelled navigation event", async () => {
       let cancel = true;
       const { host, unmount } = render(
@@ -393,6 +451,27 @@ describe("Builtin Toolbar SSR ownership", () => {
     const items = [...document.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
     assert(root.tabIndex === 0, "toolbar root owns the pre-hydration tab stop");
     assert(items.length === 3 && items.every((item) => item.tabIndex === -1), "items opt out");
+  });
+
+  it("forwards focus from the toolbar root to the first item", async () => {
+    const { host, unmount } = render(
+      <Toolbar>
+        <ToolbarButton>A</ToolbarButton>
+        <ToolbarButton>B</ToolbarButton>
+      </Toolbar>,
+    );
+    try {
+      const bar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+      const items = Array.from(host.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
+      flushSync(() => bar.focus());
+      assert(
+        document.activeElement === items[0],
+        "focusing the toolbar root forwards focus to the first item",
+      );
+      assert(bar.tabIndex === -1, "the root never keeps the tab stop once an item can hold it");
+    } finally {
+      await unmount();
+    }
   });
 
   it("hydrates to one item-owned tab stop without recoverable errors", async () => {

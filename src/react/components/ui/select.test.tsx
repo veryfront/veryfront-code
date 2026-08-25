@@ -151,11 +151,39 @@ describe("Select", () => {
       await waitFor(() => selectedText(trigger) === "Alpha", "first option");
       press(trigger, "End");
       await waitFor(() => selectedText(trigger) === "Gamma", "last option");
+
+      press(trigger, "ArrowUp");
+      await waitFor(
+        () => selectedText(trigger) === "Beta",
+        "ArrowUp moves to the previous enabled option",
+      );
+      press(trigger, "ArrowUp");
+      await waitFor(
+        () => selectedText(trigger) === "Alpha",
+        "ArrowUp skips the disabled option on the way back",
+      );
+
+      const altUp = press(trigger, "ArrowUp", { altKey: true });
+      assertEquals(altUp.defaultPrevented, true, "Alt+ArrowUp is consumed by the combobox");
+      await waitFor(
+        () => trigger.getAttribute("aria-expanded") === "false",
+        "Alt+ArrowUp closes the listbox",
+      );
+      assertEquals(document.activeElement, trigger, "Alt+ArrowUp returns focus to the trigger");
+      assertEquals(values, [], "Alt+ArrowUp closes without committing a value");
+
+      press(trigger, "ArrowDown");
+      await waitFor(
+        () => trigger.getAttribute("aria-expanded") === "true",
+        "the listbox reopens after Alt+ArrowUp",
+      );
+      press(trigger, "End");
+      await waitFor(() => selectedText(trigger) === "Gamma", "last option");
       press(trigger, "Enter");
       await waitFor(() => trigger.getAttribute("aria-expanded") === "false", "selection close");
 
       assertEquals(values, ["gamma"]);
-      assertEquals(openChanges, [true, false]);
+      assertEquals(openChanges, [true, false, true, false]);
       assertEquals(document.activeElement, trigger);
       assertEquals(trigger.hasAttribute("aria-activedescendant"), false);
       assertEquals(trigger.textContent?.includes("Gamma"), true);

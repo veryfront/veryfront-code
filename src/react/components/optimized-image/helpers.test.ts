@@ -103,17 +103,20 @@ describe("optimized-image helpers", () => {
 
   describe("generateSrcSet", () => {
     it("generates srcset string with multiple sizes", () => {
-      const parts = generateSrcSet("/photo.png", "webp", [320, 640, 1024], 80).split(", ");
       assertEquals(
-        parts.map((part) => part.slice(part.lastIndexOf(" ") + 1)),
-        ["320w", "640w", "1024w"],
+        generateSrcSet("/photo.png", "webp", [320, 640], 80),
+        "/.veryfront/optimized-images/photo-320w.webp 320w, " +
+          "/.veryfront/optimized-images/photo-640w.webp 640w",
+        "srcset candidates must be the build-emitted optimized paths, not the source",
       );
     });
 
     it("generates single-size srcset", () => {
-      const srcset = generateSrcSet("/photo.png", "webp", [640], 80);
-      assertEquals(srcset.includes("640w"), true);
-      assertEquals(srcset.includes(","), false);
+      assertEquals(
+        generateSrcSet("/photo.png", "webp", [640], 80),
+        "/.veryfront/optimized-images/photo-640w.webp 640w",
+        "a single-size srcset carries one optimized candidate and no comma",
+      );
     });
   });
 
@@ -177,7 +180,9 @@ describe("optimized-image helpers", () => {
         assertEquals(warnings, []);
 
         Object.defineProperty(globalThis, "__RSC_DEV__", { value: true });
-        const developmentWarningCount = warnings.length;
+        // The once-latch is module-global, and nothing else in the suite reaches
+        // development mode for this module, so the first development-mode call
+        // owns the single warning.
         assertEquals(
           getOptimizedImageVariantWidths(
             Number.NaN,
@@ -186,12 +191,17 @@ describe("optimized-image helpers", () => {
           ),
           [],
         );
-        assertEquals(warnings.length <= developmentWarningCount + 1, true);
-        if (warnings.length > developmentWarningCount) {
-          assertEquals(warnings[developmentWarningCount], [INVALID_IMAGE_DIMENSIONS_WARNING]);
-        }
+        assertEquals(
+          warnings,
+          [[INVALID_IMAGE_DIMENSIONS_WARNING]],
+          "development mode warns once with the invalid-dimensions message",
+        );
         assertEquals(getOptimizedImageVariantWidths(640, hostileWidths), []);
-        assertEquals(warnings.length <= developmentWarningCount + 1, true);
+        assertEquals(
+          warnings.length,
+          1,
+          "the development warning is emitted at most once per module instance",
+        );
       } finally {
         console.warn = originalWarn;
         restore("window", originalWindow);

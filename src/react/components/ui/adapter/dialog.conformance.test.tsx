@@ -3,7 +3,9 @@
  * of `dialog.tsx` now that its mechanics resolve through `useAdapter()`
  * (defaulting to `builtinDialog`): trigger opens an `aria-modal` panel, overlay
  * classes merge, `DialogClose` / `DialogCancel` dismiss, `asChild` merges the
- * trigger. Also re-run through `UIAdapterProvider` to prove the swap path.
+ * trigger. Also re-run through `UIAdapterProvider` with an INDEPENDENT engine
+ * (one that stamps `data-alt-dialog` on the panel) to prove the swap path is
+ * really honoured rather than silently falling back to the builtin.
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
@@ -98,6 +100,7 @@ async function waitFor(
 function runDialogConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
+  expectAltEngine = false,
 ): void {
   describe(`Dialog adapter conformance - ${label}`, () => {
     afterEach(async () => {
@@ -298,15 +301,54 @@ function runDialogConformance(
         cleanup();
       }
     });
+
+    if (expectAltEngine) {
+      it("renders the engine supplied by UIAdapterProvider, not the builtin", () => {
+        const { scope, click, cleanup } = mount(
+          <Wrap>
+            <Dialog>
+              <DialogTrigger>Open</DialogTrigger>
+              <DialogContent>Body</DialogContent>
+            </Dialog>
+          </Wrap>,
+        );
+        try {
+          click(scope.querySelector("button")!);
+          assert(
+            scope.querySelector('[role="dialog"][data-alt-dialog]'),
+            "dialog.tsx renders the engine supplied by UIAdapterProvider, not the builtin",
+          );
+        } finally {
+          cleanup();
+        }
+      });
+    }
   });
 }
 
 function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactElement {
   return <>{children}</>;
 }
+/**
+ * A marker engine that delegates to the builtin one but stamps `data-alt-dialog`
+ * on the panel. Passing the builtin straight back through the provider would
+ * make the second run byte-identical to the first and could not detect
+ * `dialog.tsx` ignoring the adapter.
+ */
+const altDialog: typeof builtinDialog = {
+  ...builtinDialog,
+  Content: (props: React.ComponentProps<typeof builtinDialog.Content>) => (
+    <builtinDialog.Content data-alt-dialog="" {...props} />
+  ),
+};
+
 function ProviderWrap({ children }: { children: React.ReactNode }): React.ReactElement {
-  return <UIAdapterProvider adapter={{ dialog: builtinDialog }}>{children}</UIAdapterProvider>;
+  return (
+    <UIAdapterProvider adapter={{ name: "independent-alt", dialog: altDialog }}>
+      {children}
+    </UIAdapterProvider>
+  );
 }
 
 runDialogConformance("builtin", BuiltinWrap);
-runDialogConformance("builtin via UIAdapterProvider (swap path)", ProviderWrap);
+runDialogConformance("independent alt engine via UIAdapterProvider", ProviderWrap, true);

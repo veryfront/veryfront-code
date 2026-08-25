@@ -9,7 +9,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
@@ -440,6 +440,7 @@ describe("react/components/chat/hooks/useConversations — save", () => {
   it("consumes an initial list rejection after unmount", async () => {
     const restoreDom = installDom();
     let rejectList: ((reason: unknown) => void) | undefined;
+    const reported: ConversationStoreError[] = [];
     const store: ConversationStore = {
       list: () =>
         new Promise((_resolve, reject) => {
@@ -450,12 +451,22 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       delete: () => Promise.resolve(),
     };
     try {
-      const view = mount(store);
+      const view = mount(store, (error) => reported.push(error));
       await Promise.resolve();
       assert(rejectList);
       await unmountReactRoot(view.root);
       rejectList(new Error("late list failure"));
       await settle();
+      assertEquals(
+        reported,
+        [],
+        "a list rejection that lands after unmount must not be reported to the consumer",
+      );
+      assertEquals(
+        persistenceError(view.get()),
+        null,
+        "a post-unmount list rejection must not be written into state",
+      );
     } finally {
       restoreDom();
     }
@@ -1984,14 +1995,18 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       retainedA.remove("seed");
       retainedA.select("seed");
       retainedA.clearError();
-      let staleCreateThrew = false;
-      try {
-        retainedA.create();
-      } catch {
-        staleCreateThrew = true;
-      }
+      const staleError = assertThrows(
+        () => retainedA.create(),
+        Error,
+        "inactive hook scope",
+        "a retained create() from a handed-off scope is rejected",
+      );
+      assertEquals(
+        (staleError as Error).name,
+        "ConversationHookScopeError",
+        "the stale create() rejection keeps its scope-error identity",
+      );
       await new Promise((resolve) => setTimeout(resolve, 350));
-      assertEquals(staleCreateThrew, true);
       assertEquals(callsA, afterSwitchA);
       assertEquals(callsB, afterSwitchB);
 
@@ -1999,14 +2014,18 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       await unmountReactRoot(view.root);
       retainedB.save(conversation({ title: "After unmount" }));
       retainedB.remove("seed");
-      let unmountedCreateThrew = false;
-      try {
-        retainedB.create();
-      } catch {
-        unmountedCreateThrew = true;
-      }
+      const unmountedError = assertThrows(
+        () => retainedB.create(),
+        Error,
+        "inactive hook scope",
+        "a retained create() from an unmounted scope is rejected",
+      );
+      assertEquals(
+        (unmountedError as Error).name,
+        "ConversationHookScopeError",
+        "the post-unmount create() rejection keeps its scope-error identity",
+      );
       await new Promise((resolve) => setTimeout(resolve, 350));
-      assertEquals(unmountedCreateThrew, true);
       assertEquals(callsB, afterSwitchB);
     } finally {
       restoreDom();

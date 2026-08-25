@@ -362,6 +362,112 @@ describe("AlertDialog", () => {
     }
   });
 
+  it("never dismisses on outside-click of the overlay", async () => {
+    const { doc, click, unmount } = render(OPEN_CONFIRM);
+    try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
+      const panel = doc.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      const overlay = panel.parentElement!.firstElementChild!;
+      assert(overlay !== panel, "the overlay is a sibling of the panel");
+      click(overlay);
+      // The close would land on a scheduler task, so drain before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert(
+        doc.querySelector('[role="alertdialog"]')?.isConnected,
+        "an alert dialog never dismisses on outside-click",
+      );
+    } finally {
+      await unmount();
+    }
+  });
+
+  it("leaves the alert open when a consumer onClick cancels the Action", async () => {
+    let clicks = 0;
+    const { doc, click, unmount } = render(
+      <AlertDialog defaultOpen>
+        <AlertDialogTrigger>Delete account</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle>Delete account?</AlertDialogTitle>
+          <AlertDialogDescription>This permanently removes your account.</AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                clicks += 1;
+                e.preventDefault();
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
+      const action = Array.from(doc.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").trim() === "Delete"
+      )!;
+      assert(action, "Action button renders");
+      click(action);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(clicks, 1, "the consumer onClick runs once");
+      assert(
+        doc.querySelector('[role="alertdialog"]'),
+        "a consumer-cancelled Action leaves the alert open",
+      );
+    } finally {
+      await unmount();
+    }
+  });
+
+  it("closes when the Action is clicked and its onClick does not cancel", async () => {
+    let clicks = 0;
+    const { doc, click, unmount } = render(
+      <AlertDialog defaultOpen>
+        <AlertDialogTrigger>Delete account</AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogTitle>Delete account?</AlertDialogTitle>
+          <AlertDialogDescription>This permanently removes your account.</AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                clicks += 1;
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+    try {
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') !== null,
+        "alert dialog did not portal",
+      );
+      const action = Array.from(doc.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").trim() === "Delete"
+      )!;
+      assert(action, "Action button renders");
+      click(action);
+      assertEquals(clicks, 1, "the consumer onClick runs once");
+      await waitFor(
+        () => doc.querySelector('[role="alertdialog"]') === null,
+        "clicking the Action did not close the alert dialog",
+      );
+    } finally {
+      await unmount();
+    }
+  });
+
   it("closes when Cancel is clicked (alertdialog leaves the DOM)", async () => {
     const { doc, click, unmount } = render(OPEN_CONFIRM);
     try {

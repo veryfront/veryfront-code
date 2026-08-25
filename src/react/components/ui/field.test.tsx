@@ -128,6 +128,12 @@ describe("Field", () => {
         host.querySelector('[role="alert"]') === null,
         "empty FieldError must render nothing",
       );
+      const control = host.querySelector("input")!;
+      assertEquals(
+        control.getAttribute("aria-describedby"),
+        null,
+        "an empty FieldError must not be referenced by aria-describedby",
+      );
     } finally {
       unmount();
     }
@@ -152,6 +158,12 @@ describe("Field", () => {
           `aria-describedby must not reference the missing node ${id}`,
         );
       }
+      const alert = host.querySelector('[role="alert"]')!;
+      assertEquals(
+        describedBy,
+        alert.id,
+        "with no FieldDescription the control must reference the error id and nothing else",
+      );
     } finally {
       unmount();
     }

@@ -12,6 +12,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   createUploadId,
+  INLINE_ATTACHMENT_MAX_BYTES,
   parseChatUploadResponse,
   useUpload,
   type UseUploadResult,
@@ -324,6 +325,50 @@ describe("useUpload", () => {
     }
   });
 
+  it("classifies every transport failure as an errored attachment", async () => {
+    const dom = installDom();
+    PendingXMLHttpRequest.instances = [];
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Capture = (): null => {
+        latest = useUpload({ url: "/api/uploads" });
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest?.upload([
+          new File(["a"], "rejected.txt"),
+          new File(["b"], "unparsable.txt"),
+          new File(["c"], "unsafe.txt"),
+          new File(["d"], "offline.txt"),
+        ])
+      );
+
+      const [rejected, unparsable, unsafe, offline] = PendingXMLHttpRequest.instances;
+      flushSync(() => rejected!.respond(500, '{"url":"https://cdn.example.com/report.txt"}'));
+      flushSync(() => unparsable!.respond(200, "<html>not json</html>"));
+      flushSync(() => unsafe!.respond(200, '{"url":"javascript:alert(1)"}'));
+      flushSync(() => offline!.onerror?.());
+
+      const attachments = (latest as unknown as UseUploadResult).attachments;
+      assertEquals(
+        attachments.map((attachment) => attachment.state),
+        ["error", "error", "error", "error"],
+        "a non-2xx status, an unparsable body, an unsafe URL and a transport error all error out",
+      );
+      assertEquals(
+        attachments.map((attachment) => attachment.url),
+        [undefined, undefined, undefined, undefined],
+        "a failed upload never admits a URL",
+      );
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
   it("aborts pending uploads and releases previews on unmount", async () => {
     const dom = installDom();
     PendingXMLHttpRequest.instances = [];
@@ -578,6 +623,52 @@ describe("useUpload", () => {
       assertEquals(
         (latest as unknown as UseUploadResult).attachments[0]?.url,
         "data:text/plain;base64,Y3VycmVudA==",
+      );
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("rejects a guest-mode file over the inline size cap without reading it", async () => {
+    const dom = installDom();
+    PendingFileReader.instances = [];
+    let latest: UseUploadResult | null = null;
+
+    try {
+      const Capture = (): null => {
+        latest = useUpload();
+        return null;
+      };
+      const root = createRoot(document.getElementById("root")!);
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest?.upload([new File([new Uint8Array(INLINE_ATTACHMENT_MAX_BYTES + 1)], "over.bin")])
+      );
+
+      assertEquals(
+        (latest as unknown as UseUploadResult).attachments[0]?.state,
+        "error",
+        "an oversized guest-mode file settles as error",
+      );
+      assertEquals(
+        PendingFileReader.instances.length,
+        0,
+        "the oversized file is never handed to a FileReader",
+      );
+
+      flushSync(() =>
+        latest?.upload([new File([new Uint8Array(INLINE_ATTACHMENT_MAX_BYTES)], "at-cap.bin")])
+      );
+      assertEquals(
+        PendingFileReader.instances.length,
+        1,
+        "a file at exactly the cap is still read inline",
+      );
+      assertEquals(
+        (latest as unknown as UseUploadResult).attachments[1]?.state,
+        "uploading",
+        "a file at exactly the cap stays in flight",
       );
       await unmount(root);
     } finally {

@@ -165,6 +165,24 @@ describe("NavigationMenu behaviour", () => {
         1,
         "exactly one panel open",
       );
+
+      // The other half of the toggle: clicking the OPEN trigger collapses it.
+      click(products);
+      assertEquals(
+        products.getAttribute("aria-expanded"),
+        "false",
+        "a second click on the open trigger collapses its panel",
+      );
+      assertEquals(
+        host.querySelector('[data-slot="navigation-menu-content"]'),
+        null,
+        "the collapsed panel unmounts",
+      );
+      assertEquals(
+        products.getAttribute("aria-controls"),
+        null,
+        "a re-collapsed trigger drops its panel reference",
+      );
     } finally {
       unmount();
     }

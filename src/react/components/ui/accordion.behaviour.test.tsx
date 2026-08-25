@@ -11,7 +11,7 @@ import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./accordion.tsx";
 
@@ -86,8 +86,9 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
   });
 
   it("single mode: opening one section closes the other", async () => {
+    const values: string[] = [];
     const { host, unmount } = render(
-      <Accordion type="single" collapsible>
+      <Accordion type="single" collapsible onValueChange={(value) => values.push(value)}>
         <AccordionItem value="a">
           <AccordionTrigger>A</AccordionTrigger>
           <AccordionContent>
@@ -120,6 +121,54 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
 
       click(triggerB!);
       assert(bodyB.closest<HTMLElement>("[data-state]")?.hidden, "collapsible closes B");
+      assertEquals(
+        values,
+        ["a", "b", ""],
+        "single mode emits the opened item value and an empty string on collapse",
+      );
+    } finally {
+      await unmount();
+    }
+  });
+
+  it("multiple mode opens several sections and closes them independently", async () => {
+    const values: string[][] = [];
+    const { host, unmount } = render(
+      <Accordion type="multiple" onValueChange={(value) => values.push(value)}>
+        <AccordionItem value="a">
+          <AccordionTrigger>A</AccordionTrigger>
+          <AccordionContent>A body</AccordionContent>
+        </AccordionItem>
+        <AccordionItem value="b">
+          <AccordionTrigger>B</AccordionTrigger>
+          <AccordionContent>B body</AccordionContent>
+        </AccordionItem>
+      </Accordion>,
+    );
+    try {
+      const [triggerA, triggerB] = Array.from(host.querySelectorAll("button"));
+      assert(triggerA && triggerB, "two triggers render");
+
+      click(triggerA!);
+      click(triggerB!);
+      assertEquals(
+        [triggerA!.getAttribute("aria-expanded"), triggerB!.getAttribute("aria-expanded")],
+        ["true", "true"],
+        "multiple mode keeps both sections open",
+      );
+
+      click(triggerA!);
+      assertEquals(
+        [triggerA!.getAttribute("aria-expanded"), triggerB!.getAttribute("aria-expanded")],
+        ["false", "true"],
+        "closing one section leaves the other open",
+      );
+
+      assertEquals(
+        values,
+        [["a"], ["a", "b"], ["b"]],
+        "multiple mode reports the full value array on every toggle",
+      );
     } finally {
       await unmount();
     }

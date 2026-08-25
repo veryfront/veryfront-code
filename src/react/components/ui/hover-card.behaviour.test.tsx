@@ -40,6 +40,19 @@ async function waitForElement(
   return element;
 }
 
+/** Assert `selector` stays mounted for a bounded settle window. */
+async function assertStaysPresent(
+  container: ParentNode,
+  selector: string,
+  message: string,
+): Promise<void> {
+  const deadline = Date.now() + 150;
+  while (Date.now() < deadline) {
+    await tick();
+    assert(container.querySelector(selector), message);
+  }
+}
+
 async function waitForNoElement(
   container: ParentNode,
   selector: string,
@@ -94,6 +107,10 @@ function mountInScope(element: React.ReactElement): {
   root: Root;
   hoverIn: () => Promise<void>;
   hoverOut: () => Promise<void>;
+  /** Dispatch a bubbling mouse event on an arbitrary node, without awaiting. */
+  dispatchMouse: (el: Element, type: "mouseover" | "mouseout") => void;
+  /** The current trigger node. */
+  triggerEl: () => HTMLElement;
   cleanup: () => void;
 } {
   const dom = new JSDOM(
@@ -130,6 +147,9 @@ function mountInScope(element: React.ReactElement): {
     root,
     hoverIn,
     hoverOut,
+    dispatchMouse: (el, type) =>
+      el.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true })),
+    triggerEl: trigger,
     cleanup: () => {
       root.unmount();
       restore();
@@ -224,6 +244,86 @@ describe("HoverCard behaviour", () => {
       assert(
         content.className.includes("vf-test-consumer"),
         "consumer className is merged in",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("gates opening behind openDelay instead of opening on the first hover", async () => {
+    // The delay is far larger than the harness tick, so a card that opened
+    // without waiting for its timer is observable rather than a race.
+    const { scope, hoverIn, cleanup } = mountInScope(
+      <HoverCard openDelay={10_000} closeDelay={0}>
+        <HoverCardTrigger>@koji</HoverCardTrigger>
+        <HoverCardContent data-testid="hc">Preview</HoverCardContent>
+      </HoverCard>,
+    );
+    try {
+      await hoverIn();
+      assertEquals(
+        scope.querySelector('[data-testid="hc"]'),
+        null,
+        "openDelay must gate the card, not open it on the first hover",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("opens once openDelay elapses", async () => {
+    const { scope, hoverIn, cleanup } = mountInScope(
+      <HoverCard openDelay={20} closeDelay={0}>
+        <HoverCardTrigger>@koji</HoverCardTrigger>
+        <HoverCardContent data-testid="hc">Preview</HoverCardContent>
+      </HoverCard>,
+    );
+    try {
+      await hoverIn();
+      await waitForElement(scope, '[data-testid="hc"]', "the card opens once openDelay elapses");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("gates closing behind closeDelay", async () => {
+    const { scope, hoverIn, hoverOut, cleanup } = mountInScope(
+      <HoverCard openDelay={0} closeDelay={10_000}>
+        <HoverCardTrigger>@koji</HoverCardTrigger>
+        <HoverCardContent data-testid="hc">Preview</HoverCardContent>
+      </HoverCard>,
+    );
+    try {
+      await hoverIn();
+      await waitForElement(scope, '[data-testid="hc"]', "open after hover in");
+      await hoverOut();
+      assert(
+        scope.querySelector('[data-testid="hc"]'),
+        "closeDelay must gate the close, not dismiss the card on pointer leave",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("cancels the pending close when the pointer moves onto the card", async () => {
+    const { scope, hoverIn, dispatchMouse, triggerEl, cleanup } = mountInScope(
+      <HoverCard openDelay={0} closeDelay={20}>
+        <HoverCardTrigger>@koji</HoverCardTrigger>
+        <HoverCardContent data-testid="hc">Preview</HoverCardContent>
+      </HoverCard>,
+    );
+    try {
+      await hoverIn();
+      const content = await waitForElement(scope, '[data-testid="hc"]', "open after hover in");
+      // Leaving the trigger and entering the card happen in one synchronous
+      // block, so the close timer cannot fire in between.
+      dispatchMouse(triggerEl(), "mouseout");
+      dispatchMouse(content, "mouseover");
+      await assertStaysPresent(
+        scope,
+        '[data-testid="hc"]',
+        "hovering the card cancels the pending close",
       );
     } finally {
       cleanup();

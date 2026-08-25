@@ -257,6 +257,105 @@ describe("AppShell", () => {
     }
   });
 
+  it("persists uncontrolled desktop visibility under the storage key", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, shellDomOptions());
+    const root = createRoot(document.getElementById("root")!);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <AppShell storageKey="persist-shell" keyboardShortcut={false}>
+            <AppShell.Trigger data-trigger="left" />
+            <AppShell.Sidebar data-sidebar="left">navigation</AppShell.Sidebar>
+          </AppShell>,
+        );
+      });
+      await waitFor(() => document.querySelector('[data-sidebar="left"]') !== null);
+      const trigger = document.querySelector<HTMLButtonElement>('[data-trigger="left"]');
+      assert(trigger);
+
+      flushSync(() => trigger.click());
+      assertEquals(
+        dom.window.localStorage.getItem("persist-shell-left"),
+        "false",
+        "toggling the sidebar persists the new visibility",
+      );
+
+      flushSync(() => trigger.click());
+      assertEquals(
+        dom.window.localStorage.getItem("persist-shell-left"),
+        "true",
+        "toggling back persists the restored visibility",
+      );
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
+  it("controlled sides report through onOpenChange without self-updating", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installComponentDom(dom, shellDomOptions());
+    const root = createRoot(document.getElementById("root")!);
+    const calls: Array<[string, boolean]> = [];
+
+    function Controlled({ left }: { left: boolean }): React.ReactElement {
+      return (
+        <AppShell
+          storageKey="controlled-shell"
+          open={{ left }}
+          onOpenChange={(side, next) => calls.push([side, next])}
+        >
+          <AppShell.Sidebar data-sidebar="left">navigation</AppShell.Sidebar>
+        </AppShell>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<Controlled left />));
+      await waitFor(() => document.querySelector('[data-sidebar="left"]') !== null);
+
+      flushSync(() =>
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            cancelable: true,
+            metaKey: true,
+            key: "b",
+          }),
+        )
+      );
+
+      assertEquals(calls, [["left", false]], "a controlled side reports the requested state");
+      assert(
+        document.querySelector('[data-sidebar="left"]'),
+        "a controlled side must not close itself",
+      );
+      assertEquals(
+        dom.window.localStorage.getItem("controlled-shell-left"),
+        null,
+        "a controlled side does not write the parent's state to storage",
+      );
+
+      flushSync(() => root.render(<Controlled left={false} />));
+      assertEquals(
+        document.querySelector('[data-sidebar="left"]'),
+        null,
+        "the parent-owned open prop drives visibility",
+      );
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("keeps desktop sidebar identity and width authoritative", () => {
     const markup = renderToString(
       <AppShell keyboardShortcut={false}>

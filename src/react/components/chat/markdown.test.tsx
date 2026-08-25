@@ -134,6 +134,42 @@ describe("Markdown", () => {
     assertEquals(error.code, "VF_REACT_MARKDOWN_RENDERER_REQUIRED");
   });
 
+  it("fails closed when components are supplied without a rich renderer", () => {
+    let error: unknown;
+    try {
+      renderToString(
+        <Markdown components={{ h1: () => null }}># Heading</Markdown>,
+      );
+    } catch (cause) {
+      error = cause;
+    }
+    assertInstanceOf(error, MarkdownRendererCapabilityError);
+    assertEquals(
+      error.code,
+      "VF_REACT_MARKDOWN_RENDERER_REQUIRED",
+      "components without a renderer must fail closed",
+    );
+  });
+
+  it("fails closed for components when a provider disabled the inherited renderer", () => {
+    let error: unknown;
+    try {
+      renderToString(
+        <MarkdownRendererProvider renderer={null}>
+          <Markdown components={{ h1: () => null }}># Heading</Markdown>
+        </MarkdownRendererProvider>,
+      );
+    } catch (cause) {
+      error = cause;
+    }
+    assertInstanceOf(error, MarkdownRendererCapabilityError);
+    assertEquals(
+      error.code,
+      "VF_REACT_MARKDOWN_RENDERER_REQUIRED",
+      "a disabled inherited renderer does not rescue component overrides",
+    );
+  });
+
   it("rejects removed parser options instead of silently ignoring them", () => {
     const legacyProps = {
       children: "source",

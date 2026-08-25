@@ -188,6 +188,21 @@ describe("conversation persistence keys and envelopes", () => {
       TypeError,
       "Unsupported conversation storage version",
     );
+
+    // A well-formed envelope of the WRONG kind is rejected too, so a
+    // conversation blob can never be read back as an index (or vice versa).
+    assertThrows(
+      () => decodeConversationIndex(encodeConversationRecord(conversation()).serialized),
+      TypeError,
+      "kind does not match",
+      "a conversation envelope cannot be decoded as an index",
+    );
+    assertThrows(
+      () => decodeConversationRecord(encodeConversationIndex([summary("a")]).serialized),
+      TypeError,
+      "kind does not match",
+      "an index envelope cannot be decoded as a conversation",
+    );
   });
 
   it("returns ordinary objects without allowing __proto__ assignment to mutate prototypes", () => {
@@ -430,6 +445,15 @@ describe("conversation codec validation", () => {
       () => encodeConversationRecord(input),
       TypeError,
       "duplicate message id",
+    );
+  });
+
+  it("rejects duplicate conversation ids in an index", () => {
+    assertThrows(
+      () => encodeConversationIndex([summary("dup"), summary("dup")]),
+      TypeError,
+      "duplicate conversation id",
+      "an index with a repeated conversation id is rejected before it reaches storage",
     );
   });
 

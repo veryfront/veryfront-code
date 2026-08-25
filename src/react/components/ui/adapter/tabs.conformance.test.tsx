@@ -89,6 +89,31 @@ function Harness(): React.ReactElement {
   );
 }
 
+/** Three tabs where the middle one is taken out of the roving order. */
+function SkipHarness(
+  { off }: { off: { disabled?: boolean; "aria-disabled"?: "true" } },
+): React.ReactElement {
+  const [tab, setTab] = React.useState("a");
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsItem value="a">A</TabsItem>
+      <TabsItem value="b" {...off}>B</TabsItem>
+      <TabsItem value="c">C</TabsItem>
+    </Tabs>
+  );
+}
+
+/** A caller that cancels its own click, vetoing the tab's activation. */
+function VetoHarness(): React.ReactElement {
+  const [tab, setTab] = React.useState("a");
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsItem value="a">A</TabsItem>
+      <TabsItem value="b" onClick={(event) => event.preventDefault()}>B</TabsItem>
+    </Tabs>
+  );
+}
+
 function runTabsConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
   describe(`Tabs adapter conformance - ${label}`, () => {
     it("role=tablist/tab; clicking a tab selects it (aria-selected + data-state)", async () => {
@@ -109,6 +134,67 @@ function runTabsConformance(label: string, Wrap: React.FC<{ children: React.Reac
         assert(b!.getAttribute("aria-selected") === "true", "b selected after click");
         assert(a!.getAttribute("aria-selected") === "false", "a deselected");
         assert(b!.getAttribute("data-state") === "active", "b data-state active");
+      } finally {
+        await unmount();
+      }
+    });
+
+    for (
+      const [offLabel, off] of [
+        ["disabled", { disabled: true }],
+        ["aria-disabled", { "aria-disabled": "true" }],
+      ] as const
+    ) {
+      it(`roving navigation steps over a ${offLabel} tab`, async () => {
+        const { host, unmount } = render(
+          <Wrap>
+            <SkipHarness off={off} />
+          </Wrap>,
+        );
+        try {
+          const [a, b, c] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+          assert(a && b && c, "three tabs render");
+
+          key(a, "ArrowRight");
+          assert(
+            c.getAttribute("aria-selected") === "true",
+            `ArrowRight skips the ${offLabel} tab`,
+          );
+          assert(
+            b.getAttribute("aria-selected") === "false",
+            `the ${offLabel} tab is never selected by roving navigation`,
+          );
+
+          key(c, "ArrowLeft");
+          assert(
+            a.getAttribute("aria-selected") === "true",
+            `ArrowLeft also skips the ${offLabel} tab`,
+          );
+        } finally {
+          await unmount();
+        }
+      });
+    }
+
+    it("lets a caller that cancels its own click veto the selection", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <VetoHarness />
+        </Wrap>,
+      );
+      try {
+        const [a, b] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+        assert(a && b, "two tabs render");
+
+        click(b);
+        assert(
+          a.getAttribute("aria-selected") === "true",
+          "a caller that preventDefaults its onClick vetoes selection",
+        );
+        assert(
+          b.getAttribute("aria-selected") === "false",
+          "the vetoed tab does not activate",
+        );
       } finally {
         await unmount();
       }
@@ -143,6 +229,25 @@ describe("Tabs adapter conformance - builtin keyboard navigation", () => {
       assert(a!.getAttribute("aria-selected") === "true", "Home selects the first tab");
       key(a!, "End");
       assert(b!.getAttribute("aria-selected") === "true", "End selects the last tab");
+
+      // Backwards travel and the wrap at both ends - the modulo arithmetic that
+      // ArrowRight/Home/End alone never evaluate.
+      key(b!, "ArrowRight");
+      assert(
+        a!.getAttribute("aria-selected") === "true",
+        "ArrowRight wraps from the last tab to the first",
+      );
+      key(a!, "ArrowLeft");
+      assert(
+        b!.getAttribute("aria-selected") === "true",
+        "ArrowLeft wraps from the first tab to the last",
+      );
+      key(b!, "ArrowUp");
+      assert(
+        a!.getAttribute("aria-selected") === "true",
+        "ArrowUp navigates backwards like ArrowLeft",
+      );
+      assert(host.ownerDocument.activeElement === a, "backwards navigation moves focus too");
     } finally {
       await unmount();
     }
@@ -159,10 +264,25 @@ const altTabs: TabsParts = {
       <AltCtx.Provider value={{ value, onValueChange }}>{children}</AltCtx.Provider>
     </div>
   ),
-  Tab: ({ value, asChild, onClick, ref, ...props }) => {
+  Tab: ({ value, asChild, onClick, onKeyDown, ref, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const isActive = ctx?.value === value;
     const Comp = asChild ? Slot : "button";
+    const moveFocus = (
+      event: React.KeyboardEvent<HTMLButtonElement>,
+      direction: 1 | -1,
+    ) => {
+      const list = event.currentTarget.closest<HTMLElement>('[role="tablist"]');
+      const tabs = Array.from(list?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])
+        .filter((tab) =>
+          !tab.hasAttribute("disabled") && tab.getAttribute("aria-disabled") !== "true"
+        );
+      const currentIndex = tabs.indexOf(event.currentTarget);
+      if (currentIndex === -1 || tabs.length === 0) return;
+      const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+      next?.focus();
+      next?.click();
+    };
     return (
       <Comp
         {...(asChild ? {} : { type: "button" as const })}
@@ -170,9 +290,21 @@ const altTabs: TabsParts = {
         role="tab"
         aria-selected={isActive}
         data-state={isActive ? "active" : "inactive"}
+        tabIndex={isActive ? 0 : -1}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
-          ctx?.onValueChange(value);
+          if (!e.defaultPrevented) ctx?.onValueChange(value);
+        }}
+        onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
+          onKeyDown?.(e);
+          if (e.defaultPrevented) return;
+          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            e.preventDefault();
+            moveFocus(e, 1);
+          } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            moveFocus(e, -1);
+          }
         }}
         {...props}
       />

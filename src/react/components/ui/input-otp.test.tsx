@@ -6,7 +6,8 @@
  *
  * NOTE: synthetic key/input events do NOT reach React handlers in this
  * deno+jsdom harness, so behaviour is proven by rendering a controlled `value`
- * and asserting the structure it produces (not by simulating typing).
+ * and asserting the structure it produces (not by simulating typing); the write
+ * path is driven by invoking the input's own React `onChange` prop directly.
  *
  * @module react/components/ui/input-otp.test
  */
@@ -98,6 +99,43 @@ describe("InputOTP behaviour", () => {
       assert(
         slots[5]?.hasAttribute("data-active"),
         "the final slot stays active when the controlled code is full",
+      );
+    } finally {
+      unmount();
+    }
+  });
+
+  it("sanitizes the value it reports through onChange", () => {
+    const received: string[] = [];
+    const { host, unmount } = render(
+      <InputOTP value="" maxLength={6} onChange={(next) => received.push(next)} />,
+    );
+    try {
+      const input = host.querySelector("input")!;
+      const propsKey = Object.keys(input).find((name) => name.startsWith("__reactProps$"));
+      assert(propsKey, "the rendered input exposes its React props");
+      const inputProps = (input as unknown as Record<string, {
+        onChange?: (event: unknown) => void;
+      }>)[propsKey]!;
+
+      flushSync(() => inputProps.onChange?.({ target: { value: "12-34 5678" } }));
+      assertEquals(received, ["123456"], "onChange reports digits only, clamped to maxLength");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("disables the focusable input and marks the group", () => {
+    const { host, unmount } = render(<InputOTP value="12" disabled />);
+    try {
+      assertEquals(
+        host.querySelector("input")!.disabled,
+        true,
+        "the control that receives focus is the one that must be disabled",
+      );
+      assert(
+        host.querySelector('[role="group"]')!.hasAttribute("data-disabled"),
+        "the group exposes the disabled state for styling",
       );
     } finally {
       unmount();

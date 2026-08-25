@@ -52,4 +52,28 @@ Deno.test("upload URL opening resolves against and uses the owning document", ()
 
   assertEquals(openSafeUploadUrl("javascript:alert(1)", ownerDocument), false);
   assertEquals(calls.length, 1, "unsafe URLs must never reach window.open");
+
+  assertEquals(
+    openSafeUploadUrl("../uploads/report.pdf", {
+      baseURI: ownerDocument.baseURI,
+      defaultView: null,
+    }),
+    false,
+    "a document with no browsing context cannot open an upload",
+  );
+
+  const blocked = {
+    baseURI: ownerDocument.baseURI,
+    defaultView: {
+      open: () => {
+        throw new Error("blocked");
+      },
+    },
+  };
+  assertEquals(
+    openSafeUploadUrl("../uploads/report.pdf", blocked),
+    false,
+    "a rejected window.open returns false instead of throwing",
+  );
+  assertEquals(calls.length, 1, "the blocked attempt does not reach the original view");
 });
