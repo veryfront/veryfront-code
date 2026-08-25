@@ -133,29 +133,50 @@ export function parseEsmShSpecifier(
 const PACKAGE_COORDINATE_ROUTES: ReadonlySet<string> = new Set(["npm", "jsr"]);
 
 /**
+ * CDNs that serve a package coordinate directly from the path root, as unpkg
+ * does in `https://unpkg.com/chart.js`.
+ */
+const PACKAGE_ROOT_HOSTS: ReadonlySet<string> = new Set([
+  "unpkg.com",
+  "cdn.skypack.dev",
+  "esm.run",
+]);
+
+/**
  * Reports whether a remote mapping addresses a file rather than a package root.
  *
  * The last path segment decides, but only after the package-coordinate shapes
- * are recognised, because an npm name can look exactly like a filename:
+ * are recognised, because an npm name can look exactly like a filename and
+ * nothing about `chart.js` distinguishes it from `pkg.js` on its own. Three
+ * shapes name a package:
  *
- * - A segment carrying an `@` is a versioned coordinate, which keeps
- *   `https://cdn.jsdelivr.net/npm/lodash@4.17.21` a package root.
- * - A segment directly after a package route is a package name, which keeps
- *   `https://cdn.jsdelivr.net/npm/chart.js` one despite the `.js`. The scope is
- *   allowed to sit between them.
- * - Otherwise a segment carrying an extension is a file.
+ * - a segment carrying an `@`, which is a versioned coordinate, so
+ *   `https://cdn.jsdelivr.net/npm/lodash@4.17.21` stays a root;
+ * - a segment directly after a package route, so `/npm/chart.js` stays one,
+ *   with the scope allowed to sit between them;
+ * - the whole path on a CDN that serves coordinates from the root, so
+ *   `https://unpkg.com/chart.js` stays one while
+ *   `https://unpkg.com/chart.js/dist/chart.js` is the file it names.
  *
- * An extension allowlist was tried first and kept needing entries one report at
- * a time. The shape of the name is the durable signal, but only once the
- * coordinate forms are taken out first, since `chart.js` and `pkg.js` are
- * indistinguishable as bare names.
+ * Anything else carrying an extension is a file. An extension allowlist was
+ * tried first and needed a new entry per report; the coordinate shapes are the
+ * part that can be recognised, and the extension only decides what is left.
  */
 function addressesRemoteFile(mapping: string): boolean {
-  const boundary = mapping.search(/[?#]/);
-  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
-  const segments = path.split("/");
+  let url: URL;
+  try {
+    url = new URL(mapping);
+  } catch (_) {
+    /* expected: mapping may not be a URL */
+    return false;
+  }
+
+  const segments = url.pathname.split("/").filter(Boolean);
   const lastSegment = segments.at(-1) ?? "";
-  if (lastSegment.includes("@")) return false;
+  if (!lastSegment || lastSegment.includes("@")) return false;
+
+  const coordinateLength = segments[0]?.startsWith("@") ? 2 : 1;
+  if (PACKAGE_ROOT_HOSTS.has(url.hostname) && segments.length === coordinateLength) return false;
 
   const parent = segments.at(-2) ?? "";
   const routeSegment = parent.startsWith("@") ? segments.at(-3) ?? "" : parent;

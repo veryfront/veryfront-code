@@ -502,6 +502,27 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("appends a subpath to a dotted package root served from a CDN path root", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://unpkg.com/chart.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/auto", map),
+        "https://unpkg.com/chart.js/auto",
+        "unpkg serves the coordinate from the path root, so the whole path is the package",
+      );
+    });
+
+    it("keeps a deeper path on the same CDN as a single module", () => {
+      // The counterpart to the case above: only the bare coordinate is a root.
+      const map: ImportMapConfig = {
+        imports: { pkg: "https://unpkg.com/chart.js/dist/chart.js" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://unpkg.com/chart.js/dist/chart.js",
+        "a path below the coordinate names a file, even on a package-root host",
+      );
+    });
+
     it("keeps a dotted mapping that is not on a package route as a single module", () => {
       const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/pkg.js" } };
       assertEquals(
