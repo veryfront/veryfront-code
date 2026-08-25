@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert";
-import { afterEach, describe, it } from "#veryfront/testing/bdd";
-import { TokenManager } from "../../../src/proxy/token-manager.ts";
-import { OAuthTokenRequestError } from "../../../src/proxy/oauth-client.ts";
-import type { TokenCache, TokenCacheEntry } from "../../../src/proxy/cache/types.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { TokenManager } from "#veryfront/proxy/token-manager.ts";
+import { OAuthTokenRequestError } from "#veryfront/proxy/oauth-client.ts";
+import type { TokenCache, TokenCacheEntry } from "#veryfront/proxy/cache/types.ts";
 
 /**
  * Relocated from src/proxy/token-manager.test.ts: proving that a negative cache

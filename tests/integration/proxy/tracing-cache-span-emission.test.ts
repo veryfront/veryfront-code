@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
   type Span,
@@ -11,9 +11,9 @@ import {
   _resetOTLPForTests,
   initializeOTLPWithApis,
   shutdownOTLP,
-} from "../../../src/proxy/tracing.ts";
-import { TracingTokenCache } from "../../../src/proxy/cache/tracing-cache.ts";
-import type { CacheStats, TokenCache, TokenCacheEntry } from "../../../src/proxy/cache/types.ts";
+} from "#veryfront/proxy/tracing.ts";
+import { TracingTokenCache } from "#veryfront/proxy/cache/tracing-cache.ts";
+import type { CacheStats, TokenCache, TokenCacheEntry } from "#veryfront/proxy/cache/types.ts";
 
 /**
  * Relocated from src/proxy/cache/tracing-cache.test.ts: the proxy's withSpan()
