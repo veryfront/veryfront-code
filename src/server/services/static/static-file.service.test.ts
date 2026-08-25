@@ -567,15 +567,16 @@ describe("server/services/static/static-file.service", () => {
       const service = new StaticFileService();
       const options = makeOptions({ adapter, buildOutDir });
 
-      const result = await service.resolveFile(runtimePath, options);
-
-      assertEquals(result, null);
-
-      const siblingResult = await service.resolveFile(
-        runtimePath,
-        makeOptions({ adapter, buildOutDir: "../etc" }),
+      await assertRejects(
+        () => service.resolveFile(runtimePath, options),
+        Error,
+        "inside the project",
       );
-      assertEquals(siblingResult, null);
+      await assertRejects(
+        () => service.resolveFile(runtimePath, makeOptions({ adapter, buildOutDir: "../etc" })),
+        Error,
+        "inside the project",
+      );
     });
 
     it("does not widen source access when build output contains the project", async () => {
@@ -585,11 +586,15 @@ describe("server/services/static/static-file.service", () => {
       const adapter = createNativeFsAdapter(files);
       const service = new StaticFileService();
 
-      const malformedRootResult = await service.resolveFile(
-        "/src/private.js",
-        makeOptions({ adapter, buildOutDir: "." }),
+      await assertRejects(
+        () =>
+          service.resolveFile(
+            "/src/private.js",
+            makeOptions({ adapter, buildOutDir: "." }),
+          ),
+        Error,
+        "inside the project",
       );
-      assertEquals(malformedRootResult, null);
     });
 
     it("serves built nested index pages through clean route URLs", async () => {

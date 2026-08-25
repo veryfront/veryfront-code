@@ -102,7 +102,18 @@ function resolveConfiguredOutputDir(
 ): string {
   const configured = config.build?.outDir;
   if (configured === undefined || configured === "") return join(projectDir, "dist");
-  return resolve(projectDir, configured);
+  const resolvedProject = resolve(projectDir);
+  const resolvedOutput = resolve(resolvedProject, configured);
+  const relativeOutput = relative(resolvedProject, resolvedOutput);
+  if (
+    relativeOutput === "" || relativeOutput.startsWith("..") ||
+    isAbsolute(relativeOutput)
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: "build.outDir must resolve to a directory inside the project",
+    });
+  }
+  return resolvedOutput;
 }
 
 /**

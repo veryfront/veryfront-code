@@ -138,12 +138,14 @@ describe("commands/build/command", () => {
       );
     });
 
-    it("keeps an absolute build.outDir absolute", () => {
-      assertEquals(
-        resolveBuildOutputDir("/workspace/project", undefined, {
-          build: { outDir: "/var/www/site" },
-        }),
-        "/var/www/site",
+    it("rejects an absolute build.outDir outside the project", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", undefined, {
+            build: { outDir: "/var/www/site" },
+          }),
+        Error,
+        "inside the project",
       );
     });
 
@@ -161,7 +163,7 @@ describe("commands/build/command", () => {
       assertThrows(
         () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: ".." } }),
         Error,
-        "/workspace",
+        "inside the project",
       );
     });
 
@@ -173,12 +175,14 @@ describe("commands/build/command", () => {
       );
     });
 
-    it("allows an output directory beside the project", () => {
-      assertEquals(
-        resolveBuildOutputDir("/workspace/project", undefined, {
-          build: { outDir: "../shared-dist" },
-        }),
-        "/workspace/shared-dist",
+    it("rejects build.outDir beside the project", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", undefined, {
+            build: { outDir: "../shared-dist" },
+          }),
+        Error,
+        "inside the project",
       );
     });
   });

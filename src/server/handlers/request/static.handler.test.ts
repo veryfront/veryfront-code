@@ -1,10 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { StaticHandler } from "./static.handler.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import {
+  makeTempDir,
+  mkdir,
+  remove,
+  symlink,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -158,19 +164,51 @@ describe("server/handlers/request/static.handler", () => {
         "export const releaseRuntime = true;",
       );
       const handler = new StaticHandler();
+      const adapter = await getAdapter();
+      await assertRejects(
+        () =>
+          handler.handle(
+            new Request(`http://localhost${runtimePath}`),
+            makeCtx({
+              projectDir,
+              adapter,
+              config: { build: { outDir: buildOutDir } },
+            }),
+          ),
+        Error,
+        "inside the project",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+      await remove(buildOutDir, { recursive: true });
+    }
+  });
+
+  it("does not trust a configured build output symlink as a static root", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-static-project-" });
+    const externalDir = await makeTempDir({ prefix: "vf-static-external-" });
+    const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+
+    try {
+      await mkdir(`${externalDir}/_veryfront`, { recursive: true });
+      await writeTextFile(`${externalDir}${runtimePath}`, "export const hostFile = true;");
+      await symlink(externalDir, `${projectDir}/output`);
+
+      const handler = new StaticHandler();
+      const adapter = await getAdapter();
       const result = await handler.handle(
         new Request(`http://localhost${runtimePath}`),
         makeCtx({
           projectDir,
-          adapter: await getAdapter(),
-          config: { build: { outDir: buildOutDir } },
+          adapter,
+          config: { build: { outDir: "output" } },
         }),
       );
-
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 404);
+      assertEquals(await result.response?.text(), "Not Found");
     } finally {
       await remove(projectDir, { recursive: true });
-      await remove(buildOutDir, { recursive: true });
+      await remove(externalDir, { recursive: true });
     }
   });
 

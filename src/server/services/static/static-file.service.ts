@@ -13,6 +13,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { relative, resolve } from "#veryfront/platform/compat/path/index.ts";
@@ -138,12 +139,14 @@ export class StaticFileService {
     const projectRoot = resolve(options.projectDir);
     const configuredRoot = resolve(projectRoot, options.buildOutDir || "dist");
 
-    // Project configuration is not a trusted filesystem boundary. Keep static
-    // output below the project root so an absolute or traversing outDir cannot
-    // expose host files or another project's artifacts.
-    return configuredRoot !== projectRoot && isWithinDirectory(projectRoot, configuredRoot)
-      ? configuredRoot
-      : resolve(projectRoot, "dist");
+    // Project configuration is not a trusted filesystem boundary. Fail loudly
+    // instead of serving a different directory from the one the build wrote.
+    if (configuredRoot === projectRoot || !isWithinDirectory(projectRoot, configuredRoot)) {
+      throw SECURITY_VIOLATION.create({
+        detail: "build.outDir must resolve to a directory inside the project",
+      });
+    }
+    return configuredRoot;
   }
 
   private getFileSystems(options: StaticFileOptions): StaticFileSystems {
@@ -168,18 +171,18 @@ export class StaticFileService {
       };
     };
 
-    // Keep public files under the project policy. Give the validated build
-    // output its own boundary so custom output directories remain supported.
+    // Keep public files under the project policy. Resolve configured output
+    // through a project-root boundary as well, so a symlink at the configured
+    // output directory cannot become a trusted filesystem root of its own.
     const project = adaptSecureFs(projectSecureFs, projectRoot);
-    const buildOutputRoot = this.resolveBuildOutputRoot(options);
     const buildOutputSecureFs = createSecureFs({
-      baseDir: buildOutputRoot,
+      baseDir: projectRoot,
       adapter: options.adapter,
       context: "internal",
-      validationOptions: { checkExists: true },
+      validationOptions: { checkExists: true, followSymlinks: false },
     });
     return {
-      buildOutput: adaptSecureFs(buildOutputSecureFs, buildOutputRoot),
+      buildOutput: adaptSecureFs(buildOutputSecureFs, projectRoot),
       project,
     };
   }
