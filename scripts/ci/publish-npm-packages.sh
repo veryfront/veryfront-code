@@ -122,6 +122,58 @@ verify_npm_compatibility_artifact() {
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
 # only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
+# npm answers a burst of publishes with `409 Conflict - Failed to save
+# packument` when it cannot serialise the writes fast enough. The conflicting
+# write sometimes still lands, so recheck the registry before retrying and give
+# the packument time to settle between attempts.
+NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
+NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
+
+is_transient_publish_conflict() {
+  printf '%s\n' "$1" \
+    | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
+}
+
+# Publish one spec, absorbing transient registry conflicts. Prints sanitized npm
+# output. Returns 0 when the version is published for GITHUB_SHA.
+publish_npm_package_with_retry() {
+  PUBLISH_PACKAGE_NAME="$1"
+  PUBLISH_SPEC="$2"
+  shift 2
+  for PUBLISH_ATTEMPT in $(seq 1 "${NPM_PUBLISH_CONFLICT_ATTEMPTS}"); do
+    set +e
+    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" "$@" 2>&1)"
+    PUBLISH_STATUS=$?
+    set -e
+    SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
+    if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
+    fi
+    if [[ "${PUBLISH_STATUS}" -eq 0 ]]; then
+      return 0
+    fi
+    if ! is_transient_publish_conflict "${PUBLISH_OUTPUT}"; then
+      return "${PUBLISH_STATUS}"
+    fi
+
+    PUBLISHED_GIT_HEAD="$(npm view "${PUBLISH_PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+    if [[ "${PUBLISHED_GIT_HEAD}" == "${GITHUB_SHA}" ]]; then
+      echo "::notice::${PUBLISH_PACKAGE_NAME}@${VERSION} landed despite an npm registry conflict; continuing."
+      return 0
+    fi
+    if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
+      echo "::error::${PUBLISH_PACKAGE_NAME}@${VERSION} exists with a different commit after a registry conflict." >&2
+      return 1
+    fi
+    if [[ "${PUBLISH_ATTEMPT}" -lt "${NPM_PUBLISH_CONFLICT_ATTEMPTS}" ]]; then
+      echo "npm registry conflict publishing ${PUBLISH_PACKAGE_NAME}@${VERSION}; retrying in ${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}s (attempt ${PUBLISH_ATTEMPT}/${NPM_PUBLISH_CONFLICT_ATTEMPTS})."
+      sleep "${NPM_PUBLISH_CONFLICT_DELAY_SECONDS}"
+    fi
+  done
+  echo "::error::npm registry conflict persisted for ${PUBLISH_PACKAGE_NAME}@${VERSION} after ${NPM_PUBLISH_CONFLICT_ATTEMPTS} attempts." >&2
+  return 1
+}
+
 wait_for_npm_git_head() {
   PACKAGE_NAME="$1"
   # npm can expose a published version before its gitHead metadata converges.
@@ -169,15 +221,8 @@ rc_publish_package_dir() {
   fi
 
   echo "Publishing ${PACKAGE_NAME}@${VERSION} with rc tag"
-  set +e
-  PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc 2>&1)"
-  PUBLISH_STATUS=$?
-  set -e
-  SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
-  if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
-    printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
-  fi
-  return "${PUBLISH_STATUS}"
+  publish_npm_package_with_retry "${PACKAGE_NAME}" "${PUBLISH_SPEC}" \
+    --provenance --access public --tag rc
 }
 
 release_publish_package_dir() {
@@ -190,13 +235,10 @@ release_publish_package_dir() {
   else
     echo "Publishing ${PACKAGE_NAME}@${VERSION}"
     set +e
-    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1)"
+    publish_npm_package_with_retry "${PACKAGE_NAME}" "${PUBLISH_SPEC}" \
+      --provenance --access public
     PUBLISH_STATUS=$?
     set -e
-    SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
-    if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
-      printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
-    fi
 
     if [ "${PUBLISH_STATUS}" -ne 0 ]; then
       if printf '%s\n' "${PUBLISH_OUTPUT}" | grep -Fq "previously published versions: ${VERSION}" \
