@@ -256,6 +256,15 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("keeps a remote TypeScript mapping as a single module", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://example.com/package.ts" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://example.com/package.ts",
+        "remote TypeScript import-map values are ordinary in a Deno-first project",
+      );
+    });
+
     it("still appends a subpath to a remote package-root mapping", () => {
       const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
       assertEquals(

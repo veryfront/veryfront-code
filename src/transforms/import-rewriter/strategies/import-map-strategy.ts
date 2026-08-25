@@ -47,8 +47,13 @@ function appendSubpath(mapping: string, subpath: string): string {
   return joined + query;
 }
 
-/** Module file extensions a mapping can end in when it addresses one module. */
-const MODULE_FILE_SUFFIX = /\.(?:m|c)?js$|\.json$/;
+/**
+ * Module file extensions a mapping can end in when it addresses one module.
+ *
+ * TypeScript is included because remote TypeScript import-map values are
+ * ordinary in this Deno-first repository, not just JavaScript ones.
+ */
+const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json)$/;
 
 /**
  * Reports whether a mapping already addresses a single module rather than a
