@@ -81,11 +81,7 @@ import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts"
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
-import {
-  Singleflight,
-  SingleflightFollowerLimitError,
-  waitForSharedPromise,
-} from "#veryfront/utils/singleflight.ts";
+import { Singleflight, SingleflightFollowerLimitError } from "#veryfront/utils/singleflight.ts";
 import {
   acquireProjectSlot,
   projectRenderCounts,
@@ -830,12 +826,10 @@ export class Renderer {
     let cachedData: CachedRenderData;
     try {
       cachedData = cacheKey !== null
-        ? await waitForSharedPromise(
-          this.renderFlight.do(flightKey, runRender, {
-            maxFollowers: RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
-          }),
-          callerSignal,
-        )
+        ? await this.renderFlight.do(flightKey, runRender, {
+          maxFollowers: RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
+          signal: callerSignal,
+        })
         : await runRender();
     } catch (error) {
       if (error instanceof SingleflightFollowerLimitError) {

@@ -30,6 +30,7 @@ import {
   RENDER_ACQUIRE_TIMEOUT_MS,
   RENDER_MAX_CONCURRENT,
   RENDER_PER_PROJECT_LIMIT,
+  RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import {
@@ -2036,8 +2037,9 @@ describe("Renderer release asset cache isolation", () => {
     });
 
     const ctx = makeRenderContext();
+    const totalRenders = RENDER_SINGLEFLIGHT_MAX_FOLLOWERS + 2;
     const renders = Array.from(
-      { length: 22 },
+      { length: totalRenders },
       () =>
         renderer.renderPage("/bounded-burst", ctx, {
           environment: "production",
@@ -2060,7 +2062,7 @@ describe("Renderer release asset cache isolation", () => {
     const results = await Promise.allSettled(renders);
     assertEquals(
       results.filter((result) => result.status === "fulfilled").length,
-      21,
+      RENDER_SINGLEFLIGHT_MAX_FOLLOWERS + 1,
     );
     assertEquals(
       results.filter((result) => result.status === "rejected").length,

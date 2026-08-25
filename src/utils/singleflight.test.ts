@@ -149,6 +149,30 @@ describe("Singleflight", () => {
     assertEquals(await follower, 42);
   });
 
+  it("releases a follower slot when that caller detaches", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+    const caller = new AbortController();
+    const detached = sf.do("key", () => Promise.resolve(2), {
+      maxFollowers: 1,
+      signal: caller.signal,
+    });
+
+    caller.abort(new DOMException("request closed", "AbortError"));
+    await assertRejects(() => detached, DOMException, "request closed");
+
+    const replacement = sf.do(
+      "key",
+      () => Promise.resolve(3),
+      { maxFollowers: 1 },
+    );
+    operation.resolve(42);
+
+    assertEquals(await leader, 42);
+    assertEquals(await replacement, 42);
+  });
+
   it("should allow different keys to run concurrently", async () => {
     const sf = new Singleflight<string>();
     let callCount = 0;
