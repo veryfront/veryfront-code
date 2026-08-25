@@ -135,7 +135,15 @@ export class StaticFileService {
   }
 
   private resolveBuildOutputRoot(options: StaticFileOptions): string {
-    return resolve(options.projectDir, options.buildOutDir || "dist");
+    const projectRoot = resolve(options.projectDir);
+    const configuredRoot = resolve(projectRoot, options.buildOutDir || "dist");
+
+    // Project configuration is not a trusted filesystem boundary. Keep static
+    // output below the project root so an absolute or traversing outDir cannot
+    // expose host files or another project's artifacts.
+    return configuredRoot !== projectRoot && isWithinDirectory(projectRoot, configuredRoot)
+      ? configuredRoot
+      : resolve(projectRoot, "dist");
   }
 
   private getFileSystems(options: StaticFileOptions): StaticFileSystems {
@@ -160,17 +168,10 @@ export class StaticFileService {
       };
     };
 
-    // Keep public files under the project policy. A configured build output can
-    // live beside or outside the project, so give that trusted artifact root an
-    // independent boundary instead of expressing it as ../ paths from the project.
+    // Keep public files under the project policy. Give the validated build
+    // output its own boundary so custom output directories remain supported.
     const project = adaptSecureFs(projectSecureFs, projectRoot);
     const buildOutputRoot = this.resolveBuildOutputRoot(options);
-    if (isWithinDirectory(buildOutputRoot, projectRoot)) {
-      // Refuse to widen static serving when a malformed output root contains
-      // the project. The project policy still permits only dist and public.
-      return { buildOutput: project, project };
-    }
-
     const buildOutputSecureFs = createSecureFs({
       baseDir: buildOutputRoot,
       adapter: options.adapter,

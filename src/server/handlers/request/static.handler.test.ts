@@ -146,7 +146,7 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(resolvedBuildOutDir, "custom-output");
   });
 
-  it("serves a release runtime from an absolute build output directory", async () => {
+  it("does not serve a release runtime from an absolute build output directory", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-static-project-" });
     const buildOutDir = await makeTempDir({ prefix: "vf-static-output-" });
     const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
@@ -167,9 +167,7 @@ describe("server/handlers/request/static.handler", () => {
         }),
       );
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
-      assertEquals(await result.response.text(), "export const releaseRuntime = true;");
+      assertEquals(result.response, undefined);
     } finally {
       await remove(projectDir, { recursive: true });
       await remove(buildOutDir, { recursive: true });
