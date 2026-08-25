@@ -305,15 +305,29 @@ function isSingleModuleMapping(mapping: string): boolean {
     }
   }
 
-  const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
+  // URL canonicalization removes explicit default ports. Classify the
+  // canonical origin so `https://esm.sh:443/...` retains esm.sh coordinate
+  // semantics instead of falling through to generic path handling.
+  let classifiedMapping = mapping;
+  try {
+    const classifiedUrl = new URL(mapping);
+    if (classifiedUrl.hostname.endsWith(".")) {
+      classifiedUrl.hostname = classifiedUrl.hostname.slice(0, -1);
+    }
+    classifiedMapping = classifiedUrl.href;
+  } catch (_) {
+    /* expected: addressesRemoteFile handles malformed remote mappings below */
+  }
+  const isRemote = classifiedMapping.startsWith("http://") ||
+    classifiedMapping.startsWith("https://");
   if (!isRemote) return true;
 
   // An esm.sh target is a package coordinate rather than a path to a file, so
   // the parser decides rather than the suffix: a root takes a subpath, even
   // when the npm name ends in a module suffix as `chart.js` does, and one that
   // already names an export has nothing to append to. Same rule as npm and jsr.
-  if (isEsmShUrl(mapping)) {
-    const parsed = parseEsmShSpecifier(mapping);
+  if (isEsmShUrl(classifiedMapping)) {
+    const parsed = parseEsmShSpecifier(classifiedMapping);
     if (parsed) {
       // A reserved name cannot carry a subpath on esm.sh. Appending one to
       // `https://esm.sh/stable` yields `https://esm.sh/stable/sub`, which this
@@ -326,13 +340,7 @@ function isSingleModuleMapping(mapping: string): boolean {
       // than a channel route. A build channel already occupying the first
       // segment does the same, since `v135/v8/sub` reads back as the package
       // `v8` while a bare `stable/sub` reads back as the package `sub`.
-      let normalizedMapping = mapping;
-      try {
-        normalizedMapping = new URL(mapping).href;
-      } catch (_) {
-        /* expected: parseEsmShSpecifier already rejects malformed URLs */
-      }
-      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(normalizedMapping);
+      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(classifiedMapping);
       if (
         isReservedCoordinateName(parsed.packageName) && parsed.version === null && !hasBuildChannel
       ) {

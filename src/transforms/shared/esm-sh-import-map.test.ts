@@ -141,6 +141,28 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("normalizes default ports before classifying esm.sh mappings", () => {
+    for (
+      const mapping of [
+        "https://esm.sh:443/stable",
+        "http://esm.sh:80/stable",
+        "HTTPS://ESM.SH.:443/stable",
+      ] as const
+    ) {
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        mapping,
+        "a default port must not bypass reserved-package protection",
+      );
+    }
+
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh:444/stable" }),
+      "https://esm.sh:444/stable/sub",
+      "a non-default port names a different origin",
+    );
+  });
+
   it("treats a mapping ending in a separator as a directory", () => {
     assertEquals(
       resolve("https://esm.sh/pkg@1/sub", { pkg: "https://cdn.example/chart.js/" }),
