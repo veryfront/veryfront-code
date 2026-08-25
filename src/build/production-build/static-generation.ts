@@ -190,6 +190,8 @@ async function prepareAppRouteStylesheet(
     options.adapter,
     join(options.projectDir, stylesheetPath),
   );
+  const generationSession = acquireCSSGenerationSession(true);
+  const baseStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
   const sourceFiles = await collectAppRouteStyleSources(options.adapter, options.projectDir);
   const cssImportSources = sourceFiles.filter((file) =>
     CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))
@@ -199,7 +201,7 @@ async function prepareAppRouteStylesheet(
     fs: options.adapter.fs,
     logger,
     projectDir: options.projectDir,
-    globalCSS: stylesheet,
+    globalCSS: baseStylesheet,
     cssImports,
     stylesheetPath,
   });
@@ -208,9 +210,8 @@ async function prepareAppRouteStylesheet(
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
 
-  const generationSession = acquireCSSGenerationSession(true);
   const resolvedStylesheet = mergedStylesheet ??
-    generationSession.compilationSession.defaultStylesheet;
+    baseStylesheet;
   const generated = await generateTailwindCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
