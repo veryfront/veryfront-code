@@ -147,18 +147,35 @@ export interface WorkflowRunStatusEvent {
 }
 
 /**
+ * A pending approval was persisted; the run is parked until it is decided.
+ *
+ * The run flips to `waiting` before the approval exists, so a subscriber who
+ * reacts to `run.status: "waiting"` with a fetch can race the approval write.
+ * This event names the approval directly and removes that second fetch.
+ */
+export interface WorkflowApprovalPendingEvent {
+  type: "approval.pending";
+  runId: string;
+  approvalId: string;
+  nodeId: string;
+  /** The persisted request message, absent when none was recorded. */
+  message?: string;
+}
+
+/**
  * A persisted workflow transition suitable for streaming to run observers.
  *
- * Events contain identifiers, statuses, attempts, and persisted error messages
- * only. Workflow inputs, outputs, context, and tenant metadata are never part
- * of this stream.
+ * Events contain identifiers, statuses, attempts, persisted error messages,
+ * and approval request messages only. Workflow inputs, outputs, approval
+ * payloads, context, and tenant metadata are never part of this stream.
  */
 export type WorkflowRunEvent =
   | WorkflowStepStartedEvent
   | WorkflowStepCompletedEvent
   | WorkflowStepFailedEvent
   | WorkflowStepSkippedEvent
-  | WorkflowRunStatusEvent;
+  | WorkflowRunStatusEvent
+  | WorkflowApprovalPendingEvent;
 
 /**
  * The slice of a run this module diffs against.
@@ -166,16 +183,26 @@ export type WorkflowRunEvent =
  * Deliberately not the whole `WorkflowRun`: holding one per subscriber would
  * retain every step's input and output for the life of a connection, and a
  * workflow that passes large payloads between steps would make an idle
- * subscriber expensive. Status and per-node status/attempt are all a diff
- * needs.
+ * subscriber expensive. Status, per-node status/attempt, and per-approval
+ * identifiers are all a diff needs; approval payloads stay out for the same
+ * reason step payloads do.
  */
 export interface RunEventSnapshot {
   status: WorkflowStatus;
   nodes: Record<string, { status: NodeState["status"]; attempt: number }>;
+  /**
+   * Pending approvals by id. Absent means the producer did not observe
+   * approvals; the diff then treats them as unchanged, never as revoked.
+   */
+  approvals?: Record<string, { nodeId: string; message?: string }>;
 }
 
 /** Reduce a run to the state {@linkcode deriveRunEvents} compares. */
-export function snapshotRun(run: Pick<WorkflowRun, "status" | "nodeStates">): RunEventSnapshot {
+export function snapshotRun(
+  run:
+    & Pick<WorkflowRun, "status" | "nodeStates">
+    & Partial<Pick<WorkflowRun, "pendingApprovals">>,
+): RunEventSnapshot {
   const nodes: RunEventSnapshot["nodes"] = {};
   const entries = objectEntries(run.nodeStates ?? {});
   for (let index = 0; index < entries.length; index++) {
@@ -184,7 +211,17 @@ export function snapshotRun(run: Pick<WorkflowRun, "status" | "nodeStates">): Ru
     if (!state) continue;
     defineRecordEntry(nodes, nodeId, { status: state.status, attempt: state.attempt });
   }
-  return { status: run.status, nodes };
+  const approvals: NonNullable<RunEventSnapshot["approvals"]> = {};
+  const pendingApprovals = run.pendingApprovals ?? [];
+  for (let index = 0; index < pendingApprovals.length; index++) {
+    const approval = pendingApprovals[index];
+    if (!approval || approval.status !== "pending") continue;
+    defineRecordEntry(approvals, approval.id, {
+      nodeId: approval.nodeId,
+      ...(approval.message !== undefined ? { message: approval.message } : {}),
+    });
+  }
+  return { status: run.status, nodes, approvals };
 }
 
 function stepEventFor(
@@ -253,6 +290,28 @@ export function deriveRunEvents(
     });
   }
 
+  // After the run-status event on purpose: the engine persists `waiting`
+  // before the approval exists, so the live stream always delivers the status
+  // first, and a combined diff keeps that one sequence. A baseline without an
+  // approvals field never observed approvals, so nothing is derived against
+  // it: emitting there could repeat an approval the caller already knew.
+  if (next.approvals && (!previous || previous.approvals !== undefined)) {
+    const baseline = previous?.approvals;
+    const approvalEntries = objectEntries(next.approvals);
+    for (let index = 0; index < approvalEntries.length; index++) {
+      const approvalId = approvalEntries[index]![0];
+      const approval = approvalEntries[index]![1];
+      if (baseline && objectHasOwn(baseline, approvalId)) continue;
+      appendEvent(events, {
+        type: "approval.pending",
+        runId,
+        approvalId,
+        nodeId: approval.nodeId,
+        ...(approval.message !== undefined ? { message: approval.message } : {}),
+      });
+    }
+  }
+
   return events;
 }
 
@@ -263,7 +322,10 @@ export interface WorkflowRunEventObservation {
   close(): Promise<void>;
 }
 
-function snapshotObservedState(state: WorkflowRunObservedState): RunEventSnapshot {
+function snapshotObservedState(
+  state: WorkflowRunObservedState,
+  previous: RunEventSnapshot,
+): RunEventSnapshot {
   const nodes: RunEventSnapshot["nodes"] = {};
   const entries = objectEntries(state.nodes);
   for (let index = 0; index < entries.length; index++) {
@@ -271,7 +333,27 @@ function snapshotObservedState(state: WorkflowRunObservedState): RunEventSnapsho
     const node = entries[index]![1];
     defineRecordEntry(nodes, nodeId, { status: node.status, attempt: node.attempt });
   }
-  return { status: state.status, nodes };
+  // Observed states carry approvals only when the producing mutation touched
+  // them. An absent field means unchanged, so the previous baseline is carried
+  // forward; dropping it instead would re-report every approval on the next
+  // record that does carry the field.
+  let approvals = previous.approvals;
+  if (state.approvals !== undefined) {
+    const projected: NonNullable<RunEventSnapshot["approvals"]> = {};
+    for (let index = 0; index < state.approvals.length; index++) {
+      const approval = state.approvals[index]!;
+      defineRecordEntry(projected, approval.id, {
+        nodeId: approval.nodeId,
+        ...(approval.message !== undefined ? { message: approval.message } : {}),
+      });
+    }
+    approvals = projected;
+  }
+  return {
+    status: state.status,
+    nodes,
+    ...(approvals !== undefined ? { approvals } : {}),
+  };
 }
 
 /** Derive public events from a backend observation without shared baselines. */
@@ -285,7 +367,7 @@ export function deriveWorkflowRunEventObservation(
       async *[Symbol.asyncIterator]() {
         let previous = snapshotRun(observation.initial);
         for await (const state of observation.changes) {
-          const next = snapshotObservedState(state);
+          const next = snapshotObservedState(state, previous);
           const nodeErrors: Record<string, string | undefined> = {};
           const entries = objectEntries(state.nodes);
           for (let index = 0; index < entries.length; index++) {

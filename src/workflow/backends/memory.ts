@@ -280,7 +280,11 @@ export class MemoryBackend implements WorkflowBackend {
     });
   }
 
-  private publishRunObservation(runId: string, run: WorkflowRun): void {
+  private publishRunObservation(
+    runId: string,
+    run: WorkflowRun,
+    options: { includeApprovals?: boolean } = {},
+  ): void {
     const revision = (this.runRevisions.get(runId) ?? 0) + 1;
     this.runRevisions.set(runId, revision);
     const observers = this.runObservers.get(runId);
@@ -299,11 +303,25 @@ export class MemoryBackend implements WorkflowBackend {
         writable: true,
       });
     }
+    // Approvals are carried only by approval-append revisions, matching the
+    // observed-state contract: an absent field means unchanged. The projection
+    // stays down to identifiers and the request message; payloads never leave
+    // the approvals store through this path.
+    const approvals = options.includeApprovals
+      ? (this.approvals.get(runId) ?? [])
+        .filter((approval) => approval.status === "pending")
+        .map((approval) => ({
+          id: approval.id,
+          nodeId: approval.nodeId,
+          ...(approval.message !== undefined ? { message: approval.message } : {}),
+        }))
+      : undefined;
     const state: WorkflowRunObservedState = {
       revision,
       status: run.status,
       nodes,
       ...(run.error?.message !== undefined ? { runError: run.error.message } : {}),
+      ...(approvals !== undefined ? { approvals } : {}),
     };
     const terminal = run.status === "completed" || run.status === "failed" ||
       run.status === "cancelled";
@@ -449,6 +467,11 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.approvals.set(runId, approvals);
+    // An approval append is a persisted transition of its own. Without it a
+    // subscriber only sees the run reach `waiting` and has to fetch approvals
+    // separately, racing this very write.
+    const run = this.runs.get(runId);
+    if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
     return Promise.resolve();
   }
 
@@ -472,6 +495,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.approvals.set(runId, approvals);
+    this.publishRunObservation(runId, run, { includeApprovals: true });
     return Promise.resolve(true);
   }
 

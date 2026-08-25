@@ -79,6 +79,13 @@ export interface WorkflowRunObservedState {
     { status: WorkflowRun["nodeStates"][string]["status"]; attempt: number; error?: string }
   >;
   runError?: string;
+  /**
+   * Pending approvals reduced to identifiers and the request message. Present
+   * when the producing mutation touched approvals; absent means unchanged
+   * since the previous observed state, never that approvals were revoked.
+   * Approval payloads never appear here.
+   */
+  approvals?: Array<{ id: string; nodeId: string; message?: string }>;
 }
 
 /** Atomic initial snapshot and ordered changes for one workflow run. */

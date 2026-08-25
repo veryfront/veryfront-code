@@ -21,8 +21,9 @@ function node(
 function snapshot(
   status: WorkflowStatus,
   nodes: Record<string, { status: NodeState["status"]; attempt: number }> = {},
+  approvals: Record<string, { nodeId: string; message?: string }> = {},
 ): RunEventSnapshot {
-  return { status, nodes };
+  return { status, nodes, approvals };
 }
 
 describe("workflow/events", () => {
@@ -190,6 +191,97 @@ describe("workflow/events", () => {
     expect(getterCalls).toBe(0);
   });
 
+  it("derives approval.pending once and carries the baseline across delta records", async () => {
+    const initial = {
+      id: "r1",
+      status: "running",
+      nodeStates: { review: { nodeId: "review", status: "running", attempt: 1 } },
+      pendingApprovals: [],
+    } as unknown as WorkflowRun;
+    const observation: WorkflowRunObservation = {
+      initial,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            revision: 1,
+            status: "waiting" as const,
+            nodes: { review: { status: "running" as const, attempt: 1 } },
+          };
+          yield {
+            revision: 2,
+            status: "waiting" as const,
+            nodes: { review: { status: "running" as const, attempt: 1 } },
+            approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+          };
+          // A record without the approvals field means "unchanged". The
+          // baseline must survive it so the repeat below stays silent.
+          yield {
+            revision: 3,
+            status: "running" as const,
+            nodes: { review: { status: "running" as const, attempt: 1 } },
+          };
+          yield {
+            revision: 4,
+            status: "waiting" as const,
+            nodes: { review: { status: "running" as const, attempt: 1 } },
+            approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+          };
+        },
+      },
+      close: () => Promise.resolve(),
+    };
+
+    const events = [];
+    for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "run.status", runId: "r1", status: "waiting" },
+      {
+        type: "approval.pending",
+        runId: "r1",
+        approvalId: "apr-1",
+        nodeId: "review",
+        message: "Please review",
+      },
+      { type: "run.status", runId: "r1", status: "running" },
+      { type: "run.status", runId: "r1", status: "waiting" },
+    ]);
+  });
+
+  it("does not re-report an approval already pending in the initial snapshot", async () => {
+    const initial = {
+      id: "r1",
+      status: "waiting",
+      nodeStates: { review: { nodeId: "review", status: "running", attempt: 1 } },
+      pendingApprovals: [
+        { id: "apr-1", nodeId: "review", message: "Please review", status: "pending" },
+      ],
+    } as unknown as WorkflowRun;
+    const observation: WorkflowRunObservation = {
+      initial,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            revision: 1,
+            status: "waiting" as const,
+            nodes: { review: { status: "running" as const, attempt: 1 } },
+            approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+          };
+        },
+      },
+      close: () => Promise.resolve(),
+    };
+
+    const events = [];
+    for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([]);
+  });
+
   describe("deriveRunEvents", () => {
     it("reports a first observation as the run's current status", () => {
       const events = deriveRunEvents("r1", undefined, snapshot("running"));
@@ -313,6 +405,72 @@ describe("workflow/events", () => {
         { type: "step.skipped", runId: "r1", nodeId: "a" },
       ]);
     });
+
+    it("reports a new pending approval after the run status that parked on it", () => {
+      // The engine persists `waiting` before the approval exists, so the live
+      // stream always delivers the status first. A combined diff keeps that
+      // order so consumers handle exactly one sequence.
+      const before = snapshot("running", { review: node("running") });
+      const after = snapshot("waiting", { review: node("running") }, {
+        "apr-1": { nodeId: "review", message: "Please review" },
+      });
+
+      expect(deriveRunEvents("r1", before, after)).toEqual([
+        { type: "run.status", runId: "r1", status: "waiting" },
+        {
+          type: "approval.pending",
+          runId: "r1",
+          approvalId: "apr-1",
+          nodeId: "review",
+          message: "Please review",
+        },
+      ]);
+    });
+
+    it("omits the approval message when none was persisted", () => {
+      const before = snapshot("waiting");
+      const after = snapshot("waiting", {}, { "apr-1": { nodeId: "review" } });
+
+      expect(deriveRunEvents("r1", before, after)).toEqual([
+        { type: "approval.pending", runId: "r1", approvalId: "apr-1", nodeId: "review" },
+      ]);
+    });
+
+    it("does not repeat an approval already reported", () => {
+      const before = snapshot("waiting", {}, { "apr-1": { nodeId: "review" } });
+      const after = snapshot("waiting", {}, { "apr-1": { nodeId: "review" } });
+
+      expect(deriveRunEvents("r1", before, after)).toEqual([]);
+    });
+
+    it("treats a snapshot without approvals as unchanged, not revoked", () => {
+      const before = snapshot("waiting", {}, { "apr-1": { nodeId: "review" } });
+      const after: RunEventSnapshot = { status: "waiting", nodes: {} };
+
+      expect(deriveRunEvents("r1", before, after)).toEqual([]);
+    });
+
+    it("does not report approvals against a baseline that never observed them", () => {
+      // An old-style snapshot has no approvals field at all. Emitting against
+      // it could repeat an approval the caller already knew about.
+      const before: RunEventSnapshot = { status: "waiting", nodes: {} };
+      const after = snapshot("waiting", {}, { "apr-1": { nodeId: "review" } });
+
+      expect(deriveRunEvents("r1", before, after)).toEqual([]);
+    });
+
+    it("reports current approvals on a first observation", () => {
+      const events = deriveRunEvents(
+        "r1",
+        undefined,
+        snapshot("waiting", {}, { "apr-1": { nodeId: "review" } }),
+      );
+
+      expect(events).toEqual([
+        { type: "run.status", runId: "r1", status: "waiting" },
+        { type: "approval.pending", runId: "r1", approvalId: "apr-1", nodeId: "review" },
+      ]);
+    });
   });
 
   describe("snapshotRun", () => {
@@ -338,6 +496,7 @@ describe("workflow/events", () => {
       expect(taken).toEqual({
         status: "running",
         nodes: { a: { status: "completed", attempt: 2 } },
+        approvals: {},
       });
       expect(JSON.stringify(taken)).not.toContain("xxx");
     });
@@ -345,7 +504,33 @@ describe("workflow/events", () => {
     it("tolerates a run with no node states", () => {
       const run = { status: "pending" } as unknown as Pick<WorkflowRun, "status" | "nodeStates">;
 
-      expect(snapshotRun(run)).toEqual({ status: "pending", nodes: {} });
+      expect(snapshotRun(run)).toEqual({ status: "pending", nodes: {}, approvals: {} });
+    });
+
+    it("keeps only approval identifiers, not payloads or decided approvals", () => {
+      const run = {
+        status: "waiting",
+        nodeStates: {},
+        pendingApprovals: [
+          {
+            id: "apr-1",
+            nodeId: "review",
+            message: "Please review",
+            payload: { secret: "approval-payload" },
+            status: "pending",
+          },
+          { id: "apr-0", nodeId: "review", message: "Old", status: "approved" },
+        ],
+      } as unknown as Pick<WorkflowRun, "status" | "nodeStates" | "pendingApprovals">;
+
+      const taken = snapshotRun(run);
+
+      expect(taken).toEqual({
+        status: "waiting",
+        nodes: {},
+        approvals: { "apr-1": { nodeId: "review", message: "Please review" } },
+      });
+      expect(JSON.stringify(taken)).not.toContain("approval-payload");
     });
 
     it("preserves a node whose id is a reserved object property", () => {

@@ -42,6 +42,20 @@ describe("MemoryBackend", () => {
     backend = new MemoryBackend();
   });
 
+  /** Bound an observed-state read so a missing publish fails instead of hanging. */
+  async function nextWithin<T>(iterator: AsyncIterator<T>, ms = 2_000): Promise<IteratorResult<T>> {
+    const timeout = Promise.withResolvers<never>();
+    const timeoutId = setTimeout(
+      () => timeout.reject(new Error("Timed out waiting for an observed run state")),
+      ms,
+    );
+    try {
+      return await Promise.race([iterator.next(), timeout.promise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   describe("Run Management", () => {
     it("observes exact cross-client run transitions in revision order", async () => {
       const run = createTestRun("run-observed");
@@ -73,6 +87,86 @@ describe("MemoryBackend", () => {
         revision: 2,
         status: "running",
         nodes: { review: { status: "running", attempt: 1 } },
+      });
+      await observation.close();
+    });
+
+    it("publishes an approval append as its own contiguous revision with a minimal projection", async () => {
+      const run = createTestRun("run-approval-observed");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.updateRun(run.id, { status: "waiting" });
+      await backend.savePendingApproval(run.id, {
+        id: "apr-1",
+        nodeId: "review",
+        message: "Please review",
+        payload: { secret: "approval-payload" },
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+      });
+      // The approval write is its own revision, carrying only identifiers:
+      // a subscriber learns which approval blocks the run without a second
+      // fetch, and without the approval payload leaking into the stream.
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 2,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-1", nodeId: "review", message: "Please review" }],
+      });
+      await observation.close();
+    });
+
+    it("publishes owned approval appends only when ownership holds", async () => {
+      const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Please review",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "other-worker",
+          approval("apr-denied"),
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "w1",
+          approval("apr-owned"),
+        ),
+        true,
+      );
+
+      // The denied append must publish nothing: revision 1 is the owned
+      // append, and it projects only the approval that was actually saved.
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await nextWithin(iterator)).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+        approvals: [{ id: "apr-owned", nodeId: "review", message: "Please review" }],
       });
       await observation.close();
     });

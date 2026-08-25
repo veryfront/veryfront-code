@@ -169,6 +169,7 @@ export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts
 export { deriveRunEvents, isTerminalRunStatus, snapshotRun } from "./events.ts";
 export type {
   RunEventSnapshot,
+  WorkflowApprovalPendingEvent,
   WorkflowRunEvent,
   WorkflowRunEventObservation,
   WorkflowRunStatusEvent,

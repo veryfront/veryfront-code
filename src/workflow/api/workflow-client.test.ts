@@ -579,6 +579,51 @@ describe("WorkflowClient", () => {
       writer.getApprovalManager().stop();
     });
 
+    it("delivers approval.pending to a subscriber connected before the approval exists", async () => {
+      client.register(
+        workflow({
+          id: "observed-approval-workflow",
+          steps: [waitForApproval("review", { message: "Please review" })],
+        }),
+      );
+
+      // Subscribe before the run parks: the approval id must arrive on the
+      // stream itself, with no getPendingApprovals() call needed to learn it.
+      const handle = await client.start("observed-approval-workflow", {});
+      const observation = await client.observeRunEvents(handle.runId);
+      assertExists(observation);
+      assertEquals(observation.supported, true);
+      if (!observation.supported) throw new Error("expected observation support");
+
+      await handle.settled();
+      const [approval] = await client.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      await client.approve(handle.runId, approval.id, "reviewer");
+
+      const events = [];
+      for await (const event of observation.events) events.push(event);
+      await observation.close();
+
+      assertEquals(
+        events.filter((event) => event.type === "approval.pending"),
+        [{
+          type: "approval.pending",
+          runId: handle.runId,
+          approvalId: approval.id,
+          nodeId: "review",
+          message: "Please review",
+        }],
+      );
+      // The approval is persisted after the run parks, so it must be reported
+      // after the waiting status it explains.
+      const waitingIndex = events.findIndex((event) =>
+        event.type === "run.status" && event.status === "waiting"
+      );
+      const approvalIndex = events.findIndex((event) => event.type === "approval.pending");
+      assertEquals(waitingIndex >= 0, true);
+      assertEquals(approvalIndex > waitingIndex, true);
+    });
+
     it("returns an explicit unsupported result for a legacy custom backend", async () => {
       const legacy = new MemoryBackend();
       Object.defineProperty(legacy, "openRunObservation", { value: undefined });
