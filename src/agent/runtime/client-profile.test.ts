@@ -84,3 +84,23 @@ Deno.test("clientAllowsStudioMcp allows trusted studio-capable clients", () => {
   });
   assertEquals(clientAllowsStudioMcp(profile), true);
 });
+
+Deno.test("clientAllowsStudioMcp requires both trust and a studio UI capability", () => {
+  assertEquals(
+    clientAllowsStudioMcp(
+      resolveRuntimeClientProfile({ veryfront: { client: { id: "veryfront-cli" } } }),
+    ),
+    false,
+    "a trusted CLI client with no UI capabilities must not receive studio MCP tools",
+  );
+  assertEquals(
+    clientAllowsStudioMcp({ id: "x", type: "api", trusted: false, capabilities: ["ui_panels"] }),
+    false,
+    "an untrusted client must not receive studio MCP tools even with UI capabilities",
+  );
+  assertEquals(
+    clientAllowsStudioMcp({ id: "y", type: "web", trusted: true, capabilities: ["form_input"] }),
+    true,
+    "a trusted client with form_input must receive studio MCP tools",
+  );
+});

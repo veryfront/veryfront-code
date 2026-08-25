@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
@@ -17,10 +19,71 @@ import { scriptedModel } from "./model-runtime.test-helpers.ts";
  * foreign reason, and the resulting rejection propagated with no handler,
  * crashing the process under Deno. Deno's test runner fails on any unhandled
  * rejection, so these tests fail loudly if the regression returns.
+ *
+ * The stream body cannot report what the runtime does after the disconnect: a
+ * cancelled reader discards the queue and every later `read()` resolves
+ * `done: true`, and `sendSSE` swallows the "controller is already closed"
+ * TypeError an out-of-band error frame would raise. The server-side branch is
+ * therefore observed through its log record — the runtime's error path in
+ * `AgentRuntime.stream` logs "Agent stream error" before it emits the error
+ * frame — plus the abort reason handed to the run and the absence of an
+ * `onFinish` callback.
  */
 
-function flushMicrotasks(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
+const STREAM_ERROR_LOG_MESSAGE = "Agent stream error";
+
+function decodeChunks(chunks: readonly Uint8Array[]): string {
+  const decoder = new TextDecoder();
+  return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("");
+}
+
+/** Collect the runtime's stream-error log records for the duration of a run. */
+function captureStreamErrorLogs(): { records: LogEntry[]; stop: () => void } {
+  const records: LogEntry[] = [];
+  const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+    if (entry.component === "agent" && entry.message === STREAM_ERROR_LOG_MESSAGE) {
+      records.push(entry);
+    }
+  });
+  return { records, stop: unsubscribe };
+}
+
+function describeRecords(records: readonly LogEntry[]): string {
+  return records.map((entry) => JSON.stringify(entry.context ?? entry.error ?? {})).join("; ");
+}
+
+async function waitForRunAbort(model: ReturnType<typeof scriptedModel>): Promise<AbortSignal> {
+  await waitFor(
+    () => model.calls.some((call) => call.abortSignal?.aborted === true),
+    { message: "the run's shared signal must be aborted by the client disconnect" },
+  );
+  const aborted = model.calls.find((call) => call.abortSignal?.aborted === true)?.abortSignal;
+  assert(aborted !== undefined, "the aborted run signal must be recoverable from the model call");
+  return aborted;
+}
+
+/** The disconnect reason the runtime received, as the client spelled it. */
+function assertClientDisconnectReason(signal: AbortSignal): void {
+  const reason = signal.reason;
+  assert(
+    reason instanceof DOMException,
+    `the run must be aborted with the client's reason, got ${String(reason)}`,
+  );
+  assertEquals(reason.name, "AbortError", "the client disconnect reason must stay an AbortError");
+  assertEquals(
+    reason.message,
+    "client disconnected",
+    "the client's cancel reason must reach the run's shared signal unchanged",
+  );
+}
+
+/**
+ * Let the aborted agent loop settle. The loop rejects as soon as the shared
+ * signal aborts, and the runtime's `catch` logs before it writes an error
+ * frame, so a misclassified disconnect has landed by the time this resolves.
+ */
+function settleAbortedRun(): Promise<void> {
+  return delay(50);
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
@@ -31,6 +94,7 @@ describe("agent runtime stream cancellation (#2334)", () => {
       { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },
     ], { modelId: "hosted/cancel-crash-model", only: "stream" });
 
+    let finished = 0;
     const assistant = agent({
       model: "hosted/cancel-crash-model",
       system: "cancel crash test",
@@ -38,19 +102,48 @@ describe("agent runtime stream cancellation (#2334)", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    const response = (await assistant.stream({ input: "hi" })).toDataStreamResponse();
-    const body = response.body;
-    assert(body !== null, "expected a streaming response body");
+    const streamErrors = captureStreamErrorLogs();
+    try {
+      const response = (await assistant.stream({
+        input: "hi",
+        onFinish: () => {
+          finished += 1;
+        },
+      })).toDataStreamResponse();
+      const body = response.body;
+      assert(body !== null, "expected a streaming response body");
 
-    const reader = body.getReader();
-    // Pull the opening frames so the run is genuinely mid-stream.
-    await reader.read();
-    // The client disconnects: cancel with a foreign AbortError reason, exactly
-    // as Deno hands to the stream's cancel algorithm.
-    await reader.cancel(new DOMException("client disconnected", "AbortError"));
+      const reader = body.getReader();
+      const chunks: Uint8Array[] = [];
+      // Pull the opening frames so the run is genuinely mid-stream.
+      const first = await reader.read();
+      assertEquals(first.done, false, "the run must be mid-stream before cancelling");
+      if (first.value !== undefined) chunks.push(first.value);
+      assertEquals(
+        decodeChunks(chunks).includes('"type":"error"'),
+        false,
+        "the frames delivered before the disconnect must not be an error frame",
+      );
+      // The client disconnects: cancel with a foreign AbortError reason, exactly
+      // as Deno hands to the stream's cancel algorithm.
+      await reader.cancel(new DOMException("client disconnected", "AbortError"));
+      assertEquals((await reader.read()).done, true, "the body must close on cancel");
 
-    await flushMicrotasks();
-    assert(true, "cancellation completed without an unhandled rejection");
+      const signal = await waitForRunAbort(model);
+      assertClientDisconnectReason(signal);
+      await settleAbortedRun();
+
+      assertEquals(
+        streamErrors.records.length,
+        0,
+        `a client disconnect must take the clean-stop branch, not the error branch that emits an error frame; logged: ${
+          describeRecords(streamErrors.records)
+        }`,
+      );
+      assertEquals(finished, 0, "a cancelled run must not report a finished response");
+    } finally {
+      streamErrors.stop();
+    }
   });
 
   it("cancelling while a tool is executing does not raise an unhandled AbortError", async () => {
@@ -79,6 +172,7 @@ describe("agent runtime stream cancellation (#2334)", () => {
       { hangUntilAbort: true },
     ], { modelId: "hosted/cancel-crash-tool", only: "stream" });
 
+    let finished = 0;
     const assistant = agent({
       model: "hosted/cancel-crash-tool",
       system: "cancel crash tool test",
@@ -87,17 +181,76 @@ describe("agent runtime stream cancellation (#2334)", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    const response = (await assistant.stream({ input: "run the tool" })).toDataStreamResponse();
+    const streamErrors = captureStreamErrorLogs();
+    try {
+      const response = (await assistant.stream({
+        input: "run the tool",
+        onFinish: () => {
+          finished += 1;
+        },
+      })).toDataStreamResponse();
+      const body = response.body;
+      assert(body !== null, "expected a streaming response body");
+
+      const reader = body.getReader();
+      const chunks: Uint8Array[] = [];
+      const first = await reader.read();
+      assertEquals(first.done, false, "the run must be mid-stream before cancelling");
+      if (first.value !== undefined) chunks.push(first.value);
+      assertEquals(
+        decodeChunks(chunks).includes('"type":"error"'),
+        false,
+        "the frames delivered before the disconnect must not be an error frame",
+      );
+      await toolStarted.promise;
+      await reader.cancel(new DOMException("client disconnected", "AbortError"));
+      releaseTool?.();
+      assertEquals(
+        (await reader.read()).done,
+        true,
+        "the body must close on cancel during a tool call",
+      );
+
+      const signal = await waitForRunAbort(model);
+      assertClientDisconnectReason(signal);
+      await settleAbortedRun();
+
+      assertEquals(
+        streamErrors.records.length,
+        0,
+        `a client disconnect during tool execution must take the clean-stop branch, not the error branch that emits an error frame; logged: ${
+          describeRecords(streamErrors.records)
+        }`,
+      );
+      assertEquals(finished, 0, "a cancelled tool run must not report a finished response");
+    } finally {
+      streamErrors.stop();
+    }
+  });
+
+  it("closes the response body once a mid-stream reader is cancelled", async () => {
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "still streaming" }] },
+    ], { modelId: "hosted/cancel-close-model", only: "stream" });
+
+    const assistant = agent({
+      model: "hosted/cancel-close-model",
+      system: "cancel close test",
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({ input: "hi" })).toDataStreamResponse();
     const body = response.body;
     assert(body !== null, "expected a streaming response body");
 
     const reader = body.getReader();
-    await reader.read();
-    await toolStarted.promise;
+    const first = await reader.read();
+    assertEquals(first.done, false, "the run must be mid-stream before cancelling");
     await reader.cancel(new DOMException("client disconnected", "AbortError"));
-    releaseTool?.();
 
-    await flushMicrotasks();
-    assert(true, "cancellation during tool execution completed cleanly");
+    assertEquals((await reader.read()).done, true, "the body must close on cancel");
+    const signal = await waitForRunAbort(model);
+    assertClientDisconnectReason(signal);
   });
 });

@@ -489,6 +489,62 @@ describe("agent/runtime/call-context", () => {
       assertEquals(providerOptionsReads, 0);
     });
 
+    it("rejects structured providerOptions proxies without invoking their traps", () => {
+      let traps = 0;
+      const proxy = new Proxy({ anthropic: { cacheControl: { type: "ephemeral" } } }, {
+        ownKeys(target) {
+          traps += 1;
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          traps += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertThrows(
+        () =>
+          buildAgentCallContext({
+            instructions: [{
+              role: "system",
+              content: "Structured prompt",
+              providerOptions: proxy,
+            }],
+          }),
+        TypeError,
+        "Structured system message 0 providerOptions must not be a Proxy",
+      );
+      assertEquals(traps, 0, "provider options proxy traps must never run");
+    });
+
+    it("rejects structured provider bucket proxies without invoking their traps", () => {
+      let traps = 0;
+      const anthropic = new Proxy({ cacheControl: { type: "ephemeral" } }, {
+        ownKeys(target) {
+          traps += 1;
+          return Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          traps += 1;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      assertThrows(
+        () =>
+          buildAgentCallContext({
+            instructions: [{
+              role: "system",
+              content: "Structured prompt",
+              providerOptions: { anthropic },
+            }],
+          }),
+        TypeError,
+        "providerOptions.anthropic must not be a Proxy",
+      );
+      assertEquals(traps, 0, "provider bucket proxy traps must never run");
+    });
+
     it("ignores structured Anthropic cache-control accessors without invoking them", () => {
       let cacheControlReads = 0;
       const anthropic = { beta: "prompt-caching" };

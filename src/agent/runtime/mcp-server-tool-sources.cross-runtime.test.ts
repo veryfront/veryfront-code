@@ -61,4 +61,48 @@ describe("bindRuntimeRemoteToolSourcesToCredentialOwner", () => {
       runId: "owner-run",
     });
   });
+
+  it("keeps a nested non-binding marker when the credential owner is not run-tracked", async () => {
+    let executeContext: ToolExecutionContext | undefined;
+    const bound = bindRuntimeRemoteToolSourcesToCredentialOwner([
+      createCapturingSource((context) => executeContext = context),
+    ], { authToken: "owner-token" });
+
+    await bound?.[0]?.executeTool("get_file", {}, {
+      runId: "nested-run",
+      runIdBindsToolAuthorization: false,
+    });
+
+    assertEquals(
+      executeContext,
+      {
+        authToken: "owner-token",
+        runId: "nested-run",
+        runIdBindsToolAuthorization: false,
+      },
+      "an owner without a run id must not strip the nested run's non-binding marker",
+    );
+  });
+
+  it("keeps a nested binding marker when the credential owner is not run-tracked", async () => {
+    let executeContext: ToolExecutionContext | undefined;
+    const bound = bindRuntimeRemoteToolSourcesToCredentialOwner([
+      createCapturingSource((context) => executeContext = context),
+    ], { authToken: "owner-token" });
+
+    await bound?.[0]?.executeTool("get_file", {}, {
+      runId: "nested-run",
+      runIdBindsToolAuthorization: true,
+    });
+
+    assertEquals(
+      executeContext,
+      {
+        authToken: "owner-token",
+        runId: "nested-run",
+        runIdBindsToolAuthorization: true,
+      },
+      "an owner without a run id must leave the nested run's binding marker unchanged",
+    );
+  });
 });

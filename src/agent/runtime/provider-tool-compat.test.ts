@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import {
@@ -27,6 +27,42 @@ function containsKey(value: unknown, key: string): boolean {
 }
 
 describe("provider-tool-compat", () => {
+  it("leaves non-sanitizing provider schemas untouched", () => {
+    const schema = {
+      type: "object",
+      properties: { "bad key": { type: "string" }, ok: { type: "string" } },
+      required: ["bad key", "ok"],
+    } as never;
+
+    assertStrictEquals(
+      sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.2" }),
+      schema,
+      "OpenAI tool schemas must be returned by identity, never property-key sanitized",
+    );
+    assertStrictEquals(
+      sanitizeProviderToolSchema(schema, { model: "some-local-model" }),
+      schema,
+      "unknown-provider tool schemas must be returned by identity",
+    );
+    assertStrictEquals(
+      sanitizeProviderToolSchema(schema, {}),
+      schema,
+      "tool schemas with no model must be returned by identity",
+    );
+
+    const sanitized = sanitizeProviderToolSchema(schema, { model: "anthropic/claude-opus-4-6" });
+    assertEquals(
+      Object.keys(sanitized.properties ?? {}),
+      ["ok"],
+      "sanitizing providers must drop property keys that fail the provider pattern",
+    );
+    assertEquals(
+      sanitized.required,
+      ["ok"],
+      "sanitizing providers must drop the required entry of a dropped property",
+    );
+  });
+
   it("returns independent permissive fallback schemas", () => {
     for (
       const createFallback of [

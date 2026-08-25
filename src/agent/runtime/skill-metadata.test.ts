@@ -1091,6 +1091,42 @@ Deno.test("buildStrictRuntimeLoadedSkillResponse bounds direct response inputs",
   );
 });
 
+it("buildStrictRuntimeLoadedSkillResponse rejects references outside readable skill directories", () => {
+  const base = {
+    skillId: "bounded",
+    instructions: "Body",
+  };
+
+  assertThrows(
+    () =>
+      buildStrictRuntimeLoadedSkillResponse({
+        ...base,
+        references: ["scripts/run.ts"],
+      }),
+    TypeError,
+    "references are invalid",
+    "references outside the readable skill directories must be rejected",
+  );
+  assertThrows(
+    () =>
+      buildStrictRuntimeLoadedSkillResponse({
+        ...base,
+        references: ["notes.md"],
+      }),
+    TypeError,
+    "references are invalid",
+    "bare top-level references must be rejected",
+  );
+  assertEquals(
+    buildStrictRuntimeLoadedSkillResponse({
+      ...base,
+      references: ["references/a.md", "resources/schema.json", "assets/logo.png"],
+    }).references,
+    ["assets/logo.png", "references/a.md", "resources/schema.json"],
+    "references inside every readable skill directory must be returned intact",
+  );
+});
+
 Deno.test("strict loaded responses reject direct accessors without invoking them", () => {
   let inputGetterReads = 0;
   const input = {

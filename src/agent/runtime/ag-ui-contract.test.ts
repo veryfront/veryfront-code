@@ -104,6 +104,35 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals("state" in normalized, false);
   });
 
+  it("keeps plain-object state while applying runtime request defaults", () => {
+    const normalized = normalizeAgUiRuntimeRequest(
+      getAgUiRuntimeRequestSchema().parse({
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        state: { phase: "draft" },
+        messages: [
+          {
+            id: "user_1",
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        context: [],
+        tools: [],
+      }),
+      {
+        runId: "run_override",
+      },
+    );
+
+    assertEquals(
+      normalized.state,
+      { phase: "draft" },
+      "plain-object state must survive normalization",
+    );
+    assertEquals(normalized.runId, "run_override", "defaults must still override runId");
+  });
+
   it("returns a 400 response for malformed runtime AG-UI JSON bodies", async () => {
     const result = await parseAgUiRuntimeRequestOrError(
       new Request("http://localhost/api/ag-ui", {

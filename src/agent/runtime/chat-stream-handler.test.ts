@@ -786,6 +786,10 @@ describe("chat-stream-handler", () => {
     it("does not cut off a slow active local tool input before the provider finishes it", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
+      let releasePause: () => void = () => {};
+      const paused = new Promise<void>((resolve) => {
+        releasePause = resolve;
+      });
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
@@ -799,7 +803,7 @@ describe("chat-stream-handler", () => {
               id: "tc-slow",
               delta: '{"uploadId":"upload-1",',
             };
-            await new Promise((resolve) => setTimeout(resolve, 2_100));
+            await paused;
             yield {
               type: "tool-input-delta",
               id: "tc-slow",
@@ -812,9 +816,19 @@ describe("chat-stream-handler", () => {
         textStream: emptyAsyncIterable(),
       };
 
-      await processStream(result, state, controller, encoder, "t", undefined);
+      const processing = processStream(result, state, controller, encoder, "t", {
+        localToolInputIdleTimeoutMs: 1_000,
+      });
+      // Let the handler park on the pending delta before the provider resumes.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      releasePause();
+      await processing;
 
-      assertEquals(state.toolCalls.get("tc-slow")?.inputAvailable, true);
+      assertEquals(
+        state.toolCalls.get("tc-slow")?.inputAvailable,
+        true,
+        "a paused local tool input that resumes within the idle timeout must complete",
+      );
       assertEquals(
         events.filter((event) => event.type === "tool-input-available"),
         [
@@ -828,6 +842,126 @@ describe("chat-stream-handler", () => {
             },
           },
         ],
+        "the resumed deltas must merge into a single tool-input-available event",
+      );
+    });
+
+    it("cuts off a local tool input that idles past the configured timeout", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let nextTimerId = -1;
+      const clearedTimeouts: number[] = [];
+      const pendingTimers = new Map<number, {
+        callback: () => void;
+        timeoutMs: number;
+      }>();
+      let markPendingReadStarted: () => void = () => {};
+      const pendingReadStarted = new Promise<void>((resolve) => {
+        markPendingReadStarted = resolve;
+      });
+      let releasePendingRead: () => void = () => {};
+      const pendingRead = new Promise<IteratorResult<unknown>>((resolve) => {
+        releasePendingRead = () => resolve({ done: true, value: undefined });
+      });
+      const parts = [
+        {
+          type: "tool-input-start",
+          id: "tc-slow",
+          toolName: "retrieveDocumentEvidence",
+        },
+        {
+          type: "tool-input-delta",
+          id: "tc-slow",
+          delta: '{"uploadId":"upload-1",',
+        },
+      ];
+      let nextPartIndex = 0;
+      const result = {
+        fullStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              next(): Promise<IteratorResult<unknown>> {
+                const part = parts[nextPartIndex++];
+                if (part !== undefined) {
+                  return Promise.resolve({ done: false, value: part });
+                }
+                markPendingReadStarted();
+                return pendingRead;
+              },
+              return(): Promise<IteratorResult<unknown>> {
+                return Promise.resolve({ done: true, value: undefined });
+              },
+            };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      const processing = processStream(result, state, controller, encoder, "t", {
+        localToolInputIdleTimeoutMs: 10,
+        setTimeoutFn: ((callback: () => void, timeoutMs?: number) => {
+          const id = ++nextTimerId;
+          pendingTimers.set(id, { callback, timeoutMs: timeoutMs ?? 0 });
+          return id;
+        }) as typeof setTimeout,
+        clearTimeoutFn: ((id: number) => {
+          clearedTimeouts.push(id);
+          pendingTimers.delete(id);
+        }) as typeof clearTimeout,
+      });
+
+      let deadlineId = -1;
+      try {
+        await pendingReadStarted;
+        const pendingDeadlines = [...pendingTimers.entries()];
+        assertEquals(
+          pendingDeadlines.length,
+          1,
+          "only the deadline around the pending iterator read may remain active",
+        );
+        const pendingDeadline = pendingDeadlines[0];
+        if (pendingDeadline === undefined) {
+          throw new Error("the pending iterator read did not schedule a deadline");
+        }
+        const [id, deadline] = pendingDeadline;
+        deadlineId = id;
+        assertEquals(
+          deadline.timeoutMs,
+          10,
+          "the pending local tool input must schedule the configured 10ms idle deadline",
+        );
+        deadline.callback();
+        await processing;
+      } finally {
+        for (const deadline of pendingTimers.values()) deadline.callback();
+        releasePendingRead();
+        await processing.catch(() => {});
+      }
+      assertEquals(
+        clearedTimeouts.filter((id) => id === 0).length,
+        1,
+        "the initial stream deadline must clear the valid zero timer handle",
+      );
+      assertEquals(
+        clearedTimeouts.filter((id) => id === deadlineId).length,
+        1,
+        "the settled idle deadline must be cleared exactly once",
+      );
+
+      assertEquals(
+        state.toolCalls.get("tc-slow")?.inputAvailable,
+        false,
+        "a local tool input that idles past the configured timeout must not be marked available",
+      );
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [],
+        "a cut-off local tool input must not emit tool-input-available",
+      );
+      assertEquals(
+        state.finishReason,
+        "tool-calls",
+        "a cut-off local tool input still ends the step",
       );
     });
 

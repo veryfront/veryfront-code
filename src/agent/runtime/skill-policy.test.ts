@@ -87,7 +87,15 @@ describe("src/agent/runtime skill policy helpers", () => {
 
     it("should always allow load_skill regardless of policy", () => {
       assertEquals(enforceSkillPolicy("load_skill"), { allowed: true });
-      assertEquals(enforceSkillPolicy("load_skill_reference").allowed, false);
+      assertEquals(
+        enforceSkillPolicy("load_skill_reference"),
+        {
+          allowed: false,
+          error:
+            'Tool "load_skill_reference" is unavailable because no skill is loaded. Call load_skill first.',
+        },
+        "no-skill-loaded denial must point the model at load_skill",
+      );
       assertEquals(enforceSkillPolicy("execute_skill_script").allowed, false);
     });
 
@@ -113,7 +121,15 @@ describe("src/agent/runtime skill policy helpers", () => {
           },
         },
       );
-      assertEquals(result.allowed, false);
+      assertEquals(
+        result,
+        {
+          allowed: false,
+          error:
+            'Tool "load_skill_reference" is unavailable because the active skill advertises no matching file.',
+        },
+        "an active skill with no matching file must not tell the model to retry load_skill",
+      );
     });
 
     it("allows execute_skill_script only when the active skill advertises a script", () => {
@@ -138,7 +154,15 @@ describe("src/agent/runtime skill policy helpers", () => {
           },
         },
       );
-      assertEquals(result.allowed, false);
+      assertEquals(
+        result,
+        {
+          allowed: false,
+          error:
+            'Tool "execute_skill_script" is unavailable because the active skill advertises no matching file.',
+        },
+        "an active skill with no matching script must not tell the model to retry load_skill",
+      );
     });
   });
 

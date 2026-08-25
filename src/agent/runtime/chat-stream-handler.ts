@@ -207,6 +207,10 @@ export interface ChatStreamCallbacks {
   streamLifecycleMode?: StreamLifecycleMode;
   streamLifecyclePolicy?: Partial<StreamLifecyclePolicy>;
   onLifecycleShadowReport?: (report: StreamLifecycleShadowReport) => void;
+  /** @internal Host timer seam for deterministic stream-lifecycle tests. */
+  setTimeoutFn?: typeof setTimeout;
+  /** @internal Host timer seam for deterministic stream-lifecycle tests. */
+  clearTimeoutFn?: typeof clearTimeout;
   traceSpanName?: string;
   traceAttributes?: Record<string, TraceAttributeValue>;
 }
@@ -345,18 +349,20 @@ async function readNextStreamPartWithTimeout(
   iterator: AsyncIterator<unknown>,
   state: ChatStreamState,
   timeoutMs: number,
+  setTimeoutFn: typeof setTimeout = setTimeout,
+  clearTimeoutFn: typeof clearTimeout = clearTimeout,
 ): Promise<IteratorResult<unknown> | "timeout"> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       readNextStreamPart(iterator, state),
       new Promise<"timeout">((resolve) => {
-        timeoutId = setTimeout(() => resolve("timeout"), timeoutMs);
+        timeoutId = setTimeoutFn(() => resolve("timeout"), timeoutMs);
       }),
     ]);
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
+    if (timeoutId !== undefined) {
+      clearTimeoutFn(timeoutId);
     }
   }
 }
@@ -957,24 +963,32 @@ export function processStreamInternal(
             streamIterator,
             state,
             callbacks?.localToolInputIdleTimeoutMs ?? LOCAL_TOOL_INPUT_IDLE_MS,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
           )
           : shouldStopForCommittedLocalToolCallNow
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
             callbacks?.localToolCommitGraceMs ?? LOCAL_TOOL_COMMIT_GRACE_MS,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
           )
           : shouldStopForIdleOutput
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
             callbacks?.streamIdleTimeoutMs ?? STREAM_OUTPUT_IDLE_MS,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
           )
           : shouldStopForIdleStart
           ? await readNextStreamPartWithTimeout(
             streamIterator,
             state,
             callbacks?.streamIdleTimeoutMs ?? STREAM_START_IDLE_MS,
+            callbacks?.setTimeoutFn,
+            callbacks?.clearTimeoutFn,
           )
           : await readNextStreamPart(streamIterator, state);
         if (next === "timeout") {

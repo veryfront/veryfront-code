@@ -2,6 +2,7 @@ import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createRemoteMCPToolSource,
@@ -1043,6 +1044,56 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["search_docs"]);
       } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("drops a remote tool source whose listTools rejects instead of failing the load", async () => {
+      toolRegistryInternal.clearAll();
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (
+          entry.component === "agent" && entry.level === "warn" &&
+          entry.message === "Failed to fetch remote tool definitions from source"
+        ) {
+          warnings.push(entry);
+        }
+      });
+
+      const failing: RemoteToolSource = {
+        id: "down",
+        listTools: () => Promise.reject(new Error("remote MCP unreachable")),
+        executeTool: () => Promise.resolve({}),
+      };
+      const healthy: RemoteToolSource = {
+        id: "docs",
+        listTools: () =>
+          Promise.resolve([{
+            name: "search_docs",
+            description: "Search documentation",
+            parameters: { type: "object", properties: {} },
+          }]),
+        executeTool: () => Promise.resolve({}),
+      };
+
+      try {
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+          remoteToolSources: [failing, healthy],
+        });
+
+        assertEquals(
+          defs.map((def) => def.name),
+          ["search_docs"],
+          "a remote source whose listTools rejects must be dropped, not fail the whole tool load",
+        );
+        assertEquals(
+          warnings.map((entry) => entry.context),
+          [{ sourceId: "down", error: "remote MCP unreachable" }],
+          "the fallback warning must identify the failed source and preserve its error",
+        );
+      } finally {
+        unsubscribe();
         toolRegistryInternal.clearAll();
       }
     });

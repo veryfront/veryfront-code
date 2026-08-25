@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
+
+type UsageTotal = Parameters<typeof accumulateUsage>[0];
 import {
   isRuntimeGeneratedUserMessage,
   markRuntimeGeneratedUserMessage,
@@ -122,11 +124,87 @@ describe("input-utils", () => {
     });
 
     it("handles partial usage fields", () => {
-      const total = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       accumulateUsage(total, { promptTokens: 5 });
       assertEquals(total.promptTokens, 5);
       assertEquals(total.completionTokens, 0);
       assertEquals(total.totalTokens, 0);
+    });
+
+    it("accumulates provider cost and billing amounts", () => {
+      const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      accumulateUsage(total, {
+        costUsd: 0.002,
+        providerCostUsd: 0.0015,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 2,
+      });
+      accumulateUsage(total, {
+        costUsd: 0.003,
+        providerCostUsd: 0.001,
+        veryfrontBilledUsd: 0.004,
+        costCredits: 3,
+      });
+      assertEquals(total.costUsd, 0.005, "per-step costUsd must aggregate into the run total");
+      assertEquals(
+        total.providerCostUsd,
+        0.0025,
+        "per-step providerCostUsd must aggregate into the run total",
+      );
+      assertEquals(
+        total.veryfrontBilledUsd,
+        0.006,
+        "per-step veryfrontBilledUsd must aggregate into the run total",
+      );
+      assertEquals(total.costCredits, 5, "per-step costCredits must aggregate into the run total");
+    });
+
+    it("collapses disagreeing cost attribution and keeps deferred billing sticky", () => {
+      const total: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      accumulateUsage(total, {
+        costSource: "gateway",
+        billingMode: "deferred",
+        usageCaptureStatus: "complete",
+      });
+      accumulateUsage(total, {
+        costSource: "missing",
+        billingMode: "direct",
+        usageCaptureStatus: "partial",
+      });
+      assertEquals(
+        total.costSource,
+        "partial",
+        "a run mixing priced and unpriced steps must report partial attribution",
+      );
+      assertEquals(
+        total.billingMode,
+        "deferred",
+        "deferred billing must stay sticky once any step defers",
+      );
+      assertEquals(
+        total.usageCaptureStatus,
+        "partial",
+        "disagreeing capture status must collapse to partial",
+      );
+
+      const agreeing: UsageTotal = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      accumulateUsage(agreeing, {
+        costSource: "gateway",
+        billingMode: "direct",
+        usageCaptureStatus: "complete",
+      });
+      accumulateUsage(agreeing, {
+        costSource: "gateway",
+        billingMode: "direct",
+        usageCaptureStatus: "complete",
+      });
+      assertEquals(agreeing.costSource, "gateway", "matching cost sources must be preserved");
+      assertEquals(agreeing.billingMode, "direct", "direct billing must stay direct");
+      assertEquals(
+        agreeing.usageCaptureStatus,
+        "complete",
+        "matching capture status must be preserved",
+      );
     });
   });
 
