@@ -18,7 +18,11 @@ describe("proxy main request URL parsing", () => {
     // log line and no drain tracking (veryfront-issue-inbox#828).
     const parseIndex = source.indexOf("url = new URL(req.url);");
     const guardIndex = source.lastIndexOf("try {", parseIndex);
-    assertEquals(parseIndex >= 0, true, "the router must parse req.url into a reassignable binding");
+    assertEquals(
+      parseIndex >= 0,
+      true,
+      "the router must parse req.url into a reassignable binding",
+    );
     assertEquals(
       guardIndex >= 0 && parseIndex - guardIndex < 80,
       true,
@@ -30,6 +34,18 @@ describe("proxy main request URL parsing", () => {
       'jsonErrorResponse(400, { error: "Bad Request" })',
       "an unparseable request URL must produce a 400 response",
     );
+    // An absolute-form target with an invalid Host parses fine, so the Host
+    // authority must be validated in the same guard — otherwise the
+    // host-independent routes (health, stats) serve requests every other
+    // route rejects.
+    assertStringIncludes(
+      catchBlock,
+      "resolveProxyRequestHost(req, url);",
+      "the Host authority must be validated before any route dispatch",
+    );
+    // The rejected Host value is untrusted input and must never be logged
+    // verbatim (AGENTS.md, secret and internal-detail safety).
+    assertStringIncludes(catchBlock, "describeRejectedHostHeader(");
   });
 
   it("maps a downstream ProxyRequestHostError to 400 in the router backstop", async () => {

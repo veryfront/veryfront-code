@@ -69,7 +69,7 @@ import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
-import { ProxyRequestHostError } from "./request-host.ts";
+import { ProxyRequestHostError, resolveProxyRequestHost } from "./request-host.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
 import {
@@ -744,13 +744,18 @@ async function router(req: Request): Promise<Response> {
   let url: URL;
   try {
     url = new URL(req.url);
-  } catch {
     // Deno builds req.url from the request target and the client's Host header
     // verbatim, so a Host that is not a valid URL authority (empty, embedded
-    // space, "[", a non-numeric port) yields a req.url the parser rejects.
-    // Reject the request instead of letting the TypeError escape the handler
-    // as Deno's generic 500 with a bare stack line.
-    proxyLogger.warn(`400 ${req.method} <unparseable request URL>`, {
+    // space, "[", a non-numeric port) yields a req.url the parser rejects —
+    // and an absolute-form target with an invalid Host parses fine, so the
+    // authority must be validated explicitly too, or host-independent routes
+    // (health, stats) would serve requests every other route rejects. Reject
+    // both here instead of letting a TypeError escape the handler as Deno's
+    // generic 500 with a bare stack line. A missing Host never reaches this
+    // point: Deno rejects Host-less HTTP/1.1 requests before the handler.
+    resolveProxyRequestHost(req, url);
+  } catch {
+    proxyLogger.warn(`400 ${req.method} <invalid request target or Host header>`, {
       host: describeRejectedHostHeader(req.headers.get("host")),
     });
     return jsonErrorResponse(400, { error: "Bad Request" });
