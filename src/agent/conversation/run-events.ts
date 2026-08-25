@@ -74,7 +74,10 @@ export function serializeConversationToolResultContent(value: unknown): {
  *
  * The version 1 reader replays a stored result as a provider tool result only
  * when the durable call records that it was provider-executed; a call that
- * dropped the marker replays as an opaque legacy custom event instead.
+ * dropped the marker replays as an opaque legacy custom event instead. The
+ * marker is written on both the call start and the call end because producers
+ * do not agree on which one carries it: the live lifecycle adapter synthesizes
+ * an unmarked `tool-input-start` and marks only `tool-input-available`.
  */
 function providerExecutionMarker(
   chunk: { providerExecuted?: boolean },

@@ -471,11 +471,12 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
-  it("replays a provider result the live stream marked after the tool start", () => {
+  it("replays a provider-executed call streamed through the live lifecycle adapter", () => {
     // The live adapter defers tool announcement and synthesizes its own
     // `tool-input-start` without the provider marker, supplying it on
-    // `tool-input-available` and the output instead. Run the whole live lane so
-    // the durable writer is fed the chunk shapes a real stream produces.
+    // `tool-input-available` and the result instead, so an encoder that read the
+    // marker off the start chunk alone would persist an unmarked call. Drive the
+    // real lifecycle -> live -> encoder -> reader path end to end.
     const live = createStreamLifecycleLiveAdapter({});
     const chunks = frames([
       {
@@ -517,14 +518,14 @@ describe("conversation run lifecycle read adapter", () => {
     assertEquals(
       chunks.find((chunk) => chunk.type === "tool-input-start"),
       { type: "tool-input-start", toolCallId: "live-fetch", toolName: "web_fetch" },
-      "the live adapter announces the tool without the provider marker",
+      "the live adapter must still synthesize an unmarked start for this regression to bite",
     );
 
     const stored = normalizeEncodedConversationRunEvents(chunks);
     assertEquals(
       stored.find((event) => event.type === "TOOL_CALL_END")?.providerExecuted,
       true,
-      "the writer must keep a marker that only reached the committed tool input",
+      "the encoder must persist a provider marker that arrived after the tool start",
     );
 
     const result = readConversationRunLifecycleFrames({
@@ -546,7 +547,7 @@ describe("conversation run lifecycle read adapter", () => {
         isError: false,
         providerExecuted: true,
       }],
-      "a live-marked provider call must replay as a provider tool result",
+      "a live-streamed provider call must replay as a provider tool result",
     );
     assertEquals(
       result.frames.filter((frame) =>
