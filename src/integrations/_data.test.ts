@@ -787,7 +787,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 63],
+      ["outlook", 62],
       ["teams", 7],
     ]);
 
@@ -1823,7 +1823,6 @@ describe("integration endpoint specs", () => {
       "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
-      "Group.Read.All",
       "Group-Conversation.Read.All",
       "offline_access",
     ]);
@@ -1870,7 +1869,6 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
-      "find_group_by_mail",
       "list_group_threads",
       "list_group_thread_posts",
       "list_calendars",
@@ -1953,8 +1951,10 @@ describe("integration endpoint specs", () => {
       "microsoft-graph-search",
     );
     assertEquals(
-      getTool("outlook", "find_group_by_mail").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
+      connectors.find((connector) => connector.name === "outlook")?.tools.some(
+        (tool) => tool.id === "outlook__find_group_by_mail",
+      ),
+      false,
     );
     assertEquals(
       getTool("outlook", "list_group_threads").endpoint?.url,

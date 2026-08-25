@@ -37904,7 +37904,6 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Read.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
-        "Group.Read.All",
         "Group-Conversation.Read.All",
         "offline_access",
       ],
@@ -39156,37 +39155,6 @@ export const connectors: IntegrationConfig[] = [
             "omitted": "large email bodies and provider-specific message fields",
           },
         },
-      },
-    }, {
-      "id": "outlook__find_group_by_mail",
-      "name": "Find Group By Mail",
-      "description":
-        "Find a Microsoft 365 group by primary email address before reading its group inbox threads",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
-        "params": {
-          "mailAddress": {
-            "type": "string",
-            "in": "path",
-            "description": "Microsoft 365 group primary email address",
-            "required": true,
-          },
-          "$select": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated group fields to return",
-            "default": "id,displayName,mail,mailNickname,groupTypes,securityEnabled,mailEnabled",
-          },
-          "$top": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum groups to return",
-            "default": 5,
-          },
-        },
-        "response": { "transform": "value" },
       },
     }, {
       "id": "outlook__list_group_threads",
