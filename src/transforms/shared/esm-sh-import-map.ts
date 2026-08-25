@@ -176,6 +176,15 @@ const PACKAGE_ROOT_HOSTS: ReadonlySet<string> = new Set([
  * `.21`, which is not an extension, while `pkg@2.0.0.js` ends in one.
  */
 const FILE_EXTENSION = /\.[A-Za-z][A-Za-z0-9]*$/;
+const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
+const SEMVER_PRERELEASE_IDENTIFIER =
+  `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
+const EXACT_SEMVER = new RegExp(
+  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
+    `\\.${SEMVER_NUMERIC_IDENTIFIER}` +
+    `(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?` +
+    `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
+);
 
 /**
  * How many leading path segments a recognised package coordinate occupies, or
@@ -218,6 +227,10 @@ function coordinateHostname(url: URL): string {
 }
 
 function coordinateSegmentCount(url: URL, segments: readonly string[]): number {
+  // URL normalization removes explicit default ports. Any port left here is a
+  // distinct origin that need not implement the public CDN path contract.
+  if (url.port !== "") return -1;
+
   const hostname = coordinateHostname(url);
   if ((PACKAGE_ROUTE_HOSTS.has(hostname) || hostname === "esm.sh") && segments[0] === "gh") {
     // Both jsDelivr and esm.sh use `gh/<owner>/<repo>`. The repository name is
@@ -275,6 +288,10 @@ function addressesRemoteFile(mapping: string): boolean {
   const coordinateSegments = decodedCoordinateSegments(segments);
   const coordinateLength = coordinateSegmentCount(url, coordinateSegments);
   if (coordinateLength !== -1) return coordinateSegments.length > coordinateLength;
+
+  const versionSeparator = decodedLastSegment.lastIndexOf("@");
+  const version = versionSeparator > 0 ? decodedLastSegment.slice(versionSeparator + 1) : undefined;
+  if (version && EXACT_SEMVER.test(version)) return false;
 
   // Outside a recognised shape, a version marks a coordinate unless the name
   // also carries an extension, which makes it a version-stamped file such as

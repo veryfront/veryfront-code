@@ -197,6 +197,43 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("applies known-CDN coordinates only on canonical ports", () => {
+    for (
+      const mapping of [
+        "https://unpkg.com:443/chart.js",
+        "http://unpkg.com:80/chart.js",
+        "https://cdn.jsdelivr.net:443/npm/chart.js",
+      ] as const
+    ) {
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/auto", { pkg: mapping }),
+        `${mapping}/auto`,
+        "URL-normalized default ports retain the public CDN path contract",
+      );
+    }
+
+    for (
+      const mapping of [
+        "https://unpkg.com:444/chart.js",
+        "https://cdn.jsdelivr.net:444/npm/chart.js",
+      ] as const
+    ) {
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/auto", { pkg: mapping }),
+        mapping,
+        "a non-default port names a different origin and keeps a file mapping exact",
+      );
+    }
+
+    assertEquals(
+      resolve("https://esm.sh/@scope/pkg@1/sub", {
+        "@scope/pkg": "https://unpkg.com:444/pkg.js",
+      }),
+      "https://unpkg.com:444/pkg.js",
+      "a scoped package mapping on a non-default port also remains exact",
+    );
+  });
+
   it("normalizes trailing-dot CDN hostnames before classifying coordinates", () => {
     assertEquals(
       resolve("https://esm.sh/pkg@1/auto", { pkg: "https://unpkg.com./chart.js" }),
@@ -242,6 +279,31 @@ describe("transforms/shared/esm-sh-import-map", () => {
       resolve("https://esm.sh/pkg@1/fp", { pkg: "https://cdn.example/lodash@4.17.21" }),
       "https://cdn.example/lodash@4.17.21/fp",
       "the last component of a version is not an extension, since one starts with a letter",
+    );
+  });
+
+  it("recognizes alphabetic SemVer prereleases before file extensions", () => {
+    for (
+      const version of [
+        "2.0.0-rc.alpha",
+        "2.0.0-0.alpha",
+        "2.0.0+build.alpha",
+      ] as const
+    ) {
+      const mapping = `https://cdn.example/pkg@${version}`;
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        `${mapping}/sub`,
+        `${version} is an exact package version rather than a file extension`,
+      );
+    }
+
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", {
+        pkg: "https://cdn.example/pkg@2.0.0.js",
+      }),
+      "https://cdn.example/pkg@2.0.0.js",
+      "an invalid SemVer suffix with a file extension remains a file mapping",
     );
   });
 
