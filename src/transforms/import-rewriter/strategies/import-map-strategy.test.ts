@@ -218,6 +218,29 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("appends a subpath to an esm.sh package-root mapping with a trailing separator", () => {
+      const map: ImportMapConfig = {
+        imports: { "@scope/pkg": "https://esm.sh/@scope/pkg@2/" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://esm.sh/@scope/pkg@2/sub",
+        "a trailing separator on the mapped package root must not make it an exact export",
+      );
+    });
+
+    it("gives a scoped package mapping precedence over a global exact esm.sh URL", () => {
+      const map: ImportMapConfig = {
+        imports: { "https://esm.sh/@scope/pkg@1/sub": "/global/exact-url.js" },
+        scopes: { "/app/": { "@scope/pkg": "https://cdn.example/scoped" } },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/sub", map, "/app/"),
+        "https://cdn.example/scoped/sub",
+        "scoped package mappings must be selected before global exact esm.sh URL mappings",
+      );
+    });
+
     it("inserts an unscoped subpath before a mapping's query string", () => {
       const map: ImportMapConfig = {
         imports: { lodash: "https://cdn.example/lodash?target=es2022" },

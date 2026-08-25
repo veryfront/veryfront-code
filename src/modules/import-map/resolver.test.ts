@@ -110,6 +110,27 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("appends a subpath to an esm.sh package-root mapping with a trailing separator", () => {
+      const map = { imports: { "@scope/pkg": "https://esm.sh/@scope/pkg@2/" } };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://esm.sh/@scope/pkg@2/sub",
+        "a trailing separator on the mapped package root must not make it an exact export",
+      );
+    });
+
+    it("gives a scoped package mapping precedence over a global exact esm.sh URL", () => {
+      const map = {
+        imports: { "https://esm.sh/@scope/pkg@1/sub": "/global/exact-url.js" },
+        scopes: { "/app/": { "@scope/pkg": "https://cdn.example/scoped" } },
+      };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map, "/app/"),
+        "https://cdn.example/scoped/sub",
+        "scoped package mappings must be selected before global exact esm.sh URL mappings",
+      );
+    });
+
     it("resolves a v-number package behind a legacy build prefix", () => {
       const map = { imports: { v8: "https://cdn.example/v8" } };
       assertEquals(

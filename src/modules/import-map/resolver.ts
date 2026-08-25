@@ -11,15 +11,22 @@ export function resolveImport(
   const scopedExact = scopedImports?.[specifier];
   if (scopedExact) return scopedExact;
 
-  const globalExact = importMap.imports?.[specifier];
-  if (globalExact) return globalExact;
-
   const esmShMapping = resolveEsmShThroughImportMap(
     specifier,
     scopedImports,
-    importMap.imports,
+    undefined,
   );
   if (esmShMapping) return esmShMapping;
+
+  const globalExact = importMap.imports?.[specifier];
+  if (globalExact) return globalExact;
+
+  const globalEsmShMapping = resolveEsmShThroughImportMap(
+    specifier,
+    undefined,
+    importMap.imports,
+  );
+  if (globalEsmShMapping) return globalEsmShMapping;
 
   if (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs")) {
     const base = specifier.replace(/\.(m|c)?js$/, "");
