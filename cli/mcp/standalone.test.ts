@@ -5,6 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "veryfront/platform/path";
 import {
   createStandaloneMCPServer,
   type StandaloneMCPConfig,
@@ -117,6 +118,25 @@ describe("mcp/standalone", () => {
       assertEquals(names.includes("vf_trigger_hmr"), true);
     });
 
+    it("tools/list includes vf_scaffold with auth enum parity", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "tools/list");
+      const result = resp.result as {
+        tools: {
+          name: string;
+          inputSchema: unknown;
+        }[];
+      };
+      const scaffold = result.tools.find((tool) => tool.name === "vf_scaffold");
+
+      assertExists(scaffold);
+      assertEquals(getAuthPresetEnum(scaffold.inputSchema), [
+        "authelia",
+        "oidc",
+        "microsoft-entra",
+      ]);
+    });
+
     it("resources/list returns schema, agents-md, and skills", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "resources/list");
@@ -138,8 +158,10 @@ describe("mcp/standalone", () => {
         contents: { uri: string; text: string }[];
       };
       assertEquals(result.contents.length, 1);
-      assertEquals(result.contents[0].uri, "veryfront://schema");
-      const schema = JSON.parse(result.contents[0].text);
+      const content = result.contents[0];
+      assertExists(content);
+      assertEquals(content.uri, "veryfront://schema");
+      const schema = JSON.parse(content.text);
       assertEquals(typeof schema.version, "string");
       assertEquals(Array.isArray(schema.commands), true);
       assertEquals(schema.commands.length > 0, true);
@@ -153,7 +175,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         contents: { uri: string; text: string }[];
       };
-      const skills = JSON.parse(result.contents[0].text);
+      const content = result.contents[0];
+      assertExists(content);
+      const skills = JSON.parse(content.text);
       assertEquals(Array.isArray(skills), true);
       assertEquals(skills.length > 0, true);
       const names = skills.map((s: { name: string }) => s.name);
@@ -193,7 +217,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(typeof schema.version, "string");
       assertEquals(Array.isArray(schema.commands), true);
     });
@@ -207,7 +233,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(schema.name, "deploy");
       assertEquals(schema.category, "deploy");
     });
@@ -221,7 +249,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(Array.isArray(schema.commands), true);
       for (const cmd of schema.commands) {
         assertEquals(cmd.category, "auth");
@@ -237,8 +267,52 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const info = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const info = JSON.parse(content.text);
       assertEquals(typeof info.version, "string");
+    });
+
+    it("tools/call vf_scaffold creates auth files and reports conflicts like dev MCP", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-auth-" });
+      try {
+        const server = new StandaloneMCPServer();
+        const first = await dispatch(server, "tools/call", {
+          name: "vf_scaffold",
+          arguments: { type: "auth", name: "microsoft-entra", projectPath: projectDir },
+        });
+        const second = await dispatch(server, "tools/call", {
+          name: "vf_scaffold",
+          arguments: { type: "auth", name: "microsoft-entra", projectPath: projectDir },
+        });
+        const firstPayload = JSON.parse(
+          (first.result as { content: { text: string }[] }).content[0]!
+            .text,
+        );
+        const secondPayload = JSON.parse(
+          (second.result as { content: { text: string }[] }).content[0]!
+            .text,
+        );
+
+        assertEquals(firstPayload.success, true);
+        assertEquals(firstPayload.files.map((file: { path: string }) => file.path), [
+          ".env.auth.example",
+          "AUTH_PROVIDER_SETUP.md",
+          "AUTH_SETUP.md",
+          "veryfront.auth.config.example.ts",
+        ]);
+        assertEquals(await fileExists(join(projectDir, "veryfront.auth.config.example.ts")), true);
+        assertEquals(secondPayload.success, false);
+        assertEquals(secondPayload.files.map((file: { path: string }) => file.path), [
+          ".env.auth.example",
+          "AUTH_PROVIDER_SETUP.md",
+          "AUTH_SETUP.md",
+          "veryfront.auth.config.example.ts",
+        ]);
+        assertEquals(secondPayload.message.includes(projectDir), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("tools/list accepts cursor param without erroring", async () => {
@@ -278,3 +352,31 @@ describe("mcp/standalone", () => {
     });
   });
 });
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+function getAuthPresetEnum(schema: unknown): unknown {
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return undefined;
+
+  for (const variant of schema.anyOf) {
+    if (!isRecord(variant) || !isRecord(variant.properties)) continue;
+    const type = variant.properties.type;
+    const name = variant.properties.name;
+    if (!isRecord(type) || !isRecord(name)) continue;
+    if (type.const === "auth") return name.enum;
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

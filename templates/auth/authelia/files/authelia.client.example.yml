@@ -1,0 +1,24 @@
+# Merge this client into your reviewed Authelia OIDC provider configuration.
+# This is not a complete Authelia configuration.
+
+identity_providers:
+  oidc:
+    clients:
+      - client_id: "<OIDC_CLIENT_ID>"
+        client_name: "Veryfront"
+        public: false
+        authorization_policy: "two_factor"
+        redirect_uris:
+          - "https://<APP_HOST>/_veryfront/auth/callback"
+        scopes:
+          - "openid"
+          - "profile"
+          - "email"
+        response_types:
+          - "code"
+        grant_types:
+          - "authorization_code"
+        token_endpoint_auth_method: "client_secret_basic"
+        require_pkce: true
+        pkce_challenge_method: "S256"
+        client_secret: "<HASHED_CLIENT_SECRET>"

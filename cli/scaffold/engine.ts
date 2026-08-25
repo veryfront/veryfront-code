@@ -1,8 +1,17 @@
-import { dirname, join } from "veryfront/platform/path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep,
+} from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
 import { filenameToId } from "veryfront/discovery";
+import { getAuthTemplate } from "../../templates/loader.ts";
 
 export type ScaffoldRouter = "app-router" | "pages-router";
 export const SCAFFOLD_TYPES = [
@@ -19,6 +28,8 @@ export const SCAFFOLD_TYPES = [
   "skill",
 ] as const;
 export type ScaffoldType = typeof SCAFFOLD_TYPES[number];
+export const AUTH_PRESETS = ["authelia", "oidc", "microsoft-entra"] as const;
+export type AuthPreset = typeof AUTH_PRESETS[number];
 export type ScaffoldHttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
 export interface ScaffoldInput {
@@ -35,7 +46,7 @@ export interface ScaffoldFilePlan {
 }
 
 export interface ScaffoldPlan {
-  type: ScaffoldType;
+  type: ScaffoldType | "auth";
   name: string;
   files: ScaffoldFilePlan[];
 }
@@ -44,6 +55,15 @@ export interface ScaffoldResult {
   success: boolean;
   files: Array<{ path: string; created: boolean }>;
   message: string;
+}
+
+export interface AuthScaffoldInput {
+  projectDir: string;
+  preset: AuthPreset;
+  filesForTesting?: ScaffoldFilePlan[];
+  templateFilesForTesting?: ScaffoldFilePlan[];
+  beforeWriteForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  removeForTesting?: (path: string) => Promise<void>;
 }
 
 interface ScaffoldDefinition {
@@ -58,6 +78,7 @@ interface ResolvedScaffoldInput extends Required<Omit<ScaffoldInput, "methods">>
 }
 
 const DEFAULT_METHODS: ScaffoldHttpMethod[] = ["GET"];
+const MAX_AUTH_SCAFFOLD_FILES = 32;
 
 const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   page: {
@@ -130,7 +151,11 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
 };
 
 export function isScaffoldType(type: string): type is ScaffoldType {
-  return SCAFFOLD_TYPES.includes(type as ScaffoldType);
+  return SCAFFOLD_TYPES.some((candidate) => candidate === type);
+}
+
+export function isAuthPreset(preset: string): preset is AuthPreset {
+  return AUTH_PRESETS.some((candidate) => candidate === preset);
 }
 
 export function planScaffold(input: ScaffoldInput): ScaffoldPlan {
@@ -179,6 +204,279 @@ export async function writeScaffoldPlan(plan: ScaffoldPlan): Promise<ScaffoldRes
 
 export async function scaffoldProjectFile(input: ScaffoldInput): Promise<ScaffoldResult> {
   return writeScaffoldPlan(planScaffold(input));
+}
+
+export async function planAuthScaffold(input: AuthScaffoldInput): Promise<ScaffoldPlan> {
+  if (!isAuthPreset(input.preset)) {
+    return { type: "auth", name: input.preset, files: [] };
+  }
+
+  if (input.filesForTesting) {
+    return {
+      type: "auth",
+      name: input.preset,
+      files: input.filesForTesting,
+    };
+  }
+
+  const template = input.templateFilesForTesting ?? await getAuthTemplate(input.preset);
+  if (template?.some((file) => !isSafeAuthTemplatePath(file.path))) {
+    throw new UnsafeAuthTemplatePathError();
+  }
+  const files = (template ?? []).map((file) => ({
+    path: join(input.projectDir, file.path),
+    content: file.content,
+  }));
+
+  return {
+    type: "auth",
+    name: input.preset,
+    files,
+  };
+}
+
+export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<ScaffoldResult> {
+  if (!isAuthPreset(input.preset)) {
+    return {
+      success: false,
+      files: [],
+      message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+    };
+  }
+
+  let plan: ScaffoldPlan;
+  try {
+    plan = await planAuthScaffold(input);
+  } catch (error) {
+    if (error instanceof UnsafeAuthTemplatePathError) {
+      return failure([], "Unsafe auth template path");
+    }
+    return failure([], "Failed to load auth template");
+  }
+  if (plan.files.length === 0) {
+    return {
+      success: false,
+      files: [],
+      message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+    };
+  }
+
+  return writeGuardedMultiFilePlan(
+    plan,
+    input.projectDir,
+    input.beforeWriteForTesting,
+    input.removeForTesting,
+  );
+}
+
+async function writeGuardedMultiFilePlan(
+  plan: ScaffoldPlan,
+  projectDir: string,
+  beforeWrite?: (file: ScaffoldFilePlan) => Promise<void>,
+  remove?: (path: string) => Promise<void>,
+): Promise<ScaffoldResult> {
+  const root = resolve(projectDir);
+  const normalizedFiles = validatePlanPaths(plan, root);
+  if ("error" in normalizedFiles) return normalizedFiles.error;
+
+  const conflicts: string[] = [];
+  try {
+    const rootStat = await Deno.stat(root);
+    if (!rootStat.isDirectory) return failure([], "Unsafe scaffold project root");
+
+    for (const file of normalizedFiles.files) {
+      const unsafe = await findUnsafeExistingPrefix(root, file.path);
+      if (unsafe) {
+        return failure([], `Unsafe scaffold path: ${unsafe}`);
+      }
+      if (await pathExists(file.path)) conflicts.push(file.relativePath);
+    }
+  } catch {
+    return failure([], "Scaffold filesystem preflight failed");
+  }
+
+  if (conflicts.length) {
+    return {
+      success: false,
+      files: conflicts.map((path) => ({ path, created: false })),
+      message: `${plan.type} already exists at ${conflicts.join(", ")}`,
+    };
+  }
+
+  const createdFiles: string[] = [];
+  const createdDirs: string[] = [];
+  const defaultWriter = async (file: ScaffoldFilePlan) => {
+    const handle = await Deno.open(file.path, { write: true, createNew: true });
+    createdFiles.push(file.path);
+    try {
+      const content = new TextEncoder().encode(file.content);
+      let offset = 0;
+      while (offset < content.byteLength) {
+        const written = await handle.write(content.subarray(offset));
+        if (written === 0) throw new Error("filesystem write made no progress");
+        offset += written;
+      }
+    } finally {
+      handle.close();
+    }
+  };
+  const removeCreatedPath = remove ?? ((path: string) => Deno.remove(path));
+
+  try {
+    for (const file of normalizedFiles.files) {
+      await ensureSafeParentDirectories(root, dirname(file.path), createdDirs);
+      await beforeWrite?.(file);
+      const unsafe = await findUnsafeExistingPrefix(root, file.path);
+      if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
+      await defaultWriter(file);
+    }
+  } catch (error) {
+    const cleanupErrors: string[] = [];
+    for (const path of createdFiles.toReversed()) {
+      try {
+        await removeCreatedPath(path);
+      } catch {
+        cleanupErrors.push(relative(root, path));
+      }
+    }
+    for (const path of createdDirs.toReversed()) {
+      try {
+        await removeCreatedPath(path);
+      } catch {
+        cleanupErrors.push(relative(root, path));
+      }
+    }
+
+    const cleanup = cleanupErrors.length
+      ? ` Rollback could not remove: ${cleanupErrors.join(", ")}`
+      : "";
+    return failure(
+      [],
+      `Failed to create scaffold: ${sanitizeError(error)}.${cleanup}`,
+    );
+  }
+
+  return {
+    success: true,
+    files: normalizedFiles.files.map((file) => ({ path: file.relativePath, created: true })),
+    message: `Created ${plan.type} "${plan.name}" successfully`,
+  };
+}
+
+interface NormalizedFilePlan extends ScaffoldFilePlan {
+  relativePath: string;
+}
+
+function validatePlanPaths(
+  plan: ScaffoldPlan,
+  root: string,
+): { files: NormalizedFilePlan[] } | { error: ScaffoldResult } {
+  if (plan.files.length === 0) return { error: failure([], "Scaffold plan must contain files") };
+  if (plan.files.length > MAX_AUTH_SCAFFOLD_FILES) {
+    return { error: failure([], "Scaffold plan contains too many files") };
+  }
+
+  const seen = new Set<string>();
+  const normalized: NormalizedFilePlan[] = [];
+  for (const file of plan.files) {
+    if (!isSafeAbsoluteTargetPath(file.path, root)) {
+      return { error: failure([], "Unsafe scaffold path") };
+    }
+
+    const absolute = normalize(file.path);
+    const rel = relative(root, absolute);
+    if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
+      return { error: failure([], "Unsafe scaffold path") };
+    }
+    if (rel.split("/").some((part) => !part || part === "." || part === "..")) {
+      return { error: failure([], "Unsafe scaffold path") };
+    }
+    if (seen.has(absolute)) return { error: failure([], "Duplicate scaffold path") };
+    seen.add(absolute);
+    normalized.push({ path: absolute, relativePath: rel, content: file.content });
+  }
+
+  return {
+    files: normalized.sort((a, b) => a.relativePath.localeCompare(b.relativePath)),
+  };
+}
+
+function isSafeAuthTemplatePath(path: string): boolean {
+  if (!path || isAbsolute(path) || path.includes("\\")) return false;
+  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function isSafeAbsoluteTargetPath(path: string, root: string): boolean {
+  if (!path || !isAbsolute(path)) return false;
+  const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (!path.startsWith(rootPrefix)) return false;
+
+  const relativePath = path.slice(rootPrefix.length);
+  if (!relativePath || relativePath.includes(sep === "/" ? "\\" : "/")) return false;
+  return relativePath.split(sep).every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+class UnsafeAuthTemplatePathError extends Error {}
+
+async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {
+  const relativeTarget = relative(root, target);
+  let current = root;
+  for (const part of relativeTarget.split("/").filter(Boolean)) {
+    current = join(current, part);
+    try {
+      const stat = await Deno.lstat(current);
+      if (stat.isSymlink) return relative(root, current);
+      if (current !== target && !stat.isDirectory) return relative(root, current);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return null;
+      return relative(root, current);
+    }
+  }
+  return null;
+}
+
+async function ensureSafeParentDirectories(
+  root: string,
+  parent: string,
+  createdDirs: string[],
+): Promise<void> {
+  const relativeParent = relative(root, parent);
+  let current = root;
+  for (const part of relativeParent.split("/").filter(Boolean)) {
+    current = join(current, part);
+    try {
+      const stat = await Deno.lstat(current);
+      if (stat.isSymlink || !stat.isDirectory) {
+        throw new Error(`Unsafe scaffold path: ${relative(root, current)}`);
+      }
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      await Deno.mkdir(current);
+      createdDirs.push(current);
+    }
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+function failure(files: ScaffoldResult["files"], message: string): ScaffoldResult {
+  return { success: false, files, message };
+}
+
+function sanitizeError(error: unknown): string {
+  if (error instanceof Deno.errors.AlreadyExists) return "target already exists";
+  if (error instanceof Error && error.message.startsWith("Unsafe scaffold path:")) {
+    return error.message;
+  }
+  return "filesystem write failed";
 }
 
 function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {

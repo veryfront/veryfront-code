@@ -7,11 +7,12 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
 import {
+  AUTH_PRESETS,
+  isAuthPreset,
   SCAFFOLD_TYPES,
-  type ScaffoldHttpMethod,
+  scaffoldAuthFiles,
   scaffoldProjectFile,
   type ScaffoldResult,
-  type ScaffoldType,
 } from "../../scaffold/engine.ts";
 import { formatError, getProjectDir } from "./helpers.ts";
 
@@ -20,18 +21,27 @@ import { formatError, getProjectDir } from "./helpers.ts";
 // ============================================================================
 
 const getScaffoldInput = defineSchema((v) =>
-  v.object({
-    type: v.enum(SCAFFOLD_TYPES).describe("Type of project file to scaffold"),
-    name: v.string().describe(
-      "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
-    ),
-    methods: v.array(v.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional().describe(
-      "HTTP methods for API routes (defaults to GET)",
-    ),
-    projectPath: v.string().optional().describe(
-      "Project directory (defaults to current working directory)",
-    ),
-  })
+  v.union([
+    v.object({
+      type: v.literal("auth").describe("Generate provider-neutral auth setup files"),
+      name: v.enum(AUTH_PRESETS).describe("Auth preset"),
+      projectPath: v.string().optional().describe(
+        "Project directory (defaults to current working directory)",
+      ),
+    }),
+    v.object({
+      type: v.enum(SCAFFOLD_TYPES).describe("Type of project file to scaffold"),
+      name: v.string().describe(
+        "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
+      ),
+      methods: v.array(v.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional().describe(
+        "HTTP methods for API routes (defaults to GET)",
+      ),
+      projectPath: v.string().optional().describe(
+        "Project directory (defaults to current working directory)",
+      ),
+    }),
+  ])
 );
 const scaffoldInput = lazySchema(getScaffoldInput);
 
@@ -42,7 +52,7 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   title: "Scaffold Code",
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   description:
-    "Use this when you need to generate new pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, or skills with Veryfront conventions. Returns created file paths and refuses existing target files. Do not use for creating entire projects. Use vf_create_project instead.",
+    "Use this when you need to generate new pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, skills, or auth setup files with Veryfront conventions. Returns created file paths and refuses existing target files. Do not use for creating entire projects. Use vf_create_project instead.",
   inputSchema: scaffoldInput,
   execute: (input) =>
     withSpan(
@@ -50,11 +60,27 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
       async () => {
         const projectDir = getProjectDir(input.projectPath);
         try {
+          if (input.type === "auth") {
+            if (!isAuthPreset(input.name)) {
+              return {
+                success: false,
+                files: [],
+                message: `Unknown auth preset "${input.name}". Valid presets: ${
+                  AUTH_PRESETS.join(", ")
+                }`,
+              };
+            }
+            return await scaffoldAuthFiles({
+              projectDir,
+              preset: input.name,
+            });
+          }
+
           return await scaffoldProjectFile({
             projectDir,
-            type: input.type as ScaffoldType,
+            type: input.type,
             name: input.name,
-            methods: input.methods as ScaffoldHttpMethod[] | undefined,
+            methods: input.methods,
           });
         } catch (error) {
           return {

@@ -31,6 +31,7 @@ const FILE_NAME_MAPPINGS: Record<string, string> = {
 	_gitignore: ".gitignore",
 	_env: ".env",
 	"_env.example": ".env.example",
+	"_env.auth.example": ".env.auth.example",
 	_npmrc: ".npmrc",
 	"_eslintrc.json": ".eslintrc.json",
 	_prettierrc: ".prettierrc",
@@ -71,6 +72,7 @@ async function collectSortedFiles(root: string): Promise<Array<{ path: string }>
 async function generateManifest(): Promise<TemplateManifest> {
 	const templatesDir = "./templates/files";
 	const integrationsDir = "./templates/integrations";
+	const authDir = "./templates/auth";
 	const manifest: TemplateManifest = {
 		version: 1,
 		templates: {},
@@ -120,6 +122,44 @@ async function generateManifest(): Promise<TemplateManifest> {
 		if (Object.keys(files).length === 0) continue;
 
 		manifest.templates[`integration:${integrationName}`] = { files };
+	}
+
+	// Process auth templates. Each preset layers the shared base files first,
+	// then provider-specific files in sorted path order.
+	const baseAuthPath = `${authDir}/_base/files`;
+	const baseAuthFiles: Record<string, string> = {};
+	try {
+		for (const file of await collectSortedFiles(baseAuthPath)) {
+			const relativePath = relative(baseAuthPath, file.path);
+			const mappedPath = mapFileName(relativePath);
+			baseAuthFiles[mappedPath] = await Deno.readTextFile(file.path);
+		}
+	} catch {
+		// No auth base in older checkouts.
+	}
+
+	for (const entry of await collectSortedDirectoryEntries(authDir).catch(() => [])) {
+		if (!entry.isDirectory || entry.name === "_base") continue;
+
+		const presetName = entry.name;
+		const presetPath = `${authDir}/${presetName}/files`;
+
+		try {
+			const stat = await Deno.stat(presetPath);
+			if (!stat.isDirectory) continue;
+		} catch {
+			continue;
+		}
+
+		const files: Record<string, string> = { ...baseAuthFiles };
+		for (const file of await collectSortedFiles(presetPath)) {
+			const relativePath = relative(presetPath, file.path);
+			const mappedPath = mapFileName(relativePath);
+			files[mappedPath] = await Deno.readTextFile(file.path);
+		}
+
+		if (Object.keys(files).length === 0) continue;
+		manifest.templates[`auth:${presetName}`] = { files };
 	}
 
 	// Process ai-rules templates (used by `veryfront install`)

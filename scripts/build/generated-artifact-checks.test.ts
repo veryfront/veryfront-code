@@ -102,6 +102,8 @@ async function createTemplateManifestFixture(): Promise<string> {
     const path of [
       "templates/files/example",
       "templates/integrations",
+      "templates/auth/_base/files",
+      "templates/auth/oidc/files",
       "templates/ai-rules",
     ]
   ) {
@@ -110,6 +112,22 @@ async function createTemplateManifestFixture(): Promise<string> {
   await Deno.writeTextFile(
     join(root, "templates/files/example/index.ts"),
     "export const example = true;\n",
+  );
+  await Deno.writeTextFile(
+    join(root, "templates/auth/_base/files/_env.auth.example"),
+    "BASE_ENV=<VALUE>\n",
+  );
+  await Deno.writeTextFile(
+    join(root, "templates/auth/_base/files/AUTH_SETUP.md"),
+    "base setup\n",
+  );
+  await Deno.writeTextFile(
+    join(root, "templates/auth/oidc/files/AUTH_SETUP.md"),
+    "provider override\n",
+  );
+  await Deno.writeTextFile(
+    join(root, "templates/auth/oidc/files/AUTH_PROVIDER_SETUP.md"),
+    "provider setup\n",
   );
 
   const generated = await runTemplateManifestGenerator(root, []);
@@ -133,6 +151,10 @@ function changeGzipOsByte(source: string): string {
   bytes[9] = bytes[9] === 3 ? 255 : 3;
   const changed = btoa(String.fromCharCode(...bytes));
   return source.replace(encoded, changed);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 describe("generated artifact checks", () => {
@@ -195,6 +217,28 @@ describe("generated artifact checks", () => {
       [],
       `checked but never generated: ${orphaned.join(", ")}`,
     );
+  });
+
+  it("layers auth base files before deterministic provider overrides", async () => {
+    const root = await createTemplateManifestFixture();
+    try {
+      const manifest: unknown = JSON.parse(
+        await Deno.readTextFile(join(root, "templates/manifest.json")),
+      );
+      const templates = isRecord(manifest) && isRecord(manifest.templates)
+        ? manifest.templates
+        : undefined;
+      const oidc = isRecord(templates?.["auth:oidc"])
+        ? templates["auth:oidc"]
+        : undefined;
+      const files = isRecord(oidc?.files) ? oidc.files : undefined;
+
+      assertEquals(files?.[".env.auth.example"], "BASE_ENV=<VALUE>\n");
+      assertEquals(files?.["AUTH_SETUP.md"], "provider override\n");
+      assertEquals(files?.["AUTH_PROVIDER_SETUP.md"], "provider setup\n");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 
   it("checks compressed manifest content without rewriting its encoding", async () => {

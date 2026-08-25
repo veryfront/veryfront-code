@@ -4,6 +4,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -1042,6 +1043,71 @@ describe("templates", () => {
         offenders.join(", ")
       }`,
     );
+  });
+
+  it("lists auth templates separately from starter and integration templates", async () => {
+    const { getAuthTemplate, listAuthTemplates, listIntegrations, listTemplates } = await import(
+      "./loader.ts"
+    );
+
+    assertEquals(await listAuthTemplates(), ["authelia", "microsoft-entra", "oidc"]);
+    assertEquals((await listTemplates()).some((name) => name.startsWith("auth:")), false);
+    assertEquals((await listIntegrations()).some((name) => name.startsWith("auth:")), false);
+    assertEquals(await getAuthTemplate("missing"), null);
+  });
+
+  it("layers auth templates over the base files with deterministic paths", async () => {
+    const { getAuthTemplate } = await import("./loader.ts");
+    const authelia = await getAuthTemplate("authelia");
+    const oidc = await getAuthTemplate("oidc");
+    const entra = await getAuthTemplate("microsoft-entra");
+
+    assertEquals(authelia?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "authelia.client.example.yml",
+      "veryfront.auth.config.example.ts",
+    ]);
+    assertEquals(oidc?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "veryfront.auth.config.example.ts",
+    ]);
+    assertEquals(entra?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "veryfront.auth.config.example.ts",
+    ]);
+  });
+
+  it("keeps auth templates provider-neutral and free of generated auth handlers", async () => {
+    const { getAuthTemplate } = await import("./loader.ts");
+    for (const preset of ["authelia", "oidc", "microsoft-entra"]) {
+      const files = await getAuthTemplate(preset);
+      assert(files !== null, `${preset} must exist`);
+      const paths = files.map((file) => file.path);
+      assertEquals(paths.some((path) => path.includes("app/api/auth")), false);
+      assertEquals(paths.some((path) => path.includes("pages/api/auth")), false);
+
+      const config = files.find((file) => file.path === "veryfront.auth.config.example.ts")
+        ?.content ?? "";
+      assertStringIncludes(config, "security:");
+      assertStringIncludes(config, "oidc:");
+      assertEquals(config.includes("adapter"), false);
+      assertEquals(config.includes("authelia:"), false);
+
+      const joined = files.map((file) => file.content).join("\n");
+      assertStringIncludes(joined, "APP_URL=https://<APP_HOST>");
+      assertStringIncludes(
+        joined,
+        "VERYFRONT_AUTH_SESSION_SECRET=<RANDOM_32_BYTE_OR_LONGER_SECRET>",
+      );
+      assertEquals(/=sk-[A-Za-z0-9]/.test(joined), false);
+      assertEquals(/Bearer [A-Za-z0-9._-]+/.test(joined), false);
+    }
   });
 
   it("presents standalone inference before the optional Cloud gateway", async () => {

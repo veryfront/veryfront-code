@@ -8,6 +8,15 @@
 
 import { getEnv, readTextFile } from "veryfront/platform";
 import type { StdinReader } from "veryfront/platform";
+import {
+  AUTH_PRESETS,
+  isAuthPreset,
+  isScaffoldType,
+  SCAFFOLD_TYPES,
+  scaffoldAuthFiles,
+  type ScaffoldHttpMethod,
+  scaffoldProjectFile,
+} from "../scaffold/engine.ts";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
@@ -28,12 +37,34 @@ import {
 
 const DEFAULT_DEV_PORT = 8080;
 const NOT_RUNNING_MSG = "Dev server not running. Start with: veryfront";
+const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
 
 interface StandaloneTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   execute: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+function getStringArg(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isScaffoldHttpMethod(value: unknown): value is ScaffoldHttpMethod {
+  return typeof value === "string" && HTTP_METHODS.includes(value as ScaffoldHttpMethod);
+}
+
+function getMethodsArg(args: Record<string, unknown>): ScaffoldHttpMethod[] | undefined {
+  const value = args.methods;
+  if (!Array.isArray(value)) return undefined;
+
+  const methods: ScaffoldHttpMethod[] = [];
+  for (const method of value) {
+    if (!isScaffoldHttpMethod(method)) return undefined;
+    methods.push(method);
+  }
+  return methods.length ? methods : undefined;
 }
 
 export interface StandaloneMCPConfig {
@@ -315,6 +346,84 @@ export class StandaloneMCPServer {
           } catch {
             return { version: VERSION };
           }
+        },
+      },
+      {
+        name: "vf_scaffold",
+        description:
+          "Generate Veryfront pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, skills, or auth setup files. Returns created file paths and refuses existing target files.",
+        inputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                type: { type: "string", const: "auth" },
+                name: { type: "string", enum: [...AUTH_PRESETS], description: "Auth preset" },
+                projectPath: {
+                  type: "string",
+                  description: "Project directory (defaults to current working directory)",
+                },
+              },
+              required: ["type", "name"],
+            },
+            {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  enum: [...SCAFFOLD_TYPES],
+                  description: "Type of project file to scaffold",
+                },
+                name: {
+                  type: "string",
+                  description: "Name/path of the entity",
+                },
+                methods: {
+                  type: "array",
+                  items: { type: "string", enum: [...HTTP_METHODS] },
+                  description: "HTTP methods for API routes",
+                },
+                projectPath: {
+                  type: "string",
+                  description: "Project directory (defaults to current working directory)",
+                },
+              },
+              required: ["type", "name"],
+            },
+          ],
+        },
+        async execute(args) {
+          const type = getStringArg(args, "type");
+          const name = getStringArg(args, "name");
+          const projectPath = getStringArg(args, "projectPath");
+          const projectDir = projectPath ?? Deno.cwd();
+          const methods = getMethodsArg(args);
+
+          if (!type || !name) {
+            return { success: false, files: [], message: "type and name are required" };
+          }
+
+          if (type === "auth") {
+            if (!isAuthPreset(name)) {
+              return {
+                success: false,
+                files: [],
+                message: `Unknown auth preset "${name}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+              };
+            }
+            return scaffoldAuthFiles({ projectDir, preset: name });
+          }
+
+          if (!isScaffoldType(type)) {
+            return { success: false, files: [], message: `Unknown scaffold type: ${type}` };
+          }
+
+          return scaffoldProjectFile({
+            projectDir,
+            type,
+            name,
+            methods,
+          });
         },
       },
       {

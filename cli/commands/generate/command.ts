@@ -4,7 +4,12 @@ import { ALREADY_EXISTS, createError, toError } from "veryfront/errors";
 import { parseExtensionManifest } from "veryfront/extensions";
 import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
-import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
+import {
+  isAuthPreset,
+  isScaffoldType,
+  scaffoldAuthFiles,
+  scaffoldProjectFile,
+} from "../../scaffold/engine.ts";
 
 const MDX_EXTENSION_PACKAGE = "@veryfront/ext-content-mdx";
 
@@ -99,12 +104,38 @@ export async function generateCommand(
 ): Promise<void> {
   await warnIfOutsideProject(projectDir);
 
-  const preferred = await getPreferredRouter(projectDir);
-
   if (type === "integration") {
     await generateIntegration(projectDir, { name: name || undefined });
     return;
   }
+
+  if (type === "auth") {
+    if (!isAuthPreset(name)) {
+      throw toError(
+        createError({
+          type: "config",
+          message: `Unknown auth preset: ${name}. Valid presets: authelia, oidc, microsoft-entra`,
+        }),
+      );
+    }
+
+    const result = await scaffoldAuthFiles({
+      projectDir,
+      preset: name,
+    });
+
+    if (!result.success) {
+      throw ALREADY_EXISTS.create({
+        detail: result.message,
+        context: { paths: result.files.map((file) => file.path) },
+      });
+    }
+
+    for (const file of result.files) cliLogger.info(`Created ${file.path}`);
+    return;
+  }
+
+  const preferred = await getPreferredRouter(projectDir);
 
   if (!isScaffoldType(type)) {
     throw toError(
