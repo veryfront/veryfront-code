@@ -597,6 +597,55 @@ describe("WorkflowClient", () => {
       });
     });
 
+    it("persists the active composite wait path when one wait config is reused", async () => {
+      const workflowId = "reused-composite-wait-path-workflow";
+      const reusedReview = waitForApproval("review", {
+        message: "Review the selected branch",
+        responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+      });
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          branch("route", {
+            condition: () => true,
+            then: [reusedReview],
+            else: [reusedReview],
+          }),
+        ],
+      }));
+
+      const handle = await client.start(workflowId, {});
+      await handle.settled();
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "route/then/review");
+      assertExists(getPendingApprovalResponseSchemaId(approval));
+
+      client.getApprovalManager().stop();
+      client = createWorkflowClient({ backend });
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          branch("route", {
+            condition: () => true,
+            then: [
+              waitForApproval("review", {
+                message: "Review the selected branch",
+                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+              }),
+            ],
+          }),
+        ],
+      }));
+
+      await assertRejects(() =>
+        client.approve(handle.runId, approval.id, "reviewer", undefined, {
+          confirmed: "yes",
+        })
+      );
+      assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
+    });
+
     it("recovers a response schema from a static map node processor", async () => {
       const mappedApprovalWorkflow = workflow({
         id: "mapped-node-persisted-schema-workflow",

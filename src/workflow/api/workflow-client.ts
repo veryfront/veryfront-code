@@ -31,6 +31,26 @@ import {
 } from "../runtime/pending-approval-metadata.ts";
 
 const logger = baseLogger.component("workflow-client");
+const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
+
+type IndexedWaitNodeConfig = WaitNodeConfig & {
+  readonly [waitResponseSchemaId]?: string;
+};
+
+function withWaitResponseSchemaId(
+  config: WaitNodeConfig,
+  responseSchemaId: string,
+): WaitNodeConfig {
+  const indexedConfig: IndexedWaitNodeConfig = { ...config };
+  Object.defineProperty(indexedConfig, waitResponseSchemaId, {
+    value: responseSchemaId,
+  });
+  return indexedConfig;
+}
+
+function getWaitResponseSchemaId(config: WaitNodeConfig): string | undefined {
+  return (config as IndexedWaitNodeConfig)[waitResponseSchemaId];
+}
 
 /** Configuration used by workflow client. */
 export interface WorkflowClientConfig {
@@ -59,8 +79,6 @@ export class WorkflowClient {
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
   /** Registered response schemas keyed by a durable definition-path identity. */
   private responseSchemas = new Map<string, Schema<unknown>>();
-  /** Definition-path identities for response schemas, keyed by the declaring wait config. */
-  private responseSchemaIds = new WeakMap<WaitNodeConfig, Map<string, string>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
@@ -111,7 +129,7 @@ export class WorkflowClient {
 
         try {
           const responseSchemaId = configured?.responseSchema
-            ? this.responseSchemaIds.get(configured)?.get(run.workflowId)
+            ? getWaitResponseSchemaId(configured)
             : undefined;
           await this.approvalManager.createApproval(
             run,
@@ -156,8 +174,8 @@ export class WorkflowClient {
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-    this.executor.register(definition);
     this.indexWaitNodeConfigs(definition);
+    this.executor.register(definition);
     logger.debug("Registered workflow", { workflowId: definition.id });
   }
 
@@ -167,8 +185,11 @@ export class WorkflowClient {
    * `responseSchema` is a live object and cannot be persisted on an approval.
    * Persisting the definition-path identity lets a later process recover the
    * exact registered schema even when a parent wait and a static sub-workflow
-   * wait share a runtime node id. The node-id index remains the compatibility
-   * fallback for approvals created before definition-path identities existed.
+   * wait share a runtime node id. Each static wait gets a definition-local config
+   * clone that carries its own path through execution, so one reused config
+   * object cannot overwrite another path. The node-id index remains the
+   * compatibility fallback for approvals created before definition-path
+   * identities existed.
    * Static sub-workflows are indexed under the registering workflow's id
    * because their approvals belong to the parent run.
    *
@@ -206,17 +227,17 @@ export class WorkflowClient {
         };
         if (config.type === "wait") {
           const waitConfig = node.config as WaitNodeConfig;
-          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, waitConfig);
+          let indexedWaitConfig = waitConfig;
           if (waitConfig.responseSchema) {
             const responseSchemaId = JSON.stringify(nodePath);
             this.responseSchemas.set(
               `${definition.id}::${responseSchemaId}`,
               waitConfig.responseSchema,
             );
-            const workflowIds = this.responseSchemaIds.get(waitConfig) ?? new Map();
-            workflowIds.set(definition.id, responseSchemaId);
-            this.responseSchemaIds.set(waitConfig, workflowIds);
+            indexedWaitConfig = withWaitResponseSchemaId(waitConfig, responseSchemaId);
+            node.config = indexedWaitConfig;
           }
+          this.waitNodeConfigs.set(`${definition.id}::${node.id}`, indexedWaitConfig);
         }
         if (Array.isArray(config.nodes)) visit(config.nodes, [...nodePath, "nodes"]);
         if (Array.isArray(config.then)) visit(config.then, [...nodePath, "then"]);
