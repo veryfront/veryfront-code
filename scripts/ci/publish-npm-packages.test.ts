@@ -48,6 +48,7 @@ describe("npm package publishing", () => {
         [
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
           "npm() {",
@@ -76,6 +77,63 @@ describe("npm package publishing", () => {
       await Deno.remove(stateDir, { recursive: true });
     }
   });
+
+  for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
+    it(`blocks ${publishFunction} before publish when canonical artifact verification fails`, async () => {
+      const stateDir = await Deno.makeTempDir();
+      const artifactDir = `${stateDir}/artifact`;
+      const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
+      const callLog = `${stateDir}/calls.log`;
+      await Deno.mkdir(artifactDir);
+      await Deno.writeTextFile(tarball, "tampered tarball bytes");
+      await Deno.writeTextFile(
+        `${artifactDir}/manifest.json`,
+        JSON.stringify({
+          schemaVersion: 1,
+          rootPackage: "veryfront",
+          rootExtensionNames: [],
+          packages: [{
+            name: "veryfront",
+            version: "0.1.0",
+            file: "veryfront-0.1.0.tgz",
+            sha256: "0".repeat(64),
+          }],
+        }),
+      );
+      await Deno.writeTextFile(callLog, "");
+
+      try {
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            'package_dirs() { printf "%s\\n" "package_dirs" >> "$CALL_LOG"; }',
+            'npm() { printf "%s\\n" "npm $*" >> "$CALL_LOG"; }',
+            publishFunction,
+          ].join("\n"),
+          {
+            CALL_LOG: callLog,
+            GITHUB_SHA: "expected-commit",
+            NPM_PACK_DIR: artifactDir,
+            VERSION: "0.1.0",
+          },
+        );
+
+        assertEquals(output.code, 1, decoder.decode(output.stderr));
+        assertStringIncludes(
+          decoder.decode(output.stderr),
+          "Canonical npm compatibility artifact verification failed",
+        );
+        assertEquals(
+          await Deno.readTextFile(callLog),
+          "",
+          "Verification must fail before package enumeration or npm publish",
+        );
+      } finally {
+        await Deno.remove(stateDir, { recursive: true });
+      }
+    });
+  }
 
   it("tolerates npm gitHead metadata appearing after 120 seconds", async () => {
     const stateDir = await Deno.makeTempDir();

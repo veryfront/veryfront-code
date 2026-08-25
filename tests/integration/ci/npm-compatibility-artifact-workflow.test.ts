@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
+import { NPM_SMOKE_NODE_VERSIONS } from "../../../scripts/build/runtime-support.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -248,6 +249,22 @@ describe("canonical npm artifact workflow", () => {
 
   it("reports a reproducible five-to-one estimated build runner-minute comparison", async () => {
     const jobs = await readJobs();
+    const runtime = asRecord(
+      jobs["tests-runtime-critical-flow"],
+      "runtime critical flow",
+    );
+    const runtimeStrategy = asRecord(runtime.strategy, "runtime critical flow strategy");
+    const runtimeMatrix = asRecord(runtimeStrategy.matrix, "runtime critical flow matrix");
+    const runtimes = runtimeMatrix.runtime;
+    assert(Array.isArray(runtimes), "runtime critical flow matrix runtimes must be an array");
+    assertEquals(runtimes.length, 3, "The runtime critical flow must have three consumers");
+    assertEquals(
+      NPM_SMOKE_NODE_VERSIONS.length,
+      2,
+      "The npm install smoke must have two Node consumers",
+    );
+    const estimatedConsumerCount = runtimes.length + NPM_SMOKE_NODE_VERSIONS.length;
+    assertEquals(estimatedConsumerCount, 5);
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
     const step = namedStep(gate, "Report npm build reuse");
     assertEquals(
@@ -260,7 +277,7 @@ describe("canonical npm artifact workflow", () => {
       {
         BUILD_DURATION_SECONDS:
           "${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}",
-        LEGACY_BUILD_COUNT: "5",
+        LEGACY_BUILD_COUNT: String(estimatedConsumerCount),
         CANONICAL_BUILD_COUNT: "1",
       },
     );
@@ -271,12 +288,16 @@ describe("canonical npm artifact workflow", () => {
         env: {
           GITHUB_STEP_SUMMARY: summary,
           BUILD_DURATION_SECONDS: "120",
-          LEGACY_BUILD_COUNT: "5",
+          LEGACY_BUILD_COUNT: String(estimatedConsumerCount),
           CANONICAL_BUILD_COUNT: "1",
         },
       }).output();
       assertEquals(result.code, 0);
       const report = await Deno.readTextFile(summary);
+      assertStringIncludes(
+        report,
+        "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)",
+      );
       assertStringIncludes(
         report,
         "Estimated before: 10.00 npm build runner-minutes",

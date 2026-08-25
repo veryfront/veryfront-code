@@ -105,6 +105,15 @@ canonical_tarball_for_package_dir() {
   printf '%s/%s\n' "${NPM_PACK_DIR}" "${PACKAGE_FILE}"
 }
 
+verify_npm_compatibility_artifact() {
+  if ! deno run --config=scripts/test.deno.json --frozen --allow-read \
+    scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" \
+    >/dev/null 2>&1; then
+    echo "::error::Canonical npm compatibility artifact verification failed." >&2
+    return 1
+  fi
+}
+
 # Poll the npm registry until PACKAGE_NAME@VERSION reports a gitHead. Succeeds
 # only when that gitHead matches GITHUB_SHA. Leaves the last observed value in
 # the global PUBLISHED_GIT_HEAD for callers' error messages.
@@ -175,6 +184,7 @@ release_publish_package_dir() {
 
 run_rc_publish() {
   require_env VERSION NPM_PACK_DIR
+  verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")"
@@ -261,6 +271,7 @@ run_preflight() {
 
 run_release_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
     PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")"
