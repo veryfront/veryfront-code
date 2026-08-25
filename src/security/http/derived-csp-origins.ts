@@ -158,7 +158,7 @@ export function deriveCspOriginsFromSource(
   // release, which is what lets the header and anything keyed on it be cached.
   const ranked = [...counts.entries()]
     .sort(([originA, countA], [originB, countB]) =>
-      countB - countA || originA.localeCompare(originB)
+      countB - countA || compareStrings(originA, originB)
     )
     .slice(0, MAX_DERIVED_ORIGINS)
     .map(([origin]) => origin)
