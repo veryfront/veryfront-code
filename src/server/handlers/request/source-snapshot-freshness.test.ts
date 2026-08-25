@@ -150,6 +150,46 @@ it("reuses a prepared document snapshot while its identity is unchanged", async 
   assertEquals(refreshes, 1, "an unchanged identity reuses the classifier's strict refresh");
 });
 
+it("reuses a prepared document snapshot while its identity and generation are unchanged", async () => {
+  let refreshes = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.refreshSourceSnapshot = () => {
+    refreshes++;
+    return Promise.resolve();
+  };
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => 1;
+  const ctx = makePreviewCtx(adapter);
+
+  await preparePreviewDocumentSourceSnapshot(ctx);
+  await ensurePreviewDocumentSourceSnapshot(ctx);
+
+  assertEquals(refreshes, 1, "an unchanged generation reuses the classifier's strict refresh");
+});
+
+it("re-establishes freshness when the snapshot generation changes under one identity", async () => {
+  let refreshes = 0;
+  let generation = 1;
+  const adapter = createMockAdapter();
+  adapter.fs.refreshSourceSnapshot = () => {
+    refreshes++;
+    return Promise.resolve();
+  };
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => generation;
+  const ctx = makePreviewCtx(adapter);
+
+  await preparePreviewDocumentSourceSnapshot(ctx);
+  generation++;
+  await ensurePreviewDocumentSourceSnapshot(ctx);
+
+  assertEquals(
+    refreshes,
+    2,
+    "a same-branch source update after classification must refresh before rendering",
+  );
+});
+
 it("re-establishes freshness when the snapshot identity changed after preparation", async () => {
   // A reused contextual adapter can switch branches between the API/page
   // classifier and the SSR render context (setRequestBranch), so the prepared

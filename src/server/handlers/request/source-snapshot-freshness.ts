@@ -36,7 +36,13 @@ const DOCUMENT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze
   maxAgeMs: 0,
 });
 
-const documentFreshContexts = new WeakMap<HandlerContext, string>();
+interface PreparedDocumentSnapshot {
+  readonly identity: string;
+  readonly version: number | undefined;
+  readonly tracksVersion: boolean;
+}
+
+const documentFreshContexts = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
 
 /** Establish strict freshness before API/page ownership is classified. */
 export async function preparePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
@@ -48,20 +54,29 @@ export async function preparePreviewDocumentSourceSnapshot(ctx: HandlerContext):
   // An adapter that cannot name its context records nothing, so the render
   // re-establishes freshness instead of trusting a possibly different context.
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
-  if (identity !== undefined) documentFreshContexts.set(ctx, identity);
+  if (identity !== undefined) {
+    const getVersion = ctx.adapter.fs.getSourceSnapshotVersion;
+    const tracksVersion = typeof getVersion === "function";
+    const version = tracksVersion ? await getVersion.call(ctx.adapter.fs) : undefined;
+    documentFreshContexts.set(ctx, { identity, version, tracksVersion });
+  }
 }
 
 /** Reuse a strict snapshot prepared by the API/page classifier, or establish it directly. */
 export async function ensurePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
-  const preparedIdentity = documentFreshContexts.get(ctx);
-  if (preparedIdentity !== undefined) {
+  const prepared = documentFreshContexts.get(ctx);
+  if (prepared !== undefined) {
     documentFreshContexts.delete(ctx);
     // Freshness established by the classifier only carries over when this
     // render context still targets the identity the preparation refreshed. A
     // branch switch on a reused contextual adapter between the two points
     // must re-establish, or the render serves the previous branch's snapshot.
     const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
-    if (identity === preparedIdentity) return;
+    const getVersion = ctx.adapter.fs.getSourceSnapshotVersion;
+    const versionMatches = !prepared.tracksVersion ||
+      (typeof getVersion === "function" &&
+        await getVersion.call(ctx.adapter.fs) === prepared.version);
+    if (identity === prepared.identity && versionMatches) return;
   }
   await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
 }
