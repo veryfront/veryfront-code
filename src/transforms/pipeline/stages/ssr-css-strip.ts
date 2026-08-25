@@ -35,6 +35,10 @@ function cssModuleProxyExpression(): string {
   return "new Proxy({}, { get: (_, p) => String(p) })";
 }
 
+function cssComment(label: string, specifier: string): string {
+  return `/* css ${label}: ${specifier.replaceAll("*/", "*\\/")} */`;
+}
+
 /** Serialize data embedded in generated JavaScript without leaving HTML raw-text delimiters. */
 function serializeJavaScriptString(value: string): string {
   return JSON.stringify(value).replace(
@@ -316,7 +320,7 @@ function generateCSSReExportStub(
   specifier: string,
   allocateLocal: AllocateCssExportLocal,
 ): string {
-  const stripped = `/* css re-export stripped: ${specifier} */`;
+  const stripped = cssComment("re-export stripped", specifier);
   const fromIndex = findFromKeywordIndex(trimmed);
   if (fromIndex === -1) return stripped;
 
@@ -333,14 +337,16 @@ function generateCSSReExportStub(
         namespaceExportName,
         cssNamespaceExpression(cssModuleKey),
       )
-    } /* css re-export: ${specifier} */`;
+    } ${cssComment("re-export", specifier)}`;
   }
 
   // Named re-export: export { default as styles, container as c } from "./X.module.css"
-  const namedMatch = clause.match(/^\{([^}]*)\}$/);
-  if (!namedMatch?.[1]) return stripped;
+  const namedClause = clause.startsWith("{") && clause.endsWith("}")
+    ? clause.slice(1, -1)
+    : undefined;
+  if (!namedClause) return stripped;
 
-  const bindings = parseNamedImportBindings(namedMatch[1], true);
+  const bindings = parseNamedImportBindings(namedClause, true);
   if (bindings.length === 0) return stripped;
 
   const statements = bindings.map((binding) =>
@@ -351,7 +357,7 @@ function generateCSSReExportStub(
     )
   );
 
-  return `${statements.join(" ")} /* css re-export: ${specifier} */`;
+  return `${statements.join(" ")} ${cssComment("re-export", specifier)}`;
 }
 
 /**
@@ -376,12 +382,12 @@ function generateCSSStub(
 
   // Side-effect import: import "./globals.css"
   if (/^import\s*['"`]/.test(trimmed)) {
-    return `/* css import: ${specifier} */`;
+    return cssComment("import", specifier);
   }
 
   const fromIndex = findFromKeywordIndex(trimmed);
   if (fromIndex === -1) {
-    return `/* css import: ${specifier} */`;
+    return cssComment("import", specifier);
   }
 
   const cssModuleKey = isCssModuleImport(specifier) ? specifier : undefined;
@@ -394,7 +400,7 @@ function generateCSSStub(
     const expr = cssModuleKey
       ? scopedCssModuleProxyExpression(cssModuleKey)
       : cssModuleProxyExpression();
-    return `const ${importClause} = ${expr}; /* css module: ${specifier} */`;
+    return `const ${importClause} = ${expr}; ${cssComment("module", specifier)}`;
   }
 
   // Namespace import: import * as styles from "./X.module.css"
@@ -402,9 +408,9 @@ function generateCSSStub(
   // the stub must carry the same namespace shape the re-export promises.
   const nsMatch = importClause.match(/^\*\s*as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
   if (nsMatch) {
-    return `const ${nsMatch[1]} = ${
-      cssNamespaceExpression(cssModuleKey)
-    }; /* css module: ${specifier} */`;
+    return `const ${nsMatch[1]} = ${cssNamespaceExpression(cssModuleKey)}; ${
+      cssComment("module", specifier)
+    }`;
   }
 
   // Named imports: import { container, header } from "./X.module.css"
@@ -418,7 +424,7 @@ function generateCSSStub(
       const stubs = bindings
         .map((binding) => `${binding.local} = ${cssBindingValue(binding.imported, cssModuleKey)}`)
         .join(", ");
-      return `const ${stubs}; /* css module: ${specifier} */`;
+      return `const ${stubs}; ${cssComment("module", specifier)}`;
     }
   }
 
@@ -434,11 +440,11 @@ function generateCSSStub(
       ? scopedCssModuleProxyExpression(cssModuleKey)
       : cssModuleProxyExpression();
     return namedStubs.length > 0
-      ? `const ${defaultName} = ${defaultExpr}, ${namedStubs}; /* css module: ${specifier} */`
-      : `const ${defaultName} = ${defaultExpr}; /* css module: ${specifier} */`;
+      ? `const ${defaultName} = ${defaultExpr}, ${namedStubs}; ${cssComment("module", specifier)}`
+      : `const ${defaultName} = ${defaultExpr}; ${cssComment("module", specifier)}`;
   }
 
-  return `/* css import: ${specifier} */`;
+  return cssComment("import", specifier);
 }
 
 /**
@@ -447,12 +453,12 @@ function generateCSSStub(
  */
 function generateDynamicCSSStub(specifier: string): string {
   if (isCssModuleImport(specifier)) {
-    return `Promise.resolve({ default: ${
-      scopedCssModuleProxyExpression(specifier)
-    } }) /* css import: ${specifier} */`;
+    return `Promise.resolve({ default: ${scopedCssModuleProxyExpression(specifier)} }) ${
+      cssComment("import", specifier)
+    }`;
   }
 
-  return `Promise.resolve({}) /* css import: ${specifier} */`;
+  return `Promise.resolve({}) ${cssComment("import", specifier)}`;
 }
 
 export const cssStripPlugin: TransformPlugin = {

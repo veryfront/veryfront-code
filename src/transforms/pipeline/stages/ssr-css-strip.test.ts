@@ -329,6 +329,22 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves closing braces inside quoted css re-export names", async () => {
+    const ctx = createContext(
+      `export { "foo}bar" as className } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.className,
+      toScopedCssModuleClass(MODULE_KEY, "foo}bar"),
+      "a quoted closing brace must remain data instead of ending the export clause",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
   it("preserves single-quoted css export names and escaped quotes", async () => {
     const ctx = createContext(
       String
@@ -451,6 +467,20 @@ describe("css-strip plugin", () => {
 
     assertEquals(result.includes("</script>"), false);
     assertEquals(namespace.boundary, "</script>");
+  });
+
+  it("keeps generated comments parseable when css specifiers contain comment terminators", async () => {
+    const ctx = createContext(
+      `import "./theme*/x.css"; export const ok = true;`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+
+    await assertParsesAsModule(
+      result,
+      "a css specifier must not be able to terminate the generated comment",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./theme*/x.css"]);
   });
 
   it("does not treat `from` inside a quoted css export name as the keyword", async () => {
