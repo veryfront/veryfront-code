@@ -799,19 +799,33 @@ export default config as const;
         );
       });
 
-      it("reports the package rather than the subpath that failed to resolve", async () => {
-        // The remedy is installing `pkg`, not `pkg/deep/path`, and the subpath
-        // is the only part of a bare specifier carrying arbitrary author text,
-        // so it must not reach the message or the logged context.
+      it("does not claim a package is absent when only its subpath failed", async () => {
+        // Node reports `require("installed-pkg/missing")` for an *installed*
+        // package identically to one that is genuinely absent. Naming the
+        // package root would tell the reader to install what they already have,
+        // and the subpath -- the real fault -- is not installable at all. The
+        // runtime's own message, which names the whole specifier, is the honest
+        // answer here.
         const error = await loadFailure(
           "vf-config-subpath-",
+          `throw new Error("Cannot find module 'installed-pkg/missing'\nRequire stack:\n- /app/veryfront.config.js");\n`,
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("keeps a secret in a subpath out of any package claim", async () => {
+        // Falling through to the parse error routes the text through
+        // summarizeConfigLoadCause, which redacts and bounds it; the
+        // dependency branch must not quietly reintroduce it.
+        const error = await loadFailure(
+          "vf-config-subpath-secret-",
           `throw new Error("Cannot find module 'pkg/token=SUPERSECRET123'");\n`,
         );
 
-        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
         assert(
-          error.message.includes('"pkg"') && !error.message.includes("SUPERSECRET123"),
-          `error must name the package without its subpath, got: ${error.message}`,
+          !error.message.includes("SUPERSECRET123"),
+          `error must not repeat the secret, got: ${error.message}`,
         );
       });
 

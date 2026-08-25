@@ -1664,10 +1664,21 @@ function missingPackageName(specifier: string): string | undefined {
   if (bare.includes("\\")) return undefined;
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare)) return undefined;
 
-  const packageName = parseBarePackageSpecifier(bare)?.packageName;
-  if (packageName === undefined) return undefined;
+  const parsed = parseBarePackageSpecifier(bare);
+  if (parsed === null) return undefined;
 
-  const clean = packageName.replace(CONTROL_CHARACTERS, " ").trim();
+  // A specifier with a subpath cannot be classified from the message alone.
+  // Node reports `require("installed-pkg/missing")` for an *installed* package
+  // as `Cannot find module 'installed-pkg/missing'`, identical in shape to a
+  // package that is genuinely absent -- so naming the package root would tell
+  // a reader to install something they already have, and the subpath, which is
+  // the real fault, is not installable at all. Falling through to the parse
+  // error keeps the runtime's own message, which names the whole specifier.
+  if (parsed.subpath !== null) return undefined;
+
+  const clean = sanitizeUrlCredentials(parsed.packageName)
+    .replace(CONTROL_CHARACTERS, " ")
+    .trim();
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
     ? `${clean.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
