@@ -1432,8 +1432,6 @@ export async function publishMergeGroupReviewStatus({
   baseHeadSha,
   mergeGroupSha,
 }) {
-  let failure;
-  let bindingVerified = false;
   const pullUrlRef = {
     value: `https://github.com/${owner}/${repo}/pull/${pullNumber}`,
   };
@@ -1453,7 +1451,16 @@ export async function publishMergeGroupReviewStatus({
       baseHeadSha,
       mergeGroupSha,
     });
-    bindingVerified = true;
+  } catch (error) {
+    return {
+      state: "failure",
+      description: undefined,
+      failure: error instanceof Error ? error : new Error(String(error)),
+      published: false,
+    };
+  }
+
+  try {
     return await publishVerifiedMergeGroupReviewStatus({
       github,
       owner,
@@ -1465,9 +1472,7 @@ export async function publishMergeGroupReviewStatus({
       pullUrlRef,
     });
   } catch (error) {
-    failure = error instanceof Error ? error : new Error(String(error));
-  }
-  if (bindingVerified && FULL_SHA.test(mergeGroupSha)) {
+    const failure = error instanceof Error ? error : new Error(String(error));
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -1477,13 +1482,13 @@ export async function publishMergeGroupReviewStatus({
       description: "Could not reuse an exact-head review",
       target_url: pullUrlRef.value,
     });
+    return {
+      state: "failure",
+      description: undefined,
+      failure,
+      published: true,
+    };
   }
-  return {
-    state: "failure",
-    description: undefined,
-    failure,
-    published: bindingVerified,
-  };
 }
 
 async function reconcileMergeQueueTarget({
