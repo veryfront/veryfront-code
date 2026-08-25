@@ -436,6 +436,25 @@ describe("lookupImportMapEntry", () => {
     );
   });
 
+  it("resolves remote referrer query strings with URL semantics", () => {
+    assertEquals(
+      lookupImportMapEntry(
+        {
+          imports: {},
+          scopes: {
+            "https://cdn.example/pkg/": {
+              "https://cdn.example/pkg/helper.js?version=1": "/project/local-helper.ts",
+            },
+          },
+        },
+        "./helper.js?version=1",
+        "https://cdn.example/pkg/route.js",
+      ),
+      "/project/local-helper.ts",
+      "relative imports from a remote module must retain their URL form for scope lookup",
+    );
+  });
+
   it("leaves a specifier the map does not name alone", () => {
     assertEquals(
       lookupImportMapEntry({ imports: { "@lib/": "./lib/" }, scopes: {} }, "zod"),
@@ -2828,6 +2847,35 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("preserves import.meta.url when parser-valid slash syntax requires bundling", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(join(tmpDir, "adjacent.txt"), "beside-route");
+    const modulePath = join(tmpDir, "slash-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export const GET = async () => {`,
+        `  const value = await Deno.readTextFile(new URL("./adjacent.txt", import.meta.url));`,
+        `  return new Response(value + marker.source);`,
+        `};`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(
+      await getText(route),
+      "beside-routex",
+      "bundling must preserve the route module as the base for adjacent resources",
+    );
+  });
+
   denoIt(
     "keeps a route on the direct path when the project's map leaves its bare specifier alone",
     async () => {
@@ -3154,7 +3202,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   denoIt(
-    "keeps parser-validated slash syntax direct when import.meta.url is observed",
+    "preserves import.meta.url for parser-validated division syntax",
     async () => {
       const tmpDir = await makeTempDir();
       const modulePath = join(tmpDir, "division-import-meta-route.ts");
@@ -3175,7 +3223,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       assertMatch(
         await getText(route) ?? "",
         /4 .*division-import-meta-route\.ts/,
-        "successful parser analysis must not relocate an ordinary slash expression into a bundle",
+        "bundling division syntax must retain the original route URL",
       );
     },
   );
@@ -3521,6 +3569,55 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "Remote import blocked",
       "a Worker import-map alias must be checked against the remote allow-list",
     );
+  });
+
+  it("rejects remote imports that a bundled Worker would load outside the HTTP plugin", async () => {
+    for (
+      const { denoConfig, workerImport } of [
+        {
+          denoConfig: undefined,
+          workerImport: `https://esm.sh/yaml@2`,
+        },
+        {
+          denoConfig: `{ "imports": { "worker-lib": "https://esm.sh/yaml@2" } }\n`,
+          workerImport: `worker-lib`,
+        },
+      ]
+    ) {
+      const tmpDir = await makeTempDir();
+      if (denoConfig !== undefined) {
+        await fs.writeTextFile(join(tmpDir, "deno.json"), denoConfig);
+      }
+      await fs.writeTextFile(
+        join(tmpDir, "worker.ts"),
+        `import "${workerImport}"; self.postMessage("unreachable");`,
+      );
+      const modulePath = join(tmpDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `const marker = /x/;`,
+          `export function GET() {`,
+          `  const worker = new Worker("./worker.ts", { type: "module" });`,
+          `  worker.terminate();`,
+          `  return new Response("ok-" + marker.source);`,
+          `}`,
+        ].join("\n"),
+      );
+
+      await assertRejects(
+        async () =>
+          await loadHandlerModule({
+            projectDir: tmpDir,
+            modulePath,
+            adapter,
+            config: undefined,
+          }),
+        Error,
+        "Worker remote import cannot be validated transitively",
+        `${workerImport} must not bypass validation of the remote module's own graph`,
+      );
+    }
   });
 
   it("validates local import-map descendants in bundled Worker graphs", async () => {

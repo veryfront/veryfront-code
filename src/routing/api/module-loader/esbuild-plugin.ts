@@ -68,6 +68,17 @@ type RemoteModuleFetchResult =
     url: string;
   };
 
+async function validateRemoteModuleSource(
+  contents: string,
+  allowedHosts: string[],
+): Promise<{
+  readonly contents: string;
+  readonly loader: "js";
+}> {
+  await validateHTTPImports(contents, allowedHosts);
+  return { contents, loader: "js" };
+}
+
 function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache | null {
   if (!projectDir) return null;
 
@@ -182,14 +193,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         throw new OutboundRequestBlockedError(
           `Remote import blocked by allow-list: ${url.origin}`,
         );
-      }
-
-      async function validateRemoteModuleSource(contents: string): Promise<{
-        readonly contents: string;
-        readonly loader: "js";
-      }> {
-        await validateHTTPImports(contents, allowedHosts);
-        return { contents, loader: "js" };
       }
 
       async function fetchRemoteModuleAttempt(url: string): Promise<RemoteModuleFetchResult> {
@@ -403,7 +406,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
-                const loaded = await validateRemoteModuleSource(text);
+                const loaded = await validateRemoteModuleSource(text, allowedHosts);
                 await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
                 await moduleCache?.write(
                   lockfileEntry.resolved,
@@ -443,7 +446,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 await readCachedModule(args.path, lockfileEntry.integrity);
             if (cachedText) {
               logger.warn(`[http] serving cached remote import for ${args.path}`);
-              return await validateRemoteModuleSource(cachedText);
+              return await validateRemoteModuleSource(cachedText, allowedHosts);
             }
           }
         }
@@ -465,7 +468,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               await readCachedModule(args.path, lockfileEntry?.integrity);
           if (cachedText) {
             logger.warn(`[http] serving cached remote import for ${args.path}`);
-            return await validateRemoteModuleSource(cachedText);
+            return await validateRemoteModuleSource(cachedText, allowedHosts);
           }
 
           logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
@@ -481,7 +484,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         const text = res.text;
         const resolvedUrl = res.url;
         const integrity = await computeIntegrity(text);
-        const loaded = await validateRemoteModuleSource(text);
+        const loaded = await validateRemoteModuleSource(text, allowedHosts);
 
         await persistLockfileEntry(args.path, {
           resolved: resolvedUrl,

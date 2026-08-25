@@ -63,29 +63,36 @@ function readEscapedCharacter(
   };
   if (simpleEscapes[char] !== undefined) return { value: simpleEscapes[char], end: index + 1 };
 
-  if (char === "x") {
-    const hex = source.slice(index + 1, index + 3);
-    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) return null;
-    return { value: String.fromCodePoint(Number.parseInt(hex, 16)), end: index + 3 };
-  }
-
+  if (char === "x") return readFixedHexEscape(source, index + 1, 2);
   if (char === "u" && source[index + 1] === "{") {
-    const close = source.indexOf("}", index + 2);
-    if (close === -1) return null;
-    const hex = source.slice(index + 2, close);
-    if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
-    const codePoint = Number.parseInt(hex, 16);
-    if (codePoint > 0x10FFFF) return null;
-    return { value: String.fromCodePoint(codePoint), end: close + 1 };
+    return readBracedUnicodeEscape(source, index + 2);
   }
-
-  if (char === "u") {
-    const hex = source.slice(index + 1, index + 5);
-    if (!/^[0-9A-Fa-f]{4}$/.test(hex)) return null;
-    return { value: String.fromCodePoint(Number.parseInt(hex, 16)), end: index + 5 };
-  }
+  if (char === "u") return readFixedHexEscape(source, index + 1, 4);
 
   return { value: char, end: index + 1 };
+}
+
+function readFixedHexEscape(
+  source: string,
+  start: number,
+  length: number,
+): { value: string; end: number } | null {
+  const hex = source.slice(start, start + length);
+  if (!/^[\dA-Fa-f]+$/.test(hex) || hex.length !== length) return null;
+  return { value: String.fromCodePoint(Number.parseInt(hex, 16)), end: start + length };
+}
+
+function readBracedUnicodeEscape(
+  source: string,
+  start: number,
+): { value: string; end: number } | null {
+  const close = source.indexOf("}", start);
+  if (close === -1) return null;
+  const hex = source.slice(start, close);
+  if (!/^[\dA-Fa-f]+$/.test(hex)) return null;
+  const codePoint = Number.parseInt(hex, 16);
+  if (codePoint > 0x10FFFF) return null;
+  return { value: String.fromCodePoint(codePoint), end: close + 1 };
 }
 
 function readStringLiteral(source: string, index: number): { value: string; end: number } | null {
@@ -93,17 +100,21 @@ function readStringLiteral(source: string, index: number): { value: string; end:
   if (quote !== '"' && quote !== "'" && quote !== "`") return null;
 
   let value = "";
-  for (let i = index + 1; i < source.length; i++) {
+  let i = index + 1;
+  while (i < source.length) {
     const char = source[i];
     if (char === "\\") {
       const escaped = readEscapedCharacter(source, i + 1);
       if (escaped === null) return null;
       value += escaped.value;
-      i = escaped.end - 1;
+      i = escaped.end;
       continue;
+    } else if (char === quote) {
+      return { value, end: i + 1 };
+    } else {
+      value += char;
     }
-    if (char === quote) return { value, end: i + 1 };
-    value += char;
+    i++;
   }
 
   return null;
@@ -123,49 +134,28 @@ function readTemplateExpression(
   const bodyStart = openBraceIndex + 1;
   let depth = 1;
 
-  for (let i = bodyStart; i < source.length; i++) {
+  let i = bodyStart;
+  while (i < source.length) {
     const char = source[i];
-    const next = source[i + 1];
 
-    if (char === "/" && next === "/") {
-      i = skipLineComment(source, i) - 1;
+    const skipped = skipTemplateExpressionToken(source, i);
+    if (skipped === null) return null;
+    if (skipped !== undefined) {
+      const accumulator: MutableScanAccumulator = {
+        specifiers,
+        hasUnconstrainedDynamicImport,
+        requiresBundling,
+      };
+      mergeModuleSpecifierScan(accumulator, skipped.scan);
+      hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
+      requiresBundling = accumulator.requiresBundling || skipped.requiresBundling;
+      i = skipped.end;
       continue;
     }
-    if (char === "/" && next === "*") {
-      i = skipBlockComment(source, i) - 1;
-      continue;
-    }
-    if (char === "/") {
-      // Slash syntax still routes the graph through esbuild, but the brace
-      // walk cannot stop here: a `}` inside a regular-expression literal —
-      // `${/[}]/.test("}") ? import(target) : ""}` — would close the
-      // interpolation early and leave the rest of the executable expression
-      // read as template text. Skip the literal so the whole body is scanned.
-      requiresBundling = true;
-      if (canStartRegularExpression(source, i)) {
-        const regexEnd = skipRegularExpressionLiteral(source, i);
-        if (regexEnd !== null) i = regexEnd - 1;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      i = skipStringLiteral(source, i) - 1;
-      continue;
-    }
-    if (char === "`") {
-      const template = readTemplateLiteral(source, i);
-      if (template === null) return null;
-      specifiers.push(...template.scan.specifiers);
-      hasUnconstrainedDynamicImport ||= template.scan.hasUnconstrainedDynamicImport;
-      requiresBundling ||= template.scan.requiresBundling;
-      i = template.end - 1;
-      continue;
-    }
+
     if (char === "{") {
       depth++;
-      continue;
-    }
-    if (char === "}") {
+    } else if (char === "}") {
       depth--;
       if (depth === 0) {
         return {
@@ -182,9 +172,67 @@ function readTemplateExpression(
         };
       }
     }
+    i++;
   }
 
   return null;
+}
+
+type MutableScanAccumulator = {
+  specifiers: string[];
+  hasUnconstrainedDynamicImport: boolean;
+  requiresBundling: boolean;
+};
+
+function mergeModuleSpecifierScan(
+  target: MutableScanAccumulator,
+  scan: ModuleSpecifierScan,
+): void {
+  target.specifiers.push(...scan.specifiers);
+  target.hasUnconstrainedDynamicImport ||= scan.hasUnconstrainedDynamicImport;
+  target.requiresBundling ||= scan.requiresBundling;
+}
+
+function skipTemplateExpressionToken(
+  source: string,
+  index: number,
+): { end: number; requiresBundling: boolean; scan: ModuleSpecifierScan } | null | undefined {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === "/" && next === "/") {
+    return { end: skipLineComment(source, index), requiresBundling: false, scan: emptyScan() };
+  }
+  if (char === "/" && next === "*") {
+    return { end: skipBlockComment(source, index), requiresBundling: false, scan: emptyScan() };
+  }
+  if (char === "/") {
+    const regexEnd = canStartRegularExpression(source, index)
+      ? skipRegularExpressionLiteral(source, index)
+      : null;
+    return {
+      end: regexEnd ?? index + 1,
+      requiresBundling: true,
+      scan: emptyScan(),
+    };
+  }
+  if (char === '"' || char === "'") {
+    return { end: skipStringLiteral(source, index), requiresBundling: false, scan: emptyScan() };
+  }
+  if (char !== "`") return undefined;
+
+  const template = readTemplateLiteral(source, index);
+  if (template === null) return null;
+  return { end: template.end, requiresBundling: false, scan: template.scan };
+}
+
+function emptyScan(): ModuleSpecifierScan {
+  return {
+    specifiers: [],
+    hasUnconstrainedDynamicImport: false,
+    requiresBundling: false,
+    hasDynamicCodeGeneration: false,
+  };
 }
 
 function readTemplateLiteral(
@@ -196,13 +244,12 @@ function readTemplateLiteral(
   let requiresBundling = false;
   if (source[index] !== "`") return null;
 
-  for (let i = index + 1; i < source.length; i++) {
+  let i = index + 1;
+  while (i < source.length) {
     const char = source[i];
     if (char === "\\") {
       i++;
-      continue;
-    }
-    if (char === "`") {
+    } else if (char === "`") {
       return {
         end: i + 1,
         scan: {
@@ -214,18 +261,23 @@ function readTemplateLiteral(
           ),
         },
       };
-    }
-    if (char === "$" && source[i + 1] === "{") {
+    } else if (char === "$" && source[i + 1] === "{") {
       const expression = readTemplateExpression(source, i + 1);
       if (expression === null) return null;
       const expressionScan = scanModuleSpecifiers(expression.body);
-      specifiers.push(...expressionScan.specifiers);
-      specifiers.push(...expression.scan.specifiers);
-      hasUnconstrainedDynamicImport ||= expressionScan.hasUnconstrainedDynamicImport ||
-        expression.scan.hasUnconstrainedDynamicImport;
-      requiresBundling ||= expressionScan.requiresBundling || expression.scan.requiresBundling;
-      i = expression.end - 1;
+      const accumulator: MutableScanAccumulator = {
+        specifiers,
+        hasUnconstrainedDynamicImport,
+        requiresBundling,
+      };
+      mergeModuleSpecifierScan(accumulator, expressionScan);
+      mergeModuleSpecifierScan(accumulator, expression.scan);
+      hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
+      requiresBundling = accumulator.requiresBundling;
+      i = expression.end;
+      continue;
     }
+    i++;
   }
 
   return null;
@@ -258,7 +310,7 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
   if (source[i] !== "{") return null;
 
   const states: Array<"key" | "colon" | "value" | "commaOrClose"> = [];
-  for (; i < source.length; i++) {
+  while (i < source.length) {
     i = skipWhitespaceAndComments(source, i);
     const char = source[i];
     if (char === undefined) return null;
@@ -266,24 +318,15 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
     if (char === '"' || char === "'") {
       const literal = readStringLiteral(source, i);
       if (literal === null) return null;
-      const state = states.at(-1);
-      if (state === "colon") return null;
-      if (state === "key") {
-        states[states.length - 1] = "colon";
-      } else if (state === "value") {
-        states[states.length - 1] = "commaOrClose";
-      } else {
-        return null;
-      }
-      i = literal.end - 1;
+      if (!advanceImportAttributeStringState(states)) return null;
+      i = literal.end;
       continue;
     }
 
     if (char === "{") {
-      const state = states.at(-1);
-      if (state === "colon" || state === "commaOrClose") return null;
-      if (state === "value") states[states.length - 1] = "commaOrClose";
+      if (!startImportAttributeObjectState(states)) return null;
       states.push("key");
+      i++;
       continue;
     }
 
@@ -291,18 +334,21 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
       const state = states.pop();
       if (state === undefined || state === "colon" || state === "value") return null;
       if (states.length === 0) return i + 1;
+      i++;
       continue;
     }
 
     if (char === ":") {
       if (states.at(-1) !== "colon") return null;
       states[states.length - 1] = "value";
+      i++;
       continue;
     }
 
     if (char === ",") {
       if (states.at(-1) !== "commaOrClose") return null;
       states[states.length - 1] = "key";
+      i++;
       continue;
     }
 
@@ -311,11 +357,14 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
       let end = i + 1;
       while (isIdentifierChar(source[end])) end++;
       states[states.length - 1] = "colon";
-      i = end - 1;
+      i = end;
       continue;
     }
 
-    if (/\s/.test(char)) continue;
+    if (/\s/.test(char)) {
+      i++;
+      continue;
+    }
 
     return null;
   }
@@ -323,10 +372,37 @@ function readStaticImportAttributesArgument(source: string, index: number): numb
   return null;
 }
 
+function advanceImportAttributeStringState(
+  states: Array<"key" | "colon" | "value" | "commaOrClose">,
+): boolean {
+  const state = states.at(-1);
+  if (state === "colon") return false;
+  if (state === "key") {
+    states[states.length - 1] = "colon";
+    return true;
+  }
+  if (state === "value") {
+    states[states.length - 1] = "commaOrClose";
+    return true;
+  }
+  return false;
+}
+
+function startImportAttributeObjectState(
+  states: Array<"key" | "colon" | "value" | "commaOrClose">,
+): boolean {
+  const state = states.at(-1);
+  if (state === "colon" || state === "commaOrClose") return false;
+  if (state === "value") states[states.length - 1] = "commaOrClose";
+  return true;
+}
+
 function previousSignificantCharacter(source: string, index: number): string | undefined {
-  for (let i = index - 1; i >= 0; i--) {
+  let i = index - 1;
+  while (i >= 0) {
     const char = source[i];
     if (!/\s/.test(char ?? "")) return char;
+    i--;
   }
   return undefined;
 }
@@ -392,27 +468,24 @@ const REGULAR_EXPRESSION_PREFIX_KEYWORDS = new Set([
 function skipRegularExpressionLiteral(source: string, index: number): number | null {
   let inCharacterClass = false;
 
-  for (let i = index + 1; i < source.length; i++) {
+  let i = index + 1;
+  while (i < source.length) {
     const char = source[i];
 
     if (char === "\\") {
       i++;
-      continue;
-    }
-    if (char === "\n" || char === "\r") return null;
-    if (char === "[") {
+    } else if (char === "\n" || char === "\r") {
+      return null;
+    } else if (char === "[") {
       inCharacterClass = true;
-      continue;
-    }
-    if (char === "]") {
+    } else if (char === "]") {
       inCharacterClass = false;
-      continue;
-    }
-    if (char === "/" && !inCharacterClass) {
+    } else if (char === "/" && !inCharacterClass) {
       let end = i + 1;
       while (/[A-Za-z]/.test(source[end] ?? "")) end++;
       return end;
     }
+    i++;
   }
 
   return null;
@@ -467,39 +540,36 @@ export type ModuleSpecifierScan = {
   hasDynamicCodeGeneration: boolean;
 };
 
-const DYNAMIC_CODE_GENERATION_IDENTIFIER = /(^|[^A-Za-z0-9_$])(eval|Function)(?![A-Za-z0-9_$])/;
-const DYNAMIC_CODE_GENERATION_NAME =
-  /(^|[^A-Za-z0-9_$])(eval|Function|constructor)(?![A-Za-z0-9_$])/;
+const DYNAMIC_CODE_GENERATION_IDENTIFIERS = ["eval", "Function"] as const;
+const DYNAMIC_CODE_GENERATION_NAMES = ["eval", "Function", "constructor"] as const;
 const IDENTIFIER_UNICODE_ESCAPE = /\\u\{([0-9A-Fa-f]{1,6})\}|\\u([0-9A-Fa-f]{4})/g;
-const COMPUTED_STRING_PROPERTY =
-  /\[((?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')\s*(?:\+\s*(?:"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')\s*)+)\]/g;
 const CONSTRUCTOR_PROPERTY_REFERENCE =
   /(?:\.\s*constructor\b|\[\s*(?:"constructor"|'constructor')\s*\])/;
 const DESTRUCTURED_CONSTRUCTOR_REFERENCE =
   /(?:\{|,)\s*(?:constructor|"constructor"|'constructor')\s*(?::|[,}])/;
 
-function readStaticStringParts(expression: string): string | null {
-  let value = "";
-  let i = 0;
-  while (i < expression.length) {
-    i = skipWhitespaceAndComments(expression, i);
-    const literal = readStringLiteral(expression, i);
-    if (literal === null) return null;
-    value += literal.value;
-    i = skipWhitespaceAndComments(expression, literal.end);
-    if (i >= expression.length) return value;
-    if (expression[i] !== "+") return null;
-    i++;
-  }
-  return value;
-}
-
 function containsComputedDynamicCodeGenerationProperty(source: string): boolean {
-  for (const match of source.matchAll(COMPUTED_STRING_PROPERTY)) {
-    const property = readStaticStringParts(match[1] ?? "");
-    if (property === "eval" || property === "Function" || property === "constructor") return true;
+  let openBracket = source.indexOf("[");
+  while (openBracket !== -1) {
+    const property = readBracketedStaticStringProperty(source, openBracket);
+    if (property !== null && dynamicCodeGenerationNamesProperty(property)) return true;
+    openBracket = source.indexOf("[", openBracket + 1);
   }
   return false;
+}
+
+function readBracketedStaticStringProperty(source: string, openBracket: number): string | null {
+  const valueStart = skipWhitespaceAndComments(source, openBracket + 1);
+  const property = readConcatenatedStringLiteral(source, valueStart);
+  if (property === null || property.parts <= 1) return null;
+  const closeBracket = skipWhitespaceAndComments(source, property.end);
+  return source[closeBracket] === "]" ? property.value : null;
+}
+
+function dynamicCodeGenerationNamesProperty(name: string): boolean {
+  return DYNAMIC_CODE_GENERATION_NAMES.includes(
+    name as (typeof DYNAMIC_CODE_GENERATION_NAMES)[number],
+  );
 }
 
 /**
@@ -507,12 +577,14 @@ function containsComputedDynamicCodeGenerationProperty(source: string): boolean 
  * spells one fixed string the way a quoted literal does.
  */
 function isSubstitutionFreeTemplate(source: string, index: number, end: number): boolean {
-  for (let i = index + 1; i < end - 1; i++) {
+  let i = index + 1;
+  while (i < end - 1) {
     if (source[i] === "\\") {
       i++;
-      continue;
+    } else if (source[i] === "$" && source[i + 1] === "{") {
+      return false;
     }
-    if (source[i] === "$" && source[i + 1] === "{") return false;
+    i++;
   }
   return true;
 }
@@ -592,22 +664,46 @@ function collectGlobalObjectAliases(source: string): Set<string> {
  */
 function containsComputedGlobalDynamicCodeGeneration(source: string): boolean {
   for (const globalName of collectGlobalObjectAliases(source)) {
-    for (let i = source.indexOf(globalName); i !== -1; i = source.indexOf(globalName, i + 1)) {
-      if (!isKeywordBoundary(source, i, globalName)) continue;
-      let openBracket = skipWhitespaceAndComments(source, i + globalName.length);
-      // `globalThis?.[name]` reads the same property as `globalThis[name]`.
-      if (source[openBracket] === "?" && source[openBracket + 1] === ".") {
-        openBracket = skipWhitespaceAndComments(source, openBracket + 2);
-      }
-      if (source[openBracket] !== "[") continue;
-      const property = readConcatenatedStringLiteral(source, openBracket + 1);
-      if (property === null || source[skipWhitespaceAndComments(source, property.end)] !== "]") {
+    let i = source.indexOf(globalName);
+    while (i !== -1) {
+      const property = readComputedGlobalProperty(source, i, globalName);
+      if (property === "dynamic" || dynamicCodeGenerationIdentifiersProperty(property)) {
         return true;
       }
-      if (property.value === "eval" || property.value === "Function") return true;
+      i = source.indexOf(globalName, i + globalName.length);
     }
   }
   return false;
+}
+
+function readComputedGlobalProperty(
+  source: string,
+  index: number,
+  globalName: string,
+): string | "dynamic" | null {
+  if (!isKeywordBoundary(source, index, globalName)) return null;
+  const openBracket = readComputedPropertyOpenBracket(source, index + globalName.length);
+  if (openBracket === null) return null;
+  const property = readConcatenatedStringLiteral(source, openBracket + 1);
+  const closeBracket = property === null ? null : skipWhitespaceAndComments(source, property.end);
+  if (property === null || source[closeBracket ?? 0] !== "]") return "dynamic";
+  return property.value;
+}
+
+function readComputedPropertyOpenBracket(source: string, index: number): number | null {
+  let openBracket = skipWhitespaceAndComments(source, index);
+  // `globalThis?.[name]` reads the same property as `globalThis[name]`.
+  if (source[openBracket] === "?" && source[openBracket + 1] === ".") {
+    openBracket = skipWhitespaceAndComments(source, openBracket + 2);
+  }
+  return source[openBracket] === "[" ? openBracket : null;
+}
+
+function dynamicCodeGenerationIdentifiersProperty(name: string | null): boolean {
+  return name !== null &&
+    DYNAMIC_CODE_GENERATION_IDENTIFIERS.includes(
+      name as (typeof DYNAMIC_CODE_GENERATION_IDENTIFIERS)[number],
+    );
 }
 
 /**
@@ -640,11 +736,14 @@ function containsConcatenatedDynamicCodeGenerationName(source: string): boolean 
       i++;
       continue;
     }
-    if (DYNAMIC_CODE_GENERATION_NAME.test(concatenated.value)) {
+    if (containsIdentifierName(concatenated.value, DYNAMIC_CODE_GENERATION_NAMES)) {
       const raw = source.slice(i, concatenated.end);
       // Concatenation hides the name by construction; a lone literal only
       // hides it when escapes kept the raw text from spelling it.
-      if (concatenated.parts > 1 || !DYNAMIC_CODE_GENERATION_NAME.test(raw)) return true;
+      if (
+        concatenated.parts > 1 ||
+        !containsIdentifierName(raw, DYNAMIC_CODE_GENERATION_NAMES)
+      ) return true;
     }
     i = concatenated.end;
   }
@@ -669,12 +768,31 @@ function decodeIdentifierEscapes(source: string): string {
 }
 
 function textNamesDynamicCodeGenerator(source: string): boolean {
-  return DYNAMIC_CODE_GENERATION_IDENTIFIER.test(source) ||
+  return containsIdentifierName(source, DYNAMIC_CODE_GENERATION_IDENTIFIERS) ||
     containsComputedDynamicCodeGenerationProperty(source) ||
     containsComputedGlobalDynamicCodeGeneration(source) ||
     containsConcatenatedDynamicCodeGenerationName(source) ||
     CONSTRUCTOR_PROPERTY_REFERENCE.test(source) ||
     DESTRUCTURED_CONSTRUCTOR_REFERENCE.test(source);
+}
+
+function containsIdentifierName(source: string, names: readonly string[]): boolean {
+  return names.some((name) => hasIdentifierName(source, name));
+}
+
+function hasIdentifierName(source: string, name: string): boolean {
+  let index = source.indexOf(name);
+  while (index !== -1) {
+    if (isIdentifierNameBoundary(source, index, name)) return true;
+    index = source.indexOf(name, index + name.length);
+  }
+  return false;
+}
+
+function isIdentifierNameBoundary(source: string, index: number, name: string): boolean {
+  return !isIdentifierChar(source[index - 1]) && source[index - 1] !== "$" &&
+    !isIdentifierChar(source[index + name.length]) &&
+    source[index + name.length] !== "$";
 }
 
 function containsDynamicCodeGenerationIdentifier(source: string): boolean {
@@ -732,58 +850,85 @@ function scanForUnconstrainedDynamicImport(
   alternativeReadings: number[],
 ): boolean {
   const keyword = "import";
-  for (let i = start; i < source.length; i++) {
-    const char = source[i];
-    const next = source[i + 1];
+  let i = start;
+  while (i < source.length) {
+    const skipped = skipDynamicImportScanToken(source, i, alternativeReadings);
+    if (skipped === null) return true;
+    if (skipped !== undefined) {
+      i = skipped;
+      continue;
+    }
 
-    if (char === "/" && next === "/") {
-      i = skipLineComment(source, i) - 1;
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      i = skipBlockComment(source, i) - 1;
-      continue;
-    }
-    if (char === "/") {
-      const regexEnd = skipRegularExpressionLiteral(source, i);
-      if (regexEnd !== null) {
-        if (canStartRegularExpression(source, i)) {
-          i = regexEnd - 1;
-          continue;
-        }
-        // Division is the likelier reading of this slash, but a regular
-        // expression also parses here; queue that reading so a quote inside
-        // the literal cannot hide a later import.
-        alternativeReadings.push(regexEnd);
+    if (source.startsWith(keyword, i) && isKeywordBoundary(source, i, keyword)) {
+      const outcome = readDynamicImportLiteralOutcome(source, i + keyword.length);
+      if (outcome === "dynamic") return true;
+      if (outcome !== "absent") {
+        i = outcome;
+        continue;
       }
     }
-    if (char === '"' || char === "'") {
-      i = skipStringLiteral(source, i) - 1;
-      continue;
-    }
-    if (char === "`") {
-      const template = readTemplateLiteral(source, i);
-      if (template === null) return true;
-      if (template.scan.hasUnconstrainedDynamicImport) return true;
-      i = template.end - 1;
-      continue;
-    }
-
-    if (!source.startsWith(keyword, i) || !isKeywordBoundary(source, i, keyword)) continue;
-    const openParen = skipWhitespaceAndComments(source, i + keyword.length);
-    if (source[openParen] !== "(") continue;
-
-    const specifierIndex = skipWhitespaceAndComments(source, openParen + 1);
-    const quote = source[specifierIndex];
-    const literal = quote === '"' || quote === "'"
-      ? readStringLiteral(source, specifierIndex)
-      : null;
-    if (literal === null) return true;
-
-    const delimiter = source[skipWhitespaceAndComments(source, literal.end)];
-    if (delimiter !== ")" && delimiter !== ",") return true;
+    i++;
   }
   return false;
+}
+
+function skipDynamicImportScanToken(
+  source: string,
+  index: number,
+  alternativeReadings: number[],
+): number | null | undefined {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === "/" && next === "/") return skipLineComment(source, index);
+  if (char === "/" && next === "*") return skipBlockComment(source, index);
+  if (char === "/") return skipSlashInDynamicImportScan(source, index, alternativeReadings);
+  if (char === '"' || char === "'") return skipStringLiteral(source, index);
+  if (char !== "`") return undefined;
+
+  const template = readTemplateLiteral(source, index);
+  if (template === null || template.scan.hasUnconstrainedDynamicImport) return null;
+  return template.end;
+}
+
+function skipSlashInDynamicImportScan(
+  source: string,
+  index: number,
+  alternativeReadings: number[],
+): number | undefined {
+  const regexEnd = skipRegularExpressionLiteral(source, index);
+  if (regexEnd === null) return undefined;
+  if (canStartRegularExpression(source, index)) return regexEnd;
+  // Division is the likelier reading of this slash, but a regular expression
+  // also parses here; queue that reading so a quote inside the literal cannot
+  // hide a later import.
+  alternativeReadings.push(regexEnd);
+  return undefined;
+}
+
+function readDynamicImportLiteralOutcome(
+  source: string,
+  index: number,
+): number | "absent" | "dynamic" {
+  const openParen = skipWhitespaceAndComments(source, index);
+  if (source[openParen] !== "(") return "absent";
+
+  const literal = readQuotedStringLiteralAt(
+    source,
+    skipWhitespaceAndComments(source, openParen + 1),
+  );
+  if (literal === null) return "dynamic";
+
+  const delimiter = source[skipWhitespaceAndComments(source, literal.end)];
+  return delimiter === ")" || delimiter === "," ? literal.end : "dynamic";
+}
+
+function readQuotedStringLiteralAt(
+  source: string,
+  index: number,
+): { value: string; end: number } | null {
+  const quote = source[index];
+  return quote === '"' || quote === "'" ? readStringLiteral(source, index) : null;
 }
 
 export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
@@ -792,97 +937,29 @@ export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
   let requiresBundling = false;
   const hasDynamicCodeGeneration = containsDynamicCodeGenerationIdentifier(source);
 
-  for (let i = 0; i < source.length; i++) {
-    const char = source[i];
-    const next = source[i + 1];
+  const accumulator: MutableScanAccumulator = {
+    specifiers,
+    hasUnconstrainedDynamicImport,
+    requiresBundling,
+  };
 
-    if (char === "/" && next === "/") {
-      i = skipLineComment(source, i) - 1;
-      continue;
+  let i = 0;
+  while (i < source.length) {
+    const skipped = skipModuleScanToken(source, i, accumulator);
+    hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
+    requiresBundling = accumulator.requiresBundling;
+    if (skipped === null) {
+      return unreadableModuleSpecifierScan(specifiers, requiresBundling, hasDynamicCodeGeneration);
     }
-    if (char === "/" && next === "*") {
-      i = skipBlockComment(source, i) - 1;
-      continue;
-    }
-    if (char === "/") {
-      // Distinguishing a regular-expression literal from division requires a
-      // full JavaScript parser. The direct Deno loader bypasses the HTTP
-      // plugin, so any non-comment slash routes this graph through esbuild,
-      // whose parser and HTTP plugin enforce the actual import edges.
-      requiresBundling = true;
-      if (canStartRegularExpression(source, i)) {
-        const regexEnd = skipRegularExpressionLiteral(source, i);
-        if (regexEnd !== null) i = regexEnd - 1;
-      }
-      continue;
-    }
-    if (char === "`") {
-      const template = readTemplateLiteral(source, i);
-      if (template === null) {
-        return {
-          specifiers,
-          // An unreadable template hides whatever follows it, so this scan
-          // cannot claim the source names no unconstrained import.
-          hasUnconstrainedDynamicImport: true,
-          requiresBundling,
-          hasDynamicCodeGeneration,
-        };
-      }
-      specifiers.push(...template.scan.specifiers);
-      hasUnconstrainedDynamicImport ||= template.scan.hasUnconstrainedDynamicImport;
-      requiresBundling ||= template.scan.requiresBundling;
-      i = template.end - 1;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      i = skipStringLiteral(source, i) - 1;
+    if (skipped !== undefined) {
+      i = skipped;
       continue;
     }
 
     if (source.startsWith("import", i) && isKeywordBoundary(source, i, "import")) {
-      const afterImport = skipWhitespaceAndComments(source, i + "import".length);
-      if (source[afterImport] === "(") {
-        const specifierIndex = skipWhitespaceAndComments(source, afterImport + 1);
-        const specifierQuote = source[specifierIndex];
-        const literal = specifierQuote === '"' || specifierQuote === "'"
-          ? readStringLiteral(source, specifierIndex)
-          : null;
-        if (literal !== null) {
-          const afterLiteral = skipWhitespaceAndComments(source, literal.end);
-          if (source[afterLiteral] === ")") {
-            specifiers.push(literal.value);
-            continue;
-          }
-          if (source[afterLiteral] === ",") {
-            const argumentIndex = skipWhitespaceAndComments(source, afterLiteral + 1);
-            if (source[argumentIndex] === ")") {
-              specifiers.push(literal.value);
-              continue;
-            }
-            const attributesEnd = readStaticImportAttributesArgument(source, argumentIndex);
-            if (
-              attributesEnd !== null &&
-              source[skipWhitespaceAndComments(source, attributesEnd)] === ")"
-            ) {
-              specifiers.push(literal.value);
-              continue;
-            }
-          }
-          hasUnconstrainedDynamicImport = true;
-        } else {
-          hasUnconstrainedDynamicImport = true;
-        }
-        continue;
-      }
-
-      const sideEffectSpecifier = readStringLiteral(source, afterImport)?.value;
-      if (sideEffectSpecifier !== undefined) {
-        specifiers.push(sideEffectSpecifier);
-        continue;
-      }
-
-      const specifier = readSpecifierAfterFrom(source, afterImport);
-      if (specifier !== null) specifiers.push(specifier);
+      readImportSpecifierInto(source, i, accumulator);
+      hasUnconstrainedDynamicImport = accumulator.hasUnconstrainedDynamicImport;
+      i++;
       continue;
     }
 
@@ -890,6 +967,7 @@ export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
       const specifier = readSpecifierAfterFrom(source, i + "export".length);
       if (specifier !== null) specifiers.push(specifier);
     }
+    i++;
   }
 
   return {
@@ -899,6 +977,110 @@ export function scanModuleSpecifiers(source: string): ModuleSpecifierScan {
     requiresBundling,
     hasDynamicCodeGeneration,
   };
+}
+
+function unreadableModuleSpecifierScan(
+  specifiers: string[],
+  requiresBundling: boolean,
+  hasDynamicCodeGeneration: boolean,
+): ModuleSpecifierScan {
+  return {
+    specifiers,
+    // An unreadable template hides whatever follows it, so this scan cannot
+    // claim the source names no unconstrained import.
+    hasUnconstrainedDynamicImport: true,
+    requiresBundling,
+    hasDynamicCodeGeneration,
+  };
+}
+
+function skipModuleScanToken(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): number | null | undefined {
+  const char = source[index];
+  const next = source[index + 1];
+
+  if (char === "/" && next === "/") return skipLineComment(source, index);
+  if (char === "/" && next === "*") return skipBlockComment(source, index);
+  if (char === "/") return skipSlashInModuleScan(source, index, accumulator);
+  if (char === '"' || char === "'") return skipStringLiteral(source, index);
+  if (char !== "`") return undefined;
+
+  const template = readTemplateLiteral(source, index);
+  if (template === null) return null;
+  mergeModuleSpecifierScan(accumulator, template.scan);
+  return template.end;
+}
+
+function skipSlashInModuleScan(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): number {
+  // Distinguishing a regular-expression literal from division requires a full
+  // JavaScript parser. The direct Deno loader bypasses the HTTP plugin, so any
+  // non-comment slash routes this graph through esbuild, whose parser and HTTP
+  // plugin enforce the actual import edges.
+  accumulator.requiresBundling = true;
+  if (!canStartRegularExpression(source, index)) return index + 1;
+  return skipRegularExpressionLiteral(source, index) ?? index + 1;
+}
+
+function readImportSpecifierInto(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): void {
+  const afterImport = skipWhitespaceAndComments(source, index + "import".length);
+  if (source[afterImport] === "(") {
+    readDynamicImportSpecifierInto(source, afterImport + 1, accumulator);
+    return;
+  }
+
+  const sideEffectSpecifier = readStringLiteral(source, afterImport)?.value;
+  if (sideEffectSpecifier !== undefined) {
+    accumulator.specifiers.push(sideEffectSpecifier);
+    return;
+  }
+
+  const specifier = readSpecifierAfterFrom(source, afterImport);
+  if (specifier !== null) accumulator.specifiers.push(specifier);
+}
+
+function readDynamicImportSpecifierInto(
+  source: string,
+  index: number,
+  accumulator: MutableScanAccumulator,
+): void {
+  const literal = readQuotedStringLiteralAt(source, skipWhitespaceAndComments(source, index));
+  if (literal === null) {
+    accumulator.hasUnconstrainedDynamicImport = true;
+    return;
+  }
+
+  const afterLiteral = skipWhitespaceAndComments(source, literal.end);
+  if (source[afterLiteral] === ")") {
+    accumulator.specifiers.push(literal.value);
+    return;
+  }
+  if (source[afterLiteral] !== ",") {
+    accumulator.hasUnconstrainedDynamicImport = true;
+    return;
+  }
+
+  const argumentIndex = skipWhitespaceAndComments(source, afterLiteral + 1);
+  if (source[argumentIndex] === ")") {
+    accumulator.specifiers.push(literal.value);
+    return;
+  }
+  const attributesEnd = readStaticImportAttributesArgument(source, argumentIndex);
+  if (attributesEnd !== null && source[skipWhitespaceAndComments(source, attributesEnd)] === ")") {
+    accumulator.specifiers.push(literal.value);
+    return;
+  }
+  accumulator.hasUnconstrainedDynamicImport = true;
 }
 
 /**
@@ -1075,42 +1257,55 @@ function classifyWorkerUrlArgument(source: string, index: number): WorkerUrlClas
     if (literal === null) return DYNAMIC_WORKER;
     return classifyWorkerUrlLiteral(literal.value, literal.value);
   }
-  if (source.startsWith("new", index) && isKeywordBoundary(source, index, "new")) {
-    let j = skipWhitespaceAndComments(source, index + "new".length);
-    if (source.startsWith("URL", j) && isKeywordBoundary(source, j, "URL")) {
-      j = skipWhitespaceAndComments(source, j + "URL".length);
-      if (source[j] === "(") {
-        const inner = skipWhitespaceAndComments(source, j + 1);
-        const literal = readConcatenatedStringLiteral(source, inner);
-        if (literal !== null) {
-          if (REMOTE_OR_INLINE_WORKER_URL.test(literal.value)) return REMOTE_WORKER;
-          return classifyWorkerUrlBase(source, literal.end, literal.value);
-        }
-      }
-    }
+  return classifyNewWorkerUrlArgument(source, index);
+}
+
+function classifyNewWorkerUrlArgument(source: string, index: number): WorkerUrlClassification {
+  const urlCallOpenParen = readNewUrlOpenParen(source, index);
+  if (urlCallOpenParen === null) return DYNAMIC_WORKER;
+
+  const inner = skipWhitespaceAndComments(source, urlCallOpenParen + 1);
+  const literal = readConcatenatedStringLiteral(source, inner);
+  if (literal === null) return DYNAMIC_WORKER;
+  if (REMOTE_OR_INLINE_WORKER_URL.test(literal.value)) return REMOTE_WORKER;
+  return classifyWorkerUrlBase(source, literal.end, literal.value);
+}
+
+function readNewUrlOpenParen(source: string, index: number): number | null {
+  if (!source.startsWith("new", index) || !isKeywordBoundary(source, index, "new")) return null;
+  const urlIndex = skipWhitespaceAndComments(source, index + "new".length);
+  if (!source.startsWith("URL", urlIndex) || !isKeywordBoundary(source, urlIndex, "URL")) {
+    return null;
   }
-  return DYNAMIC_WORKER;
+  const openParen = skipWhitespaceAndComments(source, urlIndex + "URL".length);
+  return source[openParen] === "(" ? openParen : null;
 }
 
 /** Every worker construction in `source`, in source order. */
 function* textualWorkerUrlClassifications(source: string): Generator<WorkerUrlClassification> {
   const keyword = "new";
-  for (let i = source.indexOf(keyword); i !== -1; i = source.indexOf(keyword, i + 1)) {
-    if (!isKeywordBoundary(source, i, keyword)) continue;
-    let j = skipWhitespaceAndComments(source, i + keyword.length);
-    if (!source.startsWith("Worker", j) || !isKeywordBoundary(source, j, "Worker")) continue;
-    j = skipWhitespaceAndComments(source, j + "Worker".length);
-    if (source[j] !== "(") continue;
-    yield classifyWorkerUrlArgument(source, skipWhitespaceAndComments(source, j + 1));
+  let i = source.indexOf(keyword);
+  while (i !== -1) {
+    const argumentIndex = readWorkerConstructorArgumentIndex(source, i);
+    if (argumentIndex !== null) yield classifyWorkerUrlArgument(source, argumentIndex);
+    i = source.indexOf(keyword, i + keyword.length);
   }
+}
+
+function readWorkerConstructorArgumentIndex(source: string, index: number): number | null {
+  if (!isKeywordBoundary(source, index, "new")) return null;
+  let workerIndex = skipWhitespaceAndComments(source, index + "new".length);
+  if (
+    !source.startsWith("Worker", workerIndex) ||
+    !isKeywordBoundary(source, workerIndex, "Worker")
+  ) return null;
+  workerIndex = skipWhitespaceAndComments(source, workerIndex + "Worker".length);
+  return source[workerIndex] === "(" ? skipWhitespaceAndComments(source, workerIndex + 1) : null;
 }
 
 function containsFallbackCapabilityName(source: string, names: readonly string[]): boolean {
   const decoded = decodeIdentifierEscapes(source);
-  return names.some((name) => {
-    const pattern = new RegExp(`(^|[^\\p{ID_Continue}$])${name}(?![\\p{ID_Continue}$])`, "u");
-    return pattern.test(decoded);
-  });
+  return containsIdentifierName(decoded, names);
 }
 
 function fallbackWorkerUrlClassifications(source: string): WorkerUrlClassification[] {
@@ -1148,8 +1343,8 @@ function firstWorkerViolation(
   workers: readonly WorkerUrlClassification[],
 ): WorkerViolation | null {
   for (const worker of workers) {
-    if (worker.kind === "file" || worker.kind === "remote") return "remote";
-    if (worker.kind === "dynamic") return "dynamic";
+    if (worker.kind === "file") return "remote";
+    if (worker.kind !== "local") return worker.kind;
     // A local worker without a specifier names an entry no graph walk can vet.
     if (worker.specifier === null) return "dynamic";
     if (worker.requiresUnqualifiedWorkerShim === true) return "shim";

