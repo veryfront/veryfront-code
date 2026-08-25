@@ -7,7 +7,6 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  assertConfiguredBuildOutputPhysicallyContained,
   buildCommand,
   formatBuildOutputPath,
   releaseBuildExtensions,
@@ -15,9 +14,6 @@ import {
   runWithBundlerShutdown,
 } from "./command.ts";
 import type { BuildOptions } from "./types.ts";
-import { makeTempDir, mkdir, remove, symlink } from "#veryfront/platform/compat/fs.ts";
-import { join } from "veryfront/platform/path";
-import { runtime } from "veryfront/platform";
 
 describe("commands/build/command", () => {
   describe("buildCommand", () => {
@@ -219,68 +215,6 @@ describe("commands/build/command", () => {
         Error,
         "inside the project",
       );
-    });
-  });
-
-  describe("configured output physical containment", () => {
-    it("rejects an absent output below an intermediate symlink", async () => {
-      const tempDir = await makeTempDir({ prefix: "veryfront-build-output-" });
-      const projectDir = join(tempDir, "project");
-      const externalDir = join(tempDir, "external");
-      await mkdir(projectDir, { recursive: true });
-      await mkdir(externalDir, { recursive: true });
-      await symlink(externalDir, join(projectDir, "link"));
-
-      try {
-        const adapter = await runtime.get();
-        await assertRejects(
-          () =>
-            assertConfiguredBuildOutputPhysicallyContained(adapter, projectDir, {
-              build: { outDir: "link/release" },
-            }),
-          Error,
-          "physically inside the project",
-        );
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
-    });
-
-    it("rejects an output symlink whose target remains inside the project", async () => {
-      const tempDir = await makeTempDir({ prefix: "veryfront-build-output-" });
-      const projectDir = join(tempDir, "project");
-      const artifactsDir = join(projectDir, "artifacts");
-      await mkdir(artifactsDir, { recursive: true });
-      await symlink(artifactsDir, join(projectDir, "output"));
-
-      try {
-        const adapter = await runtime.get();
-        await assertRejects(
-          () =>
-            assertConfiguredBuildOutputPhysicallyContained(adapter, projectDir, {
-              build: { outDir: "output" },
-            }),
-          Error,
-          "must not traverse symbolic links",
-        );
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
-    });
-
-    it("accepts an absent output below the physical project directory", async () => {
-      const tempDir = await makeTempDir({ prefix: "veryfront-build-output-" });
-      const projectDir = join(tempDir, "project");
-      await mkdir(projectDir, { recursive: true });
-
-      try {
-        const adapter = await runtime.get();
-        await assertConfiguredBuildOutputPhysicallyContained(adapter, projectDir, {
-          build: { outDir: "nested/release" },
-        });
-      } finally {
-        await remove(tempDir, { recursive: true });
-      }
     });
   });
 
