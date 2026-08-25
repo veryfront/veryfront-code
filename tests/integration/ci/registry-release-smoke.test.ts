@@ -175,7 +175,7 @@ exit 0
           VF_FAKE_NPM_COUNT: npmCount,
           VF_FAKE_NPM_LOG: npmLog,
           VF_NPM_REGISTRY_PACKAGES:
-            "veryfront\n@veryfront/ext-parser-babel\n@veryfront/ext-auth-jwt",
+            "veryfront\n@example/runtime-kit\n@veryfront/ext-parser-babel\n@veryfront/ext-auth-jwt",
           VF_NPM_REGISTRY_URL: registryUrl,
           VF_NPM_REGISTRY_VERSION: version,
         },
@@ -187,7 +187,7 @@ exit 0
       const log = await Deno.readTextFile(npmLog);
       assertStringIncludes(
         log,
-        `args=install --no-fund --no-audit --silent --ignore-scripts veryfront@${version} @veryfront/ext-parser-babel@${version}`,
+        `args=install --no-fund --no-audit --silent --ignore-scripts veryfront@${version} @example/runtime-kit@${version} @veryfront/ext-parser-babel@${version}`,
       );
       assertStringIncludes(
         log,
