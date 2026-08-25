@@ -69,6 +69,7 @@ import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
+import { ProxyRequestHostError } from "./request-host.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
 import {
@@ -729,7 +730,20 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
  * Main router.
  */
 async function router(req: Request): Promise<Response> {
-  const url = new URL(req.url);
+  let url: URL;
+  try {
+    url = new URL(req.url);
+  } catch {
+    // Deno builds req.url from the request target and the client's Host header
+    // verbatim, so a Host that is not a valid URL authority (empty, embedded
+    // space, "[", a non-numeric port) yields a req.url the parser rejects.
+    // Reject the request instead of letting the TypeError escape the handler
+    // as Deno's generic 500 with a bare stack line.
+    proxyLogger.warn(`400 ${req.method} <unparseable request URL>`, {
+      host: req.headers.get("host") ?? "",
+    });
+    return jsonErrorResponse(400, { error: "Bad Request" });
+  }
 
   if (url.pathname === "/_proxy/health") {
     return Response.json({ service: "veryfront-proxy", status: "ok" });
@@ -765,6 +779,16 @@ async function router(req: Request): Promise<Response> {
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);
+    if (error instanceof ProxyRequestHostError) {
+      // An absolute-form request target with an empty Host header parses as a
+      // URL, but Host validation rejects it downstream ("" is not nullish, so
+      // the url.host fallback never fires). Map it to 400 here instead of
+      // letting it escape as Deno's generic 500.
+      proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
+        host: req.headers.get("host") ?? "",
+      });
+      return jsonErrorResponse(400, { error: "Bad Request" });
+    }
     throw error;
   }
 }

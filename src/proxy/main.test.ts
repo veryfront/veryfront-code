@@ -9,6 +9,46 @@ describe("proxy main request URL parsing", () => {
     assertEquals(requestUrlParses.length, 1);
   });
 
+  it("rejects an unparseable request URL with 400 instead of an escaping TypeError", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    // A malformed Host header makes Deno synthesize a req.url that new URL()
+    // rejects (e.g. `http:///`). The parse must be guarded and answer 400;
+    // an escaping TypeError becomes Deno's own generic 500 with no structured
+    // log line and no drain tracking (veryfront-issue-inbox#828).
+    const parseIndex = source.indexOf("url = new URL(req.url);");
+    const guardIndex = source.lastIndexOf("try {", parseIndex);
+    assertEquals(parseIndex >= 0, true, "the router must parse req.url into a reassignable binding");
+    assertEquals(
+      guardIndex >= 0 && parseIndex - guardIndex < 80,
+      true,
+      "the request-URL parse must sit directly inside a try block",
+    );
+    const catchBlock = source.slice(parseIndex, source.indexOf("if (url.pathname", parseIndex));
+    assertStringIncludes(
+      catchBlock,
+      'jsonErrorResponse(400, { error: "Bad Request" })',
+      "an unparseable request URL must produce a 400 response",
+    );
+  });
+
+  it("maps a downstream ProxyRequestHostError to 400 in the router backstop", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    // An absolute-form target with an empty Host header parses as a URL but
+    // fails Host validation downstream, so the guard on the parse alone would
+    // only move the crash (veryfront-issue-inbox#828).
+    const catchIndex = source.indexOf("proxyRequestDrainTracker.complete(requestId);");
+    assertEquals(catchIndex >= 0, true);
+    const routerCatch = source.slice(catchIndex, catchIndex + 700);
+    assertStringIncludes(routerCatch, "error instanceof ProxyRequestHostError");
+    assertStringIncludes(
+      routerCatch,
+      'jsonErrorResponse(400, { error: "Bad Request" })',
+      "an invalid Host header must produce a 400 response, not an escaping throw",
+    );
+  });
+
   it("uses an independent request body for every upstream attempt", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
