@@ -21,6 +21,7 @@ import {
   type TransportRequestInit,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 function createOps(
   token: string | (() => string) = "token",
@@ -90,22 +91,22 @@ function observeAbortListenerBalance(signal: AbortSignal): {
 }
 
 describe("VeryfrontAPIOperations", () => {
-  const originalFetch = globalThis.fetch;
-
   function stubJsonFetch(handler: (url: string, init?: RequestInit) => unknown): void {
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const body = handler(String(input), init);
-      return Promise.resolve(
-        new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    }) as typeof fetch;
+    installMockFetch(
+      ((input: RequestInfo | URL, init?: RequestInit) => {
+        const body = handler(String(input), init);
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }) as typeof fetch,
+    );
   }
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     __resetLogRecordEmitterForTests();
   });
 
@@ -248,9 +249,80 @@ describe("VeryfrontAPIOperations", () => {
         };
       });
 
-      await createOps().getBranchFile("project-slug", "main", "app/api/ag-ui/route.ts");
+      const detail = await createOps().getBranchFile(
+        "project-slug",
+        "main",
+        "app/api/ag-ui/route.ts",
+      );
 
       assertStringIncludes(requestedUrl, "include_server_functions=true");
+      assertEquals(detail, {
+        path: "app/api/ag-ui/route.ts",
+        content: "export const POST = () => new Response();",
+        id: "file-id",
+        type: "function",
+        size: 40,
+      }, "branch file detail must map every payload field");
+    });
+
+    it("maps every environment file detail field returned by the API", async () => {
+      stubJsonFetch(() => ({
+        id: "file-id",
+        version_id: "version-id",
+        path: "app/api/agents/route.ts",
+        content: "export const GET = () => new Response();",
+        size: 39,
+        type: "function",
+        updated_at: "2026-04-23T00:00:00.000Z",
+        environment_id: "environment-id",
+        environment_name: "production",
+        release_id: "release-id",
+        release_version: "v1",
+      }));
+
+      const detail = await createOps().getEnvironmentFile(
+        "project-slug",
+        "production",
+        "app/api/agents/route.ts",
+      );
+
+      assertEquals(detail, {
+        path: "app/api/agents/route.ts",
+        content: "export const GET = () => new Response();",
+        id: "file-id",
+        version_id: "version-id",
+        release_id: "release-id",
+        release_version: "v1",
+      }, "environment file detail must map every payload field");
+    });
+
+    it("maps every release file detail field returned by the API", async () => {
+      stubJsonFetch(() => ({
+        id: "file-id",
+        version_id: "version-id",
+        path: "pages/api/articles-2.ts",
+        content: "export default () => {}",
+        size: 23,
+        type: "function",
+        updated_at: "2026-04-23T00:00:00.000Z",
+        release_id: "release-id",
+        release_version: "v1",
+      }));
+
+      const detail = await createOps().getReleaseFile(
+        "project-slug",
+        "release-id",
+        "pages/api/articles-2.ts",
+      );
+
+      assertEquals(detail, {
+        path: "pages/api/articles-2.ts",
+        content: "export default () => {}",
+        id: "file-id",
+        version_id: "version-id",
+        release_id: "release-id",
+        release_version: "v1",
+      }, "release file detail must map every payload field");
     });
 
     it("warn-logs normal 404s for branch file content reads", async () => {
@@ -258,14 +330,16 @@ describe("VeryfrontAPIOperations", () => {
       const originalWarn = console.warn;
       console.warn = () => {};
       __registerLogRecordEmitter((entry) => entries.push(entry));
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ error: "Not found" }), {
-            status: 404,
-            statusText: "Not Found",
-            headers: { "Content-Type": "application/json" },
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Not found" }), {
+              status: 404,
+              statusText: "Not Found",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -292,14 +366,16 @@ describe("VeryfrontAPIOperations", () => {
       const originalWarn = console.warn;
       console.warn = () => {};
       __registerLogRecordEmitter((entry) => entries.push(entry));
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ error: "Not found" }), {
-            status: 404,
-            statusText: "Not Found",
-            headers: { "Content-Type": "application/json" },
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Not found" }), {
+              status: 404,
+              statusText: "Not Found",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -329,14 +405,16 @@ describe("VeryfrontAPIOperations", () => {
       const originalWarn = console.warn;
       console.warn = () => {};
       __registerLogRecordEmitter((entry) => entries.push(entry));
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ error: "Not found" }), {
-            status: 404,
-            statusText: "Not Found",
-            headers: { "Content-Type": "application/json" },
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Not found" }), {
+              status: 404,
+              statusText: "Not Found",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -366,14 +444,16 @@ describe("VeryfrontAPIOperations", () => {
       const originalWarn = console.warn;
       console.warn = () => {};
       __registerLogRecordEmitter((entry) => entries.push(entry));
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ error: "Not found" }), {
-            status: 404,
-            statusText: "Not Found",
-            headers: { "Content-Type": "application/json" },
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Not found" }), {
+              status: 404,
+              statusText: "Not Found",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -403,14 +483,16 @@ describe("VeryfrontAPIOperations", () => {
       const originalWarn = console.warn;
       console.warn = () => {};
       __registerLogRecordEmitter((entry) => entries.push(entry));
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ error: "Invalid authentication token" }), {
-            status: 401,
-            statusText: "Unauthorized",
-            headers: { "Content-Type": "application/json" },
-          }),
-        )) as typeof fetch;
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Invalid authentication token" }), {
+              status: 401,
+              statusText: "Unauthorized",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -472,17 +554,113 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
+  describe("lookupProjectByDomain", () => {
+    it("strips the port and matches environment domains case-insensitively", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "P",
+          slug: "p",
+          environments: [{
+            id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            name: "production",
+            domains: ["APP.EXAMPLE.COM"],
+            active_release_id: "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+          }],
+        };
+      });
+
+      const result = await createOps().lookupProjectByDomain("app.example.com:8443");
+
+      assertEquals(
+        new URL(requestedUrl).pathname,
+        "/projects/app.example.com",
+        "the lookup path must drop the :port suffix",
+      );
+      assertEquals(
+        result?.environment?.name,
+        "production",
+        "domain matching must be case-insensitive",
+      );
+      assertEquals(
+        result?.release_id,
+        "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+        "the matching environment's active release must be returned",
+      );
+    });
+
+    it("resolves to null when the domain has no project", async () => {
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response("{}", {
+              status: 404,
+              statusText: "Not Found",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
+
+      try {
+        assertEquals(
+          await createOps().lookupProjectByDomain("missing.example.com"),
+          null,
+          "a 404 lookup must resolve to null, not throw",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+
+    it("rethrows non-404 upstream failures", async () => {
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      installMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response("{}", {
+              status: 500,
+              statusText: "Internal Server Error",
+              headers: { "Content-Type": "application/json" },
+            }),
+          )) as typeof fetch,
+      );
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com",
+        "token",
+        { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      );
+
+      try {
+        await assertRejects(
+          () => ops.lookupProjectByDomain("app.example.com"),
+          VeryfrontError,
+          undefined,
+          "a 500 must surface as an error instead of a null lookup",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+  });
+
   describe("bounded file content", () => {
     it("returns exact UTF-8 bytes through the normal branch file endpoint", async () => {
       let requestedUrl = "";
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        requestedUrl = String(input);
-        return Promise.resolve(
-          new Response(JSON.stringify({ ignored: [1, 2, 3], content: "é" }), {
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          requestedUrl = String(input);
+          return Promise.resolve(
+            new Response(JSON.stringify({ ignored: [1, 2, 3], content: "é" }), {
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }) as typeof fetch,
+      );
 
       const bytes = await createOps().getBranchFileContentBytesWithinLimit(
         "project-slug",
@@ -501,10 +679,12 @@ describe("VeryfrontAPIOperations", () => {
       let fetchCalls = 0;
       let parseCalls = 0;
       const originalJsonParse = JSON.parse;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(new Response(JSON.stringify({ content: "xx" })));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response(JSON.stringify({ content: "xx" })));
+        }) as typeof fetch,
+      );
       JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
         parseCalls++;
         return Reflect.apply(originalJsonParse, JSON, args);
@@ -569,17 +749,19 @@ describe("VeryfrontAPIOperations", () => {
       const started = new Promise<void>((resolve) => {
         requestStarted = resolve;
       });
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-        fetchCalls++;
-        const signal = init?.signal;
-        requestStarted();
-        return new Promise<Response>((_resolve, reject) => {
-          if (!signal) return;
-          const rejectAbort = () => reject(signal.reason);
-          if (signal.aborted) rejectAbort();
-          else signal.addEventListener("abort", rejectAbort, { once: true });
-        });
-      }) as typeof fetch;
+      installMockFetch(
+        ((_input: RequestInfo | URL, init?: RequestInit) => {
+          fetchCalls++;
+          const signal = init?.signal;
+          requestStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            if (!signal) return;
+            const rejectAbort = () => reject(signal.reason);
+            if (signal.aborted) rejectAbort();
+            else signal.addEventListener("abort", rejectAbort, { once: true });
+          });
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -602,17 +784,19 @@ describe("VeryfrontAPIOperations", () => {
         const started = new Promise<void>((resolve) => {
           markStarted = resolve;
         });
-        globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-          observedSignal = init?.signal ?? undefined;
-          markStarted();
-          return new Promise<Response>((_resolve, reject) => {
-            observedSignal?.addEventListener(
-              "abort",
-              () => reject(observedSignal?.reason),
-              { once: true },
-            );
-          });
-        }) as typeof fetch;
+        installMockFetch(
+          ((_input: RequestInfo | URL, init?: RequestInit) => {
+            observedSignal = init?.signal ?? undefined;
+            markStarted();
+            return new Promise<Response>((_resolve, reject) => {
+              observedSignal?.addEventListener(
+                "abort",
+                () => reject(observedSignal?.reason),
+                { once: true },
+              );
+            });
+          }) as typeof fetch,
+        );
         const transport = createVeryfrontApiTransport<unknown>({
           baseUrl: "https://api.example.com",
           getToken: () => "token",
@@ -638,7 +822,7 @@ describe("VeryfrontAPIOperations", () => {
 
     it("detaches compatibility listeners after a successful request", async () => {
       await withoutAbortSignalAny(async () => {
-        globalThis.fetch = (() => Promise.resolve(new Response("{}"))) as typeof fetch;
+        installMockFetch((() => Promise.resolve(new Response("{}"))) as typeof fetch);
         const caller = new AbortController();
         const observation = observeAbortListenerBalance(caller.signal);
         try {
@@ -660,7 +844,7 @@ describe("VeryfrontAPIOperations", () => {
 
     it("detaches compatibility listeners after a non-abort failure", async () => {
       await withoutAbortSignalAny(async () => {
-        globalThis.fetch = (() => Promise.reject(new Error("network failed"))) as typeof fetch;
+        installMockFetch((() => Promise.reject(new Error("network failed"))) as typeof fetch);
         const caller = new AbortController();
         const observation = observeAbortListenerBalance(caller.signal);
         try {
@@ -687,12 +871,14 @@ describe("VeryfrontAPIOperations", () => {
     it("balances compatibility listeners across retry attempts", async () => {
       await withoutAbortSignalAny(async () => {
         let fetchCalls = 0;
-        globalThis.fetch = (() => {
-          fetchCalls++;
-          return fetchCalls === 1
-            ? Promise.reject(new Error("retryable failure"))
-            : Promise.resolve(new Response("{}"));
-        }) as typeof fetch;
+        installMockFetch(
+          (() => {
+            fetchCalls++;
+            return fetchCalls === 1
+              ? Promise.reject(new Error("retryable failure"))
+              : Promise.resolve(new Response("{}"));
+          }) as typeof fetch,
+        );
         const caller = new AbortController();
         const observation = observeAbortListenerBalance(caller.signal);
         try {
@@ -717,7 +903,7 @@ describe("VeryfrontAPIOperations", () => {
     it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {
       const body = '{"content":"\\u0000\\u0000"}';
       assertEquals(new TextEncoder().encode(body).byteLength, 26);
-      globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+      installMockFetch((() => Promise.resolve(new Response(body))) as typeof fetch);
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -738,10 +924,12 @@ describe("VeryfrontAPIOperations", () => {
       const body = '{"content":"","x":0}';
       assertEquals(new TextEncoder().encode(body).byteLength, 20);
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(new Response(body));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response(body));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -770,21 +958,23 @@ describe("VeryfrontAPIOperations", () => {
     it("retries a body read aborted by the per-attempt timeout", async () => {
       let fetchCalls = 0;
       let cancellations = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(
-          new Response(
-            new ReadableStream<Uint8Array>({
-              pull() {
-                return new Promise<void>(() => {});
-              },
-              cancel() {
-                cancellations++;
-              },
-            }),
-          ),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull() {
+                  return new Promise<void>(() => {});
+                },
+                cancel() {
+                  cancellations++;
+                },
+              }),
+            ),
+          );
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -807,15 +997,17 @@ describe("VeryfrontAPIOperations", () => {
 
     it("preserves a 400 status when its diagnostic body is malformed UTF-8", async () => {
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(
-          new Response(new Uint8Array([0xc3, 0x28]), {
-            status: 400,
-            statusText: "Bad Request",
-          }),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(
+            new Response(new Uint8Array([0xc3, 0x28]), {
+              status: 400,
+              statusText: "Bad Request",
+            }),
+          );
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -834,15 +1026,17 @@ describe("VeryfrontAPIOperations", () => {
 
     it("retries a 500 even when its diagnostic body is malformed UTF-8", async () => {
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(
-          new Response(new Uint8Array([0xc3, 0x28]), {
-            status: 500,
-            statusText: "Internal Server Error",
-          }),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(
+            new Response(new Uint8Array([0xc3, 0x28]), {
+              status: 500,
+              statusText: "Internal Server Error",
+            }),
+          );
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -860,10 +1054,12 @@ describe("VeryfrontAPIOperations", () => {
 
     it("rejects invalid bounded options before fetching", async () => {
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(new Response("{}"));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response("{}"));
+        }) as typeof fetch,
+      );
       const transport = createVeryfrontApiTransport<unknown>({
         baseUrl: "https://api.example.com",
         getToken: () => "token",
@@ -911,18 +1107,20 @@ describe("VeryfrontAPIOperations", () => {
       let contentHashHeader: string | null = null;
       let contentTypeHeader: string | null = null;
       let requestedUrl = "";
-      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-        requestedUrl = String(input);
-        const headers = new Headers(init?.headers);
-        contentHashHeader = headers.get("x-vf-content-hash");
-        contentTypeHeader = headers.get("Content-Type");
-        return Promise.resolve(
-          new Response(JSON.stringify({ stored: true, existed: false }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          requestedUrl = String(input);
+          const headers = new Headers(init?.headers);
+          contentHashHeader = headers.get("x-vf-content-hash");
+          contentTypeHeader = headers.get("Content-Type");
+          return Promise.resolve(
+            new Response(JSON.stringify({ stored: true, existed: false }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }) as typeof fetch,
+      );
 
       const bytes = new TextEncoder().encode("export const x = 1;");
       const res = await createOps().uploadReleaseAsset(
@@ -995,18 +1193,20 @@ describe("VeryfrontAPIOperations", () => {
       let method = "";
       let contentType = "";
       let body: BodyInit | null | undefined;
-      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-        requestedUrl = String(input);
-        method = init?.method ?? "GET";
-        contentType = new Headers(init?.headers).get("content-type") ?? "";
-        body = init?.body;
-        return Promise.resolve(
-          new Response(JSON.stringify({ stored: true, existed: false }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          requestedUrl = String(input);
+          method = init?.method ?? "GET";
+          contentType = new Headers(init?.headers).get("content-type") ?? "";
+          body = init?.body;
+          return Promise.resolve(
+            new Response(JSON.stringify({ stored: true, existed: false }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }) as typeof fetch,
+      );
       const bytes = new TextEncoder().encode("export const value = 42;");
       const contentHash = await crypto.subtle.digest("SHA-256", bytes).then((digest) =>
         [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
@@ -1032,10 +1232,12 @@ describe("VeryfrontAPIOperations", () => {
 
     it("rejects a local content hash mismatch before transport", async () => {
       let fetchCalls = 0;
-      globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) => {
-        fetchCalls++;
-        return Promise.resolve(new Response("{}"));
-      }) as typeof fetch;
+      installMockFetch(
+        ((_input: RequestInfo | URL, _init?: RequestInit) => {
+          fetchCalls++;
+          return Promise.resolve(new Response("{}"));
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () =>

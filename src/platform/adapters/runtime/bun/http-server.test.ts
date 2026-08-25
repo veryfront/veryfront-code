@@ -132,6 +132,26 @@ describe("Bun HTTP server lifecycle", () => {
     assertEquals(observedPeer, undefined);
   });
 
+  it("contains handler exceptions as a 500 instead of leaking them to Bun", async () => {
+    const native = new FakeNativeServer();
+    const fake = createRuntime(native);
+    await createBunServerWithRuntime(fake.runtime, () => {
+      throw new Error("handler exploded");
+    });
+
+    const response = await fake.getOptions().fetch(
+      new Request("http://localhost/"),
+      native,
+    );
+
+    assertEquals(response?.status, 500, "handler exceptions must be contained");
+    assertEquals(
+      await response?.text(),
+      "Internal Server Error",
+      "the contained response must not leak the error",
+    );
+  });
+
   it("reports the actual bound address and installs the native WebSocket handler", async () => {
     const native = new FakeNativeServer("::1", 45_678);
     const fake = createRuntime(native);

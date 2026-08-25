@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getTokenStorageAdapter,
@@ -105,7 +111,11 @@ describe("platform/adapters/token/integration", () => {
     it("should return same instance on multiple calls (singleton)", async () => {
       const adapter1 = await getTokenStorageAdapter();
       const adapter2 = await getTokenStorageAdapter();
-      assertEquals(adapter1, adapter2);
+      assertStrictEquals(
+        adapter1,
+        adapter2,
+        "getTokenStorageAdapter must return the same adapter instance",
+      );
     });
 
     it("coalesces concurrent singleton creation", async () => {
@@ -114,8 +124,16 @@ describe("platform/adapters/token/integration", () => {
         getTokenStorageAdapter(),
         getTokenStorageAdapter(),
       ]);
-      assertEquals(adapter1, adapter2);
-      assertEquals(adapter2, adapter3);
+      assertStrictEquals(
+        adapter1,
+        adapter2,
+        "concurrent callers must share one adapter instance",
+      );
+      assertStrictEquals(
+        adapter2,
+        adapter3,
+        "concurrent callers must share one adapter instance",
+      );
     });
 
     it("prevents pending creation from republishing an adapter after reset", async () => {
@@ -129,7 +147,11 @@ describe("platform/adapters/token/integration", () => {
       );
 
       const replacement = await getTokenStorageAdapter();
-      assertEquals(await getTokenStorageAdapter(), replacement);
+      assertStrictEquals(
+        await getTokenStorageAdapter(),
+        replacement,
+        "the replacement adapter must be published as the singleton",
+      );
     });
 
     it("should create new instance after reset", async () => {
@@ -138,6 +160,11 @@ describe("platform/adapters/token/integration", () => {
       const adapter2 = await getTokenStorageAdapter();
       assertExists(adapter1);
       assertExists(adapter2);
+      assertNotStrictEquals(
+        adapter1,
+        adapter2,
+        "resetTokenStorageAdapter must publish a new adapter instance",
+      );
     });
 
     it("should return a working memory adapter", async () => {

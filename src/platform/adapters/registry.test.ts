@@ -91,6 +91,17 @@ describe("registry.ts", () => {
     it("should throw on invalid adapter", async () => {
       await assertRejects(() => runtime.set({} as any), Error, "Invalid adapter");
       await assertRejects(() => runtime.set(null as never), Error, "Invalid adapter");
+
+      for (const missing of ["id", "name", "fs", "env", "server"] as const) {
+        const adapter = createMockAdapter();
+        delete (adapter as unknown as Record<string, unknown>)[missing];
+        await assertRejects(
+          () => runtime.set(adapter),
+          Error,
+          "Invalid adapter",
+          `an adapter missing ${missing} must be rejected at set() time`,
+        );
+      }
     });
 
     it("should replace existing adapter", async () => {
@@ -319,6 +330,49 @@ describe("registry.ts", () => {
 
       assertEquals(a, b);
       assertEquals(b, c);
+    });
+
+    it("refuses getSync and reports uninitialized while a replacement is in flight", async () => {
+      const registry = new AdapterRegistry();
+      const initializationStarted = createDeferred();
+      const release = createDeferred();
+      const installed = createMockAdapter();
+      const replacement = createMockAdapter();
+      replacement.initialize = async () => {
+        initializationStarted.resolve();
+        await release.promise;
+      };
+
+      await registry.set(installed);
+      const pending = registry.set(replacement);
+      await initializationStarted.promise;
+
+      assertEquals(
+        registry.isInitialized(),
+        false,
+        "isInitialized must report false while an operation is in flight",
+      );
+      assertThrows(
+        () => registry.getSync(),
+        Error,
+        "transitioning",
+        "getSync must refuse to hand back an adapter that is being replaced",
+      );
+
+      release.resolve();
+      await pending;
+
+      assertEquals(
+        registry.isInitialized(),
+        true,
+        "the registry must report initialized once the operation settles",
+      );
+      assertEquals(
+        registry.getSync(),
+        replacement,
+        "getSync must return the replacement after the transition completes",
+      );
+      await registry.reset();
     });
 
     it("serializes an explicit set after an in-flight automatic initialization", async () => {
