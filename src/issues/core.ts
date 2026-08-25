@@ -45,14 +45,6 @@ export function parseFrontmatter(content: string): { frontmatter: string; body: 
 }
 
 /**
- * Minimal YAML parser for issue frontmatter. Handles ONLY the shapes this
- * module emits: flat `key: value` scalars, `[a, b]` inline arrays, and
- * block arrays (`-` items). Keys may contain letters, digits, `_` and `-`.
- * Values may contain colons (e.g. URLs) since only the first `:` splits the
- * line. Nested maps, multi-line/block scalars, anchors, and quoted keys are
- * NOT supported. Use a real YAML parser if the schema grows beyond this.
- */
-/**
  * Encodes a string as a double-quoted YAML scalar.
  *
  * Backslashes are escaped before quotes, or the backslash introduced by
@@ -112,7 +104,10 @@ function splitInlineArray(body: string): string[] {
       current += char;
       continue;
     }
-    if (char === '"' || char === "'") {
+    // Only an opening quote delimits. An apostrophe inside a plain scalar such
+    // as `won't-fix` is an ordinary character, and treating it as a delimiter
+    // swallowed the separator that followed it.
+    if ((char === '"' || char === "'") && current.trim() === "") {
       quote = char;
       current += char;
       continue;
@@ -129,6 +124,14 @@ function splitInlineArray(body: string): string[] {
   return items.map(unquoteYamlString).filter(Boolean);
 }
 
+/**
+ * Minimal YAML parser for issue frontmatter. Handles ONLY the shapes this
+ * module emits: flat `key: value` scalars, `[a, b]` inline arrays, and
+ * block arrays (`-` items). Keys may contain letters, digits, `_` and `-`.
+ * Values may contain colons (e.g. URLs) since only the first `:` splits the
+ * line. Nested maps, multi-line/block scalars, anchors, and quoted keys are
+ * NOT supported. Use a real YAML parser if the schema grows beyond this.
+ */
 export function parseYaml(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = yaml.split("\n");
