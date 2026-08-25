@@ -74,7 +74,7 @@ describe("rendering/layouts/utils/app-resolver", () => {
     });
 
     it("should reject absolute config.app paths outside the project", async () => {
-      const absoluteAppPath = "/sensitive/home/project/app.tsx";
+      const absoluteAppPath = "/<PROJECT_DIR>/app.tsx";
       const files = new Set([absoluteAppPath]);
       const adapter = createMockAdapter(files);
       const config = { app: absoluteAppPath } as unknown as VeryfrontConfig;
