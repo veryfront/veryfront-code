@@ -40,6 +40,37 @@ function jobBlock(workflow: string, jobName: string): string {
   return nextJob === -1 ? rest : rest.slice(0, nextJob);
 }
 
+/** Slices the body of the top-level `on:` mapping, excluding the `on:` line. */
+function onBlock(workflow: string, path: string): string {
+  const marker = "\non:\n";
+  const start = workflow.indexOf(marker);
+  assert(start >= 0, `expected ${path} to define a top-level on: block`);
+
+  const rest = workflow.slice(start + marker.length);
+  const nextTopLevelKey = rest.search(/\n[A-Za-z0-9_-]+:/);
+  return nextTopLevelKey === -1 ? rest : rest.slice(0, nextTopLevelKey);
+}
+
+/**
+ * Slices a single trigger entry out of the `on:` block. Scoped to that one
+ * entry so a sibling trigger keeping its own `branches:` filter (`push:`
+ * legitimately stays pinned to main) cannot be mistaken for it.
+ */
+function triggerEntry(
+  workflow: string,
+  path: string,
+  trigger: string,
+): string {
+  const block = onBlock(workflow, path);
+  const marker = `  ${trigger}:\n`;
+  const start = block.indexOf(marker);
+  assert(start >= 0, `expected ${path} to define an ${trigger}: trigger`);
+
+  const rest = block.slice(start + marker.length);
+  const nextTrigger = rest.search(/\n {2}[A-Za-z0-9_-]+:/);
+  return nextTrigger === -1 ? rest : rest.slice(0, nextTrigger);
+}
+
 function workflowStepBlock(workflow: string, stepName: string): string {
   const marker = `      - name: ${stepName}\n`;
   const start = workflow.indexOf(marker);
@@ -331,6 +362,62 @@ describe("repository hardening", () => {
           `expected ${path} job ${jobName} to carry the fork guard on its own job-level if:, not on a step`,
         );
       }
+    }
+  });
+
+  it("runs the required checks on a pull request whatever its base branch", async () => {
+    // GitHub matches `branches:` on a `pull_request:` trigger against the pull
+    // request's BASE branch, not its head. While these workflows carried
+    // `branches: [main]`, a pull request stacked on any other branch ran none
+    // of them, and a required status context that never runs is ABSENT rather
+    // than failing, so branch protection had nothing to block on: the pull
+    // request rendered fully green having run zero gates.
+    //
+    // cicd.yml owns `ci (format)`, `ci (lint)`, `ci (typecheck)`,
+    // `tests (unit)`, `tests (integration)`, `coverage gate`,
+    // `tests (rsc browser e2e)` and `tests (binary e2e)`; codeql.yml owns
+    // `Analyze`. client-bundle-report.yml is informational but shares the
+    // failure mode, so it is held to the same rule.
+    for (
+      const path of [
+        ".github/workflows/cicd.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/client-bundle-report.yml",
+      ]
+    ) {
+      const workflow = stripComments(await readText(path));
+      const pullRequest = triggerEntry(workflow, path, "pull_request");
+
+      assertEquals(
+        /^\s+branches(?:-ignore)?:/m.test(pullRequest),
+        false,
+        `${path} filters its pull_request: trigger by branch, and GitHub ` +
+          `matches that filter against the pull request BASE branch. A pull ` +
+          `request stacked on any other branch would skip this workflow ` +
+          `entirely, its required checks would report as absent rather than ` +
+          `failing, and branch protection would let it merge green without ` +
+          `ever running the gates. Found: ${JSON.stringify(pullRequest)}`,
+      );
+    }
+  });
+
+  it("keeps push builds pinned to main so widening pull requests cannot publish", async () => {
+    for (
+      const path of [
+        ".github/workflows/cicd.yml",
+        ".github/workflows/codeql.yml",
+      ]
+    ) {
+      const workflow = stripComments(await readText(path));
+      const push = triggerEntry(workflow, path, "push");
+
+      assert(
+        /^\s+branches: \[main\]$/m.test(push),
+        `${path} must keep its push: trigger pinned to branches: [main]. ` +
+          `Release-capable jobs key off refs/heads/main on push, so widening ` +
+          `this trigger would expose the publish path to feature branches. ` +
+          `Found: ${JSON.stringify(push)}`,
+      );
     }
   });
 
