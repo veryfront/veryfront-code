@@ -24,7 +24,12 @@ import {
   setEnv,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  _resetShimForTests,
+  getGlobalMetricsAPI,
+  getGlobalTelemetryAPISnapshot,
+  getGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
 import {
   __resetLoggerConfigForTests,
@@ -155,24 +160,25 @@ describe("orchestrateOrDisposeFS()", () => {
   });
 
   it("preserves the original error when fsDispose itself throws", async () => {
-    // If fsDispose throws, we still want the original orchestration error
-    // to reach the caller — a dispose failure must not mask the root cause.
     const originalError = new Error("orchestrate-boom");
+    const disposeError = new Error("fsDispose-boom");
 
-    await assertRejects(
+    const rejected = await assertRejects(
       () =>
         orchestrateOrDisposeFS(
           () => Promise.reject(originalError),
           () => {
-            throw new Error("fsDispose-boom");
+            throw disposeError;
           },
         ),
       Error,
-      // The current implementation lets the dispose error propagate because
-      // it is thrown synchronously after the catch; adjust this test if that
-      // changes. Right now it will be "fsDispose-boom", which is acceptable
-      // for a resource-leak fix (both errors are visible).
-      "fsDispose-boom",
+      "orchestrate-boom",
+    );
+
+    assertStrictEquals(
+      rejected,
+      originalError,
+      "a dispose failure must not mask the orchestration root cause",
     );
   });
 });
@@ -184,18 +190,53 @@ describe("wireTracingShim()", () => {
     __resetLogRecordEmitterForTests();
 
     const emitted: unknown[] = [];
+    const provider = { getTracer: () => ({}) };
+    const metricsApi = { getMeter: () => ({}) };
+    const traceApi = {
+      getActiveSpan: () => null,
+      getSpan: () => null,
+      setSpan: (ctx: unknown) => ctx,
+    };
+    const contextApi = {
+      active: () => ({}),
+      with: <T>(_ctx: unknown, fn: () => T) => fn(),
+    };
     const exporter: TracingExporter = {
       start: () => Promise.resolve(),
       export: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),
-      getProvider: () => ({ getTracer: () => ({}) }),
-      getMetricsAPI: () => null,
+      getProvider: () => provider,
+      getMetricsAPI: () => metricsApi,
+      getTraceAPI: () => traceApi,
+      getContextAPI: () => contextApi,
       getLogRecordEmitter: () => (record) => emitted.push(record),
     };
 
     register("TracingExporter", exporter);
     wireTracingShim();
     logger.info("otel bridge smoke", { project_id: "project-1" });
+
+    assertStrictEquals(
+      getGlobalTracerProvider() as unknown,
+      provider,
+      "bootstrap installs the exporter's tracer provider",
+    );
+    assertStrictEquals(
+      getGlobalMetricsAPI() as unknown,
+      metricsApi,
+      "bootstrap installs the exporter's metrics API",
+    );
+    const snapshot = getGlobalTelemetryAPISnapshot();
+    assertStrictEquals(
+      snapshot.activeSpanAccessor as unknown,
+      traceApi,
+      "bootstrap installs the exporter's active-span accessor",
+    );
+    assertStrictEquals(
+      snapshot.contextAccessor as unknown,
+      contextApi,
+      "bootstrap installs the exporter's context accessor",
+    );
 
     assertEquals(emitted.length, 1);
     assertEquals((emitted[0] as { message: string }).message, "otel bridge smoke");

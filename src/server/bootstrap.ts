@@ -270,7 +270,18 @@ export async function orchestrateOrDisposeFS(
   try {
     return await orchestrate();
   } catch (err) {
-    if (fsDispose) fsDispose();
+    if (fsDispose) {
+      try {
+        fsDispose();
+      } catch (disposeError) {
+        bootstrapLog.warn(
+          "[bootstrap] Failed to dispose the FS adapter after orchestration failed",
+          {
+            error: disposeError,
+          },
+        );
+      }
+    }
     throw err;
   }
 }

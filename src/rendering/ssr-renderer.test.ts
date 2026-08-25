@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStrictEquals,
   assertStringIncludes,
@@ -60,7 +61,10 @@ describe("rendering/ssr-renderer", () => {
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: undefined,
       renderToPipeableStream: (_element, options) => {
-        queueMicrotask(() => options?.onShellReady?.());
+        queueMicrotask(() => {
+          options?.onShellReady?.();
+          options?.onAllReady?.();
+        });
         return createPipeableSSRStream(
           () => {},
           () => {
@@ -77,6 +81,13 @@ describe("rendering/ssr-renderer", () => {
     );
 
     assertEquals(result.stream instanceof ReadableStream, true);
+    const allReady =
+      (result.stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady;
+    assertExists(
+      allReady,
+      "pipeable true-streaming must carry allReady onto the converted ReadableStream so ssr.service can observe late redirect/notFound errors",
+    );
+    await allReady;
     await result.stream?.cancel(new Error("stop"));
     await result.stream?.cancel(new Error("stop again"));
     assertEquals(abortCount, 1);
@@ -84,17 +95,19 @@ describe("rendering/ssr-renderer", () => {
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
     let observedNonce: string | undefined;
+    const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",
       renderToStaticMarkup: () => "<div>static</div>",
       renderToReadableStream: async (_element, options) => {
         observedNonce = options?.nonce;
-        return new ReadableStream<Uint8Array>({
+        const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode("<div>streamed</div>"));
             controller.close();
           },
-        }) as Awaited<
+        });
+        return Object.assign(stream, { allReady: streamAllReady }) as Awaited<
           ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
         >;
       },
@@ -107,6 +120,11 @@ describe("rendering/ssr-renderer", () => {
     );
 
     assertEquals(observedNonce, "response-nonce");
+    assertStrictEquals(
+      (result.stream as ReadableStream<Uint8Array> & { allReady?: Promise<unknown> }).allReady,
+      streamAllReady,
+      "readable-stream true-streaming must carry allReady onto the returned stream so ssr.service can observe late redirect/notFound errors",
+    );
     await result.stream?.cancel();
   });
 
@@ -524,6 +542,31 @@ describe("rendering/ssr-renderer", () => {
 
     assertEquals(result.html, "<div>string</div>");
     assertEquals(identifierPrefix, "vf");
+  });
+
+  it("rejects with a render error when the adapter produces no output", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "",
+      renderToStaticMarkup: () => "",
+      renderToReadableStream: undefined,
+      renderToPipeableStream: undefined,
+    });
+
+    const renderer = new SSRRenderer("production");
+    const error = await assertRejects(
+      () =>
+        renderer.renderToHTML(
+          React.createElement("div"),
+          { mode: "production", wantsStream: true },
+        ),
+      Error,
+    );
+
+    assertStringIncludes(
+      String(error),
+      "SSR failed - no output",
+      "a render that produces no output must surface a RENDER_ERROR, never a blank success",
+    );
   });
 
   it("reports an explicit project React version before the first render", () => {

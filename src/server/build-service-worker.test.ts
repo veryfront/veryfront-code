@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateServiceWorker } from "./build-service-worker.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/manifest.ts";
@@ -27,6 +33,34 @@ function createManifest(overrides: Partial<BuildManifest> = {}): BuildManifest {
   };
 }
 
+const DEFAULT_STATIC_CACHE_URLS = [
+  "/",
+  "/_veryfront/manifest.json",
+  "/_veryfront/prefetch.js",
+  "/_veryfront/router.js",
+  "/sw.js",
+];
+
+function parseStaticCacheUrls(output: string): string[] {
+  const match = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
+  assertExists(match, "STATIC_CACHE_URLS must be emitted as a parseable array literal");
+  return JSON.parse(match[1]) as string[];
+}
+
+function parseCacheStrategy(output: string, name: string): RegExp[] {
+  const match = output.match(new RegExp(`${name}:\\s*\\[([^\\]]*?)\\]`));
+  assertExists(match, `the ${name} strategy must be emitted with its own pattern list`);
+  return match[1]
+    .split("\n")
+    .map((line) => line.trim().replace(/,$/, ""))
+    .filter((line) => line.startsWith("/") && line.endsWith("/"))
+    .map((literal) => new RegExp(literal.slice(1, -1)));
+}
+
+function matchesAny(patterns: RegExp[], path: string): boolean {
+  return patterns.some((pattern) => pattern.test(path));
+}
+
 describe("server/build-service-worker", () => {
   describe("generateServiceWorker", () => {
     describe("output structure", () => {
@@ -52,7 +86,11 @@ describe("server/build-service-worker", () => {
 
       it("should include SKIP_WAITING message handling", () => {
         const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "SKIP_WAITING");
+        assertStringIncludes(
+          output,
+          "event.data.type === 'SKIP_WAITING'",
+          "the message handler must call skipWaiting only when the page asks for it",
+        );
       });
     });
 
@@ -88,28 +126,48 @@ describe("server/build-service-worker", () => {
 
     describe("default static assets", () => {
       it("should always include root path", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, '"/');
+        const urls = parseStaticCacheUrls(generateServiceWorker(createManifest()));
+        assertEquals(
+          urls.includes("/"),
+          true,
+          "the root document must be precached so offline navigation to / works",
+        );
       });
 
       it("should always include router.js", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "/_veryfront/router.js");
+        const urls = parseStaticCacheUrls(generateServiceWorker(createManifest()));
+        assertEquals(
+          urls.includes("/_veryfront/router.js"),
+          true,
+          "the client router must be precached",
+        );
       });
 
       it("should always include prefetch.js", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "/_veryfront/prefetch.js");
+        const urls = parseStaticCacheUrls(generateServiceWorker(createManifest()));
+        assertEquals(
+          urls.includes("/_veryfront/prefetch.js"),
+          true,
+          "the prefetch runtime must be precached",
+        );
       });
 
       it("should always include manifest.json", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "/_veryfront/manifest.json");
+        const urls = parseStaticCacheUrls(generateServiceWorker(createManifest()));
+        assertEquals(
+          urls.includes("/_veryfront/manifest.json"),
+          true,
+          "the build manifest must be precached",
+        );
       });
 
       it("should always include sw.js", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "/sw.js");
+        const urls = parseStaticCacheUrls(generateServiceWorker(createManifest()));
+        assertEquals(
+          urls.includes("/sw.js"),
+          true,
+          "the service worker itself must be precached",
+        );
       });
     });
 
@@ -206,8 +264,11 @@ describe("server/build-service-worker", () => {
         // deno-lint-ignore no-explicit-any
         (manifest.routes[0] as any).chunks = "not-an-array";
         const output = generateServiceWorker(manifest);
-        // Should not throw, and default assets should still be present
-        assertStringIncludes(output, "/_veryfront/router.js");
+        assertEquals(
+          parseStaticCacheUrls(output),
+          DEFAULT_STATIC_CACHE_URLS,
+          "a route whose chunks field is not an array must contribute no cache entries",
+        );
       });
     });
 
@@ -230,7 +291,13 @@ describe("server/build-service-worker", () => {
         // deno-lint-ignore no-explicit-any
         (manifest as any).buildTime = undefined;
         const output = generateServiceWorker(manifest);
-        assertStringIncludes(output, "veryfront-");
+        const versionMatch = output.match(/const CACHE_VERSION = '([^']+)';/);
+        assertExists(versionMatch, "CACHE_VERSION must be emitted as a single-quoted literal");
+        assertMatch(
+          versionMatch[1],
+          /^veryfront-1\.0\.0-\d{4}-\d{2}-\d{2}T\d{6}\.\d{3}Z$/,
+          "a manifest without buildTime must fall back to a generated ISO timestamp stamp",
+        );
       });
 
       it("should handle chunks with undefined shared array", () => {
@@ -273,18 +340,60 @@ describe("server/build-service-worker", () => {
 
     describe("cache strategies", () => {
       it("should include networkFirst strategy", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "networkFirst");
+        const patterns = parseCacheStrategy(
+          generateServiceWorker(createManifest()),
+          "networkFirst",
+        );
+        assert(
+          matchesAny(patterns, "/api/v1"),
+          "api requests must be routed to the networkFirst strategy",
+        );
+        assert(
+          matchesAny(patterns, "/_veryfront/data/x"),
+          "framework data requests must be routed to the networkFirst strategy",
+        );
+        assertEquals(
+          matchesAny(patterns, "/logo.png"),
+          false,
+          "images must not be routed to the networkFirst strategy",
+        );
       });
 
       it("should include cacheFirst strategy", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "cacheFirst");
+        const patterns = parseCacheStrategy(generateServiceWorker(createManifest()), "cacheFirst");
+        assert(
+          matchesAny(patterns, "/_veryfront/chunks/a.js"),
+          "immutable hashed chunks must be routed to the cacheFirst strategy",
+        );
+        assert(
+          matchesAny(patterns, "/logo.png"),
+          "images must be routed to the cacheFirst strategy",
+        );
+        assertEquals(
+          matchesAny(patterns, "/api/v1"),
+          false,
+          "api requests must not be routed to the cacheFirst strategy",
+        );
       });
 
       it("should include staleWhileRevalidate strategy", () => {
-        const output = generateServiceWorker(createManifest());
-        assertStringIncludes(output, "staleWhileRevalidate");
+        const patterns = parseCacheStrategy(
+          generateServiceWorker(createManifest()),
+          "staleWhileRevalidate",
+        );
+        assert(
+          matchesAny(patterns, "/x.css"),
+          "stylesheets must be routed to the staleWhileRevalidate strategy",
+        );
+        assert(
+          matchesAny(patterns, "/x.js"),
+          "scripts must be routed to the staleWhileRevalidate strategy",
+        );
+        assertEquals(
+          matchesAny(patterns, "/logo.png"),
+          false,
+          "images must not be routed to the staleWhileRevalidate strategy",
+        );
       });
     });
 
@@ -341,12 +450,12 @@ describe("server/build-service-worker", () => {
         assertStringIncludes(output, "/_veryfront/chunks/route-about.js");
 
         // Sorted output (STATIC_CACHE_URLS is sorted)
-        const urlsMatch = output.match(/STATIC_CACHE_URLS = (\[[\s\S]*?\]);/);
-        if (urlsMatch) {
-          const urls = JSON.parse(urlsMatch[1]) as string[];
-          const sorted = [...urls].sort();
-          assertEquals(urls, sorted);
-        }
+        const urls = parseStaticCacheUrls(output);
+        assertEquals(
+          urls,
+          [...urls].sort(),
+          "the precache list must be emitted in sorted order",
+        );
       });
     });
   });

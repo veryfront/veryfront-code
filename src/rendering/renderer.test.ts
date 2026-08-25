@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRenderCacheKey, buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
 import {
@@ -23,6 +28,7 @@ import {
   projectRenderCounts,
   releaseProjectSlot,
   RENDER_ACQUIRE_TIMEOUT_MS,
+  RENDER_MAX_CONCURRENT,
   RENDER_PER_PROJECT_LIMIT,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
@@ -183,6 +189,17 @@ describe("Renderer helpers", () => {
     it("should handle the default concurrent value", () => {
       assertEquals(computePerProjectLimit(RENDER_MAX_CONCURRENT_DEFAULT), 10);
     });
+
+    it("keeps the shipped per-project limit a fraction of global concurrency", () => {
+      // A CI override would make the derived default unobservable.
+      if (getEnv("RENDER_PER_PROJECT_LIMIT") !== undefined) return;
+
+      assertEquals(
+        RENDER_PER_PROJECT_LIMIT,
+        Math.ceil(RENDER_MAX_CONCURRENT / 3),
+        "the per-project limit must stay a fraction of global concurrency so one project cannot occupy every render slot",
+      );
+    });
   });
 
   describe("projectSlotManager", () => {
@@ -274,8 +291,15 @@ describe("Renderer helpers", () => {
   });
 
   describe("RENDER_MAX_CONCURRENT defaults", () => {
-    it("should parse default max concurrent as 30", () => {
-      assertEquals(parseInt("30", 10), 30);
+    it("should default max concurrent to 30", () => {
+      // A CI override would make the shipped default unobservable.
+      if (getEnv("RENDER_MAX_CONCURRENT") !== undefined) return;
+
+      assertEquals(
+        RENDER_MAX_CONCURRENT,
+        RENDER_MAX_CONCURRENT_DEFAULT,
+        "default pod-wide render concurrency",
+      );
     });
   });
 });
@@ -767,6 +791,69 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(result.html, "<html>fresh manifest render</html>");
     assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
+  });
+
+  it("keeps studio-embed renders off the manifest-versioned cache prefix", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
+    );
+
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string; releaseAssetManifest?: ReleaseAssetManifest | null },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          assertEquals(
+            options?.releaseAssetManifest,
+            null,
+            "studio-embed must not receive the ready release manifest",
+          );
+          return Promise.resolve({
+            html: "<html>studio embed render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/fresh", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      studioEmbed: true,
+    });
+
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
+    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
+    assertEquals(result.html, "<html>studio embed render</html>");
+    assertEquals(
+      store.data.has(`${jitPrefix}:page:/fresh`),
+      true,
+      "studio-embed renders must persist under the unversioned production prefix",
+    );
+    assertEquals(
+      store.data.has(`${manifestPrefix}:page:/fresh`),
+      false,
+      "studio-embed renders must never write into the manifest-versioned public cache",
+    );
   });
 
   it("serves stale HTML immediately and refreshes that route in the background", async () => {
@@ -1343,6 +1430,44 @@ describe("Renderer release asset cache isolation", () => {
       assertEquals(prewarm?.request?.headers.has("authorization"), false);
       assertEquals(prewarm?.request?.headers.has("cookie"), false);
       assertEquals(prewarm?.request?.headers.has("x-preview-context"), false);
+    }
+  });
+
+  it("bounds remembered prewarm contexts", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const remember = (renderer as unknown as {
+      rememberProductionPrewarm(key: string, promise: Promise<void>): void;
+    }).rememberProductionPrewarm.bind(renderer);
+
+    // Well past the documented bound, so the eviction loop has to fire.
+    const attempts = 600;
+    for (let index = 0; index < attempts; index++) {
+      remember(`key-${index}`, Promise.resolve());
+    }
+
+    const contexts = (renderer as unknown as {
+      productionPrewarmContexts: Map<string, Promise<void>>;
+    }).productionPrewarmContexts;
+
+    try {
+      assertEquals(
+        contexts.size < attempts,
+        true,
+        "remembered prewarm contexts must stay bounded so multi-tenant pods cannot grow without limit",
+      );
+      assertEquals(
+        contexts.has("key-0"),
+        false,
+        "the oldest remembered prewarm context must be evicted first",
+      );
+      assertEquals(
+        contexts.has(`key-${attempts - 1}`),
+        true,
+        "the newest key must survive eviction",
+      );
+    } finally {
+      await renderer.destroy();
     }
   });
 
@@ -1953,6 +2078,96 @@ describe("Renderer release asset cache isolation", () => {
     const result = await followerRender;
     assertEquals(result.html, "<html>/shared</html>");
     assertEquals(renderCalls, 1);
+  });
+
+  it("rebinds the sealed cache nonce to each caller's own response nonce", async () => {
+    const projectId = `nonce-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
+    };
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    const renderGate = Promise.withResolvers<void>();
+    const renderStarted = Promise.withResolvers<void>();
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: { nonce?: string },
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renderCalls++;
+          renderStarted.resolve();
+          return renderGate.promise.then(() => ({
+            html: `<html><script nonce="${options?.nonce}">boot()</script></html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          }));
+        },
+      },
+    });
+
+    const sharedOptions = {
+      cacheKey: "nonce-render",
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const leaderRender = renderer.renderPage("/nonce", ctx, {
+      ...sharedOptions,
+      nonce: "nonce-123",
+    });
+    await renderStarted.promise;
+
+    const followerRender = renderer.renderPage("/nonce", ctx, {
+      ...sharedOptions,
+      nonce: "nonce-456",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    renderGate.resolve();
+
+    const leader = await leaderRender;
+    const follower = await followerRender;
+
+    assertEquals(renderCalls, 1, "the follower must join the leader's flight");
+    assertStringIncludes(
+      leader.html,
+      '<script nonce="nonce-123">',
+      "the leader must receive its own response nonce, not the sealed cache placeholder",
+    );
+    assertStringIncludes(
+      follower.html,
+      '<script nonce="nonce-456">',
+      "a follower must have the cached placeholder rebound to its own nonce",
+    );
+    assertEquals(
+      leader.html.includes("vf-cache-"),
+      false,
+      "the internal cache nonce placeholder must never reach a response",
+    );
+    assertEquals(
+      follower.html.includes("vf-cache-"),
+      false,
+      "the internal cache nonce placeholder must never reach a response",
+    );
   });
 
   it("keeps a cacheable leader queued after its first caller disconnects", async () => {

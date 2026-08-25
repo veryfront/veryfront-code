@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "#veryfront/discovery/types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -55,6 +55,75 @@ describe("server/startup-discovery", () => {
 
     assertEquals(calls.length, 1);
     assertEquals(calls[0]?.allowHostProjectCodeExecution, false);
+    assertEquals(
+      calls[0]?.baseDir,
+      PROJECT_DIR,
+      "discovery must receive the configured project dir",
+    );
+  });
+
+  it("forwards the configured adapter and verbose flag to discovery", async () => {
+    const { calls, discoverAll } = recorder();
+    const fsAdapter = {} as unknown as FileSystemAdapter;
+
+    await runStartupDiscovery({
+      config: { baseDir: PROJECT_DIR, fsAdapter, verbose: true },
+      allowHostProjectCodeExecution: false,
+      discoverAll,
+      isExtendedFSAdapter: noExtendedAdapters,
+    });
+
+    assertEquals(
+      calls[0]?.baseDir,
+      PROJECT_DIR,
+      "discovery must receive the configured project dir",
+    );
+    assertStrictEquals(
+      calls[0]?.fsAdapter,
+      fsAdapter,
+      "discovery must receive the configured adapter",
+    );
+    assertEquals(calls[0]?.verbose, true, "the verbose flag must be forwarded");
+  });
+
+  it("defaults the verbose flag to false", async () => {
+    const { calls, discoverAll } = recorder();
+
+    await runStartupDiscovery({
+      config: { baseDir: PROJECT_DIR },
+      allowHostProjectCodeExecution: false,
+      discoverAll,
+      isExtendedFSAdapter: noExtendedAdapters,
+    });
+
+    assertEquals(calls[0]?.verbose, false, "verbose defaults to false");
+  });
+
+  it("runs discovery for a single-project extended adapter", async () => {
+    const { calls, discoverAll } = recorder();
+    const fsAdapter = {
+      isMultiProjectMode: () => false,
+      runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+    } as unknown as ExtendedFileSystemAdapter;
+
+    const outcome = await runStartupDiscovery({
+      config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
+      allowHostProjectCodeExecution: true,
+      discoverAll,
+      isExtendedFSAdapter: allExtendedAdapters,
+    });
+
+    assertEquals(
+      outcome,
+      { ran: true },
+      "a single-project extended adapter is not the scoped multi-project path and must still run startup discovery",
+    );
+    assertEquals(calls.length, 1, "discovery must be invoked exactly once");
+    assertEquals(
+      calls[0]?.allowHostProjectCodeExecution,
+      true,
+      "the computed grant is forwarded unchanged",
+    );
   });
 
   it("grants host execution when the deployment does", async () => {

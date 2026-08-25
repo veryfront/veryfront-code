@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getAppRouteEntity } from "./app-route-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -340,6 +340,112 @@ describe("rendering/app-route-resolver", () => {
 
       const result = await getAppRouteEntity("/project", "", adapter, "pages");
       assertEquals(result !== null, true);
+    });
+
+    it("rejects traversing or absolute app directories before consulting the filesystem", async () => {
+      const files = new Map([
+        ["/project/app/page.mdx", "---\ntitle: Home\n---\n# Hello"],
+      ]);
+      const adapter = createMockAdapter(files);
+      let reads = 0;
+      const boundedReader = adapter.fs.readFileBytesWithinLimit;
+      assertExists(
+        boundedReader,
+        "the mock adapter must expose readFileBytesWithinLimit for the read counter to observe",
+      );
+      const readBounded = boundedReader.bind(adapter.fs);
+      adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
+        reads++;
+        return readBounded(path, byteLimit);
+      };
+
+      assertEquals(
+        await getAppRouteEntity("/project", "", adapter, "../outside"),
+        null,
+        "a traversing directories.app value must not resolve an App Router root",
+      );
+      assertEquals(
+        await getAppRouteEntity("/project", "", adapter, "a/../../b"),
+        null,
+        "a nested traversal in directories.app must not resolve an App Router root",
+      );
+      assertEquals(
+        await getAppRouteEntity("/project", "", adapter, "/etc"),
+        null,
+        "an absolute directories.app value must be rejected",
+      );
+      assertEquals(
+        await getAppRouteEntity("/project", "", adapter, "app\\win"),
+        null,
+        "a backslash directories.app value must be rejected",
+      );
+      assertEquals(reads, 0, "a rejected app directory must never reach the filesystem");
+
+      assertEquals(
+        (await getAppRouteEntity("/project", "", adapter, "./app"))?.entity.type,
+        "page",
+        "a leading ./ in directories.app must still resolve the App Router root",
+      );
+    });
+
+    it("resolves a missing intermediate App Router directory to a 404", async () => {
+      const adapter = createMockAdapter(new Map());
+      adapter.fs.readDir = () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () =>
+              Promise.reject(
+                Object.assign(new Error("ENOENT: no such directory"), { code: "ENOENT" }),
+              ),
+          };
+        },
+      });
+
+      assertEquals(
+        await getAppRouteEntity("/project", "blog/post", adapter),
+        null,
+        "a missing intermediate App Router directory must resolve to a 404, not propagate as a 500",
+      );
+    });
+
+    it("fails loudly when two dynamic directories match the same route segment", async () => {
+      const files = new Map([
+        ["/project/app/blog/[slug]/page.mdx", "---\ntitle: Slug\n---\nSlug"],
+        ["/project/app/blog/[id]/page.mdx", "---\ntitle: Id\n---\nId"],
+      ]);
+      const dirs = new Set([
+        "/project/app",
+        "/project/app/blog",
+        "/project/app/blog/[slug]",
+        "/project/app/blog/[id]",
+      ]);
+      const adapter = createMockAdapter(files, dirs);
+
+      await assertRejects(
+        () => getAppRouteEntity("/project", "blog/x", adapter),
+        Error,
+        "Multiple dynamic App Router directories match the same route segment",
+      );
+    });
+
+    it("fails loudly when two optional catch-all directories match the same route", async () => {
+      const files = new Map([
+        ["/project/app/docs/[[...rest]]/page.mdx", "---\ntitle: Rest\n---\nRest"],
+        ["/project/app/docs/[[...all]]/page.mdx", "---\ntitle: All\n---\nAll"],
+      ]);
+      const dirs = new Set([
+        "/project/app",
+        "/project/app/docs",
+        "/project/app/docs/[[...rest]]",
+        "/project/app/docs/[[...all]]",
+      ]);
+      const adapter = createMockAdapter(files, dirs);
+
+      await assertRejects(
+        () => getAppRouteEntity("/project", "docs", adapter),
+        Error,
+        "Multiple optional catch-all App Router directories match the same route",
+      );
     });
 
     it("should handle malformed frontmatter gracefully", async () => {

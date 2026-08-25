@@ -18,6 +18,7 @@ import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-bui
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { HEAD_SHELL_PROVENANCE_ATTRIBUTE } from "#veryfront/html/managed-head-protocol.ts";
 import { getProjectReact } from "#veryfront/react";
+import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
 import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import {
   clearReactVersionCache,
@@ -132,6 +133,67 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
 export default function Page() {
   return <button id="counter" type="button">Count: 0</button>;
+}
+`,
+  );
+
+  return { projectDir, pageFile };
+}
+
+async function makeServerOnlyProject(): Promise<{ projectDir: string; pageFile: string }> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-server-only-" });
+
+  const appDir = join(projectDir, "app");
+  await Deno.mkdir(appDir, { recursive: true });
+  await Deno.writeTextFile(
+    join(appDir, "layout.tsx"),
+    `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <main data-testid="server-only-layout">{children}</main>;
+}
+`,
+  );
+  const pageFile = join(appDir, "page.tsx");
+  await Deno.writeTextFile(
+    pageFile,
+    `export default function Page() {
+  return <p id="server-only-page">Static copy</p>;
+}
+`,
+  );
+
+  return { projectDir, pageFile };
+}
+
+async function makeHeadLayoutProject(): Promise<{ projectDir: string; pageFile: string }> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-head-" });
+  const appDir = join(projectDir, "app");
+  const pageFile = join(appDir, "page.tsx");
+
+  await Deno.mkdir(appDir, { recursive: true });
+  await Deno.writeTextFile(
+    join(appDir, "layout.tsx"),
+    `import { Head } from "veryfront/head";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head>
+        <title>Assistant</title>
+        <meta name="viewport" content="width=device-width, initial-scale=2.0" />
+        <script type="module" src="/analytics.js"></script>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+      </Head>
+      {children}
+    </>
+  );
+}
+`,
+  );
+  await Deno.writeTextFile(
+    pageFile,
+    `"use client";
+export default function Page() {
+  return <button id="head-page" type="button">Open</button>;
 }
 `,
   );
@@ -282,6 +344,7 @@ Deno.test({
       cacheKey?: string;
       dependencies?: Readonly<Record<string, string>>;
       moduleServerOrigin?: string;
+      reactVersion?: string;
     }> = [];
     let changedToStateB = false;
 
@@ -303,6 +366,8 @@ Deno.test({
           pageFile,
           contentSourceId: "test-content-source",
           moduleServerOrigin: "https://build.example",
+          // A stale caller-supplied version must lose to the pinned snapshot.
+          reactVersion: "18.3.1",
         },
         {
           componentLoader: async (_source, filePath, _projectDir, _adapter, options) => {
@@ -310,6 +375,7 @@ Deno.test({
               cacheKey: options?.dependencyPinningCacheKey,
               dependencies: options?.dependencyPinningDependencies,
               moduleServerOrigin: options?.moduleServerOrigin,
+              reactVersion: options?.reactVersion,
             });
 
             if (filePath === pageFile && !changedToStateB) {
@@ -339,13 +405,31 @@ Deno.test({
       assertEquals(Object.isFrozen(pageLoad.dependencies), true);
       assertEquals(pageLoad.moduleServerOrigin, "https://build.example");
       assertEquals(layoutLoad.moduleServerOrigin, "https://build.example");
+      assertEquals(
+        pageLoad.reactVersion,
+        "19.2.4",
+        "a pinned snapshot must override the caller-supplied reactVersion for the page load",
+      );
+      assertEquals(
+        layoutLoad.reactVersion,
+        "19.2.4",
+        "a pinned snapshot must override the caller-supplied reactVersion for the layout load",
+      );
 
       const hydrationData = extractHydrationData(html);
       assertEquals(hydrationData.dependencyPinningCacheKey, pageLoad.cacheKey);
 
       const imports = extractImportMapImports(html);
-      assertStringIncludes(imports.react ?? "", "react@19.2.4");
-      assertEquals((imports.react ?? "").includes("react@18.3.1"), false);
+      assertStringIncludes(
+        imports.react ?? "",
+        "react@19.2.4",
+        "an on: pinned snapshot must override the caller-supplied reactVersion in the import map",
+      );
+      assertEquals(
+        (imports.react ?? "").includes("18.3.1"),
+        false,
+        "the stale caller-supplied React version must not reach the import map",
+      );
 
       const currentSnapshot = await getDependencyPinningSnapshot(projectDir);
       assertEquals(currentSnapshot.dependencies, stateB);
@@ -433,6 +517,11 @@ Deno.test({
       assertEquals(pageIndex < footerIndex, true);
 
       const hydrationData = extractHydrationData(html);
+      assertEquals(
+        hydrationData.slug,
+        "section/reports/detail",
+        "non-root routes must hydrate under the leading-slash-stripped slug the build writes",
+      );
       assertEquals(hydrationData.isolatedClientPage, true);
       assertEquals(hydrationData.layouts, [
         { kind: "tsx", path: "app/section/reports/layout.tsx" },
@@ -536,6 +625,11 @@ export default function Page() {
       assertEquals(extractHydrationData(html).layouts, [
         { kind: "tsx", path: "app/(marketing)/[slug]/layout.tsx" },
       ]);
+      assertEquals(
+        extractHydrationData(html).slug,
+        "launch",
+        "non-root routes must hydrate under the leading-slash-stripped slug the build writes",
+      );
     } finally {
       await cleanupProject(projectDir);
     }
@@ -546,40 +640,9 @@ Deno.test({
   name:
     "server/build-app-route-renderer hoists the layout's declared <Head> title into the prerendered document",
   async fn() {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-head-" });
-    const appDir = join(projectDir, "app");
-    const pageFile = join(appDir, "page.tsx");
+    const { projectDir, pageFile } = await makeHeadLayoutProject();
 
     try {
-      await Deno.mkdir(appDir, { recursive: true });
-      await Deno.writeTextFile(
-        join(appDir, "layout.tsx"),
-        `import { Head } from "veryfront/head";
-
-export default function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <>
-      <Head>
-        <title>Assistant</title>
-        <meta name="viewport" content="width=device-width, initial-scale=2.0" />
-        <script type="module" src="/analytics.js"></script>
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-      </Head>
-      {children}
-    </>
-  );
-}
-`,
-      );
-      await Deno.writeTextFile(
-        pageFile,
-        `"use client";
-export default function Page() {
-  return <button id="head-page" type="button">Open</button>;
-}
-`,
-      );
-
       const html = await renderAppRouteToHTML({
         adapter: denoAdapter,
         projectDir,
@@ -613,6 +676,104 @@ export default function Page() {
       const collectedScriptIndex = html.indexOf('src="/analytics.js"');
       assertEquals(importMapEndIndex >= 0 && importMapEndIndex < collectedScriptIndex, true);
       assertEquals(collectedScriptIndex < stylesheetIndex, true);
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name: "server/build-app-route-renderer links the compiled project stylesheet for a static build",
+  async fn() {
+    const { projectDir, pageFile } = await makeHeadLayoutProject();
+
+    try {
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+        stylesheetHref: "/_vf/assets/app.abc.css",
+        includePreviewStylesheet: false,
+      });
+
+      assertStringIncludes(
+        html,
+        '<link rel="stylesheet" href="/_vf/assets/app.abc.css">',
+        "a statically built route must link its compiled project stylesheet",
+      );
+      assertEquals(
+        html.includes(getPreviewStylesheetLink()),
+        false,
+        "the dev preview stylesheet must not ship in a static build",
+      );
+      assertEquals(
+        html.match(/rel="stylesheet"/g)?.length,
+        1,
+        "a statically built route must carry exactly one stylesheet link",
+      );
+
+      // Same cascade order as the request-time shell, checked against the real
+      // compiled stylesheet rather than the dev preview link.
+      const importMapEndIndex = html.indexOf("</script>", html.indexOf('type="importmap"'));
+      const collectedScriptIndex = html.indexOf('src="/analytics.js"');
+      const stylesheetIndex = html.indexOf('href="/_vf/assets/app.abc.css"');
+      const faviconIndex = html.indexOf('href="/favicon.svg"');
+      const headCloseIndex = html.indexOf("</head>");
+      assertEquals(
+        importMapEndIndex >= 0 && importMapEndIndex < collectedScriptIndex,
+        true,
+        "the framework import map must close before the collected module script",
+      );
+      assertEquals(
+        collectedScriptIndex < stylesheetIndex,
+        true,
+        "the collected module script must precede the compiled stylesheet",
+      );
+      assertEquals(
+        stylesheetIndex < faviconIndex,
+        true,
+        "the compiled stylesheet must precede the remaining collected head elements",
+      );
+      assertEquals(
+        faviconIndex < headCloseIndex,
+        true,
+        "collected head elements must close the head",
+      );
+    } finally {
+      await cleanupProject(projectDir);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "server/build-app-route-renderer omits hydration data and the client bootstrap for a server-only route",
+  async fn() {
+    const { projectDir, pageFile } = await makeServerOnlyProject();
+
+    try {
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, 'id="server-only-page"');
+      assertStringIncludes(html, 'data-testid="server-only-layout"');
+      assertEquals(
+        html.includes('id="veryfront-hydration-data"'),
+        false,
+        "a server-only App Router page must not ship hydration data",
+      );
+      assertEquals(
+        html.includes(getProdHydrationModulePath()),
+        false,
+        "a server-only App Router page must not ship the client hydration bootstrap",
+      );
     } finally {
       await cleanupProject(projectDir);
     }

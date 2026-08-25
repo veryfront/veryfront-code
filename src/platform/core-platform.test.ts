@@ -131,6 +131,25 @@ describe("platform/core-platform", () => {
       assertEquals(result.compatible, true);
     });
 
+    it("should be compatible when maxSteps equals the platform limit", () => {
+      // 3 is the documented cloudflare-workers maxAgentSteps, so a config that
+      // sits exactly on the advertised limit must still be accepted.
+      const result = validatePlatformCompatibility(
+        { maxSteps: 3 },
+        "cloudflare-workers",
+      );
+      assertEquals(
+        result.compatible,
+        true,
+        "maxSteps equal to the platform limit must be accepted",
+      );
+      assertEquals(
+        result.errors.length,
+        0,
+        "a config at exactly maxAgentSteps must produce no error",
+      );
+    });
+
     it("should not error for streaming:true on non-streaming platform", () => {
       const result = validatePlatformCompatibility(
         { streaming: true },
