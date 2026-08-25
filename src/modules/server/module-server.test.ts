@@ -321,7 +321,43 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("answers a stylesheet module request with 404 rather than a transform error", async () => {
+  it("returns a CSS error body when a stylesheet lookup fails", async () => {
+    // A missing stylesheet is a 404, but a permission or transient storage
+    // error escapes findSourceFile and surfaces as a 500 that is typed
+    // text/css. The body must be CSS, and the rewriter-appended form must be
+    // classified the same way as the bare one.
+    const { serveModule } = await import("./module-server.ts");
+
+    for (const requestPath of ["styles/globals.css", "styles/globals.css.js"]) {
+      const projectDir = `/module-css-error-${requestPath.replace(/[^a-z]/gi, "")}`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(`${projectDir}/styles/globals.css`, "body { color: red; }");
+      adapter.fs.stat = () => Promise.reject(new Error("EACCES: denied */ escape"));
+      adapter.fs.readFileBytesWithinLimit = () =>
+        Promise.reject(new Error("EACCES: denied */ escape"));
+
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/${requestPath}`),
+        { projectId: "module-css-error", projectDir, adapter, dev: true },
+      );
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("content-type"), "text/css; charset=utf-8");
+      assertEquals(
+        body.startsWith("/*") && body.endsWith("*/"),
+        true,
+        `${requestPath} must answer with a CSS comment, not a JavaScript throw`,
+      );
+      assertEquals(
+        body.includes("denied *\\/ escape"),
+        true,
+        "a comment terminator inside the message must be escaped, not end the comment early",
+      );
+    }
+  });
+
+  it("answers a missing stylesheet module request with 404", async () => {
     // findSourceFile resolves only the extensions this server compiles to
     // JavaScript, so a stylesheet never reaches the transform at all. The dev
     // styles handler serves those. Pinning it keeps the error-body helper from
@@ -337,7 +373,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         { projectId: "module-css-unreachable", projectDir, adapter, dev: true },
       );
 
-      assertEquals(response.status, 404, `${requestPath} is not served by the module server`);
+      assertEquals(response.status, 404, `${requestPath} has no source file to serve`);
     }
   });
 

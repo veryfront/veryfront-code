@@ -1698,14 +1698,19 @@ function getClientModuleError(dev: boolean, errorMessage: string): string {
 /**
  * The body served when a module fails to transform.
  *
- * There is no CSS arm. `findSourceFile` resolves only the extensions it can
- * compile to JavaScript, so a `.css` request never reaches here in either the
- * bare or the rewriter-appended form; both answer 404. Stylesheets are served
- * by the dev styles handler instead. An arm here would be unreachable code
- * implying support this server does not offer.
+ * A stylesheet reaches here only when the lookup itself fails rather than
+ * reporting the file missing: a permission or transient storage error escapes
+ * `findSourceFile` and surfaces as a 500 instead of a 404. The response is
+ * typed `text/css` in that case, so the body has to be CSS.
  */
 function createModuleErrorBody(modulePath: string, errorMessage: string): string {
   const sourcePath = getModuleSourcePath(modulePath);
+
+  if (sourcePath.endsWith(".css")) {
+    // A comment cannot contain its own terminator.
+    const sanitized = errorMessage.replace(/\*\//g, "*\\/");
+    return `/* Transform Error: ${sanitized} */`;
+  }
 
   if (sourcePath.endsWith(".json") || sourcePath.endsWith(".map")) {
     return JSON.stringify({ error: errorMessage });
