@@ -7,11 +7,23 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
-// Mirrors React's custom-element detection: hyphenated tag names, plus
-// customized built-ins declared via a string `is` prop.
-function isCustomElement(tagName: string | undefined, props: Record<string, unknown>): boolean {
-  if (tagName?.includes("-") === true) return true;
-  return typeof props.is === "string";
+// Mirrors React's custom-element detection. These SVG/MathML names contain a
+// hyphen but remain standard elements, so React still applies normal attribute
+// aliases (for example `htmlFor` -> `for`). The `is` prop does not change the
+// serialization path for customized built-ins either.
+const RESERVED_HYPHENATED_ELEMENTS = new Set([
+  "annotation-xml",
+  "color-profile",
+  "font-face",
+  "font-face-format",
+  "font-face-name",
+  "font-face-src",
+  "font-face-uri",
+  "missing-glyph",
+]);
+
+function isCustomElement(tagName: string | undefined, _props: Record<string, unknown>): boolean {
+  return tagName?.includes("-") === true && !RESERVED_HYPHENATED_ELEMENTS.has(tagName);
 }
 
 function renderAttributeName(key: string, customElement: boolean): string {

@@ -94,7 +94,7 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
   });
 
   describe("treeToHTML", () => {
-    it("preserves htmlFor on custom elements while mapping label htmlFor to for", async () => {
+    it("maps htmlFor on custom elements while preserving it on custom elements", async () => {
       const html = await treeToHTML({
         type: "fragment",
         children: [
@@ -134,7 +134,7 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
       );
     });
 
-    it("preserves htmlFor on customized built-ins declared via the is prop", async () => {
+    it("maps htmlFor on customized built-ins declared via the is prop", async () => {
       const html = await treeToHTML({
         type: "server",
         component: "label",
@@ -152,15 +152,31 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
         "the is attribute is emitted",
       );
       assertEquals(
-        html.includes('htmlFor="target"'),
+        html.includes('for="target"'),
         true,
-        "customized built-ins preserve React-style htmlFor",
+        "customized built-ins use the standard for attribute",
       );
       assertEquals(
-        html.includes('for="target"'),
+        html.includes('htmlFor="target"'),
         false,
-        "customized built-ins do not receive normalized for attributes",
+        "customized built-ins do not use the custom-element attribute path",
       );
+    });
+
+    it("maps htmlFor on reserved hyphenated SVG and MathML elements", async () => {
+      for (const component of ["annotation-xml", "font-face", "missing-glyph"]) {
+        const html = await treeToHTML({
+          type: "server",
+          component,
+          props: { htmlFor: "target" },
+        });
+        assertEquals(
+          html.includes('for="target"'),
+          true,
+          `${component} uses the standard for attribute`,
+        );
+        assertEquals(html.includes('htmlFor="target"'), false);
+      }
     });
   });
 });
