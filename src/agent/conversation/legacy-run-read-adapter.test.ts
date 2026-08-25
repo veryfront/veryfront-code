@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import {
+  createStreamLifecycleLiveAdapter,
+  type StreamLifecycleFrame,
+} from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { createLifecycleAgUiAdapter } from "#veryfront/agent/ag-ui/lifecycle-adapter.ts";
 import fixture from "./fixtures/legacy-content-after-end.json" with {
   type: "json",
@@ -465,6 +468,93 @@ describe("conversation run lifecycle read adapter", () => {
       ).length,
       0,
       "a provider-executed v1 result must not fall back to the legacy custom path",
+    );
+  });
+
+  it("replays a provider result the live stream marked after the tool start", () => {
+    // The live adapter defers tool announcement and synthesizes its own
+    // `tool-input-start` without the provider marker, supplying it on
+    // `tool-input-available` and the output instead. Run the whole live lane so
+    // the durable writer is fed the chunk shapes a real stream produces.
+    const live = createStreamLifecycleLiveAdapter({});
+    const chunks = frames([
+      {
+        event: {
+          type: "tool_input_start",
+          toolCallId: "live-fetch",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "tool_input_content",
+          toolCallId: "live-fetch",
+          delta: '{"url":"https://docs.example/page"}',
+        },
+      },
+      {
+        event: {
+          type: "tool_input_ready",
+          toolCallId: "live-fetch",
+          toolName: "web_fetch",
+          input: { url: "https://docs.example/page" },
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "live-fetch",
+          toolName: "web_fetch",
+          output: { ok: true },
+          isError: false,
+          providerExecuted: true,
+        },
+      },
+    ]).flatMap((frame) => live.encode(frame));
+
+    assertEquals(
+      chunks.find((chunk) => chunk.type === "tool-input-start"),
+      { type: "tool-input-start", toolCallId: "live-fetch", toolName: "web_fetch" },
+      "the live adapter announces the tool without the provider marker",
+    );
+
+    const stored = normalizeEncodedConversationRunEvents(chunks);
+    assertEquals(
+      stored.find((event) => event.type === "TOOL_CALL_END")?.providerExecuted,
+      true,
+      "the writer must keep a marker that only reached the committed tool input",
+    );
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: stored,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ).map((frame) => frame.event),
+      [{
+        type: "provider_tool_result",
+        toolCallId: "live-fetch",
+        toolName: "web_fetch",
+        output: { ok: true },
+        isError: false,
+        providerExecuted: true,
+      }],
+      "a live-marked provider call must replay as a provider tool result",
+    );
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "custom" &&
+        (frame.event as { name?: string }).name === "legacy-tool-result"
+      ).length,
+      0,
+      "a live-marked provider result must not fall back to the legacy custom path",
     );
   });
 

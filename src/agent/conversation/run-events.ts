@@ -303,7 +303,11 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         return events;
       }
 
@@ -317,7 +321,11 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         events.push({
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
