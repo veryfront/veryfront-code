@@ -131,4 +131,28 @@ describe("security/http/application-request", () => {
       assertEquals(headers.get("x-application-role"), null);
     }
   });
+
+  it("fails closed for accessor, proxy, sparse, symbol, and malformed-length denylists", () => {
+    const source = new Headers({ "x-application-role": "editor" });
+    const accessor = Object.defineProperty([], "0", {
+      enumerable: true,
+      get() {
+        throw new Error("must not read denylist accessor");
+      },
+    }) as readonly string[];
+    const proxy = new Proxy(["x-auth-subject"], {
+      getOwnPropertyDescriptor() {
+        throw new Error("must not leak proxy trap");
+      },
+    });
+    const sparse = new Array(1) as readonly string[];
+    const symbol = ["x-auth-subject"] as Array<string> & { [key: symbol]: string };
+    symbol[Symbol("deny")] = "x-auth-email";
+    const malformedLength = { length: 1, 0: "x-auth-subject" } as unknown as readonly string[];
+
+    for (const denyHeaders of [accessor, proxy, sparse, symbol, malformedLength]) {
+      const headers = createApplicationRequestHeaders(source, { denyHeaders });
+      assertEquals(headers.get("x-application-role"), null);
+    }
+  });
 });

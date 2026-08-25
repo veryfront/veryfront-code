@@ -7,11 +7,19 @@
  * the proxy for project filesystem access.
  */
 const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const NativeNumber = Number;
+const NativeSet = Set;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const getOwnPropertySymbols = Object.getOwnPropertySymbols;
 const headersAppend = NativeHeaders.prototype.append;
 const headersForEach = NativeHeaders.prototype.forEach;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectKeys = Object.keys;
+const regexpTest = RegExp.prototype.test;
 const requestClone = NativeRequest.prototype.clone;
 const requestHeadersGetter = getOwnPropertyDescriptor(
   NativeRequest.prototype,
@@ -19,6 +27,7 @@ const requestHeadersGetter = getOwnPropertyDescriptor(
 )?.get;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringStartsWith = String.prototype.startsWith;
+const stringCharCodeAt = String.prototype.charCodeAt;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MAX_DYNAMIC_DENY_HEADERS = 32;
 const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
@@ -65,23 +74,60 @@ export interface ApplicationRequestHeaderOptions {
 function normalizeDynamicDenyHeaders(
   names: readonly string[] | undefined,
 ): ReadonlySet<string> | null {
-  if (names === undefined) return new Set<string>();
-  if (!Array.isArray(names) || names.length > MAX_DYNAMIC_DENY_HEADERS) return null;
+  try {
+    if (names === undefined) return new NativeSet<string>();
+    if (!arrayIsArray(names) || getOwnPropertySymbols(names).length > 0) return null;
 
-  const denylist = new Set<string>();
-  for (let index = 0; index < names.length; index += 1) {
-    const name = names[index];
+    const descriptors = getOwnPropertyDescriptors(names);
+    const lengthDescriptor = getOwnPropertyDescriptor(names, "length");
     if (
-      typeof name !== "string" ||
-      name.length === 0 ||
-      name.length > MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH ||
-      !HEADER_NAME_PATTERN.test(name)
+      !lengthDescriptor ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !numberIsSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value > MAX_DYNAMIC_DENY_HEADERS
     ) {
       return null;
     }
-    denylist.add(apply(stringToLowerCase, name, []) as string);
+
+    const denylist = new NativeSet<string>();
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = descriptors[index];
+      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+        return null;
+      }
+      const name = descriptor.value;
+      if (
+        name.length === 0 ||
+        name.length > MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH ||
+        !(apply(regexpTest, HEADER_NAME_PATTERN, [name]) as boolean)
+      ) {
+        return null;
+      }
+      denylist.add(apply(stringToLowerCase, name, []) as string);
+    }
+
+    const keys = objectKeys(descriptors);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      if (key === "length" || isArrayIndexKey(key)) continue;
+      return null;
+    }
+    return denylist;
+  } catch {
+    return null;
   }
-  return denylist;
+}
+
+function isArrayIndexKey(value: string): boolean {
+  if (value === "0") return true;
+  if (value.length === 0 || value[0] === "0") return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code < 48 || code > 57) return false;
+  }
+  const numeric = apply(NativeNumber, undefined, [value]) as number;
+  return numberIsSafeInteger(numeric) && numeric >= 0 && numeric < 2 ** 32 - 1;
 }
 
 /** Copy only application-owned headers across the project-code boundary. */

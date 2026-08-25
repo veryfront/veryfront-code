@@ -6,6 +6,11 @@ import { createTrustedProxyApplicationAuthRuntime } from "./trusted-proxy.ts";
 import type { TrustedProxyAuthConfig } from "#veryfront/security/http/middleware/types.ts";
 
 const APP_URL = "https://app.example.test/dashboard";
+const NativeNumber = Number;
+const NativeURL = URL;
+const nativeNumberParseInt = Number.parseInt;
+const nativeArrayIsArray = Array.isArray;
+const nativeNumberIsSafeInteger = Number.isSafeInteger;
 
 function config(
   overrides: Partial<TrustedProxyAuthConfig> = {},
@@ -50,6 +55,22 @@ function assertUnauthorized(response: unknown): asserts response is Response {
   assertEquals(response.status, 401);
   assertEquals(response.headers.get("Cache-Control"), "no-store");
   assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
+}
+
+async function withTamperedPrimordials<T>(
+  tamper: () => void,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    tamper();
+    return await fn();
+  } finally {
+    globalThis.Number = NativeNumber;
+    globalThis.URL = NativeURL;
+    Number.parseInt = nativeNumberParseInt;
+    Array.isArray = nativeArrayIsArray;
+    Number.isSafeInteger = nativeNumberIsSafeInteger;
+  }
 }
 
 describe("security/application-auth trusted proxy runtime", () => {
@@ -98,6 +119,66 @@ describe("security/application-auth trusted proxy runtime", () => {
     assertEquals(expanded.identity.subject, "ipv6-user");
     assert(!(mapped instanceof Response));
     assertEquals(mapped.identity.subject, "mapped-user");
+  });
+
+  it("rejects wrong IPv4 peers after global Number and helper tampering", async () => {
+    const runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["127.0.0.1"] }),
+    });
+    const wrongPeer = request({ "x-auth-subject": "user-123" }, "198.51.100.3");
+
+    await withTamperedPrimordials(
+      () => {
+        function FakeNumber(value: unknown): number {
+          if (value === "198") return 127;
+          if (value === "51") return 0;
+          if (value === "100") return 0;
+          if (value === "3") return 1;
+          return NativeNumber(value);
+        }
+        Object.assign(FakeNumber, NativeNumber);
+        globalThis.Number = FakeNumber as NumberConstructor;
+        Array.isArray = () => true;
+        Number.isSafeInteger = () => true;
+      },
+      async () => {
+        assertUnauthorized(await runtime.admitRequest(wrongPeer));
+      },
+    );
+  });
+
+  it("rejects wrong IPv6 peers after global URL and Number.parseInt tampering", async () => {
+    const ipv6Runtime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["2001:db8::1"] }),
+    });
+    const mappedRuntime = createTrustedProxyApplicationAuthRuntime({
+      config: config({ trustedPeers: ["192.0.2.10"] }),
+    });
+
+    await withTamperedPrimordials(
+      () => {
+        class FakeURL {
+          readonly hostname = "[2001:db8::1]";
+          constructor(_value: string) {}
+        }
+        globalThis.URL = FakeURL as typeof URL;
+        Number.parseInt = (value: string, radix?: number): number => {
+          if (value === "c633") return 0xc000;
+          if (value === "6403") return 0x020a;
+          return nativeNumberParseInt(value, radix);
+        };
+      },
+      async () => {
+        assertUnauthorized(
+          await ipv6Runtime.admitRequest(request({ "x-auth-subject": "user-123" }, "2001:db8::2")),
+        );
+        assertUnauthorized(
+          await mappedRuntime.admitRequest(
+            request({ "x-auth-subject": "user-123" }, "::ffff:c633:6403"),
+          ),
+        );
+      },
+    );
   });
 
   it("rejects missing, wrong, hostname, and CIDR peer provenance without consulting spoofable headers", async () => {
@@ -188,8 +269,11 @@ describe("security/application-auth trusted proxy runtime", () => {
         {},
         { "x-auth-subject": "" },
         { "x-auth-subject": "u".repeat(1_025) },
+        { "x-auth-subject": `${"\u00a0".repeat(1_024)}u` },
         { "x-auth-subject": "user\u0001123" },
         { "x-auth-subject": "user-123", "x-auth-email": "e".repeat(513) },
+        { "x-auth-subject": "user-123", "x-auth-email": `${"\u00a0".repeat(512)}e` },
+        { "x-auth-subject": "user-123", "x-auth-name": `${"\u00a0".repeat(512)}n` },
         { "x-auth-subject": "user-123", "x-auth-groups": "g".repeat(257) },
         {
           "x-auth-subject": "user-123",
@@ -216,9 +300,33 @@ describe("security/application-auth trusted proxy runtime", () => {
     assertEquals(result.identity.roles, ["deployer", "owner"]);
     assertEquals(result.identity.claims, {
       sub: "user-123",
-      groups: ["admin", "editor", "admin", "viewer"],
-      roles: ["deployer", "owner", "deployer"],
+      groups: ["admin", "editor", "viewer"],
+      roles: ["deployer", "owner"],
     });
+  });
+
+  it("accepts 256 unique list entries plus duplicates and rejects 257 unique entries", async () => {
+    const groups = Array.from({ length: 256 }, (_, index) => `g${index}`);
+    const accepted = await admit(
+      config(),
+      request({
+        "x-auth-subject": "user-123",
+        "x-auth-groups": [...groups, "g0", "g255"].join(","),
+      }),
+    );
+    const rejected = await admit(
+      config(),
+      request({
+        "x-auth-subject": "user-123",
+        "x-auth-roles": Array.from({ length: 257 }, (_, index) => `r${index}`).join(","),
+      }),
+    );
+
+    assert(!(accepted instanceof Response));
+    assertEquals(accepted.identity.groups.length, 256);
+    assertEquals(accepted.identity.groups[0], "g0");
+    assertEquals(accepted.identity.groups[255], "g255");
+    assertUnauthorized(rejected);
   });
 
   it("returns one normalized header name when duplicate configured identity headers differ only by case", async () => {
