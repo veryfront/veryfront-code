@@ -122,12 +122,32 @@ describe("commands/build/command", () => {
       );
     });
 
+    it("allows an in-project build.outDir beginning with two dots", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "..cache" },
+        }),
+        "/workspace/project/..cache",
+      );
+    });
+
     it("lets -o/--output override build.outDir", () => {
       assertEquals(
         resolveBuildOutputDir("/workspace/project", "flagout", {
           build: { outDir: "custom-out" },
         }),
         "flagout",
+      );
+    });
+
+    it("still rejects an external build.outDir when --output overrides it", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", "dist", {
+            build: { outDir: "../release" },
+          }),
+        Error,
+        "inside the project",
       );
     });
 
@@ -297,6 +317,18 @@ describe("cli/build resolveBuildOutputDir clearsOutputDir", () => {
         clearsOutputDir: false,
       }),
       "/tmp/proj/custom",
+    );
+  });
+
+  it("allows an external embedded build.outDir when the guard is opted out", () => {
+    assertEquals(
+      resolveBuildOutputDir(
+        "/tmp/proj",
+        undefined,
+        { build: { outDir: "../host/dist" } },
+        { clearsOutputDir: false },
+      ),
+      "/tmp/host/dist",
     );
   });
 });

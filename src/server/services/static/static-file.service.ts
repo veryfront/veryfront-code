@@ -16,7 +16,7 @@ import { createSecureFs } from "#veryfront/security";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { relative, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { isAbsolute, relative, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -138,10 +138,15 @@ export class StaticFileService {
   private resolveBuildOutputRoot(options: StaticFileOptions): string {
     const projectRoot = resolve(options.projectDir);
     const configuredRoot = resolve(projectRoot, options.buildOutDir || "dist");
+    const relativeRoot = relative(projectRoot, configuredRoot).replace(/\\/g, "/");
 
     // Project configuration is not a trusted filesystem boundary. Fail loudly
     // instead of serving a different directory from the one the build wrote.
-    if (configuredRoot === projectRoot || !isWithinDirectory(projectRoot, configuredRoot)) {
+    if (
+      relativeRoot === "" || relativeRoot === "." || relativeRoot === ".." ||
+      relativeRoot.startsWith("../") ||
+      isAbsolute(relativeRoot)
+    ) {
       throw SECURITY_VIOLATION.create({
         detail: "build.outDir must resolve to a directory inside the project",
       });

@@ -86,7 +86,12 @@ export function resolveBuildOutputDir(
   config: Pick<VeryfrontConfig, "build">,
   options: { clearsOutputDir?: boolean } = {},
 ): string {
-  const outputDir = explicitOutputDir ?? resolveConfiguredOutputDir(projectDir, config);
+  const configuredOutputDir = resolveConfiguredOutputDir(
+    projectDir,
+    config,
+    options.clearsOutputDir !== false,
+  );
+  const outputDir = explicitOutputDir ?? configuredOutputDir;
   // The guard below exists because the caller wipes the directory first. A
   // caller that only writes into it is not dangerous, and rejecting it would
   // block legitimate invocations — see the embedded preset.
@@ -99,15 +104,17 @@ export function resolveBuildOutputDir(
 function resolveConfiguredOutputDir(
   projectDir: string,
   config: Pick<VeryfrontConfig, "build">,
+  requireProjectContained: boolean,
 ): string {
   const configured = config.build?.outDir;
   if (configured === undefined || configured === "") return join(projectDir, "dist");
   const resolvedProject = resolve(projectDir);
   const resolvedOutput = resolve(resolvedProject, configured);
-  const relativeOutput = relative(resolvedProject, resolvedOutput);
+  const relativeOutput = relative(resolvedProject, resolvedOutput).replace(/\\/g, "/");
   if (
-    relativeOutput === "" || relativeOutput.startsWith("..") ||
-    isAbsolute(relativeOutput)
+    requireProjectContained &&
+    (relativeOutput === "" || relativeOutput === ".." ||
+      relativeOutput.startsWith("../") || isAbsolute(relativeOutput))
   ) {
     throw CONFIG_INVALID.create({
       detail: "build.outDir must resolve to a directory inside the project",
