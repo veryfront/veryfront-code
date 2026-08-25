@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { DnsPermissionError } from "#veryfront/platform/compat/dns.ts";
 import {
   assertWorkerEgressAllowed,
   assertWorkerHostEgressAllowed,
@@ -246,6 +247,26 @@ describe("worker-egress-guard", () => {
         }),
       WorkerEgressBlockedError,
       "unable to resolve host",
+    );
+  });
+
+  it("forwards a DNS permission diagnosis as a blocked-egress message", async () => {
+    // The broker boundary forwards only WorkerEgressBlockedError messages and
+    // collapses everything else into a generic failure, so the permission
+    // diagnosis must be translated at the guard or it never reaches the
+    // consumer (veryfront-issue-inbox#744).
+    await assertRejects(
+      () =>
+        assertWorkerHostEgressAllowed("api.example.com", {
+          resolveHost: () =>
+            Promise.reject(
+              new DnsPermissionError(
+                'net access to the DNS resolver is not permitted while resolving "api.example.com"',
+              ),
+            ),
+        }),
+      WorkerEgressBlockedError,
+      "net access to the DNS resolver is not permitted",
     );
   });
 

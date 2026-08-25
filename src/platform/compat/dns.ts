@@ -205,6 +205,19 @@ function isPermissionError(error: unknown): boolean {
     (error.name === "NotCapable" || error.name === "PermissionDenied");
 }
 
+/**
+ * A DNS lookup failed because net permission is missing, not because the name
+ * did not resolve. Named so boundary layers that collapse unknown errors into
+ * a generic message (e.g. the worker egress broker) can recognize and forward
+ * the permission diagnosis instead of discarding it.
+ */
+export class DnsPermissionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "DnsPermissionError";
+  }
+}
+
 async function resolveHostAddressesUncached(
   hostname: string,
   options: { recordTypes: readonly DnsAddressRecordType[] },
@@ -237,7 +250,7 @@ async function resolveHostAddressesUncached(
         // the network instead of the flags (veryfront-issue-inbox#744). The
         // caller stays fail-closed either way; only the diagnosis changes.
         if (isPermissionError(error)) {
-          throw new Error(
+          throw new DnsPermissionError(
             `net access to the DNS resolver is not permitted while resolving "${hostname}"; ` +
               `this usually means --allow-net is narrowed (Deno checks permission against the nameserver, not the queried host)`,
             { cause: error },

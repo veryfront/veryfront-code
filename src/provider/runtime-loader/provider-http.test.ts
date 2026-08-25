@@ -1160,12 +1160,14 @@ describe("provider-http", () => {
         originalRemove(type, listener, options);
       }) as typeof signal.removeEventListener;
 
+      let requestInit: RequestInit | undefined;
       await assertRejects(
         () =>
           requestStream({
             url: "https://provider.test/stream",
-            fetchImpl: () =>
-              Promise.resolve({
+            fetchImpl: (_url, init) => {
+              requestInit = init;
+              return Promise.resolve({
                 ok: true,
                 status: 200,
                 body: {
@@ -1173,7 +1175,8 @@ describe("provider-http", () => {
                     throw new TypeError("body is locked");
                   },
                 },
-              } as unknown as Response),
+              } as unknown as Response);
+            },
             init: { method: "POST", signal },
             providerLabel: "veryfront-cloud",
             providerKind: "moonshotai",
@@ -1187,6 +1190,13 @@ describe("provider-http", () => {
         abortListenersRemoved,
         abortListenersAdded,
         "every abort listener the deadline added must be removed on the handoff failure",
+      );
+      // No stream was handed off, so nothing else releases the provider
+      // connection: the request itself must be aborted before the rethrow.
+      assertEquals(
+        requestInit?.signal?.aborted,
+        true,
+        "the provider request must be aborted when the handoff fails",
       );
     });
 

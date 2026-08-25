@@ -727,6 +727,17 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
 }
 
 /**
+ * A rejected Host header is untrusted input and may carry a customer domain,
+ * private hostname, or secret-like value, so log only its shape — never the
+ * verbatim value (AGENTS.md, "Secret and internal-detail safety").
+ */
+function describeRejectedHostHeader(host: string | null): string {
+  if (host === null) return "<missing>";
+  if (host.length === 0) return "<empty>";
+  return `<redacted, ${host.length} chars>`;
+}
+
+/**
  * Main router.
  */
 async function router(req: Request): Promise<Response> {
@@ -740,7 +751,7 @@ async function router(req: Request): Promise<Response> {
     // Reject the request instead of letting the TypeError escape the handler
     // as Deno's generic 500 with a bare stack line.
     proxyLogger.warn(`400 ${req.method} <unparseable request URL>`, {
-      host: req.headers.get("host") ?? "",
+      host: describeRejectedHostHeader(req.headers.get("host")),
     });
     return jsonErrorResponse(400, { error: "Bad Request" });
   }
@@ -785,7 +796,7 @@ async function router(req: Request): Promise<Response> {
       // the url.host fallback never fires). Map it to 400 here instead of
       // letting it escape as Deno's generic 500.
       proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
-        host: req.headers.get("host") ?? "",
+        host: describeRejectedHostHeader(req.headers.get("host")),
       });
       return jsonErrorResponse(400, { error: "Bad Request" });
     }

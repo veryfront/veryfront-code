@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetHostAddressCacheForTests,
   createHostAddressResolver,
+  DnsPermissionError,
   HOST_ADDRESS_CACHE_MAX_ENTRIES,
   HOST_ADDRESS_CACHE_TTL_MS,
   resolveHostAddresses,
@@ -306,7 +307,7 @@ describe("platform/compat/dns loopback names", () => {
       });
       const error = await assertRejects(
         () => resolveHostAddresses("permission-probe.invalid", { recordTypes: ["A"] }),
-        Error,
+        DnsPermissionError,
         "net access to the DNS resolver is not permitted",
       );
       assertEquals(

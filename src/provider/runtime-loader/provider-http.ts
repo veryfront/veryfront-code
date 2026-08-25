@@ -933,8 +933,13 @@ export async function requestStream(options: {
       // Past this point `streamWithCleanup` has claimed (or tried to claim)
       // `response.body` with `getReader()`. Retrying would replay a request
       // whose body another reader may already hold, so surface the failure
-      // whatever its shape.
-      if (bodyClaimAttempted) throw error;
+      // whatever its shape. No stream was handed off, so nothing else will
+      // release the provider connection: abort the request before surfacing
+      // the failure, as the normal stream error and cancellation paths do.
+      if (bodyClaimAttempted) {
+        deadline.abort(error);
+        throw error;
+      }
       const failure = deadline.timedOut
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
