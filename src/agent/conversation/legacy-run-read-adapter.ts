@@ -180,7 +180,7 @@ function readVersion1(
             // Durable writers serialize structured tool output into `content`,
             // so decode it exactly as the version 2 reader does; otherwise a
             // stored object replays to the runs UI as its JSON source text.
-            output: parseToolResultContent(event.content),
+            output: parseToolResultContent(event.content, event.contentEncoding),
             isError: event.isError === true,
             providerExecuted: true,
           });
@@ -482,7 +482,7 @@ function readVersion2(
             type: "provider_tool_result",
             toolCallId,
             toolName,
-            output: parseToolResultContent(event.content),
+            output: parseToolResultContent(event.content, event.contentEncoding),
             isError: event.isError === true,
             providerExecuted: true,
           });
@@ -522,7 +522,8 @@ function readVersion2(
   return { status: "ok", frames, repairs: [] };
 }
 
-function parseToolResultContent(content: unknown): unknown {
+function parseToolResultContent(content: unknown, contentEncoding: unknown): unknown {
+  if (contentEncoding === "text") return content;
   if (typeof content !== "string") return content;
   try {
     return JSON.parse(content);

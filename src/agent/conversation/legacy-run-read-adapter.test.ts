@@ -267,6 +267,85 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
+  it("preserves JSON-shaped string provider results through durable v1 replay", () => {
+    for (const output of ["null", "42", '{"ok":true}']) {
+      const durableEvents = writeDurableEvents(frames([
+        {
+          event: {
+            type: "tool_input_start",
+            toolCallId: "legacy-fetch",
+            toolName: "web_fetch",
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "tool_input_ready",
+            toolCallId: "legacy-fetch",
+            toolName: "web_fetch",
+            input: { url: "https://docs.example/page" },
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "provider_tool_result",
+            toolCallId: "legacy-fetch",
+            toolName: "web_fetch",
+            output,
+            isError: false,
+            providerExecuted: true,
+          },
+        },
+      ]));
+      const storedResult = durableEvents.find((event) => event.type === "TOOL_CALL_RESULT");
+      assertEquals(storedResult?.content, output);
+      assertEquals(storedResult?.contentEncoding, "text");
+
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 1,
+        events: [
+          {
+            type: "TOOL_CALL_START",
+            toolCallId: "legacy-fetch",
+            toolCallName: "web_fetch",
+            providerExecuted: true,
+          },
+          {
+            type: "TOOL_CALL_ARGS",
+            toolCallId: "legacy-fetch",
+            delta: '{"url":"https://docs.example/page"}',
+          },
+          { type: "TOOL_CALL_END", toolCallId: "legacy-fetch" },
+          {
+            type: "TOOL_CALL_RESULT",
+            toolCallId: "legacy-fetch",
+            toolName: "web_fetch",
+            content: storedResult?.content,
+            contentEncoding: storedResult?.contentEncoding,
+            isError: false,
+          },
+        ],
+      });
+
+      assertEquals(result.status, "ok");
+      if (result.status !== "ok") continue;
+      assertEquals(
+        result.frames.filter((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ).map((frame) => frame.event),
+        [{
+          type: "provider_tool_result",
+          toolCallId: "legacy-fetch",
+          toolName: "web_fetch",
+          output,
+          isError: false,
+          providerExecuted: true,
+        }],
+      );
+    }
+  });
+
   it("keeps a non-JSON version 1 provider-executed tool result verbatim", () => {
     const events = [
       {

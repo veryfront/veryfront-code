@@ -25,6 +25,43 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("marks JSON-shaped string tool outputs as text in durable events", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    for (const output of ["null", "42", '{"ok":true}']) {
+      assertEquals(
+        encoder.encode({ type: "tool-output-available", toolCallId: "tc-1", output }),
+        [{
+          type: conversationRunEventTypes.toolCallResult,
+          messageId: "tool:tc-1",
+          toolCallId: "tc-1",
+          content: output,
+          contentEncoding: "text",
+          role: "tool",
+        }],
+      );
+    }
+  });
+
+  it("keeps structured tool outputs in the legacy JSON durable representation", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "tc-1",
+        output: { ok: true },
+      }),
+      [{
+        type: conversationRunEventTypes.toolCallResult,
+        messageId: "tool:tc-1",
+        toolCallId: "tc-1",
+        content: '{"ok":true}',
+        role: "tool",
+      }],
+    );
+  });
+
   it("encodes text and reasoning events", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

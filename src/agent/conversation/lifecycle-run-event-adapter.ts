@@ -1,6 +1,10 @@
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
-import { type ConversationRunEvent, conversationRunEventTypes } from "./run-events.ts";
+import {
+  type ConversationRunEvent,
+  conversationRunEventTypes,
+  serializeConversationToolResultContent,
+} from "./run-events.ts";
 
 /**
  * Thrown when a supposedly validated lifecycle frame sequence violates a
@@ -289,7 +293,7 @@ export function createLifecycleRunEventAdapter(input: {
           type: conversationRunEventTypes.toolCallResult,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
-          content: serialize(event.output),
+          ...serializeConversationToolResultContent(event.output),
           isError: event.isError,
           providerExecuted: true,
           ...(storedInput !== undefined ? { input: storedInput } : {}),

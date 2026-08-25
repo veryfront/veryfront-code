@@ -45,6 +45,27 @@ function serializeToolInput(input: unknown): string {
   }
 }
 
+/** Serialize tool output while preserving strings that would otherwise decode as JSON. */
+export function serializeConversationToolResultContent(value: unknown): {
+  content: string;
+  contentEncoding?: "text";
+} {
+  if (typeof value === "string") {
+    try {
+      JSON.parse(value);
+      return { content: value, contentEncoding: "text" };
+    } catch {
+      return { content: value };
+    }
+  }
+
+  try {
+    return { content: JSON.stringify(value ?? null) };
+  } catch {
+    return { content: String(value) };
+  }
+}
+
 function encodeCustomDataEvent(
   chunk: Extract<ChatStreamEvent, { type: `data-${string}` }>,
 ): ConversationRunEvent[] {
@@ -155,18 +176,6 @@ export class ConversationRunEventEncoder {
   private releaseToolCallState(toolCallId: string): void {
     this.toolInputs.delete(toolCallId);
     this.streamedToolInputs.delete(toolCallId);
-  }
-
-  private serializeToolResultContent(value: unknown): string {
-    if (typeof value === "string") {
-      return value;
-    }
-
-    try {
-      return JSON.stringify(value ?? null);
-    } catch {
-      return String(value);
-    }
   }
 
   encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
@@ -296,7 +305,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -313,7 +322,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.output),
+          ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -328,7 +337,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
