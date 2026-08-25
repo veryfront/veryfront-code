@@ -636,6 +636,67 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("validates V8 property aliases independently of callable labels", async () => {
+    const error = new Error("unknown error callable_alias_frames");
+    error.stack = [
+      "Error: unknown error callable_alias_frames",
+      "    at Object.publicAlias [as private-control.example] (/srv/app.ts:1:1)",
+      "    at Object.publicAlias [as async prefixed-private.example] (/srv/app.ts:2:1)",
+      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:3:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const output = formatUserError(error);
+
+      assertEquals(output.includes("private-control.example"), false);
+      assertEquals(output.includes("prefixed-private.example"), false);
+      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+      return Promise.resolve();
+    });
+  });
+
+  it("rejects hostname-shaped V8 aliases with accessor-like prefixes", async () => {
+    const error = new Error("unknown error accessor_alias_frame");
+    error.stack = [
+      "Error: unknown error accessor_alias_frame",
+      "    at Object.publicAlias [as get private-control.example] (/srv/app.ts:1:1)",
+      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const output = formatUserError(error);
+
+      assertEquals(output.includes("private-control.example"), false);
+      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+      return Promise.resolve();
+    });
+  });
+
+  it("does not call live RegExp prototype hooks while sanitizing stacks", async () => {
+    const error = new Error("unknown error mutated_regexp_test");
+    error.stack = [
+      "Error: unknown error mutated_regexp_test",
+      "    at publicHandler (/srv/app.ts:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const originalTest = RegExp.prototype.test;
+      let output: string;
+      try {
+        RegExp.prototype.test = () => {
+          throw new Error("live RegExp.test must not run");
+        };
+        output = formatUserError(error);
+      } finally {
+        RegExp.prototype.test = originalTest;
+      }
+
+      assert(output.includes("publicHandler"));
+      assertEquals(output.includes("live RegExp.test"), false);
+      return Promise.resolve();
+    });
+  });
+
   it("leaks no stack frames in production output", async () => {
     const error = unknownError();
 

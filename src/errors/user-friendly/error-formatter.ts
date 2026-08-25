@@ -111,6 +111,9 @@ const CALLABLE_LABEL_PREFIX = /^(?:(?:async|new)\s+)+/;
 /** Standard V8 property aliases must be safe independently of their function name. */
 const CALLABLE_ALIAS_SUFFIX = /^(.+)\s+\[as\s+([^\]\r\n]+)\]$/;
 
+/** A custom prefix cannot make an unsafe alias suffix safe to display. */
+const CALLABLE_ALIAS_TRAILING_TOKEN = /\S+$/;
+
 /** Captures a frame whose text after `at ` can be a bare source location. */
 const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 
@@ -131,6 +134,11 @@ function isRetainableCallableLabel(label: string): boolean {
       testRegExp(SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL, label));
 }
 
+function isRetainableCallableAlias(label: string): boolean {
+  const trailingToken = execRegExp(CALLABLE_ALIAS_TRAILING_TOKEN, label)?.[0] ?? "";
+  return isRetainableCallableLabel(label) && isRetainableCallableLabel(trailingToken);
+}
+
 /** Keep a frame's callable label only when the label itself carries no source location. */
 function retainCallableLabel(label: string): string {
   const trimmed = label.trim();
@@ -142,7 +150,7 @@ function retainCallableLabel(label: string): string {
   const unprefixedAlias = aliasPrefix ? aliasLabel!.slice(aliasPrefix.length).trim() : aliasLabel;
   const isSafe = alias
     ? isRetainableCallableLabel(alias[1]!.trim()) &&
-      isRetainableCallableLabel(unprefixedAlias ?? "")
+      isRetainableCallableAlias(unprefixedAlias ?? "")
     : isRetainableCallableLabel(callableLabel);
   return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
 }

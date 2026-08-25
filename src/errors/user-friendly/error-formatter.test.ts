@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { cyan, dim } from "#veryfront/compat/console";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { formatErrorBox, formatUserError } from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
@@ -170,56 +169,6 @@ describe("formatUserError", () => {
 
     assertEquals(output.includes("build-server"), false);
     assertEquals(output.includes("file:///home/user"), false);
-  });
-
-  it("should validate V8 property aliases independently of callable labels", () => {
-    const originalEnvironment = getHostEnv("VERYFRONT_ENV");
-    const error = new Error("unknown error callable_alias_frames");
-    error.stack = [
-      "Error: unknown error callable_alias_frames",
-      "    at Object.publicAlias [as private-control.example] (/srv/app.ts:1:1)",
-      "    at Object.publicAlias [as async prefixed-private.example] (/srv/app.ts:2:1)",
-      "    at Object.publicAlias [as visibleAlias] (/srv/app.ts:2:1)",
-    ].join("\n");
-
-    let output: string;
-    try {
-      setEnv("VERYFRONT_ENV", "development");
-      output = formatUserError(error);
-    } finally {
-      if (originalEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
-      else setEnv("VERYFRONT_ENV", originalEnvironment);
-    }
-
-    assertEquals(output.includes("private-control.example"), false);
-    assertEquals(output.includes("prefixed-private.example"), false);
-    assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
-  });
-
-  it("should not call live RegExp prototype hooks while sanitizing stacks", () => {
-    const originalTest = RegExp.prototype.test;
-    const originalEnvironment = getHostEnv("VERYFRONT_ENV");
-    const error = new Error("unknown error mutated_regexp_test");
-    error.stack = [
-      "Error: unknown error mutated_regexp_test",
-      "    at publicHandler (/srv/app.ts:1:1)",
-    ].join("\n");
-
-    let output: string;
-    try {
-      setEnv("VERYFRONT_ENV", "development");
-      RegExp.prototype.test = () => {
-        throw new Error("live RegExp.test must not run");
-      };
-      output = formatUserError(error);
-    } finally {
-      RegExp.prototype.test = originalTest;
-      if (originalEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
-      else setEnv("VERYFRONT_ENV", originalEnvironment);
-    }
-
-    assert(output.includes("publicHandler"));
-    assertEquals(output.includes("live RegExp.test"), false);
   });
 
   it("should not invoke proxy traps in plain output", () => {
