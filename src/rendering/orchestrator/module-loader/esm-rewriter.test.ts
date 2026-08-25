@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import { register, resolve } from "#veryfront/extensions/contracts.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
@@ -224,15 +225,12 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       },
     } as unknown as RuntimeAdapter;
-    let originalFetch: typeof fetch;
-
     beforeEach(() => {
       files.clear();
-      originalFetch = globalThis.fetch;
     });
 
     afterEach(() => {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     });
 
     function jsonResponse(body: string, status = 200): Response {
@@ -244,16 +242,20 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
     it("resolves the top-level URL when all nested URLs succeed", async () => {
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(
-            jsonResponse(`import { a } from "https://esm.sh/a";`),
-          );
-        }
-        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse(`export const a = 1;`));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(
+              jsonResponse(`import { a } from "https://esm.sh/a";`),
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse(`export const a = 1;`));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       assertEquals(result.startsWith(tmpDir), true);
@@ -277,12 +279,16 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
           return originalLexer.parse(code);
         },
       });
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
-        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse("export const a = 1;"));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse("export const a = 1;"));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       try {
         const result = await fetchEsmModule(
@@ -319,11 +325,13 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       });
       const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -364,11 +372,13 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       });
       const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       try {
         await assertRejects(
@@ -381,6 +391,48 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
           files.size,
           0,
           "no artifact may be written for a module whose template-literal path stayed unrewritten",
+        );
+      } finally {
+        register("ModuleLexer", originalLexer);
+      }
+    });
+
+    it("fails the load when a comment separates the keyword from a relative path", async () => {
+      // Anchoring the fallback on `import`/`from` would mean re-deriving JS
+      // syntax by regex: a comment in the middle is enough to hide the
+      // specifier and reinstate the unloadable artifact.
+      const esmCache = new Map<string, string>();
+      const originalLexer = resolve<ModuleLexer>("ModuleLexer");
+      const rootCode = `/* reject-configured-lexer */ import /* generated */ "./dep.js";`;
+      register<ModuleLexer>("ModuleLexer", {
+        init: originalLexer.init?.bind(originalLexer),
+        parse(code) {
+          if (code.includes("reject-configured-lexer")) {
+            throw new Error("configured lexer rejected source");
+          }
+          return originalLexer.parse(code);
+        },
+      });
+      const rootUrl = "https://esm.sh/v135/root@1.0.0/es2022/root.js";
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === rootUrl) return Promise.resolve(jsonResponse(rootCode));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
+
+      try {
+        await assertRejects(
+          () => fetchEsmModule(rootUrl, tmpDir, localAdapter, esmCache),
+          Error,
+          "./dep.js",
+          "a comment before the specifier must not hide it from the fallback",
+        );
+        assertEquals(
+          files.size,
+          0,
+          "no artifact may be written for a comment-separated relative specifier",
         );
       } finally {
         register("ModuleLexer", originalLexer);
@@ -404,11 +456,13 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
           return originalLexer.parse(code);
         },
       });
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") return Promise.resolve(jsonResponse(rootCode));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       try {
         const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
@@ -432,19 +486,21 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       const finalUrl = "https://esm.sh/v135/pkg@1.0.0/es2022/pkg.mjs";
       const chunkUrl = "https://esm.sh/v135/pkg@1.0.0/es2022/chunk.mjs";
       const requested: string[] = [];
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        requested.push(url);
-        if (url === requestedUrl) {
-          const redirected = jsonResponse(`export { c } from "./chunk.mjs";`);
-          // `Response.url` is read-only, and a synthetic response reports "";
-          // defining it is how a followed redirect is simulated here.
-          Object.defineProperty(redirected, "url", { value: finalUrl });
-          return Promise.resolve(redirected);
-        }
-        if (url === chunkUrl) return Promise.resolve(jsonResponse(`export const c = 1;`));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          requested.push(url);
+          if (url === requestedUrl) {
+            const redirected = jsonResponse(`export { c } from "./chunk.mjs";`);
+            // `Response.url` is read-only, and a synthetic response reports "";
+            // defining it is how a followed redirect is simulated here.
+            Object.defineProperty(redirected, "url", { value: finalUrl });
+            return Promise.resolve(redirected);
+          }
+          if (url === chunkUrl) return Promise.resolve(jsonResponse(`export const c = 1;`));
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule(requestedUrl, tmpDir, localAdapter, esmCache);
 
@@ -472,14 +528,18 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
     it("prefetches successful template-literal dynamic imports", async () => {
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse("const load = () => import(`https://esm.sh/a`);"));
-        }
-        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse("export const a = 1;"));
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse("const load = () => import(`https://esm.sh/a`);"));
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse("export const a = 1;"));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       const rootContent = files.get(result) ?? "";
@@ -493,21 +553,25 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
     it("does not abort the render when a nested URL fetch fails", async () => {
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(
-            jsonResponse(
-              `import { a } from "https://esm.sh/a";\nimport("https://esm.sh/broken");`,
-            ),
-          );
-        }
-        if (url === "https://esm.sh/a") return Promise.resolve(jsonResponse(`export const a = 1;`));
-        if (url === "https://esm.sh/broken") {
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(
+              jsonResponse(
+                `import { a } from "https://esm.sh/a";\nimport("https://esm.sh/broken");`,
+              ),
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse(`export const a = 1;`));
+          }
+          if (url === "https://esm.sh/broken") {
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       const rootContent = files.get(result) ?? "";
@@ -519,25 +583,27 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
     it("does not publish a lazy-failure cycle artifact", async () => {
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(`import("https://esm.sh/a");`));
-        }
-        if (url === "https://esm.sh/a") {
-          return Promise.resolve(jsonResponse(
-            `import { b } from "https://esm.sh/b";\n` +
-              `import("https://esm.sh/broken");\nexport const a = 1;`,
-          ));
-        }
-        if (url === "https://esm.sh/b") {
-          return Promise.resolve(jsonResponse(`import { r } from "https://esm.sh/root";`));
-        }
-        if (url === "https://esm.sh/broken") {
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(`import("https://esm.sh/a");`));
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse(
+              `import { b } from "https://esm.sh/b";\n` +
+                `import("https://esm.sh/broken");\nexport const a = 1;`,
+            ));
+          }
+          if (url === "https://esm.sh/b") {
+            return Promise.resolve(jsonResponse(`import { r } from "https://esm.sh/root";`));
+          }
+          if (url === "https://esm.sh/broken") {
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       assertEquals(
@@ -560,38 +626,40 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import { x } from "https://esm.sh/x";\n` +
-              `import("https://esm.sh/b");`,
-          );
-        }
-        if (url === "https://esm.sh/b") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import { missing } from "https://esm.sh/broken";\n` +
-              `export const b = d;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { b } from "https://esm.sh/b";\nexport const d = 1;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await dWritten.promise;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        if (url === "https://esm.sh/broken") {
-          return new Response("upstream broken", { status: 500 });
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import { x } from "https://esm.sh/x";\n` +
+                `import("https://esm.sh/b");`,
+            );
+          }
+          if (url === "https://esm.sh/b") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import { missing } from "https://esm.sh/broken";\n` +
+                `export const b = d;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { b } from "https://esm.sh/b";\nexport const d = 1;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await dWritten.promise;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          if (url === "https://esm.sh/broken") {
+            return new Response("upstream broken", { status: 500 });
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
@@ -617,45 +685,47 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import { x } from "https://esm.sh/x";\n` +
-              `import("https://esm.sh/a");`,
-          );
-        }
-        if (url === "https://esm.sh/a") {
-          return jsonResponse(
-            `import { b } from "https://esm.sh/b";\n` +
-              `import { missing } from "https://esm.sh/broken";\n` +
-              `export const a = b;`,
-          );
-        }
-        if (url === "https://esm.sh/b") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import { a } from "https://esm.sh/a";\n` +
-              `export const b = d;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { b } from "https://esm.sh/b";\nexport const d = b;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await bWritten.promise;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        if (url === "https://esm.sh/broken") {
-          return new Response("upstream broken", { status: 500 });
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import { x } from "https://esm.sh/x";\n` +
+                `import("https://esm.sh/a");`,
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return jsonResponse(
+              `import { b } from "https://esm.sh/b";\n` +
+                `import { missing } from "https://esm.sh/broken";\n` +
+                `export const a = b;`,
+            );
+          }
+          if (url === "https://esm.sh/b") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import { a } from "https://esm.sh/a";\n` +
+                `export const b = d;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { b } from "https://esm.sh/b";\nexport const d = b;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await bWritten.promise;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          if (url === "https://esm.sh/broken") {
+            return new Response("upstream broken", { status: 500 });
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
@@ -681,39 +751,41 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import("https://esm.sh/a");\n` +
-              `import { x } from "https://esm.sh/x";\n` +
-              `export const root = x;`,
-          );
-        }
-        if (url === "https://esm.sh/a") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import("https://esm.sh/broken");\n` +
-              `export const a = d;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { a } from "https://esm.sh/a";\nexport const d = 1;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await dWritten.promise;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        if (url === "https://esm.sh/broken") {
-          return new Response("upstream broken", { status: 500 });
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import("https://esm.sh/a");\n` +
+                `import { x } from "https://esm.sh/x";\n` +
+                `export const root = x;`,
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import("https://esm.sh/broken");\n` +
+                `export const a = d;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { a } from "https://esm.sh/a";\nexport const d = 1;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await dWritten.promise;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          if (url === "https://esm.sh/broken") {
+            return new Response("upstream broken", { status: 500 });
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule(
         "https://esm.sh/root",
@@ -747,40 +819,42 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import { a } from "https://esm.sh/a";\n` +
-              `import { x } from "https://esm.sh/x";\n` +
-              `export const root = a + x;`,
-          );
-        }
-        if (url === "https://esm.sh/a") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import { slow } from "https://esm.sh/slow";\n` +
-              `export const a = d + slow;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { a } from "https://esm.sh/a";\nexport const d = a;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await dWritten.promise;
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        if (url === "https://esm.sh/slow") {
-          await dWritten.promise;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          return jsonResponse("export const slow = 1;");
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import { a } from "https://esm.sh/a";\n` +
+                `import { x } from "https://esm.sh/x";\n` +
+                `export const root = a + x;`,
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import { slow } from "https://esm.sh/slow";\n` +
+                `export const a = d + slow;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { a } from "https://esm.sh/a";\nexport const d = a;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await dWritten.promise;
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          if (url === "https://esm.sh/slow") {
+            await dWritten.promise;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return jsonResponse("export const slow = 1;");
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule(
         "https://esm.sh/root",
@@ -813,28 +887,30 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import { x } from "https://esm.sh/x";\n` +
-              `export const root = d + x;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { root } from "https://esm.sh/root";\nexport const d = root;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await dWritten.promise;
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import { x } from "https://esm.sh/x";\n` +
+                `export const root = d + x;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { root } from "https://esm.sh/root";\nexport const d = root;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await dWritten.promise;
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadlocked = new Promise<"deadlocked">((resolve) => {
@@ -888,40 +964,42 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
         },
       } as unknown as RuntimeAdapter;
 
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return jsonResponse(
-            `import { a } from "https://esm.sh/a";\n` +
-              `import { x } from "https://esm.sh/x";\n` +
-              `export const root = a + x;`,
-          );
-        }
-        if (url === "https://esm.sh/a") {
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\n` +
-              `import { y } from "https://esm.sh/y";\n` +
-              `export const a = d + y;`,
-          );
-        }
-        if (url === "https://esm.sh/d") {
-          return jsonResponse(
-            `import { a } from "https://esm.sh/a";\nexport const d = a;`,
-          );
-        }
-        if (url === "https://esm.sh/y") {
-          return jsonResponse(
-            `import { x } from "https://esm.sh/x";\nexport const y = x;`,
-          );
-        }
-        if (url === "https://esm.sh/x") {
-          await dWritten.promise;
-          return jsonResponse(
-            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
-          );
-        }
-        return new Response("not found", { status: 404 });
-      }) as typeof fetch;
+      installMockFetch(
+        (async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return jsonResponse(
+              `import { a } from "https://esm.sh/a";\n` +
+                `import { x } from "https://esm.sh/x";\n` +
+                `export const root = a + x;`,
+            );
+          }
+          if (url === "https://esm.sh/a") {
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\n` +
+                `import { y } from "https://esm.sh/y";\n` +
+                `export const a = d + y;`,
+            );
+          }
+          if (url === "https://esm.sh/d") {
+            return jsonResponse(
+              `import { a } from "https://esm.sh/a";\nexport const d = a;`,
+            );
+          }
+          if (url === "https://esm.sh/y") {
+            return jsonResponse(
+              `import { x } from "https://esm.sh/x";\nexport const y = x;`,
+            );
+          }
+          if (url === "https://esm.sh/x") {
+            await dWritten.promise;
+            return jsonResponse(
+              `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+            );
+          }
+          return new Response("not found", { status: 404 });
+        }) as typeof fetch,
+      );
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadlocked = new Promise<"deadlocked">((resolve) => {
@@ -964,27 +1042,29 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // has produced an artifact, so neither the caller-stack `pending` set nor
       // `graph.artifacts` shows the cycle: only the recorded wait edges do.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { a } from "https://esm.sh/a";\n` +
-              `import { b } from "https://esm.sh/b";\n` +
-              `export const root = a + b;`,
-          ));
-        }
-        if (url === "https://esm.sh/a") {
-          return Promise.resolve(jsonResponse(
-            `import { b } from "https://esm.sh/b";\nexport const a = b;`,
-          ));
-        }
-        if (url === "https://esm.sh/b") {
-          return Promise.resolve(jsonResponse(
-            `import { a } from "https://esm.sh/a";\nexport const b = a;`,
-          ));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { a } from "https://esm.sh/a";\n` +
+                `import { b } from "https://esm.sh/b";\n` +
+                `export const root = a + b;`,
+            ));
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse(
+              `import { b } from "https://esm.sh/b";\nexport const a = b;`,
+            ));
+          }
+          if (url === "https://esm.sh/b") {
+            return Promise.resolve(jsonResponse(
+              `import { a } from "https://esm.sh/a";\nexport const b = a;`,
+            ));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadlocked = new Promise<"deadlocked">((resolve) => {
@@ -1036,32 +1116,34 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // the cycle is only visible by following `a` -> `b` -> `c` through the
       // recorded wait edges.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { a } from "https://esm.sh/a";\n` +
-              `import { b } from "https://esm.sh/b";\n` +
-              `export const root = a + b;`,
-          ));
-        }
-        if (url === "https://esm.sh/a") {
-          return Promise.resolve(jsonResponse(
-            `import { b } from "https://esm.sh/b";\nexport const a = b;`,
-          ));
-        }
-        if (url === "https://esm.sh/b") {
-          return Promise.resolve(jsonResponse(
-            `import { c } from "https://esm.sh/c";\nexport const b = c;`,
-          ));
-        }
-        if (url === "https://esm.sh/c") {
-          return Promise.resolve(jsonResponse(
-            `import { a } from "https://esm.sh/a";\nexport const c = a;`,
-          ));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { a } from "https://esm.sh/a";\n` +
+                `import { b } from "https://esm.sh/b";\n` +
+                `export const root = a + b;`,
+            ));
+          }
+          if (url === "https://esm.sh/a") {
+            return Promise.resolve(jsonResponse(
+              `import { b } from "https://esm.sh/b";\nexport const a = b;`,
+            ));
+          }
+          if (url === "https://esm.sh/b") {
+            return Promise.resolve(jsonResponse(
+              `import { c } from "https://esm.sh/c";\nexport const b = c;`,
+            ));
+          }
+          if (url === "https://esm.sh/c") {
+            return Promise.resolve(jsonResponse(
+              `import { a } from "https://esm.sh/a";\nexport const c = a;`,
+            ));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       let timer: ReturnType<typeof setTimeout> | undefined;
       const deadlocked = new Promise<"deadlocked">((resolve) => {
@@ -1101,16 +1183,18 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // loader is handed it. Leaving a static dependency remote would change
       // that contract, so this failure stays fatal.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(`import { b } from "https://esm.sh/broken";`));
-        }
-        if (url === "https://esm.sh/broken") {
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(`import { b } from "https://esm.sh/broken";`));
+          }
+          if (url === "https://esm.sh/broken") {
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
@@ -1124,22 +1208,24 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // The fetch budget turns that runaway into a failure rather than a hang.
       const esmCache = new Map<string, string>();
       let fetchCount = 0;
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        fetchCount++;
-        if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
-        if (url === "https://esm.sh/cycle-a") {
-          return Promise.resolve(
-            jsonResponse(`import { b } from "https://esm.sh/cycle-b";\nexport const a = 1;`),
-          );
-        }
-        if (url === "https://esm.sh/cycle-b") {
-          return Promise.resolve(
-            jsonResponse(`import { a } from "https://esm.sh/cycle-a";\nexport const b = 2;`),
-          );
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          fetchCount++;
+          if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
+          if (url === "https://esm.sh/cycle-a") {
+            return Promise.resolve(
+              jsonResponse(`import { b } from "https://esm.sh/cycle-b";\nexport const a = 1;`),
+            );
+          }
+          if (url === "https://esm.sh/cycle-b") {
+            return Promise.resolve(
+              jsonResponse(`import { a } from "https://esm.sh/cycle-a";\nexport const b = 2;`),
+            );
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/cycle-a", tmpDir, localAdapter, esmCache);
 
@@ -1175,17 +1261,19 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
     it("terminates on a self-referencing module", async () => {
       const esmCache = new Map<string, string>();
       let fetchCount = 0;
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        fetchCount++;
-        if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
-        if (url === "https://esm.sh/self") {
-          return Promise.resolve(
-            jsonResponse(`export { x } from "https://esm.sh/self";\nexport const x = 1;`),
-          );
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          fetchCount++;
+          if (fetchCount > 8) throw new Error(`runaway fetch of ${url}`);
+          if (url === "https://esm.sh/self") {
+            return Promise.resolve(
+              jsonResponse(`export { x } from "https://esm.sh/self";\nexport const x = 1;`),
+            );
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/self", tmpDir, localAdapter, esmCache);
 
@@ -1203,22 +1291,24 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // longest-first ordering the second import becomes the first
       // dependency's path with a dangling "-dom" glued on.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/react") {
-          return Promise.resolve(jsonResponse(`export const react = 1;`));
-        }
-        if (url === "https://esm.sh/react-dom") {
-          return Promise.resolve(jsonResponse(`export const reactDom = 2;`));
-        }
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { react } from "https://esm.sh/react";\n` +
-              `import { reactDom } from "https://esm.sh/react-dom";`,
-          ));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/react") {
+            return Promise.resolve(jsonResponse(`export const react = 1;`));
+          }
+          if (url === "https://esm.sh/react-dom") {
+            return Promise.resolve(jsonResponse(`export const reactDom = 2;`));
+          }
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { react } from "https://esm.sh/react";\n` +
+                `import { reactDom } from "https://esm.sh/react-dom";`,
+            ));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       const rootContent = files.get(result) ?? "";
@@ -1251,22 +1341,24 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // replacement must still match whole specifiers, or the failed URL
       // becomes the shorter dependency's path with "-dom" glued on.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/react") {
-          return Promise.resolve(jsonResponse(`export const react = 1;`));
-        }
-        if (url === "https://esm.sh/react-dom") {
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { react } from "https://esm.sh/react";\n` +
-              `const dom = () => import("https://esm.sh/react-dom");`,
-          ));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/react") {
+            return Promise.resolve(jsonResponse(`export const react = 1;`));
+          }
+          if (url === "https://esm.sh/react-dom") {
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { react } from "https://esm.sh/react";\n` +
+                `const dom = () => import("https://esm.sh/react-dom");`,
+            ));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       const result = await fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache);
       const rootContent = files.get(result) ?? "";
@@ -1297,24 +1389,26 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       // cached would hand every later fetch an artifact importing a path that
       // does not exist.
       const esmCache = new Map<string, string>();
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { b } from "https://esm.sh/cycle-b";\n` +
-              `import { x } from "https://esm.sh/broken";`,
-          ));
-        }
-        if (url === "https://esm.sh/cycle-b") {
-          return Promise.resolve(jsonResponse(
-            `import { r } from "https://esm.sh/root";\nexport const b = 2;`,
-          ));
-        }
-        if (url === "https://esm.sh/broken") {
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { b } from "https://esm.sh/cycle-b";\n` +
+                `import { x } from "https://esm.sh/broken";`,
+            ));
+          }
+          if (url === "https://esm.sh/cycle-b") {
+            return Promise.resolve(jsonResponse(
+              `import { r } from "https://esm.sh/root";\nexport const b = 2;`,
+            ));
+          }
+          if (url === "https://esm.sh/broken") {
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
@@ -1336,26 +1430,28 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
     it("does not delete a cache entry published by a concurrent graph", async () => {
       const esmCache = new Map<string, string>();
       const concurrentRootPath = `${tmpDir}/concurrent-root.js`;
-      globalThis.fetch = ((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url === "https://esm.sh/root") {
-          return Promise.resolve(jsonResponse(
-            `import { b } from "https://esm.sh/cycle-b";`,
-          ));
-        }
-        if (url === "https://esm.sh/cycle-b") {
-          return Promise.resolve(jsonResponse(
-            `import { r } from "https://esm.sh/root";\n` +
-              `import { x } from "https://esm.sh/broken";\n` +
-              `export const b = r;`,
-          ));
-        }
-        if (url === "https://esm.sh/broken") {
-          esmCache.set("https://esm.sh/root", concurrentRootPath);
-          return Promise.resolve(new Response("upstream broken", { status: 500 }));
-        }
-        return Promise.resolve(new Response("not found", { status: 404 }));
-      }) as typeof fetch;
+      installMockFetch(
+        ((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url === "https://esm.sh/root") {
+            return Promise.resolve(jsonResponse(
+              `import { b } from "https://esm.sh/cycle-b";`,
+            ));
+          }
+          if (url === "https://esm.sh/cycle-b") {
+            return Promise.resolve(jsonResponse(
+              `import { r } from "https://esm.sh/root";\n` +
+                `import { x } from "https://esm.sh/broken";\n` +
+                `export const b = r;`,
+            ));
+          }
+          if (url === "https://esm.sh/broken") {
+            esmCache.set("https://esm.sh/root", concurrentRootPath);
+            return Promise.resolve(new Response("upstream broken", { status: 500 }));
+          }
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),
@@ -1371,8 +1467,9 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
 
     it("still throws when the top-level URL itself fails", async () => {
       const esmCache = new Map<string, string>();
-      globalThis.fetch =
-        (() => Promise.resolve(new Response("upstream broken", { status: 500 }))) as typeof fetch;
+      installMockFetch(
+        (() => Promise.resolve(new Response("upstream broken", { status: 500 }))) as typeof fetch,
+      );
 
       await assertRejects(
         () => fetchEsmModule("https://esm.sh/root", tmpDir, localAdapter, esmCache),

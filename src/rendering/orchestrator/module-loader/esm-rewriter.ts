@@ -67,18 +67,19 @@ export async function rewriteEsmPaths(code: string, urlBase: string): Promise<st
     logger.debug("Could not lex a fetched module; leaving its specifiers unrewritten", {
       error: error instanceof Error ? error.message : String(error),
     });
-    // Only reachable once the lexer has already refused the source, so the scan
-    // is deliberately coarse: a string that merely reads like an import costs a
-    // failed load here, never a silently unloadable artifact. Backticks count
-    // because esm.sh emits template-literal dynamic imports, which would
-    // otherwise slip through with a relative path intact. Declared inside the
-    // handler so its `lastIndex` cannot leak between calls.
-    const importLikeSpecifier = /(?:\bfrom|\bimport)\s*\(?\s*(["'`])([^"'`\n]+)\1/g;
-    for (
-      let match = importLikeSpecifier.exec(code);
-      match;
-      match = importLikeSpecifier.exec(code)
-    ) {
+    // Every quoted string is examined, not just the ones in an import-looking
+    // position. Anchoring on `import`/`from` would mean re-implementing JS
+    // syntax with a regex — comments between the keyword and the specifier,
+    // line continuations, and the `export {a} from` forms each need their own
+    // case, and a missed one silently reinstates the unloadable artifact this
+    // guards against. The lexer has already refused the source by this point,
+    // so the only safe direction to err in is refusing too much: a data string
+    // that merely looks like a path costs a failed load, never a broken
+    // module. Declared inside the handler so `lastIndex` cannot leak between
+    // calls; backticks are included because esm.sh emits template-literal
+    // dynamic imports.
+    const quotedString = /(["'`])([^"'`\n]*)\1/g;
+    for (let match = quotedString.exec(code); match; match = quotedString.exec(code)) {
       const specifier = match[2];
       if (specifier === undefined || !needsEsmRewrite(specifier)) continue;
       throw MODULE_NOT_FOUND.create({
