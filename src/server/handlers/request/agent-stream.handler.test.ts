@@ -1279,7 +1279,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedAllowedTools, undefined);
   });
 
-  it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
+  it("does not auto-expose Studio MCP tools from self-asserted Studio metadata", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
@@ -1387,8 +1387,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
-      assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
+      assertEquals(capturedAllowedRemoteTools, undefined);
+      assertEquals(capturedRemoteToolNames, []);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");

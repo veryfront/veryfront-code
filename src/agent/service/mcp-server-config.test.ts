@@ -7,10 +7,7 @@ import {
 } from "./mcp-server-config.ts";
 
 it("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
-  assertEquals(defaultAgentServiceMcpServers(), [
-    { kind: "veryfront-api" },
-    { kind: "veryfront-studio" },
-  ]);
+  assertEquals(defaultAgentServiceMcpServers(), [{ kind: "veryfront-api" }]);
 });
 
 it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {

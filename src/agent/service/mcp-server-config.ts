@@ -42,7 +42,7 @@ export type CreateAgentServiceRemoteMcpConfigInput = {
 };
 
 export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
-  return [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }];
+  return [{ kind: "veryfront-api" }];
 }
 
 /** Build the project-scoped control-plane MCP URL for the active project. */
