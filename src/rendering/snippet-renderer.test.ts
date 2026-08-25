@@ -60,6 +60,16 @@ const compileToStubModule: ContentProcessor["compileMdx"] = () =>
     globals: {},
   });
 
+/**
+ * Module server base that cannot be dialled by construction: the port is outside
+ * the valid range, so `import()` rejects while parsing the specifier and no
+ * socket is ever opened. renderSnippet writes the snippet cache entry before it
+ * imports the compiled module, so seeding only needs that import to fail -- and
+ * failing at URL-parse time keeps this unit hermetic instead of betting that a
+ * fixed "unroutable" port is unused on the host running the suite.
+ */
+const UNDIALABLE_MODULE_SERVER_URL = "http://127.0.0.1:99999";
+
 /** Seed the snippet cache for one project and return the entry's hash. */
 async function seedSnippet(mdxContent: string, projectSlug: string): Promise<string> {
   const adapter = createMockAdapter();
@@ -73,12 +83,16 @@ async function seedSnippet(mdxContent: string, projectSlug: string): Promise<str
         projectId: "snippet-cache-project",
         adapter,
         isLocalProject: false,
-        // Unroutable module server: the snippet module import fails after the
-        // cache write, which is all this seeding needs.
-        moduleServerUrl: "http://127.0.0.1:1",
+        moduleServerUrl: UNDIALABLE_MODULE_SERVER_URL,
       }),
   );
-  return (await computeHash(mdxContent + projectSlug)).slice(0, 16);
+  const hash = (await computeHash(mdxContent + projectSlug)).slice(0, 16);
+  assertEquals(
+    getCompiledSnippet(hash) !== undefined,
+    true,
+    "seeding must leave the compiled snippet in the cache without dialling a module server",
+  );
+  return hash;
 }
 
 describe("rendering/snippet-renderer", () => {
