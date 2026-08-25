@@ -285,7 +285,7 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         reactVersion: "1.0.0",
         registryBaseUrl: "https://registry.example.com",
       });
-      const entry = { tempPath: "/tmp/cross-project.mjs", contentHash: "hash" };
+      const entry = { tempPath: "cross-project.mjs", contentHash: "hash" };
       globalCrossProjectCache.set(ownedKey, entry);
       globalCrossProjectCache.set(foreignKey, entry);
 
