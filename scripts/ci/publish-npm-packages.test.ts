@@ -119,12 +119,66 @@ describe("npm package publishing", () => {
         assertEquals(output.code, 1, decoder.decode(output.stderr));
         assertStringIncludes(
           decoder.decode(output.stderr),
+          "npm compatibility artifact verify failed.",
+        );
+        assertStringIncludes(
+          decoder.decode(output.stderr),
           "Canonical npm compatibility artifact verification failed",
         );
         assertEquals(
           await Deno.readTextFile(callLog),
           "",
           "Verification must fail before package enumeration or npm publish",
+        );
+      });
+    });
+  }
+
+  for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
+    it(`blocks ${publishFunction} when the manifest omits a package`, async () => {
+      await withTempDir(async (stateDir) => {
+        const packageDir = `${stateDir}/npm`;
+        const artifactDir = `${stateDir}/artifact`;
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.mkdir(packageDir);
+        await Deno.mkdir(artifactDir);
+        await Deno.writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "veryfront", version: "0.1.0" }),
+        );
+        await Deno.writeTextFile(
+          `${artifactDir}/manifest.json`,
+          JSON.stringify({ packages: [] }),
+        );
+        await Deno.writeTextFile(npmLog, "");
+
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "verify_npm_compatibility_artifact() { :; }",
+            "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
+            'npm() { printf "%s\\n" "$*" >> "$NPM_LOG"; }',
+            publishFunction,
+          ].join("\n"),
+          {
+            GITHUB_SHA: "expected-commit",
+            NPM_LOG: npmLog,
+            NPM_PACK_DIR: artifactDir,
+            PACKAGE_DIR: packageDir,
+            VERSION: "0.1.0",
+          },
+        );
+
+        assertEquals(output.code, 1, decoder.decode(output.stderr));
+        assertStringIncludes(
+          decoder.decode(output.stderr),
+          "Canonical npm publish spec for veryfront is empty",
+        );
+        assertEquals(
+          await Deno.readTextFile(npmLog),
+          "",
+          "A package missing from the manifest must fail before npm publish",
         );
       });
     });

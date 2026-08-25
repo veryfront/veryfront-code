@@ -94,7 +94,7 @@ canonical_tarball_for_package_dir() {
     jq -er --arg name "${PACKAGE_NAME}" --arg version "${VERSION}" '
       [.packages[] | select(.name == $name and .version == $version) | .file]
       | if length == 1 then .[0] else error("canonical package entry must be unique") end
-    ' "${NPM_PACK_DIR}/manifest.json"
+    ' "${NPM_PACK_DIR}/manifest.json" 2>/dev/null
   )"
   case "${PACKAGE_FILE}" in
     ""|*/*|*\\*)
@@ -106,9 +106,12 @@ canonical_tarball_for_package_dir() {
 }
 
 verify_npm_compatibility_artifact() {
-  if ! deno run --config=scripts/test.deno.json --frozen --allow-read \
+  if ! VERIFY_OUTPUT="$(deno run --config=scripts/test.deno.json --no-lock --allow-read \
     scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" \
-    >/dev/null 2>&1; then
+    2>&1)"; then
+    if [ -n "${VERIFY_OUTPUT}" ]; then
+      printf '%s\n' "${VERIFY_OUTPUT}" >&2
+    fi
     echo "::error::Canonical npm compatibility artifact verification failed." >&2
     return 1
   fi
@@ -187,7 +190,12 @@ run_rc_publish() {
   verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
-    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")"
+    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+    if [ -z "${PUBLISH_SPEC}" ]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+      return 1
+    fi
     rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
   done
 }
@@ -274,7 +282,12 @@ run_release_publish() {
   verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
-    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")"
+    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+    if [ -z "${PUBLISH_SPEC}" ]; then
+      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+      return 1
+    fi
     release_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}"
   done
 }
