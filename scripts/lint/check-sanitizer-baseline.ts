@@ -23,9 +23,11 @@ import {
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 350 after the transforms/mdx, transforms/esm, transforms/pipeline, module,
-// server-runtime, server-handler, and rendering/RSC audits removed opt-outs.
-export const SANITIZER_OPT_OUT_BASELINE = 350;
+// 342 after the transforms/mdx, transforms/esm, transforms/pipeline, module,
+// server-runtime, server-handler, rendering/RSC, and platform/compat audits
+// removed opt-outs. Platform/compat process and opaque-deps suites now restore
+// the globals and child processes they touch instead of suppressing leak reports.
+export const SANITIZER_OPT_OUT_BASELINE = 342;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 
