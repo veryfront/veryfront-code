@@ -115,13 +115,18 @@ function parseClaimObject(
     throw new TypeError(`${path} exceeds the object key limit`);
   }
 
-  const output: MutableAuthClaimRecord = {};
+  const output: MutableAuthClaimRecord = Object.create(null);
   for (const key of keys) {
     const descriptor = descriptors[key];
     if (!descriptor || !("value" in descriptor)) {
       throw new TypeError(`${path}.${key} contains an accessor property`);
     }
-    output[key] = parseClaimValue(descriptor.value, state, depth + 1, `${path}.${key}`);
+    Object.defineProperty(output, key, {
+      value: parseClaimValue(descriptor.value, state, depth + 1, `${path}.${key}`),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   state.seen.delete(value);
   return output;

@@ -163,6 +163,95 @@ describe("security/application-auth/identity", () => {
     }, TypeError);
   });
 
+  it("preserves own __proto__ root claims as frozen JSON-safe data", () => {
+    const claims = {};
+    Object.defineProperty(claims, "__proto__", {
+      value: { injected: "root" },
+      enumerable: true,
+      configurable: true,
+    });
+
+    const identity = createApplicationIdentity({
+      issuer: "https://issuer.example.com",
+      expectedIssuer: "https://issuer.example.com",
+      subject: "user-123",
+      claims,
+    });
+
+    assertEquals(Object.getPrototypeOf(identity.claims), null);
+    assertEquals(Object.hasOwn(identity.claims, "__proto__"), true);
+    assertEquals(identity.claims.__proto__, { injected: "root" });
+    assertEquals(Object.isFrozen(identity.claims.__proto__), true);
+    assertEquals(JSON.stringify(identity.claims), '{"__proto__":{"injected":"root"}}');
+  });
+
+  it("preserves nested Microsoft overage __proto__ claims as own frozen data", () => {
+    const claimNames = { groups: "src1" };
+    Object.defineProperty(claimNames, "__proto__", {
+      value: "claim-names-data",
+      enumerable: true,
+      configurable: true,
+    });
+
+    const graphSource = {
+      endpoint: "https://graph.microsoft.com/v1.0/users/user-123/getMemberObjects",
+    };
+    Object.defineProperty(graphSource, "__proto__", {
+      value: { source: "nested" },
+      enumerable: true,
+      configurable: true,
+    });
+
+    const claimSources = { src1: graphSource };
+    Object.defineProperty(claimSources, "__proto__", {
+      value: { fallback: "source" },
+      enumerable: true,
+      configurable: true,
+    });
+
+    const identity = createApplicationIdentity({
+      issuer: "https://login.microsoftonline.com/tenant-id/v2.0",
+      expectedIssuer: "https://login.microsoftonline.com/tenant-id/v2.0",
+      subject: "user-123",
+      claims: {
+        _claim_names: claimNames,
+        _claim_sources: claimSources,
+      },
+      claimNames: {
+        groups: "groups",
+      },
+    });
+
+    assertEquals(identity.groupsComplete, false);
+    assertEquals(Object.getPrototypeOf(identity.claims._claim_names), null);
+    assertEquals(Object.getPrototypeOf(identity.claims._claim_sources), null);
+    assertEquals(
+      Object.getPrototypeOf(
+        (identity.claims._claim_sources as { readonly src1: { readonly endpoint: string } }).src1,
+      ),
+      null,
+    );
+    assertEquals(
+      (identity.claims._claim_names as { readonly __proto__: string }).__proto__,
+      "claim-names-data",
+    );
+    assertEquals(
+      (identity.claims._claim_sources as { readonly __proto__: { readonly fallback: string } })
+        .__proto__,
+      { fallback: "source" },
+    );
+    assertEquals(
+      (identity.claims._claim_sources as {
+        readonly src1: { readonly __proto__: { readonly source: string } };
+      }).src1.__proto__,
+      { source: "nested" },
+    );
+    assertEquals(
+      JSON.stringify(identity.claims),
+      '{"_claim_names":{"groups":"src1","__proto__":"claim-names-data"},"_claim_sources":{"src1":{"endpoint":"https://graph.microsoft.com/v1.0/users/user-123/getMemberObjects","__proto__":{"source":"nested"}},"__proto__":{"fallback":"source"}}}',
+    );
+  });
+
   it("rejects unsafe or oversized claim snapshots before constructing an identity", () => {
     const withAccessor = {};
     Object.defineProperty(withAccessor, "email", {
