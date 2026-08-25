@@ -61,7 +61,6 @@ export {
   gracefullyShutdownProductionServer,
   type GracefulProductionShutdownOptions,
 } from "./graceful-shutdown.ts";
-export { initializeProductionErrorReportingFromEnv } from "./production-error-reporting.ts";
 export {
   createVeryfrontServer,
   type CreateVeryfrontServerOptions,

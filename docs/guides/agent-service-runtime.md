@@ -33,12 +33,12 @@ service runtime:
 
 ```ts
 // service.ts
-import { startAgentService } from "veryfront/agent";
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
-await startAgentService();
+await startNodeVeryfrontCloudAgentService();
 ```
 
-The bootstrap discovers the same project primitives as the app runtime:
+The service discovers the same project primitives as the app runtime:
 
 - `agents/`
 - `tools/`
@@ -116,7 +116,7 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
 const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
 const releaseId = process.env.DEPLOYED_RELEASE_ID;
@@ -124,7 +124,7 @@ if (!environmentName || !releaseId) {
   throw new Error("Missing immutable agent service deployment identity");
 }
 
-await startAgentService({
+await startNodeVeryfrontCloudAgentService({
   runtimeSource: {
     type: "environment",
     environmentName,
@@ -156,12 +156,12 @@ This service startup config uses `endpoint` and `headers`. Per-agent config in
 
 ```ts
 import {
-  startAgentService,
+  startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "veryfront/agent";
 
-await startAgentService({
+await startNodeVeryfrontCloudAgentService({
   serviceName: "support-agent",
   mcpServers: [
     veryfrontApiMcpServer(),
@@ -196,7 +196,7 @@ exact allowed endpoints once at startup. Use the host transport only for those
 immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
 function requiredUrl(name: string): string {
@@ -214,7 +214,7 @@ const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
   requestFetch: hostFetch,
 });
 
-await startAgentService({
+await startNodeVeryfrontCloudAgentService({
   createRemoteToolSource,
 });
 ```
@@ -253,9 +253,9 @@ Services that use Veryfront Cloud project steering can reuse
 
 ## Use lower-level helpers
 
-Use `startAgentService()` for the standard service shape. Use lower-level
-helpers only when the service needs a custom server adapter, custom execution
-preparation, or custom infrastructure.
+Use `startNodeVeryfrontCloudAgentService()` for the standard service shape.
+Use lower-level helpers only when the service needs a custom server adapter,
+custom execution preparation, or custom infrastructure.
 
 | Helper                                             | Use                                                                                  |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -267,8 +267,9 @@ preparation, or custom infrastructure.
 ## Migrate custom durable child event writers
 
 This migration applies to custom hosted runtimes that call the lower-level
-durable child helpers. Framework-managed `startAgentService()` runtimes create
-and scope writer capabilities internally.
+durable child helpers. Framework-managed
+`startNodeVeryfrontCloudAgentService()` runtimes create and scope writer
+capabilities internally.
 
 Raw `authToken`, `apiUrl`, and `runEventAppendToken` fields no longer grant
 durable child event-writer authority. The parsed hosted request also excludes

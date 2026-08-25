@@ -182,17 +182,15 @@ function createDeferredProductionStartupErrorReporter(): {
 }
 
 function loadProductionSentryModule(): Promise<ProductionSentryModule> {
-  // Process-wide Sentry mutators are internal, so the CLI composes its
-  // startup reporter from allowed public contracts: `veryfront/server` owns
-  // env-configured initialization and `veryfront/observability` owns
-  // capture and flush.
+  // Process-wide Sentry initialization stays on an internal CLI-only import.
+  // The public observability surface exposes only capture and flush.
   return Promise.all([
-    import("veryfront/server"),
+    import("#cli/production-error-reporting"),
     import("veryfront/observability"),
-  ]).then(([serverModule, observabilityModule]) => ({
+  ]).then(([reportingModule, observabilityModule]) => ({
     captureApplicationError: observabilityModule.captureApplicationError,
     flushApplicationErrors: observabilityModule.flushApplicationErrors,
-    initializeSentryFromEnv: serverModule.initializeProductionErrorReportingFromEnv,
+    initializeSentryFromEnv: reportingModule.initializeProductionErrorReportingFromEnv,
   }));
 }
 
