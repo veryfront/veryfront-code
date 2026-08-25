@@ -107,6 +107,11 @@ function freshStatefulPattern(pattern: RegExp): RegExp {
   return matcher;
 }
 
+function advanceStringIndex(input: string, index: number, unicode: boolean): number {
+  if (!unicode) return index + 1;
+  return index + ((input.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+}
+
 function redactBlockedPattern(input: string, pattern: RegExp): string {
   const matcher = freshStatefulPattern(pattern);
   if (!matcher.sticky) return input.replace(matcher, "[REDACTED]");
@@ -124,7 +129,13 @@ function redactBlockedPattern(input: string, pattern: RegExp): string {
     cursor = match.index + match[0].length;
     matched = true;
     if (!matcher.global) break;
-    if (match[0].length === 0) matcher.lastIndex = cursor + 1;
+    if (match[0].length === 0) {
+      matcher.lastIndex = advanceStringIndex(
+        input,
+        cursor,
+        matcher.unicode || matcher.unicodeSets,
+      );
+    }
   }
 
   return matched ? redacted + input.slice(cursor) : input;
