@@ -674,19 +674,20 @@ describe("formatUserError environment gating", () => {
     });
   });
 
-  it("rejects hostname-shaped direct callable labels with accessor-like prefixes", async () => {
-    const error = new Error("unknown error accessor_callable_frame");
+  it("rejects hostname-shaped tokens in direct callable labels", async () => {
+    const error = new Error("unknown error direct_callable_token_frames");
     error.stack = [
-      "Error: unknown error accessor_callable_frame",
+      "Error: unknown error direct_callable_token_frames",
       "    at get private-control.example (/srv/app.ts:1:1)",
-      "    at get Object.visibleHandler (/srv/app.ts:2:1)",
+      "    at get private-control.example visibleValue (/srv/app.ts:2:1)",
+      "    at get Object.publicValue (/srv/app.ts:3:1)",
     ].join("\n");
 
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const output = formatUserError(error);
 
       assertEquals(output.includes("private-control.example"), false);
-      assertEquals(output.includes("get Object.visibleHandler"), true);
+      assertEquals(output.includes("get Object.publicValue"), true);
       return Promise.resolve();
     });
   });

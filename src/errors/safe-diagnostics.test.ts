@@ -307,12 +307,13 @@ describe("safe-diagnostics", () => {
     }
   });
 
-  it("should detect truncation inside the first segment of a longer absolute path", () => {
+  it("should detect truncation inside the first segment of longer absolute paths", () => {
     for (
       const [requestedPath, truncatedPath] of [
         ["//private-control-plane.example/share/file", "//private-control"],
-        ["/definitely-private-marker/project/file", "/definitely-private-mar"],
-        ["C:\\private-marker\\project\\file", "c:/private-mar"],
+        ["/definitely-private-marker/share/file", "/definitely-private"],
+        ["C:\\private-marker\\share\\file", "c:/private-mar"],
+        ["file:///definitely-private-marker/share/file", "/definitely-private"],
       ] as const
     ) {
       assertEquals(
