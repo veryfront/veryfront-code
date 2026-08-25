@@ -395,6 +395,27 @@ describe("security/csrf/helpers", () => {
       assertEquals(setCookie.includes("; Secure"), false);
     });
 
+    it("applies the LAN fallback when config explicitly repeats the secure default", () => {
+      const origin = "http://192.168.1.20:3000";
+      const req = new Request(`${origin}/`, {
+        headers: { accept: "text/html" },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, { cookieName: "__Host-vf_csrf" });
+
+      const cookies = headers.getSetCookie();
+      const tokenCookie = cookies.find((cookie) => cookie.startsWith("vf_csrf="));
+      assertExists(tokenCookie, "the explicit documented default must remain usable on LAN HTTP");
+      assertEquals(tokenCookie.includes("; Secure"), false);
+      assertEquals(
+        cookies.some((cookie) =>
+          cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes("vf_csrf")
+        ),
+        true,
+        "the browser helper must discover the origin-selected fallback name",
+      );
+    });
+
     it("should skip when csrf config is false", () => {
       const req = new Request("http://localhost/");
       const headers = new Headers();

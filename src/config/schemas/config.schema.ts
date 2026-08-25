@@ -609,8 +609,10 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * Pass an object to customize it, or `false` to switch it off.
            *
            * Every request that is not GET, HEAD, or OPTIONS must include an
-           * `x-csrf-token` header matching the `__Host-vf_csrf` cookie. The
-           * cookie is set automatically on HTML document responses.
+           * `x-csrf-token` header matching the origin's default CSRF cookie.
+           * Veryfront uses `__Host-vf_csrf` on HTTPS and loopback origins, and
+           * `vf_csrf` on plain-HTTP non-loopback origins. The cookie is set
+           * automatically on HTML document responses.
            * Custom names must use HTTP token syntax. Exclusions must be
            * canonical absolute URL paths without queries, fragments, or
            * trailing slashes.

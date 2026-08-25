@@ -179,12 +179,17 @@ export function applyCsrfCookie(
 
   const config = typeof csrfConfig === "boolean" ? {} : csrfConfig;
   const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
+  const configuredCookieName = config.cookieName;
+  const effectiveCookieName = configuredCookieName === undefined ||
+      configuredCookieName === DEFAULT_CSRF_COOKIE_NAME
+    ? defaultCsrfCookieNameForOrigin(browserOrigin)
+    : configuredCookieName;
   // Validate here, not only in the schema: applyCsrfCookie is public API and a
   // direct caller can pass names the schema never saw. An unvalidated name is
   // interpolated straight into Set-Cookie.
   const cookieName = requireNonReservedCsrfCookieName(
     requireCsrfName(
-      config.cookieName ?? defaultCsrfCookieNameForOrigin(browserOrigin),
+      effectiveCookieName,
       "CSRF cookieName",
     ),
   );
