@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
@@ -16,7 +17,6 @@ const TOOL_CALL_ID = "tool-call-1";
 const INPUT_REQUEST_ID = "11111111-1111-4111-a111-111111111111";
 const CREATED_AT = "2026-04-04T00:00:00.000Z";
 const EXPIRES_AT = "2026-04-04T00:05:00.000Z";
-const originalFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -75,12 +75,12 @@ function createInputRequestRecord(overrides: Record<string, unknown> = {}) {
 function stubFetchWithRecorder(
   handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response,
 ) {
-  globalThis.fetch = async (input, init) => handler(input, init);
+  installMockFetch(async (input, init) => handler(input, init));
 }
 
 describe("agent/input-request-protocol", () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   });
 
   it("creates durable form input requests through the conversation endpoint", async () => {
