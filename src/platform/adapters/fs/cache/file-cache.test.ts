@@ -8,6 +8,199 @@ import {
 } from "./file-cache.ts";
 import { CacheBackends } from "#veryfront/cache/backend.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import type { FileCacheOptions } from "./types.ts";
+
+/** `file:release:<projectSlug>:<releaseId>:<path>`, immutable by construction. */
+const IMMUTABLE_RELEASE_KEY = "file:release:proj-a:rel-1:/app/page.tsx";
+/** The per-release prefix a publish poke invalidates. */
+const IMMUTABLE_RELEASE_PREFIX = "file:release:proj-a:rel-1:";
+/** The path segment of IMMUTABLE_RELEASE_KEY, for the prefix+suffix entry points. */
+const IMMUTABLE_RELEASE_SUFFIX = "/app/page.tsx";
+/** Branch-scoped keys are the mutable ones and must always reach the backend. */
+const BRANCH_KEY = "file:branch:proj-a:main:/app/page.tsx";
+/** Neither release- nor branch-scoped, so the process-local tier must refuse it. */
+const ENVIRONMENT_KEY = "file:env:proj-a:production:rel-1:/app/page.tsx";
+
+/**
+ * The FileCache surface these tests drive, spelled structurally. A
+ * query-qualified copy of the module re-declares the class's private fields,
+ * which makes its `FileCache` nominally distinct from the canonical import,
+ * so `typeof FileCache` would refuse every such module at the type level.
+ */
+type FileCacheLike = Pick<
+  FileCache,
+  | "getAsync"
+  | "set"
+  | "setAsync"
+  | "delete"
+  | "deleteAsync"
+  | "deleteByPrefix"
+  | "deleteByPrefixAsync"
+  | "deleteByPrefixAndSuffix"
+  | "deleteByPrefixAndSuffixAsync"
+  | "clear"
+>;
+
+interface DistributedFileCacheModule {
+  FileCache: new (options?: FileCacheOptions) => FileCacheLike;
+  initializeFileCacheBackend: () => Promise<boolean>;
+}
+
+interface CountingBackendHarness {
+  cache: FileCacheLike;
+  backendGets: () => number;
+  resetBackendGets: () => void;
+  /** Drop a key from the fake backend without going through the cache. */
+  removeFromBackend: (key: string) => void;
+  /** Hold every backend read open until `releaseReads()`, to order a race. */
+  holdReads: () => void;
+  /** Resolves once a held read has captured its value and blocked. */
+  readStarted: () => Promise<void>;
+  releaseReads: () => void;
+  /** Hold every backend delete open until `releaseMutations()`, to order a race. */
+  holdMutations: () => void;
+  /** Resolves once a held delete has started and blocked, before mutating. */
+  mutationStarted: () => Promise<void>;
+  releaseMutations: () => void;
+}
+
+/**
+ * Wire a counting distributed backend into a query-qualified file-cache module,
+ * so the fake backend and the module-scoped process-local tier both stay
+ * private to one test.
+ */
+async function useCountingDistributedBackend(
+  distributedModule: DistributedFileCacheModule,
+  cacheOptions: FileCacheOptions = {},
+): Promise<CountingBackendHarness> {
+  const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+  assertExists(descriptor);
+  const values = new Map<string, string>();
+  let gets = 0;
+  let holding = false;
+  let markReadStarted: (() => void) | undefined;
+  let started = new Promise<void>((resolve) => {
+    markReadStarted = resolve;
+  });
+  let doRelease: (() => void) | undefined;
+  let released = new Promise<void>((resolve) => {
+    doRelease = resolve;
+  });
+  let holdingMutations = false;
+  let markMutationStarted: (() => void) | undefined;
+  let mutationStarted = new Promise<void>((resolve) => {
+    markMutationStarted = resolve;
+  });
+  let doReleaseMutations: (() => void) | undefined;
+  let mutationsReleased = new Promise<void>((resolve) => {
+    doReleaseMutations = resolve;
+  });
+  // Blocks BEFORE the mutation applies, so a read racing a held deletion sees
+  // the value the backend still holds, exactly as an in-flight network delete
+  // would leave it.
+  const gateMutation = async (): Promise<void> => {
+    if (!holdingMutations) return;
+    markMutationStarted?.();
+    await mutationsReleased;
+  };
+  Object.defineProperty(CacheBackends, "file", {
+    ...descriptor,
+    value: () =>
+      Promise.resolve({
+        type: "redis",
+        size: 0,
+        get: async (key: string) => {
+          gets += 1;
+          // Captured before blocking, so a held read carries the value the
+          // backend held when it started rather than a later one.
+          const captured = values.get(key) ?? null;
+          if (holding) {
+            markReadStarted?.();
+            await released;
+          }
+          return captured;
+        },
+        set: (key: string, value: string) => {
+          values.set(key, value);
+          return Promise.resolve();
+        },
+        del: async (key: string) => {
+          await gateMutation();
+          return values.delete(key);
+        },
+        clear: () => Promise.resolve(),
+        delByPattern: async (pattern: string) => {
+          await gateMutation();
+          const prefix = pattern.replace(/\*.*$/, "");
+          let deleted = 0;
+          for (const key of [...values.keys()]) {
+            if (!key.startsWith(prefix)) continue;
+            values.delete(key);
+            deleted += 1;
+          }
+          return deleted;
+        },
+      } as never),
+  });
+
+  try {
+    assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+  } finally {
+    Object.defineProperty(CacheBackends, "file", descriptor);
+  }
+
+  return {
+    cache: new distributedModule.FileCache(cacheOptions),
+    backendGets: () => gets,
+    resetBackendGets: (): void => {
+      gets = 0;
+    },
+    removeFromBackend: (key: string): void => {
+      values.delete(key);
+    },
+    holdReads: (): void => {
+      holding = true;
+      started = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      released = new Promise<void>((resolve) => {
+        doRelease = resolve;
+      });
+    },
+    readStarted: () => started,
+    releaseReads: (): void => {
+      holding = false;
+      doRelease?.();
+    },
+    holdMutations: (): void => {
+      holdingMutations = true;
+      mutationStarted = new Promise<void>((resolve) => {
+        markMutationStarted = resolve;
+      });
+      mutationsReleased = new Promise<void>((resolve) => {
+        doReleaseMutations = resolve;
+      });
+    },
+    mutationStarted: () => mutationStarted,
+    releaseMutations: (): void => {
+      holdingMutations = false;
+      doReleaseMutations?.();
+    },
+  };
+}
+
+/** One read of one key, inside its own request scope, for one project. */
+function readInRequest(
+  cache: FileCacheLike,
+  projectId: string,
+  key: string,
+): Promise<string | undefined> {
+  return runWithCacheKeyContext(
+    { projectId, mode: "production", versionId: "rel-1" },
+    () => runWithCacheBatching(() => cache.getAsync<string>(key)),
+  );
+}
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -613,8 +806,470 @@ describe("Distributed cache functions", () => {
       );
     });
 
+    it("serves a warmed immutable release key without a second backend read", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-release-reuse");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the warming request must read the immutable value through the backend",
+      );
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "a later request must still see the same immutable value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "a second request for the same immutable release key must not reach the backend",
+      );
+    });
+
+    it("reads a branch-scoped key from the backend on every request", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-branch-scoped");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(BRANCH_KEY, "draft-source");
+      await readInRequest(harness.cache, "proj-a", BRANCH_KEY);
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", BRANCH_KEY),
+        "draft-source",
+        "a branch-scoped read must still return the backend value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a branch-scoped key must reach the backend on every request",
+      );
+
+      await readInRequest(harness.cache, "proj-a", BRANCH_KEY);
+      assertEquals(
+        harness.backendGets(),
+        2,
+        "a branch-scoped key must keep reaching the backend on every later request",
+      );
+    });
+
+    it("stops serving an immutable release key once its process-local TTL expires", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-ttl-expiry");
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        immutableL1Ttl: 1,
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "an expired entry must be refetched rather than dropped",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an entry older than the configured TTL must not be served from the process-local tier",
+      );
+    });
+
+    it("treats a non-finite per-instance TTL as the process default, not as forever", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-nonfinite-ttl");
+      // An Infinity lifetime must not stamp entries that never expire. The
+      // constructor falls back to the finite process default, so the tier
+      // stays live under a finite bound; the store itself refuses a
+      // non-finite TTL outright (covered in immutable-l1.test.ts).
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        immutableL1Ttl: Number.POSITIVE_INFINITY,
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the tier must still serve under the substituted finite default",
+      );
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "a non-finite TTL must fall back to the finite process default rather than disable or unbound the tier",
+      );
+    });
+
+    it("does not serve a shorter-TTL instance an entry past its own bound", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-per-instance-ttl");
+      const harness = await useCountingDistributedBackend(distributedModule);
+      const shortTtlCache = new distributedModule.FileCache({ immutableL1Ttl: 1 });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+
+      // The admitting instance's own lifetime still covers the entry.
+      harness.resetBackendGets();
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "the admitting instance must still be served within its own lifetime",
+      );
+
+      // The store is process-global, so both instances share the entry; the
+      // shorter lifetime must be enforced at lookup, not only at admission.
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(shortTtlCache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the shorter-TTL instance still reads the value, through the backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an instance with a 1ms lifetime must not be served an entry another instance admitted 25ms ago",
+      );
+    });
+
+    it("drops a value admitted while its backend deletion was in flight", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-delete-race");
+      const harness = await useCountingDistributedBackend(distributedModule);
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "stale");
+
+      harness.holdMutations();
+      const deletion = harness.cache.deleteAsync(IMMUTABLE_RELEASE_KEY);
+      await harness.mutationStarted();
+
+      // Starts after the pre-mutation drop, so it carries a fresh generation
+      // token, while the backend still holds the value the deletion is about
+      // to remove; without a post-settle drop this admission would outlive
+      // the deletion.
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "stale",
+        "positive control: a read racing the deletion sees the pre-deletion value",
+      );
+
+      harness.releaseMutations();
+      await deletion;
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        undefined,
+        "the value admitted during the deletion must not survive it",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "the later request must reach the backend rather than a reinstated entry",
+      );
+    });
+
+    it("drops a value admitted while a backend prefix invalidation was in flight", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-prefix-race");
+      const harness = await useCountingDistributedBackend(distributedModule);
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "stale");
+
+      harness.holdMutations();
+      const invalidation = harness.cache.deleteByPrefixAsync(IMMUTABLE_RELEASE_PREFIX);
+      await harness.mutationStarted();
+
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "stale",
+        "positive control: a read racing the invalidation sees the pre-invalidation value",
+      );
+
+      harness.releaseMutations();
+      await invalidation;
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        undefined,
+        "the value admitted during the prefix invalidation must not survive it",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "the later request must reach the backend rather than a reinstated entry",
+      );
+    });
+
+    it("keeps one project from reading another project's process-local entry", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-project-isolation");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      await readInRequest(harness.cache, "proj-b", IMMUTABLE_RELEASE_KEY);
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "the same cache key under a different projectRef must not hit the first project's entry",
+      );
+
+      harness.resetBackendGets();
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "the first project's entry must survive, so the miss above was scope and not eviction",
+      );
+    });
+
+    it("refuses a key shape that is neither release nor branch scoped", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-unrecognized-shape");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      await harness.cache.setAsync(ENVIRONMENT_KEY, "env-source");
+      await readInRequest(harness.cache, "proj-a", ENVIRONMENT_KEY);
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", ENVIRONMENT_KEY),
+        "env-source",
+        "an unadmitted key must still return the backend value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a key shape outside the admission predicate must not be admitted to the process-local tier",
+      );
+    });
+
+    it("does not admit a value this request wrote optimistically", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-optimistic-write");
+      const harness = await useCountingDistributedBackend(distributedModule);
+
+      // setAsync publishes into the request-scoped cache before the backend
+      // confirms it, so the read that follows in the same request is answering
+      // from this request's own unconfirmed write.
+      await runWithCacheKeyContext(
+        { projectId: "proj-a", mode: "production", versionId: "rel-1" },
+        () =>
+          runWithCacheBatching(async () => {
+            await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "optimistic");
+            assertEquals(
+              await harness.cache.getAsync<string>(IMMUTABLE_RELEASE_KEY),
+              "optimistic",
+              "the writing request must still see its own write",
+            );
+          }),
+      );
+
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "optimistic",
+        "a later request must still read the value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an unconfirmed optimistic write must not be promoted into the process-local tier",
+      );
+    });
+
     it("should return boolean", async () => {
       assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
+    });
+  });
+
+  describe("process-local tier invalidation", () => {
+    /**
+     * Every way a FileCache is told an entry is gone. Each must reach the
+     * process-local tier, or a warmed entry outlives its own invalidation for
+     * the whole TTL.
+     */
+    const entryPoints: Array<{
+      name: string;
+      tag: string;
+      invalidate: (cache: FileCacheLike) => void | Promise<void>;
+    }> = [
+      {
+        name: "set()",
+        tag: "set",
+        invalidate: (cache) => cache.set(IMMUTABLE_RELEASE_KEY, "rewritten"),
+      },
+      {
+        name: "setAsync()",
+        tag: "set-async",
+        invalidate: (cache) => cache.setAsync(IMMUTABLE_RELEASE_KEY, "rewritten"),
+      },
+      {
+        name: "delete()",
+        tag: "delete",
+        invalidate: (cache): void => {
+          cache.delete(IMMUTABLE_RELEASE_KEY);
+        },
+      },
+      {
+        name: "deleteAsync()",
+        tag: "delete-async",
+        invalidate: (cache) => cache.deleteAsync(IMMUTABLE_RELEASE_KEY),
+      },
+      {
+        name: "deleteByPrefix()",
+        tag: "delete-by-prefix",
+        invalidate: (cache): void => {
+          cache.deleteByPrefix(IMMUTABLE_RELEASE_PREFIX);
+        },
+      },
+      {
+        name: "deleteByPrefixAsync()",
+        tag: "delete-by-prefix-async",
+        invalidate: (cache) => cache.deleteByPrefixAsync(IMMUTABLE_RELEASE_PREFIX),
+      },
+      {
+        name: "deleteByPrefixAndSuffix()",
+        tag: "delete-by-prefix-and-suffix",
+        invalidate: (cache): void => {
+          cache.deleteByPrefixAndSuffix(IMMUTABLE_RELEASE_PREFIX, IMMUTABLE_RELEASE_SUFFIX);
+        },
+      },
+      {
+        name: "deleteByPrefixAndSuffixAsync()",
+        tag: "delete-by-prefix-and-suffix-async",
+        invalidate: (cache) =>
+          cache.deleteByPrefixAndSuffixAsync(IMMUTABLE_RELEASE_PREFIX, IMMUTABLE_RELEASE_SUFFIX),
+      },
+      {
+        name: "clear()",
+        tag: "clear",
+        invalidate: (cache): void => cache.clear(),
+      },
+    ];
+
+    for (const entryPoint of entryPoints) {
+      it(`${entryPoint.name} forces the next request back to the backend`, async () => {
+        const distributedModule = await import(`./file-cache.ts?issue-602-inv-${entryPoint.tag}`);
+        const harness = await useCountingDistributedBackend(distributedModule);
+
+        await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "published");
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+        // Positive control: without it a broken warm path would make the
+        // assertion below pass for the wrong reason.
+        harness.resetBackendGets();
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+        assertEquals(
+          harness.backendGets(),
+          0,
+          "the entry must be warm in the process-local tier before it is invalidated",
+        );
+
+        await entryPoint.invalidate(harness.cache);
+
+        harness.resetBackendGets();
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+        assertEquals(
+          harness.backendGets(),
+          1,
+          `${entryPoint.name} must drop the process-local entry, not only the backend one`,
+        );
+      });
+    }
+  });
+
+  describe("reinstate-after-invalidation race", () => {
+    /**
+     * `getCachedWithBatching` hands a read that starts now the promise of a
+     * read that started earlier. A read starting AFTER an invalidation
+     * therefore receives a PRE-invalidation value while carrying a
+     * post-invalidation generation token, and must not be admitted on it.
+     */
+    async function runRaceProbe(
+      tag: string,
+      invalidate: (cache: FileCacheLike) => void | Promise<void>,
+    ): Promise<{ value: string | undefined; backendGets: number }> {
+      const distributedModule = await import(`./file-cache.ts?issue-602-race-${tag}`);
+      const harness = await useCountingDistributedBackend(distributedModule);
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "stale");
+
+      harness.holdReads();
+      await runWithCacheKeyContext(
+        { projectId: "proj-a", mode: "production", versionId: "rel-1" },
+        () =>
+          runWithCacheBatching(async () => {
+            const first = harness.cache.getAsync<string>(IMMUTABLE_RELEASE_KEY);
+            await harness.readStarted();
+
+            await invalidate(harness.cache);
+            harness.removeFromBackend(IMMUTABLE_RELEASE_KEY);
+
+            // Starts after the invalidation, so it takes a post-bump token, and
+            // joins the pending read that started before it.
+            const second = harness.cache.getAsync<string>(IMMUTABLE_RELEASE_KEY);
+            harness.releaseReads();
+            await first;
+            await second;
+          }),
+      );
+
+      harness.resetBackendGets();
+      const value = await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      return { value, backendGets: harness.backendGets() };
+    }
+
+    it("does not reinstate a value deleted while a read was in flight", async () => {
+      const probe = await runRaceProbe("delete", (cache) => {
+        cache.delete(IMMUTABLE_RELEASE_KEY);
+      });
+
+      assertEquals(
+        probe.value,
+        undefined,
+        "a key deleted mid-read must not be served from the process-local tier afterwards",
+      );
+      assertEquals(
+        probe.backendGets,
+        1,
+        "the later request must reach the backend rather than a reinstated entry",
+      );
+    });
+
+    it("does not reinstate a value whose prefix was invalidated mid-read", async () => {
+      const probe = await runRaceProbe("prefix", (cache) => {
+        cache.deleteByPrefix(IMMUTABLE_RELEASE_PREFIX);
+      });
+
+      assertEquals(
+        probe.value,
+        undefined,
+        "a prefix invalidated mid-read must not leave a reinstated entry behind",
+      );
+      assertEquals(
+        probe.backendGets,
+        1,
+        "the later request must reach the backend rather than a reinstated entry",
+      );
+    });
+
+    it("does not reinstate a value cleared mid-read", async () => {
+      const probe = await runRaceProbe("clear", (cache) => cache.clear());
+
+      assertEquals(
+        probe.value,
+        undefined,
+        "a clear during a read must not leave a reinstated entry behind",
+      );
+      assertEquals(
+        probe.backendGets,
+        1,
+        "the later request must reach the backend rather than a reinstated entry",
+      );
     });
   });
 

@@ -12,6 +12,7 @@ export type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 
 // Import for use in interface
 import type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
+import type { ResolvedCacheAuthority } from "./request-authority.ts";
 
 /** Maximum number of code units in a cache revision identifier. */
 export const MAX_CACHE_REVISION_LENGTH = 256;
@@ -38,6 +39,17 @@ export type CacheRevisionMutation =
 export interface CacheBackend {
   /** Backend type identifier */
   readonly type: CacheBackendType;
+
+  /**
+   * The credential and project reference this backend's reads are made under.
+   *
+   * Implemented only by backends that gate on a per-request authority. Anything
+   * caching a result in front of that gate must scope what it holds on this
+   * rather than re-deriving it, because a backend holding an explicit endpoint
+   * credential does not read under the ambient one. Never returns the token to
+   * a log; see `cache/request-authority.ts`.
+   */
+  cacheAuthority?(): ResolvedCacheAuthority;
 
   /**
    * Get a value from the cache.
