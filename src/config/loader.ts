@@ -35,6 +35,7 @@ import { currentRequestContext } from "#veryfront/platform/request-context-acces
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
 import {
@@ -1630,6 +1631,36 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
 }
 
 /**
+ * Decide whether a specifier names an installable package rather than a file.
+ *
+ * Only a bare specifier is fixable by installing dependencies. Every runtime
+ * reports a missing relative *file* through the same phrasing as a missing
+ * package, so telling that reader to run `npm install` for a file they have
+ * not written yet would be the same misdirection this classification exists to
+ * remove. The shape of the specifier, not the error code, is what separates
+ * them.
+ *
+ * Rejected here, each for a reader an install would not help:
+ * - `./x`, `/x`, `\\x`, and UNC paths are files, on either path separator;
+ * - `#x` is a package-internal subpath import;
+ * - any URI scheme, which also covers `C:\\...` since a drive letter parses as
+ *   one -- and keeps credentials out of the detail line without a redaction
+ *   pass, since a bare specifier has no userinfo to leak;
+ * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
+ *   already rejects: no package named `@/lib/config` exists to install.
+ */
+function isBarePackageSpecifier(specifier: string): boolean {
+  const bare = specifier.startsWith("npm:") || specifier.startsWith("jsr:")
+    ? specifier.slice(4)
+    : specifier;
+  if (bare.length === 0) return false;
+  if (/^[./\\#]/.test(bare)) return false;
+  if (bare.includes("\\")) return false;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare)) return false;
+  return parseBarePackageSpecifier(bare) !== null;
+}
+
+/**
  * How far to walk `cause` when looking for the runtime's resolution error.
  *
  * The loader wraps import failures on its way out, so the runtime's own error
@@ -1639,72 +1670,67 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
 const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 
 /**
- * Every shape in which a runtime names the specifier it could not resolve.
- *
- * Both runtimes raise `ERR_MODULE_NOT_FOUND` for a missing *file* as readily as
- * for a missing package, so the code alone cannot classify; these patterns only
- * extract the specifier, and {@link isBarePackageSpecifier} decides. Verified
- * against Deno 2.7.7 and the Node message in the field report.
- */
-const MISSING_DEPENDENCY_PATTERNS: readonly RegExp[] = [
-  // Node: "Cannot find package 'x' imported from /path/veryfront.config.ts".
-  /Cannot find package ['"]([^'"]+)['"]/,
-  // Node: CommonJS resolution; also fires for relative paths, filtered by shape.
-  /Cannot find module ['"]([^'"]+)['"]/,
-  // Deno: a bare specifier no import map or node_modules entry claims.
-  /Import ['"]([^'"]+)['"] not a dependency/,
-  // Deno: unresolved specifier, including npm:/jsr: forms. A missing relative
-  // file arrives here as a file:// URL and is filtered by shape.
-  /Module not found ['"]([^'"]+)['"]/,
-];
-
-/**
- * Decide whether a specifier names a package rather than a file.
- *
- * Only a bare specifier is fixable by installing dependencies. Node raises the
- * same `ERR_MODULE_NOT_FOUND` for a relative import whose file is genuinely
- * missing ("Cannot find module '/abs/path/missing.js'"), and telling that
- * reader to run `npm install` would be the same misdirection this classifies
- * away from. A `npm:`/`jsr:` prefix is stripped first: those name packages too.
- *
- * Excluding every other scheme also keeps credentials out of the detail line
- * without a redaction pass, since a bare specifier has no userinfo to leak.
- */
-function isBarePackageSpecifier(specifier: string): boolean {
-  const bare = specifier.startsWith("npm:")
-    ? specifier.slice(4)
-    : specifier.startsWith("jsr:")
-    ? specifier.slice(4)
-    : specifier;
-  if (bare.length === 0) return false;
-  if (bare.startsWith(".") || bare.startsWith("/") || bare.startsWith("#")) return false;
-  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare);
-}
-
-/**
  * Name the package a config module imports that the runtime cannot resolve.
  *
  * A config file whose imports do not resolve is not a malformed config file:
- * the remedy is installing dependencies, not editing syntax. Classifying this
- * as a parse error sends the reader to inspect a file that is fine, while the
+ * the remedy is installing dependencies, not editing syntax. Classifying it as
+ * a parse error sends the reader to inspect a file that is fine, while the
  * detail line already carries the real cause.
  *
  * Returns `undefined` for resolution failures an install cannot fix -- an
  * unknown subpath of a package that *is* installed resolves the package and
- * rejects the export, and stays with the parse-error family.
+ * rejects the export, and its reported specifier (`./config`) is not bare, so
+ * it stays with the parse-error family.
  */
 function unresolvedConfigDependency(error: unknown): string | undefined {
   let current: unknown = error;
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
     if (!(current instanceof Error)) return undefined;
-    for (const pattern of MISSING_DEPENDENCY_PATTERNS) {
-      const specifier = current.message.match(pattern)?.[1];
-      if (specifier !== undefined && isBarePackageSpecifier(specifier)) return specifier;
-    }
+    const specifier = reportedMissingSpecifier(current.message);
+    if (specifier !== undefined && isBarePackageSpecifier(specifier)) return specifier;
     current = current.cause;
   }
   return undefined;
 }
+
+/**
+ * The specifier a runtime says it could not resolve, or `undefined`.
+ *
+ * Anchored on purpose: a config author's own `Setup failed: Module not found
+ * "db"` quotes a resolver phrase without being one, and classifying it as a
+ * missing dependency would hand that reader the wrong remedy.
+ *
+ * Deno appends an ANSI-coloured `hint:` line and an `at <location>` line to its
+ * resolution errors, so the real message is three lines where the pattern
+ * expects one. The first line is retried rather than the anchors loosened.
+ *
+ * These formats are also recognised, for a different purpose, by
+ * `reportedMissingSpecifier` in `src/extensions/first-party-import.ts`. That
+ * module is a published export path whose generated API reference is
+ * CI-checked, so its matcher is deliberately not exported; a runtime whose
+ * phrasing changes needs updating in both places.
+ */
+function reportedMissingSpecifier(message: string): string | undefined {
+  for (const line of [message, message.split("\n", 1)[0]]) {
+    if (line === undefined) continue;
+    for (const pattern of MISSING_SPECIFIER_PATTERNS) {
+      const match = line.match(pattern);
+      if (match?.[1] !== undefined) return match[1];
+    }
+  }
+  return undefined;
+}
+
+/** Anchored resolution-failure formats, per runtime. */
+const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
+  // Node, and Deno's `Module not found "file:///…".` form.
+  /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
+  // Deno, when the importer resolves out of the global npm cache.
+  /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
+  // Deno, for a specifier no import map or node_modules entry claims.
+  /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
+  /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+];
 
 /**
  * Build the error for a config module that failed to load.

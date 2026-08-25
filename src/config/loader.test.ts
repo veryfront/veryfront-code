@@ -794,6 +794,110 @@ export default config as const;
         }
       });
 
+      it("classifies Deno's npm-referrer wording as a missing dependency", async () => {
+        // The runtimes disagree on wording for one failure. Node says "Cannot
+        // find package 'x' imported from y"; Deno says "Import \"x\" not a
+        // dependency", and "Could not find package 'x' from referrer 'y'" when
+        // the importer resolves out of the npm cache. All are the same problem
+        // with the same fix, so all must reach the same slug.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-referrer-" });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source =
+          `throw new Error("Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.");\n`;
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "dependency-missing");
+          assert(
+            error.message.includes("left-pad"),
+            `error must name the unresolved package, got: ${error.message}`,
+          );
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("does not reclassify an ordinary error that merely quotes a resolver phrase", async () => {
+        // `Setup failed: Module not found "db"` is a config author's own error,
+        // not a resolver's. Only an anchored match separates the two, and the
+        // reader of a real setup failure must not be told to run `npm install`.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-quoted-" });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source = `throw new Error('Setup failed: Module not found "db"');\n`;
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "config-parse-error");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("does not blame a missing Windows path on an uninstalled package", async () => {
+        // A leading backslash is a path on Windows exactly as a leading slash is
+        // one elsewhere, and a UNC path starts with two. Rejecting only "/"
+        // would hand Windows readers the wrong recovery advice.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-windows-" });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source =
+          `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`;
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "config-parse-error");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
+      it("does not blame the project-module alias on an uninstalled package", async () => {
+        // Deno reports an unresolved `@/lib/config` through the same wording as
+        // a missing package, but `@/` is Veryfront's own project alias -- no
+        // package by that name exists to install.
+        const adapter = setup();
+        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-alias-" });
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const source = 'import "@/lib/config";\nexport default {};\n';
+
+        try {
+          await Deno.writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+
+          const error = await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+
+          assertEquals(error.slug, "config-parse-error");
+        } finally {
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
+
       it("does not blame a missing relative import on an uninstalled package", async () => {
         // Both runtimes raise ERR_MODULE_NOT_FOUND for a missing *file* as
         // readily as for a missing package, so classifying on the code alone

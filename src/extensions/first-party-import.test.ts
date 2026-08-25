@@ -53,6 +53,45 @@ describe("first-party extension imports", () => {
     }
   });
 
+  describe("multi-line runtime messages", () => {
+    it("reads through the hint and location lines Deno appends", () => {
+      // Deno's real resolution error is three lines: the resolution itself,
+      // then an ANSI-coloured `hint:` line and an `at <location>` line. Matching
+      // only against the whole message missed every one of them in practice, so
+      // an uninstalled first-party extension read as a real load failure.
+      const denoMessage = [
+        'Import "@veryfront/ext-auth-jwt" not a dependency and not in import map from "file:///app/veryfront.config.ts"',
+        "  hint: If you want to use the npm package, try running `deno add npm:@veryfront/ext-auth-jwt`",
+        "    at file:///app/veryfront.config.ts:1:8",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(denoMessage), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+    });
+
+    it("keeps the multi-line Require stack form matching as a whole", () => {
+      // Matched against the whole message before the first-line retry, because
+      // this form is legitimately multi-line and its trailing lines are part of
+      // the pattern rather than noise after it.
+      const nodeMessage = [
+        `Cannot find module '@veryfront/ext-auth-jwt'`,
+        "Require stack:",
+        "- /app/server.js",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(nodeMessage), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+    });
+  });
+
   describe("isMissingFirstPartyExtensionModule", () => {
     it("matches missing-module errors without an anchor", () => {
       assertEquals(

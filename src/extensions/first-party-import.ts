@@ -261,7 +261,28 @@ export function isMissingFirstPartyExtensionModule(
   return matched;
 }
 
+/**
+ * The specifier a runtime says it could not resolve, or `undefined`.
+ *
+ * Every pattern is anchored. An ordinary error that merely quotes a resolver
+ * phrase -- `Setup failed: Module not found "db"` -- must not be mistaken for
+ * one, because the caller acts on the answer.
+ */
 function reportedMissingSpecifier(message: string): string | undefined {
+  const whole = matchReportedMissingSpecifier(message);
+  if (whole !== undefined) return whole;
+  // Deno appends a `hint:` line and an `at <location>` line to its resolution
+  // errors, so the real-world message is three lines where the pattern expects
+  // one. Retrying on the first line keeps every pattern anchored -- loosening
+  // the anchors instead would let an ordinary error that merely quotes a
+  // resolver phrase (`Setup failed: Module not found "db"`) be read as one.
+  // Tried second so the genuinely multi-line Require-stack form still wins.
+  const firstLine = message.split("\n", 1)[0];
+  if (firstLine === undefined || firstLine === message) return undefined;
+  return matchReportedMissingSpecifier(firstLine);
+}
+
+function matchReportedMissingSpecifier(message: string): string | undefined {
   for (
     const prefix of [
       "[ERR_PACKAGE_PATH_NOT_EXPORTED] ",
