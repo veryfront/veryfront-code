@@ -19,6 +19,9 @@ const requestHeadersGetter = getOwnPropertyDescriptor(
 )?.get;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringStartsWith = String.prototype.startsWith;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const MAX_DYNAMIC_DENY_HEADERS = 32;
+const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
 
 if (typeof requestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
@@ -55,12 +58,45 @@ export function isInfrastructureOnlyRequestHeader(name: string): boolean {
   }
 }
 
+export interface ApplicationRequestHeaderOptions {
+  readonly denyHeaders?: readonly string[];
+}
+
+function normalizeDynamicDenyHeaders(
+  names: readonly string[] | undefined,
+): ReadonlySet<string> | null {
+  if (names === undefined) return new Set<string>();
+  if (!Array.isArray(names) || names.length > MAX_DYNAMIC_DENY_HEADERS) return null;
+
+  const denylist = new Set<string>();
+  for (let index = 0; index < names.length; index += 1) {
+    const name = names[index];
+    if (
+      typeof name !== "string" ||
+      name.length === 0 ||
+      name.length > MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH ||
+      !HEADER_NAME_PATTERN.test(name)
+    ) {
+      return null;
+    }
+    denylist.add(apply(stringToLowerCase, name, []) as string);
+  }
+  return denylist;
+}
+
 /** Copy only application-owned headers across the project-code boundary. */
-export function createApplicationRequestHeaders(headers: Headers): Headers {
+export function createApplicationRequestHeaders(
+  headers: Headers,
+  options: ApplicationRequestHeaderOptions = {},
+): Headers {
+  const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
   const applicationHeaders = new NativeHeaders();
+  if (dynamicDenyHeaders === null) return applicationHeaders;
+
   apply(headersForEach, headers, [
     (value: string, name: string) => {
-      if (!isInfrastructureOnlyRequestHeader(name)) {
+      const normalized = apply(stringToLowerCase, name, []) as string;
+      if (!dynamicDenyHeaders.has(normalized) && !isInfrastructureOnlyRequestHeader(name)) {
         apply(headersAppend, applicationHeaders, [name, value]);
       }
     },
@@ -74,10 +110,13 @@ export function createApplicationRequestHeaders(headers: Headers): Headers {
  * Cloning first preserves the host-owned request body for later framework
  * processing while giving project code an independent header list.
  */
-export function createApplicationRequest(request: Request): Request {
+export function createApplicationRequest(
+  request: Request,
+  options: ApplicationRequestHeaderOptions = {},
+): Request {
   const cloned = apply(requestClone, request, []) as Request;
   const headers = apply(requestHeadersGetter!, cloned, []) as Headers;
   return new NativeRequest(cloned, {
-    headers: createApplicationRequestHeaders(headers),
+    headers: createApplicationRequestHeaders(headers, options),
   });
 }

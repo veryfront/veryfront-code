@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext, SecurityConfig } from "#veryfront/types";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { handleApplicationAuthRequest } from "./application-auth-runtime.ts";
 import { markApplicationAuthAdmittedRequest } from "./oidc-runtime.ts";
 
@@ -31,6 +32,52 @@ function createCtx(envValues: Readonly<Record<string, string | undefined>> = {})
     } as unknown as HandlerContext["adapter"],
     isLocalProject: false,
   };
+}
+
+function createTrustedProxyCtx(
+  overrides: Partial<HandlerContext> = {},
+): HandlerContext {
+  return {
+    projectDir: "/tmp/application-auth-runtime-test",
+    securityConfig: {
+      auth: {
+        trustedProxy: {
+          trustedPeers: ["127.0.0.1"],
+          headers: {
+            subject: "x-auth-subject",
+            email: "x-auth-email",
+            groups: "x-auth-groups",
+          },
+        },
+      },
+    } as SecurityConfig,
+    adapter: {
+      env: {
+        get(_name: string): string | undefined {
+          return undefined;
+        },
+      },
+    } as unknown as HandlerContext["adapter"],
+    isLocalProject: false,
+    ...overrides,
+  };
+}
+
+function trustedProxyRequest(): Request {
+  const request = new Request(`${APP_ORIGIN}/dashboard`, {
+    headers: {
+      "x-auth-subject": "user-123",
+      "x-auth-email": "user@example.test",
+      "x-auth-groups": "admin, editor",
+      authorization: "Bearer end-user",
+    },
+  });
+  recordRequestPeerFromTransport(request, {
+    runtime: "node",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 describe("security/application-auth runtime integration", () => {
@@ -72,5 +119,52 @@ describe("security/application-auth runtime integration", () => {
       "/_veryfront/auth/login?returnTo=%2Fdashboard%3Fview%3Dhome",
     );
     assertEquals(result?.response?.headers.get("Cache-Control"), "no-store");
+  });
+
+  it("admits trusted-proxy identity with normalized identity-header metadata", async () => {
+    const result = await handleApplicationAuthRequest(
+      trustedProxyRequest(),
+      createTrustedProxyCtx(),
+    );
+
+    assertEquals(result?.continue, true);
+    assertEquals(result?.metadata?.applicationIdentity, {
+      issuer: "veryfront:trusted-proxy",
+      subject: "user-123",
+      email: "user@example.test",
+      groups: ["admin", "editor"],
+      roles: [],
+      groupsComplete: true,
+      claims: {
+        sub: "user-123",
+        email: "user@example.test",
+        groups: ["admin", "editor"],
+      },
+    });
+    assertEquals(result?.metadata?.applicationIdentityHeaderNames, [
+      "x-auth-subject",
+      "x-auth-email",
+      "x-auth-groups",
+    ]);
+  });
+
+  it("rejects trusted-proxy auth in hosted or proxy runtimes", async () => {
+    const proxyMode = await handleApplicationAuthRequest(
+      trustedProxyRequest(),
+      createTrustedProxyCtx({ isProxyMode: true }),
+    );
+    const hostedConfig = await handleApplicationAuthRequest(
+      trustedProxyRequest(),
+      createTrustedProxyCtx({
+        prepareHostedConfigContext: () => {
+          throw new Error("must not prepare hosted config");
+        },
+      }),
+    );
+
+    assertEquals(proxyMode?.response?.status, 401);
+    assertEquals(proxyMode?.response?.headers.get("Cache-Control"), "no-store");
+    assertEquals(hostedConfig?.response?.status, 401);
+    assertEquals(hostedConfig?.response?.headers.get("X-Content-Type-Options"), "nosniff");
   });
 });

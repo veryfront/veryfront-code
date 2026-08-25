@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createApplicationRequest } from "./application-request.ts";
+import {
+  createApplicationRequest,
+  createApplicationRequestHeaders,
+} from "./application-request.ts";
 
 describe("security/http/application-request", () => {
   it("retains application credentials and withholds infrastructure metadata", () => {
@@ -90,5 +93,42 @@ describe("security/http/application-request", () => {
     assertEquals(host.headers.get("x-application-value"), "before");
     assertEquals(await application.text(), '{"ok":true}');
     assertEquals(await host.text(), '{"ok":true}');
+  });
+
+  it("removes configured trusted-proxy identity headers with a bounded case-insensitive denylist", () => {
+    const application = createApplicationRequest(
+      new Request("https://tenant.example/api/private", {
+        headers: {
+          authorization: "Bearer public-user",
+          "x-auth-subject": "user-123",
+          "x-auth-email": "user@example.test",
+          "x-auth-name": "User Name",
+          "x-application-role": "editor",
+        },
+      }),
+      {
+        denyHeaders: [
+          "X-Auth-Subject",
+          "x-auth-email",
+          "x-auth-name",
+          "x-auth-subject",
+        ],
+      },
+    );
+
+    assertEquals(application.headers.get("authorization"), "Bearer public-user");
+    assertEquals(application.headers.get("x-application-role"), "editor");
+    assertEquals(application.headers.get("x-auth-subject"), null);
+    assertEquals(application.headers.get("x-auth-email"), null);
+    assertEquals(application.headers.get("x-auth-name"), null);
+  });
+
+  it("rejects malformed dynamic denylist names before copying application headers", () => {
+    const source = new Headers({ "x-application-role": "editor" });
+
+    for (const denyHeaders of [["x-auth-subject\n"], ["x-auth-subject".repeat(50)]]) {
+      const headers = createApplicationRequestHeaders(source, { denyHeaders });
+      assertEquals(headers.get("x-application-role"), null);
+    }
   });
 });
