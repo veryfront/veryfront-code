@@ -59,7 +59,7 @@ function describeErrorCategory(error: unknown): string {
 function describeRemoteModuleUrl(value: string): string {
   try {
     const url = new URL(value);
-    return `${url.origin}${url.pathname}`;
+    return url.origin;
   } catch {
     return "remote module";
   }
@@ -197,14 +197,18 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
         try {
           await lockfile.flush();
-          logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
+          logger.debug(
+            `[http] lockfile updated: ${describeRemoteModuleUrl(url)} -> ${
+              describeRemoteModuleUrl(entry.resolved)
+            }`,
+          );
         } catch (error) {
           if (!isReadOnlyFileSystemError(error)) throw error;
           lockfileFlushDisabled = true;
           logger.debug(
-            `[http] lockfile flush disabled on read-only filesystem for ${url}: ${
-              describePersistenceError(error)
-            }`,
+            `[http] lockfile flush disabled on read-only filesystem for ${
+              describeRemoteModuleUrl(url)
+            }: ${describePersistenceError(error)}`,
           );
         }
       }
@@ -217,7 +221,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           }
 
           logger.warn(
-            `[http] fetch attempt ${attempt} failed ${url} ${response.status}; retrying`,
+            `[http] fetch attempt ${attempt} failed ${
+              describeRemoteModuleUrl(url)
+            } ${response.status}; retrying`,
           );
           await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
         }
@@ -288,7 +294,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             }
             u.searchParams.set("target", "es2020");
             u.searchParams.set("bundle", "true");
-            logger.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
+            logger.debug(
+              `[http] esm.sh rewrite: ${describeRemoteModuleUrl(args.path)} -> ${
+                describeRemoteModuleUrl(u.toString())
+              }`,
+            );
             requestUrl = u.toString();
           }
         } catch (e) {
@@ -300,7 +310,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         const lockfileEntry = lockfile ? await getLockfileEntryForBuild(lockfile, args.path) : null;
 
         if (lockfileEntry) {
-          logger.debug(`[http] lockfile hit: ${args.path}`);
+          logger.debug(`[http] lockfile hit: ${describeRemoteModuleUrl(args.path)}`);
           try {
             const res = await fetchRemoteModule(lockfileEntry.resolved);
             if (res.ok) {
@@ -322,7 +332,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 };
               }
 
-              logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
+              logger.warn(
+                `[http] integrity mismatch, refetching: ${describeRemoteModuleUrl(args.path)}`,
+              );
             } else {
               return {
                 errors: [{
@@ -355,7 +367,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         }
 
         if (!res.ok) {
-          logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
+          logger.error(
+            `[http] fetch failed ${describeRemoteModuleUrl(requestUrl)} ${res.status}`,
+          );
           return {
             errors: [
               {

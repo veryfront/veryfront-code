@@ -885,7 +885,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
     it("does not fall back to a mutable URL when the locked URL is unavailable", async () => {
       const requestUrl = "https://esm.sh/yaml@2";
-      const lockedUrl = "https://cdn.example/yaml-2.0.0.js?token=secret-value";
+      const lockedUrl = "https://cdn.example/secret-value/yaml-2.0.0.js?token=secret-value";
       const lockedSource = "export const version = '2.0.0';";
       const lockedIntegrity = await computeIntegrity(lockedSource);
       const requestedUrls: string[] = [];
