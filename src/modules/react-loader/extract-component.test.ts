@@ -107,6 +107,34 @@ describe("modules/react-loader/extract-component", () => {
     );
   });
 
+  it("keeps a context provider declared before a helper function", () => {
+    const Ctx = { $$typeof: Symbol.for("react.context"), Provider: () => null };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Ctx, helper }, "context.tsx"),
+      Ctx,
+      "a context is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
+  it("skips an export that throws when it is read", () => {
+    const Page = () => null;
+    const moduleObj: Record<string, unknown> = { __esModule: true };
+    Object.defineProperty(moduleObj, "circular", {
+      enumerable: true,
+      get() {
+        throw new ReferenceError("Cannot access 'circular' before initialization");
+      },
+    });
+    moduleObj.Page = Page;
+
+    assertEquals(
+      extractComponent(moduleObj, "circular.tsx"),
+      Page,
+      "a namespace getter that throws must not hide a usable component behind it",
+    );
+  });
+
   it("hands back a default export that is not renderable", () => {
     assertEquals(
       extractComponent({ __esModule: true, default: 42 }, "bad-default.tsx") as unknown,

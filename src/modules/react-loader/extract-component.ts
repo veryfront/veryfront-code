@@ -6,6 +6,8 @@ const REACT_COMPONENT_TAGS: ReadonlySet<symbol> = new Set([
   Symbol.for("react.memo"),
   Symbol.for("react.forward_ref"),
   Symbol.for("react.lazy"),
+  Symbol.for("react.context"),
+  Symbol.for("react.provider"),
 ]);
 
 /**
@@ -43,8 +45,20 @@ function isReactComponentObject(value: unknown): boolean {
 function firstRenderableExport(moduleObj: Record<string, unknown>): unknown {
   let untaggedObject: unknown;
 
-  for (const [key, value] of Object.entries(moduleObj)) {
+  // Read one key at a time rather than materialising every value up front. A
+  // module namespace exposes its exports as getters, and one can throw while a
+  // usable component sits further along, as happens with a circular import.
+  for (const key of Object.keys(moduleObj)) {
     if (key === "default" || key === "__esModule") continue;
+
+    let value: unknown;
+    try {
+      value = moduleObj[key];
+    } catch (_) {
+      /* expected: an export can throw on access, such as a circular import */
+      continue;
+    }
+
     if (typeof value === "function" || isReactComponentObject(value)) return value;
     if (untaggedObject === undefined && typeof value === "object" && value !== null) {
       untaggedObject = value;
