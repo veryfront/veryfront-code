@@ -52,6 +52,83 @@ export function parseFrontmatter(content: string): { frontmatter: string; body: 
  * line. Nested maps, multi-line/block scalars, anchors, and quoted keys are
  * NOT supported. Use a real YAML parser if the schema grows beyond this.
  */
+/**
+ * Encodes a string as a double-quoted YAML scalar.
+ *
+ * Backslashes are escaped before quotes, or the backslash introduced by
+ * escaping a quote would itself be re-escaped on the next save and the value
+ * would drift a little further each time it is written.
+ */
+function quoteYamlString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Decodes a YAML scalar, undoing what `quoteYamlString` applies.
+ *
+ * The two are a matched pair: the serializer escaped quotes while the parser
+ * only stripped the surrounding ones, so a quoted title came back carrying the
+ * backslashes as literal characters and compounded on every write.
+ *
+ * Single-quoted values carry no escapes, and an unquoted value is returned as
+ * it stands, so hand-edited frontmatter keeps working.
+ */
+function unquoteYamlString(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return trimmed;
+
+  const quote = trimmed[0];
+  if ((quote !== '"' && quote !== "'") || !trimmed.endsWith(quote)) return trimmed;
+
+  const inner = trimmed.slice(1, -1);
+  return quote === "'" ? inner : inner.replace(/\\(["\\])/g, "$1");
+}
+
+/**
+ * Splits an inline YAML array body on the separators between items.
+ *
+ * Splitting the raw text on every comma tore apart any item that contained
+ * one, so a label such as `needs: triage, urgent` came back as two labels.
+ */
+function splitInlineArray(body: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (const char of body) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (quote === '"' && char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      current += char;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === ",") {
+      items.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  items.push(current);
+
+  return items.map(unquoteYamlString).filter(Boolean);
+}
+
 export function parseYaml(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = yaml.split("\n");
@@ -73,7 +150,7 @@ export function parseYaml(yaml: string): Record<string, unknown> {
 
     if (/^\s+-\s+/.test(line)) {
       const itemValue = line.replace(/^\s+-\s+/, "").trim();
-      arrayValues.push(itemValue.replace(/^["']|["']$/g, ""));
+      arrayValues.push(unquoteYamlString(itemValue));
       continue;
     }
 
@@ -97,15 +174,11 @@ export function parseYaml(yaml: string): Record<string, unknown> {
     }
 
     if (value.startsWith("[") && value.endsWith("]")) {
-      result[key] = value
-        .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-        .filter(Boolean);
+      result[key] = splitInlineArray(value.slice(1, -1));
       continue;
     }
 
-    let cleanValue: unknown = value.replace(/^["']|["']$/g, "");
+    let cleanValue: unknown = unquoteYamlString(value);
     if (cleanValue === "true") cleanValue = true;
     else if (cleanValue === "false") cleanValue = false;
     else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
@@ -124,7 +197,7 @@ export function serializeYaml(metadata: IssueMetadata): string {
   const lines: string[] = [];
 
   lines.push(`id: ${metadata.id}`);
-  lines.push(`title: "${metadata.title.replace(/"/g, '\\"')}"`);
+  lines.push(`title: ${quoteYamlString(metadata.title)}`);
   lines.push(`state: ${metadata.state}`);
   lines.push(serializeYamlStringArray("labels", metadata.labels));
 
@@ -140,7 +213,7 @@ export function serializeYaml(metadata: IssueMetadata): string {
 
 function serializeYamlStringArray(field: string, values: string[]): string {
   if (!values.length) return `${field}: []`;
-  return `${field}: [${values.map((value) => `"${value}"`).join(", ")}]`;
+  return `${field}: [${values.map(quoteYamlString).join(", ")}]`;
 }
 
 /**

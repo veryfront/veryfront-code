@@ -139,6 +139,83 @@ Deno.test("serializeYaml - escapes double quotes in the title", () => {
   );
 });
 
+Deno.test("serializeYaml/parseYaml - a quoted title survives a round trip", () => {
+  const title = 'Fix "login" timeout';
+  const metadata: IssueMetadata = {
+    id: "ISSUE-001",
+    title,
+    state: "open",
+    labels: [],
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  assertEquals(
+    parseYaml(serializeYaml(metadata)).title,
+    title,
+    "the parser must undo the escaping the serializer applies",
+  );
+});
+
+Deno.test("serializeYaml/parseYaml - repeated round trips do not compound escaping", () => {
+  const title = 'Fix "login" timeout';
+  const base: IssueMetadata = {
+    id: "ISSUE-001",
+    title,
+    state: "open",
+    labels: [],
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  let current = title;
+  for (let save = 0; save < 3; save++) {
+    current = parseYaml(serializeYaml({ ...base, title: current })).title as string;
+  }
+
+  assertEquals(current, title, "each save re-escaped the previous escape, compounding the damage");
+});
+
+Deno.test("serializeYaml/parseYaml - a backslash in the title survives a round trip", () => {
+  const title = 'Path C:\\temp and a "quote"';
+  const metadata: IssueMetadata = {
+    id: "ISSUE-001",
+    title,
+    state: "open",
+    labels: [],
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  assertEquals(
+    parseYaml(serializeYaml(metadata)).title,
+    title,
+    "a backslash must be escaped too, or it corrupts the escape that follows it",
+  );
+});
+
+Deno.test("serializeYaml/parseYaml - labels containing commas survive a round trip", () => {
+  const labels = ["needs: triage, urgent", 'has "quotes"'];
+  const metadata: IssueMetadata = {
+    id: "ISSUE-001",
+    title: "Test issue",
+    state: "open",
+    labels,
+    assignees: [],
+    created_at: "2026-01-23T00:00:00.000Z",
+    updated_at: "2026-01-23T00:00:00.000Z",
+  };
+
+  assertEquals(
+    parseYaml(serializeYaml(metadata)).labels,
+    labels,
+    "an inline array must split on separators between items, not inside them",
+  );
+});
+
 Deno.test("serializeYaml - preserves empty arrays", () => {
   const metadata: IssueMetadata = {
     id: "ISSUE-001",
