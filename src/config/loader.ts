@@ -11,6 +11,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { isValidServerExternalPackageName } from "./server-external-packages.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -84,8 +85,11 @@ const PromiseResolve = Promise.resolve;
 const PromiseWithResolvers = Promise.withResolvers;
 const ReflectApply = Reflect.apply;
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -1660,12 +1664,18 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  * `VeryfrontError.message` and its context, which callers log.
  */
 function missingPackageName(specifier: string): string | undefined {
-  const hasRuntimePrefix = specifier.startsWith("npm:") || specifier.startsWith("jsr:");
-  const bare = hasRuntimePrefix ? specifier.slice(4) : specifier;
+  const hasRuntimePrefix =
+    ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean;
+  const bare = hasRuntimePrefix
+    ? ReflectApply(StringPrototypeSlice, specifier, [4]) as string
+    : specifier;
   if (bare.length === 0) return undefined;
-  if (/^[./\\#]/.test(bare)) return undefined;
-  if (bare.includes("\\")) return undefined;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare)) return undefined;
+  if (ReflectApply(RegExpPrototypeExec, /^[./\\#]/, [bare]) !== null) return undefined;
+  if (ReflectApply(StringPrototypeIncludes, bare, ["\\"]) as boolean) return undefined;
+  if (ReflectApply(RegExpPrototypeExec, /^[a-zA-Z][a-zA-Z0-9+.-]*:/, [bare]) !== null) {
+    return undefined;
+  }
 
   const parsed = parseBarePackageSpecifier(bare);
   if (parsed === null) return undefined;
@@ -1683,13 +1693,20 @@ function missingPackageName(specifier: string): string | undefined {
   // the real fault, is not installable at all. Falling through to the parse
   // error keeps the runtime's own message, which names the whole specifier.
   if (parsed.subpath !== null) return undefined;
+  if (!isValidServerExternalPackageName(parsed.packageName)) return undefined;
 
-  const clean = sanitizeUrlCredentials(parsed.packageName)
-    .replace(CONTROL_CHARACTERS, " ")
-    .trim();
+  const replaced = ReflectApply(
+    StringPrototypeReplace,
+    sanitizeUrlCredentials(parsed.packageName),
+    [CONTROL_CHARACTERS, " "],
+  ) as string;
+  const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
-    ? `${clean.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
+    ? `${ReflectApply(StringPrototypeSlice, clean, [
+      0,
+      MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1,
+    ]) as string}…`
     : clean;
 }
 
@@ -1722,7 +1739,13 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
     if (!(current instanceof Error)) return undefined;
     if (seen.has(current)) return undefined;
     seen.add(current);
-    const specifier = reportedMissingSpecifier(current.message);
+    let message: string | undefined;
+    try {
+      message = typeof current.message === "string" ? current.message : undefined;
+    } catch {
+      message = undefined;
+    }
+    const specifier = message === undefined ? undefined : reportedMissingSpecifier(message);
     const packageName = specifier === undefined ? undefined : missingPackageName(specifier);
     if (packageName !== undefined) return packageName;
     // `cause` on a config-thrown error can be a getter that throws. Reading it

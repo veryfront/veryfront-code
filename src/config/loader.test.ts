@@ -833,6 +833,56 @@ export default config as const;
         );
       });
 
+      it("contains a nested message getter that throws", async () => {
+        const error = await loadFailure(
+          "vf-config-hostile-message-",
+          "const cause = new Error();\n" +
+            'Object.defineProperty(cause, "message", {' +
+            ' get() { throw new Error("hostile"); } });\n' +
+            'throw new Error("wrapper", { cause });\n',
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assert(
+          error.message.includes("wrapper"),
+          `error must still report the safe outer message, got: ${error.message}`,
+        );
+      });
+
+      it("classifies dependencies without project-controlled string methods", async () => {
+        const receiverValue = String.prototype.valueOf;
+        const restores: Array<() => void> = [];
+        const poisonForSpecifier = (
+          method: "startsWith" | "slice" | "includes" | "replace" | "trim",
+        ) => {
+          const original = String.prototype[method] as (...args: unknown[]) => unknown;
+          restores.push(replacePropertyForTest(String.prototype, method, {
+            value: function (this: string, ...args: unknown[]): unknown {
+              const receiver = TestReflectApply(receiverValue, this, []) as string;
+              if (receiver === "npm:left-pad" || receiver === "left-pad") {
+                throw new Error(`poisoned ${String(method)}`);
+              }
+              return TestReflectApply(original, this, args);
+            },
+          }));
+        };
+
+        try {
+          for (const method of ["startsWith", "slice", "includes", "replace", "trim"] as const) {
+            poisonForSpecifier(method);
+          }
+          const error = await loadFailure(
+            "vf-config-hostile-string-",
+            "throw new Error('Module not found \"npm:left-pad\".');\n",
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+          assertStringIncludes(error.message, "left-pad");
+        } finally {
+          for (let index = restores.length - 1; index >= 0; index -= 1) restores[index]!();
+        }
+      });
+
       it("keeps a secret in a subpath out of any package claim", async () => {
         // Falling through to the parse error routes the text through
         // summarizeConfigLoadCause, which redacts and bounds it; the
@@ -854,7 +904,7 @@ export default config as const;
           `throw new Error("Cannot find module '${"a".repeat(400)}'");\n`,
         );
 
-        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
         assert(
           error.message.length < 320,
           `error must bound the specifier, got ${error.message.length} characters`,
@@ -960,6 +1010,11 @@ export default config as const;
           "a version pinned onto a plain bare specifier",
           "vf-config-versioned-",
           `throw new Error("Cannot find module 'left-pad@1.3.0'");\n`,
+        ],
+        [
+          "a package name containing whitespace",
+          "vf-config-malformed-package-",
+          `throw new Error("Cannot find package 'foo bar' imported from /app/veryfront.config.ts");\n`,
         ],
       ];
 
