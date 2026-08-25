@@ -334,6 +334,16 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(ext.contracts?.provides, ["DocumentExtractor"]);
   });
 
+  it("declares the capabilities used by the extraction subprocess", () => {
+    const ext = factory();
+    assertEquals(ext.capabilities, [
+      { type: "fs:read" },
+      { type: "process:spawn", commands: ["deno"] },
+      { type: "env:read" },
+      { type: "native:ffi" },
+    ]);
+  });
+
   it("registers DocumentExtractor on setup", () => {
     const ext = factory();
     const provides = new Map<string, unknown>();
@@ -452,6 +462,83 @@ describe("ext-document-kreuzberg extension", () => {
       { unit: "slide", current: 1, total: 2, characters: 20 },
       { unit: "slide", current: 2, total: 2, characters: 25 },
     ]);
+  });
+
+  it("routes the deprecated loadNativeKreuzberg seam through whole-file extraction", async () => {
+    const loaderCalls: Array<{ byteLength: number; mimeType: string }> = [];
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      loadNativeKreuzberg: () =>
+        Promise.resolve({
+          extractBytes: (bytes: Uint8Array, mimeType: string) => {
+            loaderCalls.push({ byteLength: bytes.byteLength, mimeType });
+            return Promise.resolve({ content: "legacy loader pdf text" });
+          },
+          // deno-lint-ignore no-explicit-any
+        } as any),
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used when the legacy loader seam is injected");
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    const content = await extractor.extractInWorker(buffer, "application/pdf");
+
+    assertEquals(content, "legacy loader pdf text");
+    assertEquals(loaderCalls, [{ byteLength: buffer.byteLength, mimeType: "application/pdf" }]);
+  });
+
+  it("routes the deprecated extractWithNativeProgressDeno seam for progress requests", async () => {
+    const progressEvents: DocumentExtractionProgressEvent[] = [];
+    const legacyCalls: Array<{ mimeType: string }> = [];
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      extractWithNativeProgressDeno: async (_buffer, mimeType, options) => {
+        legacyCalls.push({ mimeType });
+        await options.onProgress?.({ unit: "page", current: 1, total: 1, characters: 10 });
+        return "legacy progress pdf text";
+      },
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used when the legacy progress seam is injected");
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    const content = await extractor.extractInWorker(buffer, "application/pdf", {
+      onProgress: (event) => {
+        progressEvents.push(event);
+      },
+    });
+
+    assertEquals(content, "legacy progress pdf text");
+    assertEquals(legacyCalls, [{ mimeType: "application/pdf" }]);
+    assertEquals(progressEvents, [{ unit: "page", current: 1, total: 1, characters: 10 }]);
+  });
+
+  it("prefers the subprocess seam over the deprecated seams when both are injected", async () => {
+    const deps: KreuzbergDocumentExtractorDeps = {
+      isDenoRuntime: true,
+      extractWithNativeProcessDeno: async () => "subprocess text",
+      extractWithNativeProgressDeno: async () => {
+        throw new Error("deprecated progress seam must not win over the subprocess seam");
+      },
+      loadNativeKreuzberg: () => {
+        throw new Error("deprecated loader seam must not win over the subprocess seam");
+      },
+      extractInWorkerDeno: async () => {
+        throw new Error("worker should not be used when native extraction succeeds");
+      },
+    };
+    const extractor = new KreuzbergDocumentExtractor(deps);
+    const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+
+    assertEquals(await extractor.extractInWorker(buffer, "application/pdf"), "subprocess text");
+    assertEquals(
+      await extractor.extractInWorker(buffer, "application/pdf", { onProgress: () => {} }),
+      "subprocess text",
+    );
   });
 
   it("falls back to the isolated WASM worker when native PDF extraction fails", async () => {
@@ -660,6 +747,123 @@ describe("ext-document-kreuzberg extension", () => {
         "Native extraction process exited without a result",
       );
       assertStringIncludes(error.message, "SIGABRT");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("enforces the hard timeout when an async progress callback never settles", async () => {
+    // The child streams one progress event, then hangs. The host awaits an
+    // onProgress that never resolves; the hard deadline must still reject the
+    // outer extraction promise instead of hanging forever.
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      const line = JSON.stringify({
+        type: "progress",
+        event: { unit: "page", current: 1, total: 2, characters: 5 },
+      }) + "\\n";
+      Deno.stdout.writeSync(new TextEncoder().encode(line));
+      setInterval(() => {}, 1_000);
+      await new Promise(() => {});
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(
+            buffer,
+            "application/pdf",
+            {
+              hardTimeoutMs: 2_000,
+              onProgress: () => new Promise<void>(() => {}),
+            },
+            "progress",
+            { scriptUrl: fixture.scriptUrl },
+          ),
+        Error,
+        "Text extraction exceeded the hard timeout after 2s",
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not apply the progress idle deadline in whole-file mode", async () => {
+    // Whole-file extraction emits nothing until the single parse completes; a
+    // child slower than the idle deadline must still succeed under the hard
+    // deadline.
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const line = JSON.stringify({ type: "done", content: "slow whole-file content" }) + "\\n";
+      Deno.stdout.writeSync(new TextEncoder().encode(line));
+      Deno.exit(0);
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      const content = await extractWithNativeProcessDeno(
+        buffer,
+        "application/pdf",
+        { idleTimeoutMs: 500, hardTimeoutMs: 10_000 },
+        "whole-file",
+        { scriptUrl: fixture.scriptUrl },
+      );
+      assertEquals(content, "slow whole-file content");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("keeps the idle deadline for progress mode", async () => {
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      setInterval(() => {}, 1_000);
+      await new Promise(() => {});
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(
+            buffer,
+            "application/pdf",
+            { idleTimeoutMs: 500, hardTimeoutMs: 10_000, onProgress: () => {} },
+            "progress",
+            { scriptUrl: fixture.scriptUrl },
+          ),
+        Error,
+        "Text extraction made no progress for 0.5s",
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("redacts machine-specific paths from subprocess stderr in thrown errors", async () => {
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      console.error("Error: Cannot find native binding at /home/fixture-user/.cache/deno/npm/binding.node");
+      console.error("    at file:///home/fixture-user/.cache/deno/npm/loader.js:10:3");
+      Deno.exit(1);
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      const error = await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(buffer, "application/pdf", {}, "whole-file", {
+            scriptUrl: fixture.scriptUrl,
+          }),
+        Error,
+        "Native extraction process exited without a result",
+      );
+      assertStringIncludes(error.message, "Cannot find native binding");
+      assertStringIncludes(error.message, "<REDACTED>");
+      assertEquals(error.message.includes("fixture-user"), false);
+      assertEquals(error.message.includes("loader.js"), false);
     } finally {
       await fixture.cleanup();
     }

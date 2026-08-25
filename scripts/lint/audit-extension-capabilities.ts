@@ -108,6 +108,11 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
         // Native kreuzberg parsing runs in a `deno run` subprocess so a native
         // crash cannot take down the host runtime.
         { type: "process:spawn", commands: ["deno"] },
+        // The subprocess grants itself --allow-env and --allow-ffi so the
+        // napi-rs loader in @kreuzberg/node can resolve and load the native
+        // binding. Declared so the child permission surface stays audited.
+        { type: "env:read" },
+        { type: "native:ffi" },
       ],
     },
     {

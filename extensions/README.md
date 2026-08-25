@@ -345,18 +345,18 @@ capability list in the extension factory and in `veryfront.capabilities` inside
 the extension manifest. CI runs `deno task lint:extension-capabilities` to
 check for drift and to enforce the sensitive capability policies below.
 
-| Extension                         | Required capabilities                                    | Why it is sensitive                          |
-| --------------------------------- | -------------------------------------------------------- | -------------------------------------------- |
-| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage               | Obtains tokens and accesses configured blobs |
-| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys     | Accesses the explicitly configured endpoint  |
-| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`                 | Exposes command execution in a sandbox       |
-| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`                 | Connects to external cache infrastructure    |
-| `ext-redis`                       | `net:outbound`, `env:read` for Redis connection settings | Connects distributed runtime infrastructure  |
-| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                    | Opens native SQLite databases                |
-| `ext-document-kreuzberg`          | `fs:read`, `process:spawn` for `deno`                    | Parses untrusted documents in a subprocess   |
-| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                  | Exports telemetry and reads collector config |
-| `ext-observability-sentry`        | `net:outbound`                                           | Sends scrubbed application errors to Sentry  |
-| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`   | Exports eval reports to an external endpoint |
+| Extension                         | Required capabilities                                           | Why it is sensitive                          |
+| --------------------------------- | --------------------------------------------------------------- | -------------------------------------------- |
+| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage                      | Obtains tokens and accesses configured blobs |
+| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys            | Accesses the explicitly configured endpoint  |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`                        | Exposes command execution in a sandbox       |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`                        | Connects to external cache infrastructure    |
+| `ext-redis`                       | `net:outbound`, `env:read` for Redis connection settings        | Connects distributed runtime infrastructure  |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                           | Opens native SQLite databases                |
+| `ext-document-kreuzberg`          | `fs:read`, `process:spawn` for `deno`, `env:read`, `native:ffi` | Parses untrusted documents in a subprocess   |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                         | Exports telemetry and reads collector config |
+| `ext-observability-sentry`        | `net:outbound`                                                  | Sends scrubbed application errors to Sentry  |
+| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`          | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.
