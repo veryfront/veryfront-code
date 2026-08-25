@@ -604,11 +604,8 @@ function minimumAbsolutePathPrefixLength(path: string): number {
   }
   const rootLength = index;
   while (index < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
-  if (index === path.length) {
-    const terminalPrefixLength = rootLength + MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS;
-    return terminalPrefixLength < path.length ? terminalPrefixLength : path.length;
-  }
-  return index;
+  const firstSegmentPrefixLength = rootLength + MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS;
+  return firstSegmentPrefixLength < index ? firstSegmentPrefixLength : index;
 }
 
 function isPathContinuationCodeUnit(codeUnit: number): boolean {

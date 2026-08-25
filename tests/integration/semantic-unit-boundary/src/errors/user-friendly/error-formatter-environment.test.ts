@@ -674,6 +674,23 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("rejects hostname-shaped direct callable labels with accessor-like prefixes", async () => {
+    const error = new Error("unknown error accessor_callable_frame");
+    error.stack = [
+      "Error: unknown error accessor_callable_frame",
+      "    at get private-control.example (/srv/app.ts:1:1)",
+      "    at get Object.visibleHandler (/srv/app.ts:2:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const output = formatUserError(error);
+
+      assertEquals(output.includes("private-control.example"), false);
+      assertEquals(output.includes("get Object.visibleHandler"), true);
+      return Promise.resolve();
+    });
+  });
+
   it("does not call live RegExp prototype hooks while sanitizing stacks", async () => {
     const error = new Error("unknown error mutated_regexp_test");
     error.stack = [

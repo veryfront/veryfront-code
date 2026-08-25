@@ -307,6 +307,25 @@ describe("safe-diagnostics", () => {
     }
   });
 
+  it("should detect truncation inside the first segment of a longer absolute path", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["//private-control-plane.example/share/file", "//private-control"],
+        ["/definitely-private-marker/project/file", "/definitely-private-mar"],
+        ["C:\\private-marker\\project\\file", "c:/private-mar"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
   it("should normalize localhost file authorities before redacting canonical diagnostics", () => {
     for (
       const requestedPath of [

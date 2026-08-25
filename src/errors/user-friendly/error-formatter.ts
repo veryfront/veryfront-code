@@ -146,9 +146,9 @@ function retainCallableLabel(label: string): string {
   const aliasPrefix = aliasLabel ? execRegExp(CALLABLE_LABEL_PREFIX, aliasLabel)?.[0] : undefined;
   const unprefixedAlias = aliasPrefix ? aliasLabel!.slice(aliasPrefix.length).trim() : aliasLabel;
   const isSafe = alias
-    ? isRetainableCallableLabel(alias[1]!.trim()) &&
+    ? isRetainableCallableAlias(alias[1]!.trim()) &&
       isRetainableCallableAlias(unprefixedAlias ?? "")
-    : isRetainableCallableLabel(callableLabel);
+    : isRetainableCallableAlias(callableLabel);
   return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
 }
 
