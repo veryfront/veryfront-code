@@ -80,6 +80,52 @@ describe("stream lifecycle live adapter", () => {
         data: { toolCallId: "local-1", status: "pending_input" },
       },
     ]);
+
+    assertEquals(
+      frames([
+        {
+          type: "tool_input_rejected",
+          toolCallId: "call-1",
+          toolName: "create_file",
+          reason: "malformed",
+        },
+        {
+          type: "tool_input_rejected",
+          toolCallId: "call-2",
+          toolName: "create_file",
+          reason: "unavailable",
+        },
+        {
+          type: "provider_tool_denied",
+          toolCallId: "call-3",
+          toolName: "web_search",
+          providerExecuted: true,
+        },
+        {
+          type: "provider_tool_cancelled",
+          toolCallId: "call-4",
+          toolName: "web_search",
+          providerExecuted: true,
+        },
+      ]).flatMap((frame) => adapter.encode(frame)),
+      [
+        {
+          type: "tool-input-error",
+          toolCallId: "call-1",
+          toolName: "create_file",
+          input: null,
+          errorText: "Tool input was rejected before handoff",
+        },
+        { type: "tool-output-denied", toolCallId: "call-3" },
+        {
+          type: "tool-output-error",
+          toolCallId: "call-4",
+          errorText: "Provider tool execution was cancelled",
+          providerExecuted: true,
+        },
+      ],
+      "a rejected tool input must surface an error part unless the tool was merely unavailable",
+    );
   });
 
   it("maps reasoning, provider output, usage, and diagnostics", () => {

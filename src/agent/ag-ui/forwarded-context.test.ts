@@ -45,8 +45,18 @@ Deno.test("ag-ui-forwarded-context parses typed legacy context values", () => {
 
   assertEquals(parseAgUiContextString('"model-1"'), "model-1");
   assertEquals(parseAgUiContextString("   "), undefined);
+  assertEquals(
+    parseAgUiContextString("openai/gpt-5.4"),
+    "openai/gpt-5.4",
+    "unquoted legacy context values are preserved as raw strings",
+  );
   assertEquals(parseAgUiContextNullableString("null"), null);
   assertEquals(parseAgUiContextNullableString('"branch-1"'), "branch-1");
+  assertEquals(
+    parseAgUiContextNullableString("branch-1"),
+    "branch-1",
+    "unquoted legacy nullable context values are preserved as raw strings",
+  );
   assertEquals(parseAgUiContextBoolean("true"), true);
   assertEquals(parseAgUiContextBoolean("yes"), undefined);
   assertEquals(parseAgUiContextSchema('{"maxSteps":4}', overridesSchema), { maxSteps: 4 });

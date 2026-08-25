@@ -38,6 +38,71 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
   });
 
+  it("recovers buffered tool input when tool-input-available carries an empty object", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({
+      responseMessageId: "msg-1",
+    });
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-delta",
+        toolCallId: "tool-2",
+        inputTextDelta: '{"query":"docs"}',
+      }),
+      [{ type: "start-step" }],
+      "a delta for an unopened tool part is buffered rather than emitted",
+    );
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "tool-2",
+        toolName: "search_docs",
+        input: {},
+      }),
+      [
+        { type: "tool-input-start", toolCallId: "tool-2", toolName: "search_docs" },
+        { type: "tool-input-delta", toolCallId: "tool-2", inputTextDelta: '{"query":"docs"}' },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-2",
+          toolName: "search_docs",
+          input: { query: "docs" },
+        },
+      ],
+      "a complete buffered delta must reconstruct the tool input when the provider sends an empty object",
+    );
+  });
+
+  it("replays buffered deltas after a late tool-input-start", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({
+      responseMessageId: "msg-1",
+    });
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-delta",
+        toolCallId: "tool-3",
+        inputTextDelta: '{"query":"docs"}',
+      }),
+      [{ type: "start-step" }],
+      "a delta for an unopened tool part is buffered rather than emitted",
+    );
+
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-start",
+        toolCallId: "tool-3",
+        toolName: "search_docs",
+      }),
+      [
+        { type: "tool-input-start", toolCallId: "tool-3", toolName: "search_docs" },
+        { type: "tool-input-delta", toolCallId: "tool-3", inputTextDelta: '{"query":"docs"}' },
+      ],
+      "buffered deltas must be replayed after the tool-input-start that opens the part",
+    );
+  });
+
   it("preserves providerExecuted on runtime tool lifecycle events", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",

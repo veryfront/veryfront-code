@@ -557,9 +557,7 @@ export function createAgUiRuntimeHandler(
       }
 
       return Response.json(
-        {
-          error: error instanceof Error ? error.message : "Internal server error",
-        },
+        { error: "Internal server error" },
         { status: 500 },
       );
     }

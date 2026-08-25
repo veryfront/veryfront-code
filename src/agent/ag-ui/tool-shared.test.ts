@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -76,6 +76,47 @@ describe("buildMergedAgUiTools", () => {
     ], sessionManager) as Record<string, Tool | boolean>;
 
     assertEquals(mergedTools["number-generator"], true);
+  });
+
+  it("rejects injected tool calls without a toolCallId and surfaces submitted errors", async () => {
+    const agent = {
+      config: {
+        tools: {
+          "number-generator": true,
+        },
+      },
+    } as unknown as Agent;
+    const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+
+    const mergedTools = buildMergedAgUiTools(agent, "run_1", [
+      { name: "studio_open_preview" },
+    ], sessionManager) as Record<string, Tool>;
+
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    try {
+      await assertRejects(
+        () => Promise.resolve(mergedTools.studio_open_preview!.execute!({}, {})),
+        Error,
+        "Missing toolCallId",
+        "an injected tool call without a toolCallId must be rejected as an invalid argument",
+      );
+
+      const call = Promise.resolve(
+        mergedTools.studio_open_preview!.execute!({}, { toolCallId: "call-1" }),
+      );
+      sessionManager.submitSignal("run_1", {
+        waitKey: "call-1",
+        value: { result: "tool blew up", isError: true },
+      });
+      await assertRejects(
+        () => call,
+        Error,
+        "tool blew up",
+        "a submitted error result must surface as an agent error, not a resolved value",
+      );
+    } finally {
+      sessionManager.completeRun("run_1");
+    }
   });
 });
 

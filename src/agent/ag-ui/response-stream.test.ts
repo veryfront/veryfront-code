@@ -68,12 +68,23 @@ describe("agent/ag-ui-response-stream", () => {
       getFinalResponse: () => null,
     });
 
-    const text = await collectStreamText(stream);
-    assertStringIncludes(text, "event: RunStarted");
-    assertStringIncludes(text, "event: StateSnapshot");
-    assertStringIncludes(text, "event: MessagesSnapshot");
-    assertStringIncludes(text, "event: TextMessageContent");
-    assertStringIncludes(text, "event: RunFinished");
+    const frames = parseSseFrames(await collectStreamText(stream));
+    assertEquals(
+      frames.map((frame) => frame.event),
+      ["RunStarted", "StateSnapshot", "MessagesSnapshot", "TextMessageContent", "RunFinished"],
+      "bootstrap frames must precede chunk and finalize frames in order",
+    );
+    assertEquals(frames[0]?.data.runId, "run-1", "RunStarted must carry the request runId");
+    assertEquals(
+      frames[0]?.data.threadId,
+      "thread-1",
+      "RunStarted must carry the request threadId",
+    );
+    assertEquals(
+      frames[2]?.data.messages,
+      [{ id: "user-1", role: "user" }],
+      "MessagesSnapshot must replay the request messages",
+    );
   });
 
   it("shares the chunk encoder timing anchor with bootstrap and final events", async () => {
@@ -124,6 +135,7 @@ describe("agent/ag-ui-response-stream", () => {
   });
 
   it("emits RunError and swallows execution.fail rejections", async () => {
+    let failedWith: unknown;
     const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-2",
@@ -141,7 +153,8 @@ describe("agent/ag-ui-response-stream", () => {
             };
           },
         },
-        fail: async () => {
+        fail: async (error) => {
+          failedWith = error;
           throw new Error("fail exploded");
         },
         waitForFinish: async () => {},
@@ -156,6 +169,18 @@ describe("agent/ag-ui-response-stream", () => {
     const text = await collectStreamText(stream);
     assertStringIncludes(text, "event: RunError");
     assertStringIncludes(text, "stream exploded");
+    assertEquals(
+      failedWith instanceof Error && failedWith.message === "stream exploded",
+      true,
+      "execution.fail must be notified with the stream error",
+    );
+    const runError = parseSseFrames(text).find((frame) => frame.event === "RunError");
+    assertEquals(runError?.data.code, "STREAM_ERROR", "RunError must carry the STREAM_ERROR code");
+    assertEquals(
+      runError?.data.message,
+      "stream exploded",
+      "RunError must carry the stream error message",
+    );
   });
 
   it("passes accumulated state into getFinalResponse", async () => {

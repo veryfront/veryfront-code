@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionDataEvent } from "../../tool/types.ts";
 import { createToolExecutionDataEventBridgeStream } from "./tool-execution-data-event-bridge.ts";
@@ -92,6 +92,32 @@ describe("createToolExecutionDataEventBridgeStream", () => {
     controller.enqueue(encoder.encode('data: {"type":"message-finish"}\n\n'));
     controller.close();
     await reader.cancel();
+  });
+
+  it("surfaces base stream failures as stream errors", async () => {
+    let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
+
+    const stream = createToolExecutionDataEventBridgeStream({
+      baseStream: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error(new Error("upstream boom"));
+        },
+      }),
+      installPublisher(nextPublishDataEvent) {
+        publishDataEvent = nextPublishDataEvent;
+      },
+    });
+
+    await assertRejects(
+      () => stream.getReader().read(),
+      Error,
+      "upstream boom",
+      "base stream failures must propagate as a stream error, not a clean close",
+    );
+
+    // The pump reinstalls a no-op publisher on teardown, so a late publish must
+    // not enqueue onto the errored controller.
+    publishDataEvent({ type: "late", data: {} });
   });
 
   it("cancel resolves cleanly when the base reader cancel rejects (#2334)", async () => {

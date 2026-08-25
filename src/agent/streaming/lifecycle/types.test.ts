@@ -15,10 +15,19 @@ describe("stream lifecycle contract", () => {
     assertEquals(policy.attemptTimeoutMs, 300_000);
   });
 
-  it("uses a typed error for a second frame consumer", () => {
-    assertInstanceOf(
-      new StreamAlreadyConsumedError(),
-      StreamAlreadyConsumedError,
+  it("exports a named typed error for a rejected second frame consumer", () => {
+    const error = new StreamAlreadyConsumedError();
+
+    assertInstanceOf(error, Error, "the typed error must extend Error");
+    assertEquals(
+      error.name,
+      "StreamAlreadyConsumedError",
+      "the typed error must keep its exported name",
+    );
+    assertEquals(
+      error.message,
+      "Stream lifecycle frames support one consumer",
+      "the typed error must explain that frames support one consumer",
     );
   });
 });

@@ -148,8 +148,14 @@ describe("stream lifecycle observability", () => {
       assertEquals(serialized.includes(sentinel), false, sentinel);
     }
     assertEquals(
-      durations.map((entry) => entry.kind),
-      ["tool_input", "first_progress", "semantic_idle", "attempt"],
+      durations,
+      [
+        { kind: "tool_input", durationMs: 20 },
+        { kind: "first_progress", durationMs: 40 },
+        { kind: "semantic_idle", durationMs: 20 },
+        { kind: "attempt", durationMs: 90 },
+      ],
+      "each recorded duration must span the frames it measures",
     );
     assertEquals(
       Object.keys(spanAttributes).every((key) => key.startsWith("stream.lifecycle.")),
@@ -160,6 +166,87 @@ describe("stream lifecycle observability", () => {
       spanAttributes["stream.lifecycle.error_code"],
       "TOOL_INPUT_TIMEOUT",
     );
+  });
+
+  it("records provider tool execution duration between start and result", () => {
+    const { sink, durations } = createRecordingSink();
+    const observer = createStreamLifecycleObserver({
+      provider: "openai",
+      model: "gpt-5.4",
+      mode: "active",
+      sink,
+    });
+
+    observer.onFrame(frame("semantic", {
+      type: "provider_tool_start",
+      toolCallId: "t1",
+      toolName: "web_search",
+    }, 10));
+    observer.onFrame(frame("semantic", {
+      type: "provider_tool_result",
+      toolCallId: "t1",
+      toolName: "web_search",
+      output: {},
+      isError: false,
+    }, 35));
+
+    assertEquals(
+      durations,
+      [{ kind: "tool_execution", durationMs: 25 }],
+      "provider tool execution must record the start-to-result span",
+    );
+  });
+
+  it("labels cancelled outcomes with their cancellation source", () => {
+    const { sink, attributes } = createRecordingSink();
+    const spanAttributes: Record<string, unknown> = {};
+    const observer = createStreamLifecycleObserver({
+      provider: "openai",
+      model: "gpt-5.4",
+      mode: "active",
+      sink,
+      span: {
+        setAttributes(values) {
+          Object.assign(spanAttributes, values);
+          return this;
+        },
+      },
+    });
+
+    observer.onOutcome({
+      status: "cancelled",
+      source: "client_disconnected",
+      publicMessage: "The client disconnected",
+      snapshot: {
+        phase: "cancelled",
+        accumulatedText: "",
+        reasoning: [],
+        tools: [],
+        finishReason: null,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        hasStreamOutput: false,
+        hasSemanticProgress: false,
+      },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      elapsedMs: 40,
+      phase: "cancelled",
+    });
+
+    assertEquals(
+      attributes.at(0)?.cancellation_source,
+      "client_disconnected",
+      "a cancelled outcome must carry its cancellation source label",
+    );
+    assertEquals(
+      spanAttributes["stream.lifecycle.cancellation_source"],
+      "client_disconnected",
+      "the span must carry the cancellation source",
+    );
+    for (const attrs of attributes) {
+      for (const key of Object.keys(attrs)) {
+        assertEquals(ALLOWED_LABEL_KEYS.has(key), true, key);
+      }
+    }
   });
 
   it("normalizes provider, model, and repair labels to a closed vocabulary", () => {

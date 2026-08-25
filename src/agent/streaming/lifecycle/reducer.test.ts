@@ -412,8 +412,31 @@ describe("stream lifecycle reducer", () => {
       event: { type: "step_finish", finishReason: "tool-calls" },
     }, 2).state;
 
-    assertEquals(state.snapshot.phase, "failed");
-    assertEquals(state.snapshot.tools[0]?.phase, "input_rejected");
+    assertEquals(
+      state.snapshot.phase,
+      "failed",
+      "an unavailable tool call must fail the stream",
+    );
+    assertEquals(
+      state.snapshot.tools[0]?.phase,
+      "input_rejected",
+      "the unavailable tool must stay rejected instead of moving to execution",
+    );
+    assertEquals(
+      state.terminalError?.code,
+      "PROTOCOL_VIOLATION",
+      "an unavailable tool is a protocol violation, not incomplete tool input",
+    );
+    assertEquals(
+      state.terminalError?.source,
+      "runtime",
+      "an unavailable tool is a runtime fault, not a tool fault",
+    );
+    assertEquals(
+      state.terminalError?.publicMessage,
+      "Provider requested tool handoff without an executable tool call",
+      "unavailable-tool failures must not use the incomplete-input public message",
+    );
   });
 
   it("accepts provider tool output only for explicitly provider-executed input", () => {

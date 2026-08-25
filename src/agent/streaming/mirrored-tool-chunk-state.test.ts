@@ -95,12 +95,81 @@ describe("mirrored-tool-chunk-state", () => {
   it("clones state as an independent copy", () => {
     const state = createMirroredToolChunkState();
     state.startedToolCallIds.add("tc-1");
+    state.inputAvailableToolCallIds.add("tc-in");
+    state.outputAvailableToolCallIds.add("tc-out");
+    state.outputErrorToolCallIds.add("tc-err");
+    state.outputDeniedToolCallIds.add("tc-denied");
+    state.toolCallNames.set("tc-1", "bash");
 
     const clone = cloneMirroredToolChunkState(state);
     clone.startedToolCallIds.add("tc-2");
+    clone.inputAvailableToolCallIds.add("tc-in-2");
+    clone.outputAvailableToolCallIds.add("tc-out-2");
+    clone.outputErrorToolCallIds.add("tc-err-2");
+    clone.outputDeniedToolCallIds.add("tc-denied-2");
+    clone.toolCallNames.set("tc-2", "read");
 
-    assertEquals(state.startedToolCallIds.has("tc-2"), false);
-    assertEquals(clone.startedToolCallIds.has("tc-1"), true);
+    assertEquals(
+      state.startedToolCallIds.has("tc-2"),
+      false,
+      "writing started ids on the clone must not reach the source",
+    );
+    assertEquals(
+      state.inputAvailableToolCallIds.has("tc-in-2"),
+      false,
+      "writing input-available ids on the clone must not reach the source",
+    );
+    assertEquals(
+      state.outputAvailableToolCallIds.has("tc-out-2"),
+      false,
+      "writing output-available ids on the clone must not reach the source",
+    );
+    assertEquals(
+      state.outputErrorToolCallIds.has("tc-err-2"),
+      false,
+      "writing output-error ids on the clone must not reach the source",
+    );
+    assertEquals(
+      state.outputDeniedToolCallIds.has("tc-denied-2"),
+      false,
+      "writing output-denied ids on the clone must not reach the source",
+    );
+    assertEquals(
+      state.toolCallNames.get("tc-2"),
+      undefined,
+      "writing tool call names on the clone must not reach the source",
+    );
+
+    assertEquals(
+      clone.startedToolCallIds.has("tc-1"),
+      true,
+      "the clone must carry the seeded started id",
+    );
+    assertEquals(
+      clone.inputAvailableToolCallIds.has("tc-in"),
+      true,
+      "the clone must carry the seeded input-available id",
+    );
+    assertEquals(
+      clone.outputAvailableToolCallIds.has("tc-out"),
+      true,
+      "the clone must carry the seeded output-available id",
+    );
+    assertEquals(
+      clone.outputErrorToolCallIds.has("tc-err"),
+      true,
+      "the clone must carry the seeded output-error id",
+    );
+    assertEquals(
+      clone.outputDeniedToolCallIds.has("tc-denied"),
+      true,
+      "the clone must carry the seeded output-denied id",
+    );
+    assertEquals(
+      clone.toolCallNames.get("tc-1"),
+      "bash",
+      "the clone must carry the seeded tool call name",
+    );
   });
 
   it("records tool lifecycle chunks", () => {

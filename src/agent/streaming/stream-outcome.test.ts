@@ -191,11 +191,30 @@ describe("resolveStreamOutcome", () => {
     });
     assertEquals(outcome.status, "failed");
     if (outcome.status === "failed") {
-      assertEquals(outcome.error.code, "PROVIDER_TERMINAL_ERROR");
-      assertEquals(outcome.error.providerCode, "CONTEXT_WINDOW_EXCEEDED");
+      assertEquals(
+        outcome.error.code,
+        "PROVIDER_TERMINAL_ERROR",
+        "a terminal provider error must be reported under the terminal code",
+      );
+      assertEquals(
+        outcome.error.providerCode,
+        "CONTEXT_WINDOW_EXCEEDED",
+        "the provider code must be preserved for the caller",
+      );
       assertEquals(
         outcome.error.publicMessage,
         "The request exceeded the model context window",
+        "the classified public message must pass through unchanged",
+      );
+      assertEquals(
+        outcome.error.retryable,
+        false,
+        "a terminal provider error must not be reported as retryable",
+      );
+      assertEquals(
+        outcome.error.source,
+        "provider",
+        "a classified provider error must be attributed to the provider, not the runtime",
       );
     }
   });
@@ -204,15 +223,24 @@ describe("resolveStreamOutcome", () => {
     const outcome = resolveStreamOutcome({
       snapshot: snapshot("streaming", null, false),
       elapsedMs: 5,
-      thrownError: { raw: "socket closed by peer at 10.0.0.1" },
+      thrownError: new Error("socket closed by peer at 10.0.0.1"),
     });
     assertEquals(outcome.status, "failed");
     if (outcome.status === "failed") {
-      assertEquals(outcome.error.code, "PROVIDER_STREAM_ERROR");
-      assertEquals(outcome.error.retryable, true);
       assertEquals(
-        outcome.error.publicMessage.includes("10.0.0.1"),
-        false,
+        outcome.error.code,
+        "PROVIDER_STREAM_ERROR",
+        "an unrecognized provider failure stays on the generic stream-error code",
+      );
+      assertEquals(
+        outcome.error.retryable,
+        true,
+        "an unrecognized provider failure is retryable",
+      );
+      assertEquals(
+        outcome.error.publicMessage,
+        "Provider stream failed",
+        "an unrecognized provider failure must be replaced by fixed public text, never echoed",
       );
     }
   });

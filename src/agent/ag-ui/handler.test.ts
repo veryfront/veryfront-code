@@ -959,6 +959,108 @@ describe("agent/ag-ui-handler", () => {
       "Injected AG-UI tools require a public RunResumeSessionManager",
     );
   });
+
+  it("returns 409 for a duplicate run id while the first run is still open", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+    let openController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+    AgentRuntime.prototype.stream = async function (): Promise<ReadableStream<Uint8Array>> {
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          openController = controller;
+        },
+      });
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+      const body = JSON.stringify({
+        threadId: crypto.randomUUID(),
+        runId: "run_dupe_1",
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        tools: [{ name: "client_confirm" }],
+      });
+      const agUiDuplicateRequest = () =>
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+
+      const first = await handler(agUiDuplicateRequest());
+      assertEquals(first.status, 200, "the first run must stream normally");
+
+      const second = await handler(agUiDuplicateRequest());
+      assertEquals(second.status, 409, "a duplicate active runId must conflict, not 500");
+      assertEquals(
+        await second.json(),
+        { error: "Run already active" },
+        "409 body must match the documented conflict shape",
+      );
+
+      openController?.close();
+      await first.text();
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("releases the run when stream startup fails", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const originalStream = AgentRuntime.prototype.stream;
+
+    AgentRuntime.prototype.stream = function (): Promise<ReadableStream<Uint8Array>> {
+      return Promise.reject(new Error("stream startup failed"));
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent: createTestAgent().agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_release_1",
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            tools: [{ name: "client_confirm" }],
+          }),
+        }),
+      );
+
+      assertEquals(response.status, 500, "a failed stream start must surface as a server error");
+      assertEquals(await response.json(), { error: "Internal server error" });
+      assertEquals(
+        sessionManager.getRunStatus("run_release_1"),
+        null,
+        "a failed stream start must release the run instead of leaving it active",
+      );
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
 });
 
 // A minimal deferred so a test can await the (post-close) onComplete callback.
@@ -1009,8 +1111,9 @@ function createFinishingAgent(
           controller.close();
         },
       });
-      // A successful run reports its finalized response; a failing one never does.
-      if (!failMidStream && response) input.onFinish?.(response);
+      // A run may finalize server-side and still fail during flush, so the
+      // finalized response is reported whenever the agent has one.
+      if (response) input.onFinish?.(response);
       return {
         toDataStreamResponse: () =>
           new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
@@ -1078,12 +1181,16 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     });
 
     const response = await handler(agUiRequest());
+    // The onComplete decision runs synchronously with the stream close, so a
+    // fully drained body is enough to observe that the callback never fired.
     const body = await response.text();
-    // Let the stream's finally settle before asserting the callback never ran.
-    await new Promise((r) => setTimeout(r, 0));
 
     assertStringIncludes(body, "event: RunError");
-    assertEquals(calls, 0);
+    assertEquals(
+      calls,
+      0,
+      "onComplete must not fire after a RunError, even when the run already reported a finalized response",
+    );
   });
 
   it("does not fire when the run produced no finalized response", async () => {
