@@ -262,7 +262,62 @@ describe("agent/service/node-sentry", () => {
         });
       }
 
-      assertEquals(reporter.captured, []);
+      assertEquals(reporter.captured, [], "expected Agent error logs must not reach Sentry");
+
+      for (
+        const entry of [
+          { message: "server exploded", context: { statusCode: 500 } },
+          { message: "unknown code", context: { errorCode: "UNEXPECTED_RUNTIME_FAILURE" } },
+        ]
+      ) {
+        emitter({
+          timestamp: "2026-07-29T00:00:00.000Z",
+          level: "error",
+          service: "agent",
+          veryfrontVersion: "0.0.0",
+          ...entry,
+        });
+      }
+
+      assertEquals(
+        reporter.captured.length,
+        2,
+        "5xx status logs and non-whitelisted error codes must still reach Sentry",
+      );
+      assertEquals(
+        reporter.captured.map((record) =>
+          record.error instanceof Error ? record.error.message : ""
+        ),
+        ["server exploded", "unknown code"],
+        "the unexpected logs are reported under their own log messages",
+      );
+    } finally {
+      setApplicationErrorReporter(undefined);
+    }
+  });
+
+  it("reports message-only Agent error logs under their own log message", () => {
+    const reporter = createReporter();
+    const emitter = createNodeAgentServiceLogApplicationErrorEmitter();
+
+    try {
+      setApplicationErrorReporter(reporter);
+      emitter({
+        timestamp: "2026-07-29T00:00:00.000Z",
+        level: "error",
+        service: "agent",
+        veryfrontVersion: "0.0.0",
+        message: "runtime failed without an error object",
+      });
+
+      assertEquals(reporter.captured.length, 1, "a message-only error log must be captured");
+      const captured = reporter.captured[0];
+      assertExists(captured);
+      assertEquals(
+        captured.error instanceof Error ? captured.error.message : "",
+        "runtime failed without an error object",
+        "a message-only error log must be reported under its own log message",
+      );
     } finally {
       setApplicationErrorReporter(undefined);
     }

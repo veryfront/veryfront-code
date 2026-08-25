@@ -175,6 +175,114 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
+  it("projects a stored version 1 provider-executed tool result", () => {
+    const events = [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "legacy-fetch",
+        toolCallName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: "legacy-fetch",
+        delta: '{"url":"https://docs.example/page"}',
+      },
+      {
+        type: "TOOL_CALL_END",
+        toolCallId: "legacy-fetch",
+      },
+      {
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        content: { ok: true },
+        isError: false,
+      },
+    ];
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.repairs,
+      [],
+      "a stored v1 result must suppress the legacy_missing_tool_result repair",
+    );
+    assertEquals(
+      result.frames.filter((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ).map((frame) => frame.event),
+      [{
+        type: "provider_tool_result",
+        toolCallId: "legacy-fetch",
+        toolName: "web_fetch",
+        output: { ok: true },
+        isError: false,
+        providerExecuted: true,
+      }],
+      "a stored v1 provider-executed result must be replayed exactly once",
+    );
+  });
+
+  it("keeps an unmarked version 1 tool result on the custom compatibility path", () => {
+    const events = [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "legacy-local",
+        toolCallName: "request_approval",
+      },
+      {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: "legacy-local",
+        delta: '{"message":"Continue?"}',
+      },
+      {
+        type: "TOOL_CALL_END",
+        toolCallId: "legacy-local",
+      },
+      {
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "legacy-local",
+        toolName: "request_approval",
+        content: { approved: true },
+        isError: false,
+      },
+    ];
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(
+      result.repairs,
+      [],
+      "an unmarked v1 call with a result must not be repaired",
+    );
+    assertEquals(
+      result.frames.filter((frame) => frame.class === "semantic" && frame.event.type === "custom")
+        .map((frame) => frame.event),
+      [{
+        type: "custom",
+        name: "legacy-tool-result",
+        data: {
+          toolCallId: "legacy-local",
+          toolName: "request_approval",
+          content: { approved: true },
+          isError: false,
+        },
+      }],
+      "an unmarked v1 result stays on the legacy-tool-result compatibility path",
+    );
+  });
+
   it("rejects the same malformed sequence for version 2", () => {
     const result = readConversationRunLifecycleFrames({
       streamProtocolVersion: 2,
@@ -227,6 +335,213 @@ describe("conversation run lifecycle read adapter", () => {
     assertEquals(result.status, "invalid");
     if (result.status === "invalid") {
       assertEquals(result.code, "UNSUPPORTED_DURABLE_EVENT");
+    }
+  });
+
+  it("rejects version 2 reads of events that are not stamped version 2", () => {
+    const cases = [
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          logical_sequence: 1,
+          idempotency_key: "text:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          logical_sequence: 2,
+          idempotency_key: "text:2",
+        },
+      ],
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 1,
+          logical_sequence: 1,
+          idempotency_key: "text:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 1,
+          logical_sequence: 2,
+          idempotency_key: "text:2",
+        },
+      ],
+    ];
+
+    for (const events of cases) {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 2,
+        events,
+      });
+      assertEquals(result.status, "invalid", "a v2 read must reject events not stamped v2");
+      if (result.status === "invalid") {
+        assertEquals(
+          result.code,
+          "VERSION_2_LIFECYCLE_VIOLATION",
+          "an unstamped event is a lifecycle violation, not an unsupported event",
+        );
+      }
+    }
+  });
+
+  it("rejects version 2 reads with non-increasing logical sequences", () => {
+    const cases = [
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "sequence:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "sequence:2",
+        },
+      ],
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "sequence:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "sequence:2",
+        },
+      ],
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1.5,
+          idempotency_key: "sequence:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "sequence:2",
+        },
+      ],
+      [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          idempotency_key: "sequence:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "sequence:2",
+        },
+      ],
+    ];
+
+    for (const events of cases) {
+      const result = readConversationRunLifecycleFrames({
+        streamProtocolVersion: 2,
+        events,
+      });
+      assertEquals(
+        result.status,
+        "invalid",
+        "version 2 reads must reject non-increasing logical sequences",
+      );
+      if (result.status === "invalid") {
+        assertEquals(
+          result.code,
+          "VERSION_2_LIFECYCLE_VIOLATION",
+          "an out-of-order sequence is a lifecycle violation",
+        );
+      }
+    }
+  });
+
+  it("rejects replayed version 2 events that reuse an idempotency key", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "dup:1",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "dup:1",
+        },
+      ],
+    });
+
+    assertEquals(
+      result.status,
+      "invalid",
+      "a repeated idempotency key must be rejected, not projected twice",
+    );
+    if (result.status === "invalid") {
+      assertEquals(
+        result.code,
+        "VERSION_2_LIFECYCLE_VIOLATION",
+        "a replayed durable event is a lifecycle violation",
+      );
+    }
+  });
+
+  it("rejects version 2 events without an idempotency key", () => {
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 2,
+      events: [
+        {
+          type: "TEXT_MESSAGE_START",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 1,
+          idempotency_key: "",
+        },
+        {
+          type: "TEXT_MESSAGE_END",
+          contentId: "text-1",
+          stream_protocol_version: 2,
+          logical_sequence: 2,
+          idempotency_key: "",
+        },
+      ],
+    });
+
+    assertEquals(
+      result.status,
+      "invalid",
+      "an event without an idempotency key must be rejected",
+    );
+    if (result.status === "invalid") {
+      assertEquals(
+        result.code,
+        "VERSION_2_LIFECYCLE_VIOLATION",
+        "a missing idempotency key is a lifecycle violation",
+      );
     }
   });
 

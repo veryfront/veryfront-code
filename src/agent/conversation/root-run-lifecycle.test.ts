@@ -183,6 +183,80 @@ describe("agent/conversation-root-run-lifecycle", () => {
     }
   });
 
+  it("persists the latest user message before creating a hosted root run", async () => {
+    const conversationId = "11111111-1111-4111-a111-111111111111";
+    const userMessageId = "22222222-2222-4222-a222-222222222222";
+    const originalFetch = globalThis.fetch;
+
+    async function prepareWithoutProvidedRun(persistLatestUserMessageBeforeRun: boolean) {
+      const recordedUrls: string[] = [];
+      let createdRunId = "";
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        recordedUrls.push(request.url);
+        if (request.url.endsWith("/messages")) {
+          return Response.json({ id: userMessageId }, { status: 201 });
+        }
+        if (request.url.endsWith("/runs")) {
+          const body = await request.json() as { public_id: string };
+          createdRunId = body.public_id;
+          return Response.json({ accepted: true, run: { run_id: createdRunId } }, { status: 202 });
+        }
+        return Response.json({
+          run_id: createdRunId,
+          conversation_id: conversationId,
+          message_id: userMessageId,
+          latest_event_id: 0,
+          latest_external_event_sequence: 0,
+          status: "running",
+        });
+      }) as typeof fetch;
+
+      const context = await prepareHostedConversationRootRunContext(
+        {
+          authToken: "user-api-token",
+          apiUrl: "https://api.example.test",
+          conversationId,
+          projectId: "project-1",
+          agentId: "agent-1",
+          messages: [{ id: userMessageId, role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          persistLatestUserMessageBeforeRun,
+        },
+        { abortSignal: new AbortController().signal },
+      );
+      context.durableRunMirror?.dispose();
+      return recordedUrls;
+    }
+
+    try {
+      const persistedUrls = await prepareWithoutProvidedRun(true);
+      assertEquals(
+        persistedUrls[0],
+        `https://api.example.test/conversations/${conversationId}/messages`,
+        "the latest user message must be persisted before the run is created",
+      );
+      assertEquals(
+        persistedUrls[1],
+        "https://api.example.test/runs",
+        "the run is created only after the user turn is stored",
+      );
+
+      const skippedUrls = await prepareWithoutProvidedRun(false);
+      assertEquals(
+        skippedUrls.filter((url) => url.endsWith("/messages")),
+        [],
+        "a disabled persistLatestUserMessageBeforeRun must not store the user turn",
+      );
+      assertEquals(
+        skippedUrls[0],
+        "https://api.example.test/runs",
+        "the run is still created when persistence is disabled",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("preserves public mirroring without allowing private user-token fallback", async () => {
     const context = await prepareHostedConversationRootRunContext(
       {

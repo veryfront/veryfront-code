@@ -1,5 +1,6 @@
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import process from "node:process";
 import {
   type AbortRejectionEvent,
   type AbortRejectionEventTarget,
@@ -100,6 +101,47 @@ describe("agent/abort-rejection-guard", () => {
 
     guard.dispose();
     assertEquals(processTarget.listenerCount(), 0);
+  });
+
+  it("installs the guard on the default process target when none is supplied", async () => {
+    const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+    const before = process.listenerCount("unhandledRejection");
+    const guard = installAbortRejectionGuard({
+      eventTarget: null,
+      loadLogger: () => ({
+        warn: (message, metadata) => warnings.push({ message, metadata }),
+      }),
+      fallbackWarn: (message, metadata) => warnings.push({ message, metadata }),
+    });
+
+    try {
+      assertEquals(
+        process.listenerCount("unhandledRejection"),
+        before + 1,
+        "the default process target must receive the guard listener",
+      );
+
+      process.emit(
+        "unhandledRejection",
+        new DOMException("stream cancelled", "AbortError"),
+        Promise.resolve(),
+      );
+      await Promise.resolve();
+
+      assertEquals(
+        warnings[0]?.message,
+        "Agent abort rejection swallowed",
+        "the default process path must log the swallowed abort",
+      );
+    } finally {
+      guard.dispose();
+    }
+
+    assertEquals(
+      process.listenerCount("unhandledRejection"),
+      before,
+      "dispose must remove the default process listener",
+    );
   });
 
   it("prevents default browser-style AbortError rejection handling", async () => {

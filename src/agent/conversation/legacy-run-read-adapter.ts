@@ -164,6 +164,15 @@ function readVersion1(
         resultToolCallIds.add(toolCallId);
         const tool = reducer.tools.get(toolCallId);
         if (tool?.providerExecuted === true) {
+          // The reducer only accepts a provider result for a running tool, so the
+          // stored call must be started before its result is replayed -- exactly
+          // as the version 2 reader and the missing-result repair below do.
+          reduce({
+            type: "provider_tool_start",
+            toolCallId,
+            toolName,
+            providerExecuted: true,
+          });
           reduce({
             type: "provider_tool_result",
             toolCallId,
