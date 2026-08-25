@@ -378,6 +378,51 @@ describe("Renderer response metadata", () => {
     assertEquals(store.data.size, 0);
   });
 
+  it("evicts a legacy cache entry that contains response headers", async () => {
+    const store = createInMemoryStore();
+    const ctx = makeRenderContext();
+    const cacheKey = `${ctx.cachePrefix}:page:/legacy-header`;
+    store.data.set(cacheKey, {
+      result: {
+        html: "<html>legacy private response</html>",
+        frontmatter: {},
+        stream: null,
+        headers: { "x-page-state": "request-derived" },
+      },
+      storedAt: Date.now(),
+    });
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: { renderPage: () => Promise<RenderResult> };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: "<html>fresh public response</html>",
+            frontmatter: {},
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const result = await renderer.renderPage("/legacy-header", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(result.html, "<html>fresh public response</html>");
+    assertEquals(result.headers, undefined);
+    assertEquals(renderCalls, 1);
+    assertEquals(store.data.get(cacheKey)?.result.html, "<html>fresh public response</html>");
+  });
+
   it("rerenders singleflight followers when the leader returns headers", async () => {
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -536,6 +581,60 @@ describe("Renderer response metadata", () => {
     assertEquals(observedDelivery, "stream");
     assertEquals(result.stream, stream);
     assertEquals(result.html, "");
+  });
+
+  it("holds render admission until an uncached stream is ready", async () => {
+    const projectId = `stream-project-${crypto.randomUUID()}`;
+    const ctx = {
+      ...makeRenderContext(),
+      projectId,
+      projectSlug: projectId,
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
+    };
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const shellReady = Promise.withResolvers<void>();
+    const allReady = Promise.withResolvers<void>();
+    const stream = new ReadableStream<Uint8Array>();
+    Object.defineProperty(stream, "allReady", { value: allReady.promise });
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: { renderPage: () => Promise<RenderResult> };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          shellReady.resolve();
+          return Promise.resolve({ html: "", frontmatter: {}, stream });
+        },
+      },
+    });
+
+    const render = renderer.renderPage("/private-stream", ctx, {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+      delivery: "stream",
+      request: new Request("https://example.test/private-stream", {
+        headers: { authorization: "Bearer secret" },
+      }),
+    });
+
+    try {
+      await shellReady.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(projectRenderCounts.get(projectId), 1);
+
+      allReady.resolve();
+      assertEquals((await render).stream, stream);
+      assertEquals(projectRenderCounts.has(projectId), false);
+    } finally {
+      allReady.resolve();
+      await render.catch(() => {});
+      while ((projectRenderCounts.get(projectId) ?? 0) > 0) {
+        await releaseProjectSlot(projectId);
+      }
+    }
   });
 
   it("rerenders singleflight followers when the leader returns cookies", async () => {

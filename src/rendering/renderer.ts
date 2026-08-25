@@ -163,6 +163,12 @@ interface CachedRenderData {
   stream?: RenderResult["stream"];
 }
 
+function getStreamAllReady(stream: RenderResult["stream"]): Promise<unknown> | null {
+  const allReady = (stream as { allReady?: unknown } | null | undefined)?.allReady;
+  if (!allReady || typeof (allReady as { then?: unknown }).then !== "function") return null;
+  return allReady as Promise<unknown>;
+}
+
 function createCacheRenderNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
@@ -1008,8 +1014,8 @@ export class Renderer {
       const request = cacheKey !== null && options?.request
         ? new Request(options.request, { signal: renderAbortController.signal })
         : options?.request;
-      const result = await withTimeoutThrow(
-        services.pipeline.renderPage(slug, {
+      const renderToReady = async (): Promise<RenderResult> => {
+        const result = await services.pipeline.renderPage(slug, {
           ...options,
           request,
           abortSignal: renderAbortController.signal,
@@ -1021,7 +1027,20 @@ export class Renderer {
           releaseId: ctx.releaseId,
           skipCacheCheck: true,
           skipCachePersist: true,
-        }),
+        });
+        if (cacheKey === null) {
+          const allReady = getStreamAllReady(result.stream);
+          if (allReady) {
+            // Keep admission and the render deadline active through streamed
+            // work. The SSR boundary classifies the original promise's
+            // rejection after this method returns.
+            await allReady.catch(() => {});
+          }
+        }
+        return result;
+      };
+      const result = await withTimeoutThrow(
+        renderToReady(),
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
         {
