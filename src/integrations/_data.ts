@@ -15902,7 +15902,10 @@ export const connectors: IntegrationConfig[] = [
       "provider": "google",
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
-      "scopes": ["https://www.googleapis.com/auth/drive"],
+      "scopes": [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+      ],
       "requiredApis": [{
         "name": "Google Drive API",
         "enableUrl": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
@@ -16206,7 +16209,7 @@ export const connectors: IntegrationConfig[] = [
       }, {
         "title": "Configure OAuth Consent Screen",
         "description":
-          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scope: drive (full access)",
+          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
         "url": "https://console.cloud.google.com/apis/credentials/consent",
       }, {
         "title": "Create OAuth 2.0 Client ID",
@@ -16225,7 +16228,7 @@ export const connectors: IntegrationConfig[] = [
       "notes": [
         "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
         "In production, make sure to add your production callback URL to authorized redirect URIs",
-        "The drive scope grants full access to all files; tools like update_file and delete_file require it for files not created by this app",
+        "The drive.file scope limits file changes to files created or opened by this app",
         "You may need to verify your app if you plan to distribute it publicly",
       ],
     },

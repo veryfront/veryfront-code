@@ -67,7 +67,10 @@ export const driveConfig: OAuthServiceConfig = {
   serviceId: "drive",
   displayName: "Google Drive",
   apiBaseUrl: "https://www.googleapis.com/drive/v3",
-  defaultScopes: ["https://www.googleapis.com/auth/drive"],
+  defaultScopes: [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+  ],
 };
 
 /** Configuration used by Google Docs. */

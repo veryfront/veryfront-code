@@ -1196,6 +1196,11 @@ describe("integration endpoint specs", () => {
 
   it("keeps newly added static endpoints executor-compatible", () => {
     const driveCreateFolder = getTool("drive", "create_folder");
+    const drive = getConnector("drive");
+    assertEquals(drive.auth.scopes, [
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+    ]);
     assertEquals(
       driveCreateFolder.endpoint?.url,
       "https://www.googleapis.com/drive/v3/files",
