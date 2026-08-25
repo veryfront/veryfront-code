@@ -5,6 +5,57 @@ import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 const scriptPath = `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`;
 const decoder = new TextDecoder();
 
+async function sha256File(path: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    await Deno.readFile(path),
+  );
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function writeCanonicalTarballArtifact(
+  stateDir: string,
+  artifactDir: string,
+  gitHead?: string,
+): Promise<void> {
+  const packageRoot = `${stateDir}/staging/package`;
+  const tarball = `${artifactDir}/veryfront-0.1.0.tgz`;
+  await Deno.mkdir(packageRoot, { recursive: true });
+  await Deno.mkdir(artifactDir);
+  await Deno.writeTextFile(
+    `${packageRoot}/package.json`,
+    JSON.stringify({
+      name: "veryfront",
+      version: "0.1.0",
+      ...(gitHead === undefined ? {} : { gitHead }),
+    }),
+  );
+  const tar = await new Deno.Command("tar", {
+    args: ["-czf", tarball, "package"],
+    cwd: `${stateDir}/staging`,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assertEquals(tar.code, 0, decoder.decode(tar.stderr));
+  await Deno.writeTextFile(
+    `${artifactDir}/manifest.json`,
+    JSON.stringify({
+      schemaVersion: 1,
+      rootPackage: "veryfront",
+      rootExtensionNames: [],
+      packages: [{
+        name: "veryfront",
+        version: "0.1.0",
+        file: "veryfront-0.1.0.tgz",
+        sha256: await sha256File(tarball),
+      }],
+    }),
+  );
+}
+
 async function runBash(
   source: string,
   env: Record<string, string>,
@@ -58,6 +109,7 @@ describe("npm package publishing", () => {
           "run_rc_publish",
         ].join("\n"),
         {
+          GITHUB_SHA: "0".repeat(40),
           NPM_LOG: npmLog,
           NPM_PACK_DIR: artifactDir,
           PACKAGE_DIR: packageDir,
@@ -132,6 +184,57 @@ describe("npm package publishing", () => {
         );
       });
     });
+  }
+
+  for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
+    for (const artifactGitHead of [undefined, "f".repeat(40)]) {
+      const identityCase = artifactGitHead === undefined ? "missing" : "mismatched";
+      it(`blocks ${publishFunction} before publish when canonical tarball gitHead is ${identityCase}`, async () => {
+        await withTempDir(async (stateDir) => {
+          const packageDir = `${stateDir}/npm`;
+          const artifactDir = `${stateDir}/artifact`;
+          const callLog = `${stateDir}/calls.log`;
+          await Deno.mkdir(packageDir);
+          await Deno.writeTextFile(
+            `${packageDir}/package.json`,
+            JSON.stringify({ name: "veryfront", version: "0.1.0" }),
+          );
+          await writeCanonicalTarballArtifact(
+            stateDir,
+            artifactDir,
+            artifactGitHead,
+          );
+          await Deno.writeTextFile(callLog, "");
+
+          const output = await runBash(
+            [
+              "set -euo pipefail",
+              'source "$SCRIPT_PATH"',
+              'package_dirs() { printf "%s\\n" "package_dirs" >> "$CALL_LOG"; }',
+              'npm() { printf "%s\\n" "npm $*" >> "$CALL_LOG"; }',
+              publishFunction,
+            ].join("\n"),
+            {
+              CALL_LOG: callLog,
+              GITHUB_SHA: "0".repeat(40),
+              NPM_PACK_DIR: artifactDir,
+              VERSION: "0.1.0",
+            },
+          );
+
+          assertEquals(output.code, 1, decoder.decode(output.stderr));
+          assertStringIncludes(
+            decoder.decode(output.stderr),
+            "Canonical npm compatibility artifact verification failed",
+          );
+          assertEquals(
+            await Deno.readTextFile(callLog),
+            "",
+            "Commit identity verification must fail before package enumeration or npm publish",
+          );
+        });
+      });
+    }
   }
 
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {

@@ -256,6 +256,33 @@ describe("registry release workflow", () => {
     });
   }
 
+  it("prepares the computed RC version before prerelease SBOM generation", async () => {
+    const jobs = await readJobs();
+    const prerelease = asRecord(jobs.prerelease, "prerelease job");
+    const prereleaseSteps = steps(prerelease, "prerelease job");
+    const prepare = namedStep(prerelease, "Prepare RC checkout for SBOM");
+    const generate = namedStep(prerelease, "Generate SBOM");
+
+    assertEquals(
+      asRecord(prepare.env, "RC SBOM preparation environment"),
+      { VERSION: "${{ steps.version.outputs.version }}" },
+      "RC SBOM preparation must use the computed numbered version",
+    );
+    assertEquals(
+      prepare.run,
+      "deno run -A scripts/ci/prepare-rc-build.ts",
+    );
+    assert(
+      prereleaseSteps.indexOf(prepare) < prereleaseSteps.indexOf(generate),
+      "RC checkout preparation must precede SBOM generation",
+    );
+    assertEquals(
+      String(generate.run).includes("prepare-rc-build.ts"),
+      false,
+      "SBOM generation must not hide version preparation inside the same step",
+    );
+  });
+
   it("runs the exact-version registry smoke after the selected release", async () => {
     const jobs = await readJobs();
     const gate = asRecord(

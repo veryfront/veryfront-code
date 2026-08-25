@@ -24,9 +24,14 @@ export interface LoadedNpmCompatibilityArtifact {
   readonly manifestSha256: string;
 }
 
+interface LoadNpmCompatibilityArtifactOptions {
+  readonly expectedGitHead?: string;
+}
+
 interface PackageManifest {
   readonly name?: unknown;
   readonly version?: unknown;
+  readonly gitHead?: unknown;
   readonly dependencies?: Record<string, string>;
 }
 
@@ -61,6 +66,50 @@ async function sha256File(path: string): Promise<string> {
     new Uint8Array(digest),
     (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
+}
+
+function validateGitHead(gitHead: string): void {
+  if (!/^[0-9a-f]{40}$/.test(gitHead)) {
+    throw new Error(
+      "Canonical npm artifact gitHead must be a 40-character lowercase hexadecimal commit",
+    );
+  }
+}
+
+async function verifyPackageGitHead(
+  tarball: string,
+  packageName: string,
+  expectedGitHead: string,
+): Promise<void> {
+  const output = await new Deno.Command("tar", {
+    args: ["-xOf", tarball, "package/package.json"],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!output.success) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Failed to inspect canonical package metadata for ${packageName}`,
+      { packageName },
+    );
+  }
+  let manifest: PackageManifest;
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(output.stdout)) as PackageManifest;
+  } catch {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package metadata for ${packageName} is not valid JSON`,
+      { packageName },
+    );
+  }
+  if (manifest.gitHead !== expectedGitHead) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${packageName} gitHead does not match the release commit`,
+      { packageName },
+    );
+  }
 }
 
 async function readPackageManifest(directory: string): Promise<{
@@ -166,14 +215,7 @@ export async function createNpmCompatibilityArtifact(
   options: { readonly gitHead?: string } = {},
 ): Promise<NpmCompatibilityManifest> {
   const resolvedDestination = resolve(destination);
-  if (
-    options.gitHead !== undefined &&
-    !/^[0-9a-f]{40}$/.test(options.gitHead)
-  ) {
-    throw new Error(
-      "Canonical npm artifact gitHead must be a 40-character lowercase hexadecimal commit",
-    );
-  }
+  if (options.gitHead !== undefined) validateGitHead(options.gitHead);
   await Deno.mkdir(resolvedDestination, { recursive: true });
   const packageSources = await Promise.all(
     (await packageDirectories(npmDirectory)).map(async (directory) => ({
@@ -256,7 +298,11 @@ function validateManifest(value: unknown): NpmCompatibilityManifest {
 
 export async function loadNpmCompatibilityArtifact(
   directory: string,
+  options: LoadNpmCompatibilityArtifactOptions = {},
 ): Promise<LoadedNpmCompatibilityArtifact> {
+  if (options.expectedGitHead !== undefined) {
+    validateGitHead(options.expectedGitHead);
+  }
   const manifestPath = join(directory, MANIFEST_FILE);
   const manifest = validateManifest(
     JSON.parse(await Deno.readTextFile(manifestPath)),
@@ -274,6 +320,9 @@ export async function loadNpmCompatibilityArtifact(
       throw new Error(
         `SHA-256 mismatch for ${entry.name}: expected ${entry.sha256}, received ${actual}`,
       );
+    }
+    if (options.expectedGitHead !== undefined) {
+      await verifyPackageGitHead(path, entry.name, options.expectedGitHead);
     }
     packagePaths.set(entry.name, path);
   }
@@ -350,8 +399,11 @@ async function main(args: string[]): Promise<void> {
     }));
     return;
   }
-  if (command === "verify" && directory && destination === undefined) {
-    const loaded = await loadNpmCompatibilityArtifact(directory);
+  if (command === "verify" && directory && gitHead === undefined) {
+    const loaded = await loadNpmCompatibilityArtifact(
+      directory,
+      destination === undefined ? {} : { expectedGitHead: destination },
+    );
     console.log(`npm compatibility manifest SHA-256: ${loaded.manifestSha256}`);
     return;
   }
@@ -360,7 +412,7 @@ async function main(args: string[]): Promise<void> {
     return;
   }
   throw new Error(
-    "Usage: npm-compatibility-artifact.ts pack <npm-directory> <destination> <git-head> | verify <artifact-directory> | materialize <artifact-directory> <npm-directory>",
+    "Usage: npm-compatibility-artifact.ts pack <npm-directory> <destination> <git-head> | verify <artifact-directory> [git-head] | materialize <artifact-directory> <npm-directory>",
   );
 }
 

@@ -8,7 +8,7 @@
 # Modes:
 #   rc-publish       Publish every verified tarball from $NPM_PACK_DIR with
 #                    `--tag rc`, skipping packages already published at
-#                    $VERSION. Requires: VERSION, NPM_PACK_DIR.
+#                    $VERSION. Requires: VERSION, GITHUB_SHA, NPM_PACK_DIR.
 #   preflight        Runs BEFORE the build: enumerate package names from the
 #                    deno.json workspace and fail if any name@$VERSION already
 #                    exists on npm for a different commit than $GITHUB_SHA.
@@ -106,8 +106,8 @@ canonical_tarball_for_package_dir() {
 }
 
 verify_npm_compatibility_artifact() {
-  if ! VERIFY_OUTPUT="$(deno run --config=scripts/test.deno.json --no-lock --allow-read \
-    scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" \
+  if ! VERIFY_OUTPUT="$(deno run --config=scripts/test.deno.json --no-lock --allow-read --allow-run=tar \
+    scripts/ci/npm-compatibility-artifact.ts verify "${NPM_PACK_DIR}" "${GITHUB_SHA}" \
     2>&1)"; then
     if [ -n "${VERIFY_OUTPUT}" ]; then
       printf '%s\n' "${VERIFY_OUTPUT}" >&2
@@ -186,7 +186,7 @@ release_publish_package_dir() {
 }
 
 run_rc_publish() {
-  require_env VERSION NPM_PACK_DIR
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
   verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do

@@ -220,13 +220,17 @@ describe("canonical npm artifact workflow", () => {
   it("prepares the numbered RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
     const prerelease = asRecord(jobs.prerelease, "prerelease job");
+    const prereleaseSteps = jobSteps(prerelease, "prerelease job");
+    const prepareSbom = namedStep(prerelease, "Prepare RC checkout for SBOM");
     const generateSbom = namedStep(prerelease, "Generate SBOM");
-    const script = String(generateSbom.run);
 
-    assertStringIncludes(script, "scripts/ci/prepare-rc-build.ts");
+    assertEquals(
+      asRecord(prepareSbom.env, "RC SBOM preparation environment").VERSION,
+      "${{ steps.version.outputs.version }}",
+    );
     assert(
-      script.indexOf("scripts/ci/prepare-rc-build.ts") <
-        script.indexOf("deno task sbom:all"),
+      prereleaseSteps.indexOf(prepareSbom) <
+        prereleaseSteps.indexOf(generateSbom),
       "The prerelease checkout must use the numbered RC version before SBOM generation",
     );
   });

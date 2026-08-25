@@ -1171,11 +1171,15 @@ jobs:
         with:
           path: binaries
 
+      - name: Prepare RC checkout for SBOM
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: deno run -A scripts/ci/prepare-rc-build.ts
+
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          deno run -A scripts/ci/prepare-rc-build.ts
           deno task sbom:all --output-dir "dist/sbom-${VERSION}"
           deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 

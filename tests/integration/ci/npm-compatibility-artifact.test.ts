@@ -200,6 +200,9 @@ describe("npm compatibility artifact", () => {
       const gitHead = "0123456789abcdef0123456789abcdef01234567";
 
       await createNpmCompatibilityArtifact(root, artifact, { gitHead });
+      await loadNpmCompatibilityArtifact(artifact, {
+        expectedGitHead: gitHead,
+      });
       await materializeNpmCompatibilityArtifact(artifact, destination);
 
       const rootManifest = JSON.parse(
