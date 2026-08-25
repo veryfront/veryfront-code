@@ -35,6 +35,11 @@ import {
   managedHeadDescriptorToTransportEntry,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
+import {
+  getCSSImportReferences,
+  registerCSSImport,
+  runWithCSSCollector,
+} from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import {
@@ -1606,6 +1611,29 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(merged?.includes(".a_root__"), true);
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
+    });
+
+    it("reads canonical CSS bytes with the authored module key", async () => {
+      const readPaths: string[] = [];
+      const { result: merged } = await runWithCSSCollector(async () => {
+        registerCSSImport("/project/generated-theme", "/project/theme.module.css");
+        return await mergeImportedCSS({
+          fs: {
+            readFile: (path: string) => {
+              readPaths.push(path);
+              return Promise.resolve(".root { color: red; }");
+            },
+          },
+          logger: { debug: () => {} },
+          projectDir: "/project",
+          globalCSS: undefined,
+          cssImports: getCSSImportReferences(),
+          stylesheetPath: "globals.css",
+        });
+      });
+
+      assertEquals(readPaths, ["/project/generated-theme"]);
+      assertEquals(merged?.includes(".theme_root__"), true);
     });
   });
 });

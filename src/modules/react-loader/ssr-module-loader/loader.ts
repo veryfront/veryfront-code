@@ -991,7 +991,7 @@ export class SSRModuleLoader {
         // Register CSS imports for later inclusion in HTML output.
         // CSS files are not JS modules — skip them in the dependency graph.
         for (const cssImport of parseResult.cssImports) {
-          registerCSSImport(cssImport.absolutePath);
+          registerCSSImport(cssImport.absolutePath, cssImport.requestedPath);
         }
 
         if (parseResult.missing.length > 0) {

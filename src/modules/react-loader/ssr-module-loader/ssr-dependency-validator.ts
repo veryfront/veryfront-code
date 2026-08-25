@@ -7,7 +7,11 @@
  * @module module-system/react-loader/ssr-module-loader/ssr-dependency-validator
  */
 
-import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
+import type {
+  CrossProjectImport,
+  LocalImport,
+  MissingImport,
+} from "#veryfront/transforms/esm/import-parser.ts";
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
@@ -32,6 +36,7 @@ const logger = rendererLogger.component("ssr-module-loader");
 const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
 
 const reflectApply = Reflect.apply;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const decodeUtf8 = TextDecoder.prototype.decode;
 
@@ -135,7 +140,7 @@ export class SSRDependencyValidator {
     // Symlink-free semantics are authority, so only an own data property
     // counts, exactly as FSAdapterWrapper captures it: an inherited value
     // must not bypass the bound snapshot read below.
-    const semantics = Object.getOwnPropertyDescriptor(adapter.fs, "symlinkSemantics");
+    const semantics = objectGetOwnPropertyDescriptor(adapter.fs, "symlinkSemantics");
     this.symlinkFreeFs = semantics !== undefined && "value" in semantics &&
       semantics.value === "none";
     this.projectSnapshotReader = captureSnapshotReadCapability(
@@ -203,7 +208,7 @@ export class SSRDependencyValidator {
 
     // Register CSS imports from cached modules for HTML inclusion
     for (const cssImport of parseResult.cssImports) {
-      registerCSSImport(cssImport.absolutePath);
+      registerCSSImport(cssImport.absolutePath, cssImport.requestedPath);
     }
 
     if (parseResult.missing.length > 0) {
@@ -280,7 +285,7 @@ export class SSRDependencyValidator {
    * and building a map of specifier -> temp file path.
    */
   async processLocalImports(
-    imports: Array<{ absolutePath: string; specifier: string }>,
+    imports: LocalImport[],
     fromFilePath: string,
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
@@ -296,10 +301,10 @@ export class SSRDependencyValidator {
       const results = await Promise.allSettled(
         batch.map(async (imp) => {
           try {
-            const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
+            const depSource = await this.readLocalImportSource(imp, localFs);
 
             const depEntry = await this.transformWithDependencies(
-              imp.absolutePath,
+              imp.requestedPath ?? imp.absolutePath,
               depSource,
               depth + 1,
               dependencyHashCache,
@@ -358,13 +363,15 @@ export class SSRDependencyValidator {
       );
       return decodeDependencySource(bytes);
     }
-    return await this.adapter.fs.readFile(path);
+    throw new Error("Contained project imports require a bound snapshot reader");
   }
 
   private readLocalImportSource(
-    path: string,
+    imported: LocalImport,
     localFs: ReturnType<typeof createFileSystem>,
   ): Promise<string> {
+    const path = imported.absolutePath;
+    if (imported.projectContained) return this.readProjectImportSource(path);
     if (!path.startsWith("/")) {
       return this.adapter.fs.readFile(path);
     }

@@ -84,7 +84,7 @@ import { createEsmCache, createModuleCache, loadModule } from "./module-loader/i
 import { isBuildFailure, isTenantBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
-  getCSSImports,
+  getCSSImportReferences,
   runWithCSSCollector,
 } from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { assembleRenderResult } from "./render-result-assembly.ts";
@@ -1019,7 +1019,7 @@ export class RenderPipeline {
 
               // Snapshot CSS imports collected during module loading (before SSR rendering).
               // These are passed to the HTML generator to be included in the output.
-              const collectedCSSImports = getCSSImports();
+              const collectedCSSImports = getCSSImportReferences();
 
               const ssrStart = performance.now();
               const ssrResult = await profilePhase(
@@ -1055,7 +1055,7 @@ export class RenderPipeline {
                 renderPipelineLog.debug("CSS imports collected for HTML generation", {
                   slug,
                   count: collectedCSSImports.length,
-                  paths: collectedCSSImports.map((p) => p.split("/").pop()),
+                  paths: collectedCSSImports.map((entry) => entry.moduleKey.split("/").pop()),
                 });
               }
 

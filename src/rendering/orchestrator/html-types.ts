@@ -3,6 +3,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { EntityInfo, LayoutItem, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RenderOptions } from "./types.ts";
+import type { CSSImportReference } from "#veryfront/modules/react-loader/css-import-collector.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -31,5 +32,5 @@ export interface HTMLGenerationContext {
   options?: RenderOptions;
   collectedHead?: CollectedHead;
   /** Absolute paths to CSS files imported by components (collected during module loading) */
-  cssImports?: string[];
+  cssImports?: Array<string | CSSImportReference>;
 }

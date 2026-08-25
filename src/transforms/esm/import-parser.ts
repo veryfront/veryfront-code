@@ -16,6 +16,10 @@ import { getLoaderFromPath } from "./transform-utils.ts";
 export interface LocalImport {
   specifier: string;
   absolutePath: string;
+  /** Lexical project path the author addressed, used for metadata and CSS identity. */
+  requestedPath?: string;
+  /** True when canonical project containment approved absolutePath. */
+  projectContained?: true;
 }
 
 export interface CrossProjectImport {
@@ -46,6 +50,8 @@ const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 // inherited adapter properties. Capture the intrinsics it depends on at module
 // initialization, as the path compatibility layer does for its own operations.
 const ReflectApply = Reflect.apply;
+const PromiseConstructor = Promise;
+const PromiseAll = Promise.all;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const universalObjectPrototype = Object.prototype;
@@ -58,6 +64,10 @@ function stringReplaceAll(value: string, search: string, replacement: string): s
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
+
+function promiseAll<T>(values: readonly (T | PromiseLike<T>)[]): Promise<T[]> {
+  return ReflectApply(PromiseAll, PromiseConstructor, [values]) as Promise<T[]>;
 }
 
 /**
@@ -157,7 +167,12 @@ export async function parseLocalImports(
       const resolved = targetPath ? await resolveContainedFilePath(targetPath, containment) : null;
 
       if (resolved) {
-        const entry = { specifier: authoredSpecifier, absolutePath: resolved.absolutePath };
+        const entry = {
+          specifier: authoredSpecifier,
+          absolutePath: resolved.absolutePath,
+          requestedPath: resolved.requestedPath,
+          projectContained: true as const,
+        };
         // An in-project symlink may canonicalize to a target whose suffix
         // differs from the link's. The import keeps the type the author
         // addressed; the canonical path is only what gets read.
@@ -197,7 +212,12 @@ export async function parseLocalImports(
       const aliasPath = specifier.slice(2);
       const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
-        const entry = { specifier, absolutePath: resolved.absolutePath };
+        const entry = {
+          specifier,
+          absolutePath: resolved.absolutePath,
+          requestedPath: resolved.requestedPath,
+          projectContained: true as const,
+        };
         if (resolved.requestedPath.endsWith(".css")) cssImports.push(entry);
         else localImports.push(entry);
         continue;
@@ -232,10 +252,18 @@ function isPathWithinProject(path: string, projectDir: string): boolean {
   // intrinsics: tenant code that replaced String.prototype.replaceAll or
   // startsWith must not be able to make an escaping path look contained.
   const projectRelativePath = stringReplaceAll(relative(projectDir, path), "\\", "/");
+  const first = projectRelativePath[0];
+  const driveQualified = projectRelativePath[1] === ":" && projectRelativePath[2] === "/" &&
+    ((first !== undefined && first >= "A" && first <= "Z") ||
+      (first !== undefined && first >= "a" && first <= "z"));
   return projectRelativePath !== ".." &&
     !stringStartsWith(projectRelativePath, "../") &&
-    !stringStartsWith(projectRelativePath, "/");
+    !stringStartsWith(projectRelativePath, "/") &&
+    !driveQualified;
 }
+
+/** @internal Test seams for portable containment rules. */
+export const importParserInternals = Object.freeze({ isPathWithinProject });
 
 /**
  * Everything one parse needs to decide containment, captured once per parse:
@@ -296,7 +324,7 @@ function createContainmentContext(
  * the caller. Captured once per parse instead of being looked up per import.
  */
 function captureRealPath(
-  fs: object,
+  fs: RuntimeAdapter["fs"],
 ): ((path: string) => Promise<string>) | undefined {
   let owner: object | null = fs;
   for (let depth = 0; owner !== null && depth < 64; depth++) {
@@ -344,14 +372,17 @@ async function toContainedImportPath(
   containment: ContainmentContext,
 ): Promise<ContainedImportPath | null> {
   if (containment.symlinkFree) {
+    if (!isPathWithinProject(resolved, containment.projectDir)) return null;
     return { absolutePath: resolved, requestedPath: resolved };
   }
   if (containment.canonicalize === null) return null;
 
-  const [canonicalProjectDir, canonicalResolved] = await Promise.all([
+  const canonicalPaths = await promiseAll([
     containment.canonicalProjectDir(),
     containment.canonicalize(resolved),
   ]);
+  const canonicalProjectDir = canonicalPaths[0]!;
+  const canonicalResolved = canonicalPaths[1]!;
   if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
   return { absolutePath: canonicalResolved, requestedPath: resolved };
 }
@@ -487,7 +518,7 @@ async function findFirstExistingFile(
   paths: string[],
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<string | null> {
-  const results = await Promise.all(
+  const results = await promiseAll(
     paths.map(async (path) => {
       try {
         const stat = await fs.stat(path);

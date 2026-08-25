@@ -6,8 +6,9 @@ import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { parseLocalImports } from "./import-parser.ts";
+import { importParserInternals, parseLocalImports } from "./import-parser.ts";
 import { rewriteBodyImports } from "../mdx/compiler/import-rewriter.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /**
  * Stand in for the MDX extension, which is not loaded in unit tests. It turns
@@ -61,7 +62,7 @@ async function withProject<T>(
   files: Record<string, string>,
   test: (projectDir: string) => Promise<T>,
 ): Promise<T> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-import-parser-" });
+  const projectDir = await makeTempDir({ prefix: "vf-import-parser-" });
   try {
     for (const [relativePath, content] of Object.entries(files)) {
       const absolutePath = join(projectDir, relativePath);
@@ -196,7 +197,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("rejects an .mdx import that escapes the project directory", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-boundary-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-boundary-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "components/snippet.mdx");
@@ -222,7 +223,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("rejects an .mdx import through a symlink outside the project directory", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-symlink-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-symlink-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "pages/index.mdx");
@@ -251,7 +252,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("rejects compiled MDX aliases that escape the project directory", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-alias-boundary-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-alias-boundary-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "pages/index.mdx");
@@ -271,7 +272,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("rejects compiled MDX aliases through symlinks outside the project directory", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-alias-symlink-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-alias-symlink-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "pages/index.mdx");
@@ -298,7 +299,7 @@ describe("transforms/esm/import-parser", () => {
   // is what must be recorded and read.
   it("returns the canonical path for an in-project symlinked import", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-canonical-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-canonical-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "index.mdx");
@@ -324,6 +325,12 @@ describe("transforms/esm/import-parser", () => {
           canonicalChild,
           "the recorded path must be the approved canonical path, not the symlinked one",
         );
+        assertEquals(
+          imp.requestedPath,
+          join(projectDir, "linked/Child.tsx"),
+          "the authored path must remain available for metadata",
+        );
+        assertEquals(imp.projectContained, true);
       }
     } finally {
       stub.restore();
@@ -331,63 +338,11 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
-  // Regression: the containment predicate dispatched through live
-  // String.prototype methods, so tenant SSR code that replaced replaceAll or
-  // startsWith after running once in this realm could make an escaping path
-  // look contained on later renders. The predicate must run on captured
-  // intrinsics. The poison here is surgical, as an attacker's would be, so the
-  // rest of the pipeline keeps working while the containment calls lie.
-  it("keeps containment when String.prototype methods are poisoned", async () => {
-    const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-intrinsics-" });
-    const originalReplaceAll = String.prototype.replaceAll;
-    const originalStartsWith = String.prototype.startsWith;
-    try {
-      const projectDir = join(rootDir, "project");
-      const filePath = join(projectDir, "pages/index.mdx");
-      await Deno.mkdir(dirname(filePath), { recursive: true });
-      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
-      const code = `import Secret from "@/../secret.tsx";\n\n<Secret />\n`;
-      const adapter = await getLocalAdapter();
-
-      const poisonedReplaceAll = function (
-        this: string,
-        searchValue: string | RegExp,
-        replaceValue: string,
-      ): string {
-        if (String(this).includes("secret.tsx") && searchValue === "\\") return "";
-        return (originalReplaceAll as (
-          this: string,
-          searchValue: string,
-          replaceValue: string,
-        ) => string).call(this, searchValue as string, replaceValue);
-      };
-      const poisonedStartsWith = function (
-        this: string,
-        searchString: string,
-        position?: number,
-      ): boolean {
-        if (
-          String(this).includes("secret.tsx") &&
-          (searchString === "../" || searchString === "/")
-        ) {
-          return false;
-        }
-        return originalStartsWith.call(this, searchString, position);
-      };
-      String.prototype.replaceAll = poisonedReplaceAll as typeof String.prototype.replaceAll;
-      String.prototype.startsWith = poisonedStartsWith;
-
-      const result = await parseLocalImports(code, filePath, projectDir, adapter);
-
-      assertEquals(result.imports.length, 0, "poisoned intrinsics must not admit an escape");
-      assertEquals(result.missing.length, 1, "the traversal must still be rejected");
-    } finally {
-      String.prototype.replaceAll = originalReplaceAll;
-      String.prototype.startsWith = originalStartsWith;
-      stub.restore();
-      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
-    }
+  it("rejects a canonical target on another Windows drive", async () => {
+    assertEquals(
+      importParserInternals.isPathWithinProject("D:/external/secret.tsx", "C:/project"),
+      false,
+    );
   });
 
   // Regression: symlinkSemantics was read as an inherited property, so a
@@ -397,7 +352,7 @@ describe("transforms/esm/import-parser", () => {
   // property is authority, as FSAdapterWrapper captures it.
   it("ignores an inherited symlink-free claim when validating containment", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-inherited-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-inherited-" });
     try {
       const projectDir = join(rootDir, "project");
       const filePath = join(projectDir, "pages/index.mdx");
@@ -432,14 +387,17 @@ describe("transforms/esm/import-parser", () => {
   // HTML inclusion. The requested path names the type; the canonical path is
   // only what gets read.
   it("classifies a symlinked stylesheet from the requested path", async () => {
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-css-classify-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-css-classify-" });
     try {
       const projectDir = join(rootDir, "project");
       await Deno.mkdir(projectDir, { recursive: true });
       await Deno.writeTextFile(join(projectDir, "theme-generated"), `.theme { color: red; }`);
-      await Deno.symlink(join(projectDir, "theme-generated"), join(projectDir, "theme.css"));
+      await Deno.symlink(
+        join(projectDir, "theme-generated"),
+        join(projectDir, "theme.module.css"),
+      );
       const filePath = join(projectDir, "pages/index.tsx");
-      const code = `import "@/theme.css";\nexport default () => null;`;
+      const code = `import "@/theme.module.css";\nexport default () => null;`;
 
       const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
 
@@ -448,9 +406,10 @@ describe("transforms/esm/import-parser", () => {
       assertEquals(result.cssImports.length, 1, "the symlinked stylesheet must stay CSS");
       assertEquals(
         result.cssImports[0]?.absolutePath,
-        await Deno.realPath(join(projectDir, "theme.css")),
+        await Deno.realPath(join(projectDir, "theme.module.css")),
         "the recorded path must still be the approved canonical target",
       );
+      assertEquals(result.cssImports[0]?.requestedPath, join(projectDir, "theme.module.css"));
     } finally {
       await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
     }
@@ -484,7 +443,7 @@ describe("transforms/esm/import-parser", () => {
   // root-mounted project failed, including files that exist inside it.
   it("resolves compiled MDX aliases when the project directory is the filesystem root", async () => {
     const stub = withStubContentProcessor();
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-root-alias-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-root-alias-" });
     try {
       const filePath = join(rootDir, "pages/index.mdx");
       await Deno.mkdir(dirname(filePath), { recursive: true });

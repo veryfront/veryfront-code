@@ -82,6 +82,7 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
     name: "proxy-project-test",
     capabilities: denoAdapter.capabilities,
     fs: {
+      symlinkSemantics: "none",
       async readFile(path: string): Promise<string> {
         const normalized = normalize(path);
         const content = files[normalized];

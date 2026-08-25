@@ -3,6 +3,7 @@ import {
   normalizeCssModuleKey,
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
+import type { CSSImportReference } from "#veryfront/modules/react-loader/css-import-collector.ts";
 
 interface CssFsAdapterLike {
   readFile(path: string): Promise<string>;
@@ -17,7 +18,7 @@ interface MergeImportedCssOptions {
   logger: CssLoggerLike;
   projectDir: string;
   globalCSS: string | undefined;
-  cssImports: string[] | undefined;
+  cssImports: Array<string | CSSImportReference> | undefined;
   stylesheetPath: string;
 }
 
@@ -36,8 +37,10 @@ export async function mergeImportedCSS({
     join(projectDir, normalizedStylesheetPath),
   );
   const uniqueImports = new Map<string, string>();
-  for (const cssPath of cssImports) {
-    const normalized = normalizeCssModuleKey(cssPath);
+  for (const cssImport of cssImports) {
+    const cssPath = typeof cssImport === "string" ? cssImport : cssImport.readPath;
+    const moduleKey = typeof cssImport === "string" ? cssImport : cssImport.moduleKey;
+    const normalized = normalizeCssModuleKey(moduleKey);
     if (!uniqueImports.has(normalized)) {
       uniqueImports.set(normalized, cssPath);
     }

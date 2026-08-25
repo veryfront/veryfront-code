@@ -7,6 +7,7 @@ import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   cachedCodeUsesResolvedDependencies,
@@ -232,6 +233,86 @@ describe("SSRDependencyValidator", () => {
     } finally {
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("fails closed without a bound reader for a contained project import", async () => {
+    let directReads = 0;
+    let transforms = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("direct");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => {
+        transforms++;
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(directReads, 0);
+    assertEquals(transforms, 0);
+    assertEquals(validator.missingDependencies.length, 1);
+  });
+
+  it("reads canonical project paths but transforms with the authored path", async () => {
+    const snapshotCalls: Array<{ path: string; root: string }> = [];
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => Promise.reject(new Error("direct read must not run")),
+        readFileSnapshotWithinLimit: (path: string, root: string) => {
+          snapshotCalls.push({ path, root });
+          return Promise.resolve(new TextEncoder().encode("source"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/linked/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/real/project/child.tsx",
+        requestedPath: "/linked/project/child.tsx",
+        projectContained: true,
+        specifier: "./child.tsx",
+      }],
+      "/linked/project/page.tsx",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(snapshotCalls, [{ path: "/real/project/child.tsx", root: "/linked/project" }]);
+    assertEquals(transformedPaths, ["/linked/project/child.tsx"]);
   });
 
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {
