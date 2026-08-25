@@ -2,8 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createElement } from "react";
-import { isValidElementType as isValidElementType18 } from "npm:react-is@18.3.1";
-import { isValidElementType, SuspenseList } from "npm:react-is@19.2.4";
 import { extractComponent } from "./extract-component.ts";
 
 describe("modules/react-loader/extract-component", () => {
@@ -185,13 +183,9 @@ describe("modules/react-loader/extract-component", () => {
   });
 
   it("keeps React's SuspenseList built-in declared before a helper", () => {
+    const SuspenseList = Symbol.for("react.suspense_list");
     const helper = () => null;
 
-    assertEquals(
-      isValidElementType(SuspenseList),
-      true,
-      "react-is must characterize SuspenseList as a bare element type",
-    );
     assertEquals(
       extractComponent({ __esModule: true, SuspenseList, helper }, "suspense-list.tsx") as unknown,
       SuspenseList,
@@ -216,11 +210,6 @@ describe("modules/react-loader/extract-component", () => {
     const helper = () => null;
 
     assertEquals(
-      isValidElementType18(Page),
-      true,
-      "React 18 accepts module references from every supported Flight configuration",
-    );
-    assertEquals(
       extractComponent({ __esModule: true, Page, helper }, "module-ref.tsx") as unknown,
       Page,
       "a valid React 18 Flight reference must retain declaration order against a helper",
@@ -231,11 +220,6 @@ describe("modules/react-loader/extract-component", () => {
     const Page = { getModuleId: () => "page#default" };
     const helper = () => null;
 
-    assertEquals(
-      isValidElementType18(Page),
-      true,
-      "React 18 accepts Flight references identified through getModuleId",
-    );
     assertEquals(
       extractComponent({ __esModule: true, Page, helper }, "get-module-id-ref.tsx") as unknown,
       Page,

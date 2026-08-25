@@ -27,7 +27,7 @@ const REACT_COMPONENT_OBJECT_TAGS: ReadonlySet<symbol> = new Set([
  * React-is's compatibility contract for Flight references without a tag.
  */
 function isReactComponentObject(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
+  if (!value || typeof value !== "object") return false;
 
   const component = value as { $$typeof?: unknown; getModuleId?: unknown };
   const tag = component.$$typeof;
@@ -37,7 +37,7 @@ function isReactComponentObject(value: unknown): boolean {
 
 /** Reports whether an object carries a React-style symbol marker. */
 function hasSymbolTypeTag(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
