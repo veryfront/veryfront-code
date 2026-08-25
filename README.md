@@ -23,9 +23,9 @@ Veryfront account. Use the [Veryfront Cloud AI Gateway](https://veryfront.com/do
 for managed model access, and use [Veryfront Cloud](https://veryfront.com/docs/code/getting-started/cloud-quickstart)
 for previews and production hosting.
 
-## Why Veryfront Code?
+## Capabilities
 
-Purpose-built for TypeScript and React, Veryfront Code gives you everything you need to build agentic full-stack applications out-of-the-box.
+Build agents, workflows, and full-stack React applications from one TypeScript project.
 
 - [**Agents**](https://veryfront.com/docs/code/guides/agents) - Build AI agents that reason and act. Give them instructions, models, tools, skills, memory, and durable hosted execution.
 
