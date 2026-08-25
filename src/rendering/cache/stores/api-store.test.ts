@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { FakeTime } from "#std/testing/time";
 import { withTimeoutThrow } from "../../utils/stream-utils.ts";
 import { APICacheStore } from "./api-store.ts";
 import type { CachePayload } from "../types.ts";
@@ -12,10 +14,10 @@ const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
-  const previousEnv = Deno.env.get("VF_DISABLE_LRU_INTERVAL");
+  const previousEnv = getEnv("VF_DISABLE_LRU_INTERVAL");
 
   (globalThis as Record<string, unknown>).__vfDisableLruInterval = false;
-  Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+  deleteEnv("VF_DISABLE_LRU_INTERVAL");
 
   try {
     await fn();
@@ -27,9 +29,9 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
     }
 
     if (previousEnv === undefined) {
-      Deno.env.delete("VF_DISABLE_LRU_INTERVAL");
+      deleteEnv("VF_DISABLE_LRU_INTERVAL");
     } else {
-      Deno.env.set("VF_DISABLE_LRU_INTERVAL", previousEnv);
+      setEnv("VF_DISABLE_LRU_INTERVAL", previousEnv);
     }
   }
 }
@@ -38,11 +40,6 @@ describe("rendering/cache/stores/api-store", () => {
   describe("APICacheStore constructor", () => {
     it("should create with default options", () => {
       const store = new APICacheStore();
-      assertEquals(store instanceof APICacheStore, true);
-    });
-
-    it("should create with custom keyPrefix", () => {
-      const store = new APICacheStore({ keyPrefix: "custom" });
       assertEquals(store instanceof APICacheStore, true);
     });
 
@@ -56,9 +53,26 @@ describe("rendering/cache/stores/api-store", () => {
       assertEquals(store instanceof APICacheStore, true);
     });
 
-    it("should create with custom localMaxEntries", () => {
-      const store = new APICacheStore({ localMaxEntries: 50 });
-      assertEquals(store instanceof APICacheStore, true);
+    it("should bound the local cache with custom localMaxEntries", async () => {
+      const store = new APICacheStore({ enableLocalCache: true, localMaxEntries: 1 });
+      const payload = {
+        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
+        storedAt: Date.now(),
+      } as any;
+
+      try {
+        await store.set("k1", payload);
+        await store.set("k2", payload);
+
+        assertEquals(await store.get("k1"), undefined, "localMaxEntries bounds the local LRU");
+        assertEquals(
+          (await store.get("k2"))?.result.html,
+          "<p>x</p>",
+          "the newest entry survives eviction",
+        );
+      } finally {
+        await store.destroy();
+      }
     });
   });
 
@@ -179,8 +193,8 @@ describe("rendering/cache/stores/api-store", () => {
     });
 
     it("waits for distributed writes when local cache is disabled", async () => {
-      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
 
@@ -188,8 +202,8 @@ describe("rendering/cache/stores/api-store", () => {
       const releaseSet = Promise.withResolvers<void>();
       let setCompleted = false;
       let setPromise: Promise<void> | undefined;
-      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
           token: "request-token",
@@ -255,14 +269,14 @@ describe("rendering/cache/stores/api-store", () => {
           );
         } finally {
           if (previousApiBaseUrl === undefined) {
-            Deno.env.delete("VERYFRONT_API_BASE_URL");
+            deleteEnv("VERYFRONT_API_BASE_URL");
           } else {
-            Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+            setEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
           }
           if (previousApiToken === undefined) {
-            Deno.env.delete("VERYFRONT_API_TOKEN");
+            deleteEnv("VERYFRONT_API_TOKEN");
           } else {
-            Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+            setEnv("VERYFRONT_API_TOKEN", previousApiToken);
           }
           if (originalAdapter === undefined) {
             delete globals.__vf_multi_project_adapter;
@@ -274,13 +288,13 @@ describe("rendering/cache/stores/api-store", () => {
     });
 
     it("preserves Dates through an API transport round-trip", async () => {
-      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
       const values = new Map<string, string>();
-      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
           token: "request-token",
@@ -334,14 +348,176 @@ describe("rendering/cache/stores/api-store", () => {
       } finally {
         await store.destroy();
         if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
+          deleteEnv("VERYFRONT_API_BASE_URL");
         } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+          setEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
         }
         if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
+          deleteEnv("VERYFRONT_API_TOKEN");
         } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+          setEnv("VERYFRONT_API_TOKEN", previousApiToken);
+        }
+        if (originalAdapter === undefined) {
+          delete globals.__vf_multi_project_adapter;
+        } else {
+          globals.__vf_multi_project_adapter = originalAdapter;
+        }
+      }
+    });
+
+    it("namespaces distributed cache keys with the configured keyPrefix", async () => {
+      const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
+      const globals = globalThis as Record<string, unknown>;
+      const originalAdapter = globals.__vf_multi_project_adapter;
+      let receivedKey: string | undefined;
+      setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
+      globals.__vf_multi_project_adapter = {
+        getCurrentRequestContext: () => ({
+          token: "request-token",
+          projectSlug: "api-store-prefix-project",
+          productionMode: true,
+        }),
+      };
+      const store = new APICacheStore({ enableLocalCache: false, keyPrefix: "custom" });
+      const payload: CachePayload = {
+        result: { html: "<p>prefixed</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now(),
+      };
+
+      try {
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method === "POST" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-prefix-project/cache/set"
+            ) {
+              const body = await request.json() as { key: string };
+              receivedKey = body.key;
+              return Response.json({ success: true });
+            }
+            return Response.json({ error: "not found" }, { status: 404 });
+          },
+          async () => {
+            await store.set("prefix-key", payload);
+
+            assertEquals(
+              receivedKey,
+              "custom:prefix-key",
+              "keyPrefix namespaces distributed cache keys",
+            );
+          },
+        );
+      } finally {
+        await store.destroy();
+        if (previousApiBaseUrl === undefined) {
+          deleteEnv("VERYFRONT_API_BASE_URL");
+        } else {
+          setEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+        }
+        if (previousApiToken === undefined) {
+          deleteEnv("VERYFRONT_API_TOKEN");
+        } else {
+          setEnv("VERYFRONT_API_TOKEN", previousApiToken);
+        }
+        if (originalAdapter === undefined) {
+          delete globals.__vf_multi_project_adapter;
+        } else {
+          globals.__vf_multi_project_adapter = originalAdapter;
+        }
+      }
+    });
+
+    it("serves a distributed hit from the local cache on the next read", async () => {
+      const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
+      const globals = globalThis as Record<string, unknown>;
+      const originalAdapter = globals.__vf_multi_project_adapter;
+      const values = new Map<string, string>();
+      let backendGets = 0;
+      setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
+      globals.__vf_multi_project_adapter = {
+        getCurrentRequestContext: () => ({
+          token: "request-token",
+          projectSlug: "api-store-writethrough-project",
+          productionMode: true,
+        }),
+      };
+      // The seeding store keeps the distributed entry out of the reading
+      // store's local cache, so the first read must come from the backend.
+      const seeder = new APICacheStore({ enableLocalCache: false });
+      const store = new APICacheStore({ enableLocalCache: true });
+      const payload: CachePayload = {
+        result: { html: "<p>write-through</p>", frontmatter: {}, stream: null },
+        storedAt: Date.now(),
+      };
+
+      try {
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (
+              request.method === "POST" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-writethrough-project/cache/set"
+            ) {
+              const body = await request.json() as { key: string; value: string };
+              values.set(body.key, body.value);
+              return Response.json({ success: true });
+            }
+            if (
+              request.method === "GET" &&
+              url.origin === TEST_PUBLIC_API_ORIGIN &&
+              url.pathname === "/projects/api-store-writethrough-project/cache/get"
+            ) {
+              backendGets += 1;
+              return Response.json({
+                value: values.get(url.searchParams.get("key") ?? "") ?? null,
+              });
+            }
+            return Response.json({ error: "not found" }, { status: 404 });
+          },
+          async () => {
+            await seeder.set("write-through-key", payload);
+
+            const first = await store.get("write-through-key");
+            const second = await store.get("write-through-key");
+
+            assertEquals(
+              first?.result.html,
+              "<p>write-through</p>",
+              "the first read comes from the distributed cache",
+            );
+            assertEquals(
+              second?.result.html,
+              "<p>write-through</p>",
+              "the second read returns the same entry",
+            );
+            assertEquals(
+              backendGets,
+              1,
+              "a distributed hit must be written through to the local cache",
+            );
+          },
+        );
+      } finally {
+        await seeder.destroy();
+        await store.destroy();
+        if (previousApiBaseUrl === undefined) {
+          deleteEnv("VERYFRONT_API_BASE_URL");
+        } else {
+          setEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+        }
+        if (previousApiToken === undefined) {
+          deleteEnv("VERYFRONT_API_TOKEN");
+        } else {
+          setEnv("VERYFRONT_API_TOKEN", previousApiToken);
         }
         if (originalAdapter === undefined) {
           delete globals.__vf_multi_project_adapter;
@@ -352,15 +528,16 @@ describe("rendering/cache/stores/api-store", () => {
     });
 
     it("retains distributed entries through staleUntil instead of only the fresh TTL", async () => {
-      const previousApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const previousApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      using _time = new FakeTime();
+      const previousApiBaseUrl = getEnv("VERYFRONT_API_BASE_URL");
+      const previousApiToken = getEnv("VERYFRONT_API_TOKEN");
       const globals = globalThis as Record<string, unknown>;
       const originalAdapter = globals.__vf_multi_project_adapter;
 
       let receivedTtl: number | undefined;
       let receivedValue = "";
-      Deno.env.set("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
-      Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+      setEnv("VERYFRONT_API_BASE_URL", TEST_PUBLIC_API_ORIGIN);
+      setEnv("VERYFRONT_API_TOKEN", "test-token");
       globals.__vf_multi_project_adapter = {
         getCurrentRequestContext: () => ({
           token: "request-token",
@@ -399,21 +576,25 @@ describe("rendering/cache/stores/api-store", () => {
           async () => {
             await store.set("distributed-stale-key", payload);
 
-            assertEquals(receivedTtl !== undefined && receivedTtl > 5, true);
-            assertEquals(receivedValue.includes('"staleUntil"'), true);
+            assertEquals(receivedTtl, 60, "backend ttl must cover the full stale window");
+            assertEquals(
+              receivedValue.includes('"staleUntil"'),
+              true,
+              "the stale window is persisted with the distributed entry",
+            );
           },
         );
       } finally {
         await store.destroy();
         if (previousApiBaseUrl === undefined) {
-          Deno.env.delete("VERYFRONT_API_BASE_URL");
+          deleteEnv("VERYFRONT_API_BASE_URL");
         } else {
-          Deno.env.set("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
+          setEnv("VERYFRONT_API_BASE_URL", previousApiBaseUrl);
         }
         if (previousApiToken === undefined) {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
+          deleteEnv("VERYFRONT_API_TOKEN");
         } else {
-          Deno.env.set("VERYFRONT_API_TOKEN", previousApiToken);
+          setEnv("VERYFRONT_API_TOKEN", previousApiToken);
         }
         if (originalAdapter === undefined) {
           delete globals.__vf_multi_project_adapter;

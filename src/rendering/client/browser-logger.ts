@@ -5,7 +5,7 @@ export enum LogLevel {
   ERROR = 3,
 }
 
-interface BrowserLogger {
+export interface BrowserLogger {
   debug(message: string, ...args: unknown[]): void;
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
@@ -60,6 +60,11 @@ class ConditionalBrowserLogger implements BrowserLogger {
   }
 }
 
+/** Build a browser logger with an explicit prefix and level. */
+export function createBrowserLogger(prefix: string, level: LogLevel): BrowserLogger {
+  return new ConditionalBrowserLogger(prefix, level);
+}
+
 interface VeryfrontGlobal {
   __VERYFRONT_DEV__?: boolean;
   __RSC_DEV__?: boolean;
@@ -67,7 +72,7 @@ interface VeryfrontGlobal {
   __RSC_DEBUG__?: boolean;
 }
 
-function getBrowserLogLevel(): LogLevel {
+export function getBrowserLogLevel(): LogLevel {
   if (typeof window === "undefined") return LogLevel.WARN;
 
   const g = globalThis as VeryfrontGlobal;

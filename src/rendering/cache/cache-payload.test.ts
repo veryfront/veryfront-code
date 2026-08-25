@@ -41,6 +41,86 @@ describe("rendering/cache/cache-payload", () => {
     assertEquals(serialized?.result.headers, { "x-page-state": "cached" });
   });
 
+  it("rejects framework-owned and malformed cached response headers", () => {
+    const rejectedHeaders: Array<[string, Record<string, string>]> = [
+      ["set-cookie", { "set-cookie": "a=b" }],
+      ["content-security-policy", { "content-security-policy": "default-src *" }],
+      ["location", { location: "https://evil.example" }],
+      ["a duplicate header name", { "X-Foo": "a", "x-foo": "b" }],
+      ["a CR/LF bearing header value", { "x-foo": "a\r\nset-cookie: a=b" }],
+    ];
+
+    for (const [name, headers] of rejectedHeaders) {
+      const payload = payloadWithNodeMap();
+      payload.result.headers = headers;
+
+      assertEquals(
+        parseCachePayload(payload),
+        undefined,
+        `${name} must not survive a cache read`,
+      );
+      assertThrows(
+        () => cloneCachePayload(payload),
+        TypeError,
+        "result.headers is invalid",
+        `${name} must not survive a memory snapshot`,
+      );
+    }
+  });
+
+  it("lowercases cached response header names", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.headers = { "X-Page-State": "cached" };
+
+    assertEquals(
+      cloneCachePayload(payload).result.headers,
+      { "x-page-state": "cached" },
+      "memory snapshots must normalize cached header names",
+    );
+    assertEquals(
+      parseSerializedCachePayload(serializeCachePayload(payload))?.result.headers,
+      { "x-page-state": "cached" },
+      "the wire format must normalize cached header names",
+    );
+  });
+
+  it("round-trips the HTML nonce placeholder through memory and serialized payloads", () => {
+    const placeholder = `vf-cache-${"a".repeat(48)}`;
+    const payload = payloadWithNodeMap();
+    payload.htmlNoncePlaceholder = placeholder;
+
+    assertEquals(
+      cloneCachePayload(payload).htmlNoncePlaceholder,
+      placeholder,
+      "memory snapshots keep the nonce placeholder",
+    );
+    assertEquals(
+      parseSerializedCachePayload(serializeCachePayload(payload))?.htmlNoncePlaceholder,
+      placeholder,
+      "the wire format keeps the nonce placeholder",
+    );
+  });
+
+  it("rejects a stored nonce placeholder that is not a cache token", () => {
+    const invalidPlaceholders = [
+      "vf-cache-nope",
+      `vf-cache-${"z".repeat(48)}`,
+      "z".repeat(48),
+      `vf-cache-${"a".repeat(47)}`,
+    ];
+
+    for (const invalid of invalidPlaceholders) {
+      const payload = payloadWithNodeMap();
+      payload.htmlNoncePlaceholder = invalid;
+
+      assertEquals(
+        parseCachePayload(payload),
+        undefined,
+        `"${invalid}" must not become the cached nonce splice target`,
+      );
+    }
+  });
+
   it("keeps memory snapshots equivalent to serialized snapshots", () => {
     const memory = cloneCachePayload(payloadWithNodeMap());
     const serialized = parseCachePayload(JSON.parse(serializeCachePayload(payloadWithNodeMap())));

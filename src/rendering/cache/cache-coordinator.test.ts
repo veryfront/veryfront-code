@@ -647,15 +647,49 @@ describe("CacheCoordinator", () => {
   });
 
   it("clearForProject only clears entries for that project", async () => {
+    // Both coordinators share one store so a cross-tenant wipe is observable.
+    const entries = new Map<string, CachePayload>();
+    const deletedPrefixes: string[] = [];
+    let clearCalls = 0;
+    const store: CacheStore = {
+      get: (key) => Promise.resolve(entries.get(key)),
+      set: (key, value) => {
+        entries.set(key, value);
+        return Promise.resolve();
+      },
+      delete: (key) => {
+        entries.delete(key);
+        return Promise.resolve();
+      },
+      deleteByPrefix: (prefix) => {
+        deletedPrefixes.push(prefix);
+        let deleted = 0;
+        for (const key of [...entries.keys()]) {
+          if (key.startsWith(prefix)) {
+            entries.delete(key);
+            deleted += 1;
+          }
+        }
+        return Promise.resolve(deleted);
+      },
+      clear: () => {
+        clearCalls += 1;
+        entries.clear();
+        return Promise.resolve();
+      },
+      destroy: () => Promise.resolve(),
+    };
     const projectA = new CacheCoordinator({
       ttlMs: 10_000,
       projectId: "project-a",
       contentSourceId: "main",
+      store,
     });
     const projectB = new CacheCoordinator({
       ttlMs: 10_000,
       projectId: "project-b",
       contentSourceId: "main",
+      store,
     });
     const slug = "home";
 
@@ -670,8 +704,22 @@ describe("CacheCoordinator", () => {
     const lookupA = await projectA.checkCache(slug);
     const lookupB = await projectB.checkCache(slug);
 
-    assertEquals(lookupA.cachedResult, undefined);
-    assertEquals(lookupB.cachedResult?.html, "<html>Project B</html>");
+    assertEquals(
+      deletedPrefixes,
+      ["project-a:main:"],
+      "clearForProject must delete only the current project prefix",
+    );
+    assertEquals(
+      clearCalls,
+      0,
+      "clearForProject must not fall back to clearAll when a projectId and deleteByPrefix exist",
+    );
+    assertEquals(lookupA.cachedResult, undefined, "project A entry is cleared");
+    assertEquals(
+      lookupB.cachedResult?.html,
+      "<html>Project B</html>",
+      "project B entry survives a project A clear in the same store",
+    );
 
     await projectA.destroy();
     await projectB.destroy();

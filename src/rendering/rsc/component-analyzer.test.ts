@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { toBase64Url } from "#veryfront/utils/path-utils.ts";
 import { analyzeComponent, buildClientManifest } from "./component-analyzer.ts";
 
 function createMockFs(files: Map<string, string>): FileSystemAdapter {
@@ -273,6 +274,56 @@ describe("rendering/rsc/component-analyzer", () => {
         () => buildClientManifest("/project", "app", fs),
         Error,
         'Duplicate client component ID "Button"',
+      );
+    });
+
+    it("keeps server components out of the client manifest", async () => {
+      const files = new Map([
+        [
+          "/project/app/Widget.tsx",
+          `'use client';\nexport default function Widget() { return null; }`,
+        ],
+        [
+          "/project/app/Header.tsx",
+          `export default function Header() { return null; }`,
+        ],
+      ]);
+      const fs = createMockFs(files);
+      fs.readDir = (path: string) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "Widget.tsx", isFile: true, isDirectory: false, isSymlink: false };
+            yield { name: "Header.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.size, 1, "only client components enter the client manifest");
+      assertEquals(
+        manifest.has("Header"),
+        false,
+        "server components must not be exposed on /_veryfront/fs",
+      );
+
+      const entry = manifest.get("Widget");
+      assertExists(entry, "the client component is present in the manifest");
+      assertEquals(entry.id, "Widget", "the manifest entry keeps the component id");
+      assertEquals(entry.rel, "app/Widget.tsx", "the manifest entry records the relative path");
+      assertEquals(
+        entry.path,
+        `/_veryfront/fs/${toBase64Url("/project/app/Widget.tsx")}`,
+        "the manifest entry points at the filesystem module endpoint",
+      );
+      assertEquals(
+        typeof entry.contentHash === "string" && entry.contentHash.length > 0,
+        true,
+        "the manifest entry carries a content version",
+      );
+      assertEquals(
+        entry.exports.includes("default"),
+        true,
+        "the manifest entry records the component exports",
       );
     });
   });

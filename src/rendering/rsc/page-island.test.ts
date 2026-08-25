@@ -175,6 +175,21 @@ describe("rendering/rsc/page-island", () => {
     assertEquals(result, { serverLayouts: layouts, clientLayouts: [] });
   });
 
+  it("treats a project-relative hydration page path as App Router", async () => {
+    const base = createOptions([], createMockFs(new Map()));
+
+    assertEquals(
+      await planClientPageIsland({ ...base, pagePath: "/app/page.tsx" }),
+      { serverLayouts: [], clientLayouts: [] },
+      "leading-slash project-relative hydration paths must still resolve inside appDir",
+    );
+    assertEquals(
+      await planClientPageIsland({ ...base, pagePath: "app/page.tsx" }),
+      { serverLayouts: [], clientLayouts: [] },
+      "bare project-relative hydration paths must still resolve inside appDir",
+    );
+  });
+
   it("returns null outside the remote App Router client-page case", async () => {
     const fs = createMockFs(new Map());
     const base = createOptions([], fs);
@@ -186,6 +201,11 @@ describe("rendering/rsc/page-island", () => {
     assertEquals(
       await planClientPageIsland({ ...base, pagePath: "/project/pages/index.tsx" }),
       null,
+    );
+    assertEquals(
+      await planClientPageIsland({ ...base, pagePath: "/pages/index.tsx" }),
+      null,
+      "a project-relative path outside appDir must not produce an island",
     );
     assertEquals(await planClientPageIsland({ ...base, fs: null }), null);
     assertEquals(await planClientPageIsland({ ...base, strategy: "fs" }), null);

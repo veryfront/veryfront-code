@@ -1,19 +1,84 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { FilesystemCacheStore } from "./filesystem-store.ts";
-import type { CachePayload } from "../types.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { FilesystemCacheStore } from "#veryfront/rendering/cache/stores/filesystem-store.ts";
+import type { CachePayload } from "#veryfront/rendering/cache/types.ts";
+
+/**
+ * Allocate a cache root through the platform filesystem adapter so the suite
+ * never hard-codes a host-specific temp directory.
+ */
+async function makeCacheRoot(prefix: string): Promise<string> {
+  return await (await getLocalAdapter()).fs.makeTempDir(prefix);
+}
+
+function makePayload(html = "<p>x</p>"): CachePayload {
+  return {
+    result: { html, frontmatter: {}, headings: [], stream: null },
+    storedAt: Date.now(),
+  } as unknown as CachePayload;
+}
 
 describe("rendering/cache/stores/filesystem-store", () => {
   describe("FilesystemCacheStore constructor", () => {
-    it("should create with a base directory", () => {
-      const store = new FilesystemCacheStore({ baseDir: "/tmp/test-cache" });
-      assertEquals(store instanceof FilesystemCacheStore, true);
+    it("should write entries under the configured base directory", async () => {
+      const dir = await makeCacheRoot("veryfront-fs-cache-ctor-");
+      const store = new FilesystemCacheStore({ baseDir: dir });
+
+      try {
+        await store.set("test key/a", makePayload());
+
+        const fs = (await getLocalAdapter()).fs;
+        const raw = await fs.readFile(join(dir, `${encodeURIComponent("test key/a")}.json`));
+
+        assertEquals(typeof raw, "string", "entries are written under the configured baseDir");
+      } finally {
+        await store.destroy();
+      }
+    });
+
+    it("keeps stores with different baseDirs isolated", async () => {
+      const first = new FilesystemCacheStore({
+        baseDir: await makeCacheRoot("veryfront-fs-cache-iso-a-"),
+      });
+      const second = new FilesystemCacheStore({
+        baseDir: await makeCacheRoot("veryfront-fs-cache-iso-b-"),
+      });
+
+      try {
+        await first.set("shared-key", makePayload());
+
+        assertEquals(
+          (await first.get("shared-key"))?.result.html,
+          "<p>x</p>",
+          "the first store reads back its own entry",
+        );
+        assertEquals(
+          await second.get("shared-key"),
+          undefined,
+          "a second baseDir must not see the first store's entries",
+        );
+      } finally {
+        await first.destroy();
+        await second.destroy();
+      }
     });
   });
 
   describe("operations (using local adapter)", () => {
-    const baseDir = "/tmp/veryfront-test-fs-cache-" + Date.now();
+    let root = "";
+    let baseDir = "";
+
+    beforeAll(async () => {
+      root = await makeCacheRoot("veryfront-fs-cache-ops-");
+      baseDir = join(root, "default");
+    });
+
+    afterAll(async () => {
+      await (await getLocalAdapter()).fs.remove(root, { recursive: true });
+    });
 
     it("should return undefined for missing key", async () => {
       const store = new FilesystemCacheStore({ baseDir });
@@ -38,7 +103,7 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("preserves Dates through an actual file round-trip", async () => {
-      const dir = baseDir + "-dates";
+      const dir = join(root, "dates");
       const store = new FilesystemCacheStore({ baseDir: dir });
       const publishedAt = new Date("2026-07-24T08:30:00.000Z");
       const payload: CachePayload = {
@@ -82,31 +147,76 @@ describe("rendering/cache/stores/filesystem-store", () => {
     });
 
     it("should clear all entries", async () => {
-      const store = new FilesystemCacheStore({ baseDir });
-      await store.clear();
+      const dir = join(root, "clear");
+      const store = new FilesystemCacheStore({ baseDir: dir });
+
+      try {
+        await store.set("clear:a", makePayload());
+        await store.set("clear:b", makePayload());
+
+        assertEquals(
+          (await store.get("clear:a"))?.result.html,
+          "<p>x</p>",
+          "the entry is readable before clear()",
+        );
+
+        await store.clear();
+
+        assertEquals(await store.get("clear:a"), undefined, "clear() must remove cached entries");
+        assertEquals(await store.get("clear:b"), undefined, "clear() must remove every entry");
+
+        await store.set("clear:c", makePayload());
+        assertEquals(
+          (await store.get("clear:c"))?.result.html,
+          "<p>x</p>",
+          "the store must remain usable after clear() removes its directory",
+        );
+      } finally {
+        await store.destroy();
+      }
     });
 
     it("should destroy (same as clear)", async () => {
-      const store = new FilesystemCacheStore({ baseDir });
+      const dir = join(root, "destroy");
+      const store = new FilesystemCacheStore({ baseDir: dir });
+
+      await store.set("a", makePayload());
+      await store.set("b", makePayload());
+
+      assertEquals(
+        (await store.get("a"))?.result.html,
+        "<p>x</p>",
+        "the entry is readable before destroy",
+      );
+
       await store.destroy();
+
+      assertEquals(await store.get("a"), undefined, "destroy removes stored entries");
+      assertEquals(await store.get("b"), undefined, "destroy removes every stored entry");
     });
 
     it("should deleteByPrefix", async () => {
-      const dir = baseDir + "-prefix";
+      const dir = join(root, "prefix");
       const store = new FilesystemCacheStore({ baseDir: dir });
-      const payload = {
-        result: { html: "<p>x</p>", frontmatter: {}, headings: [], stream: null },
-        storedAt: Date.now(),
-      };
-      await store.set("prefix:a", payload as any);
-      await store.set("prefix:b", payload as any);
-      await store.set("other:c", payload as any);
 
-      const deleted = await store.deleteByPrefix("prefix:");
-      assertEquals(deleted >= 0, true);
+      try {
+        await store.set("prefix:a", makePayload());
+        await store.set("prefix:b", makePayload());
+        await store.set("other:c", makePayload());
 
-      // Cleanup
-      await store.destroy();
+        const deleted = await store.deleteByPrefix("prefix:");
+
+        assertEquals(deleted, 2, "deleteByPrefix removes both prefixed entries");
+        assertEquals(await store.get("prefix:a"), undefined, "prefix:a is deleted");
+        assertEquals(await store.get("prefix:b"), undefined, "prefix:b is deleted");
+        assertEquals(
+          (await store.get("other:c"))?.result.html,
+          "<p>x</p>",
+          "a non-matching key is preserved",
+        );
+      } finally {
+        await store.destroy();
+      }
     });
   });
 });
