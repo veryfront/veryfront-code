@@ -34,6 +34,12 @@ import {
 
 const logger = serverLogger.component("static-file-service");
 
+function isStrictDescendant(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate)).replace(/\\/g, "/");
+  return relativePath !== "" && relativePath !== "." && relativePath !== ".." &&
+    !relativePath.startsWith("../") && !isAbsolute(relativePath);
+}
+
 function isExpectedCandidateMiss(error: unknown): boolean {
   if (isNotFoundError(error)) return true;
 
@@ -138,14 +144,11 @@ export class StaticFileService {
   private resolveBuildOutputRoot(options: StaticFileOptions): string {
     const projectRoot = resolve(options.projectDir);
     const configuredRoot = resolve(projectRoot, options.buildOutDir || "dist");
-    const relativeRoot = relative(projectRoot, configuredRoot).replace(/\\/g, "/");
 
     // Project configuration is not a trusted filesystem boundary. Fail loudly
     // instead of serving a different directory from the one the build wrote.
     if (
-      relativeRoot === "" || relativeRoot === "." || relativeRoot === ".." ||
-      relativeRoot.startsWith("../") ||
-      isAbsolute(relativeRoot)
+      !isStrictDescendant(projectRoot, configuredRoot)
     ) {
       throw SECURITY_VIOLATION.create({
         detail: "build.outDir must resolve to a directory inside the project",
@@ -238,7 +241,6 @@ export class StaticFileService {
       if (manifestPath) addCandidate(manifestPath, "manifest");
     }
 
-    const buildOutputRoot = this.resolveBuildOutputRoot(options);
     const publicRoot = resolve(options.projectDir, "public");
     const dirs: ReadonlyArray<{
       root: string;
@@ -246,7 +248,7 @@ export class StaticFileService {
     }> = options.isLocalProject && !options.isPreviewMode
       ? [{ root: publicRoot, source: "public" }]
       : [
-        { root: buildOutputRoot, source: "dist" },
+        { root: this.resolveBuildOutputRoot(options), source: "dist" },
         { root: publicRoot, source: "public" },
       ];
 
@@ -338,7 +340,10 @@ export class StaticFileService {
     if (!index) return null;
 
     const normalized = normalizePath(requestPath.startsWith("/") ? requestPath : `/${requestPath}`);
-    return index.assets.get(normalized) ?? null;
+    const candidate = index.assets.get(normalized);
+    if (!candidate) return null;
+    const buildOutputRoot = this.resolveBuildOutputRoot(options);
+    return isStrictDescendant(buildOutputRoot, candidate) ? candidate : null;
   }
 
   private async loadManifestIndex(

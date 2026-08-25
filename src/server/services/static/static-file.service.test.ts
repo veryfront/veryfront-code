@@ -378,9 +378,44 @@ describe("server/services/static/static-file.service", () => {
         "the stale manifest entry must not survive a manifest.json rebuild",
       );
     });
+
+    it("rejects manifest assets outside the configured build output", async () => {
+      const manifest = {
+        chunks: {
+          chunks: { main: { file: "../../../src/private.js" } },
+          shared: [],
+        },
+        routes: [],
+      };
+      const files = new Map<string, Uint8Array>([
+        [
+          "/project/dist/_veryfront/manifest.json",
+          new TextEncoder().encode(JSON.stringify(manifest)),
+        ],
+        ["/project/src/private.js", new TextEncoder().encode("private source")],
+      ]);
+      __injectDepsForTests({ manifestCache: new Map(), manifestLoading: new Map() });
+
+      const service = new StaticFileService(createMockFsRepo(files));
+      assertEquals(await service.resolveFile("/_veryfront/private.js", makeOptions()), null);
+    });
   });
 
   describe("resolveFile", () => {
+    it("serves public files locally without validating an unused embedded output", async () => {
+      const data = new TextEncoder().encode("public");
+      const service = new StaticFileService(
+        createMockFsRepo(new Map([["/project/public/hello.txt", data]])),
+      );
+
+      const result = await service.resolveFile(
+        "/hello.txt",
+        makeOptions({ isLocalProject: true, buildOutDir: "../host/dist" }),
+      );
+
+      assertEquals(result?.data, data);
+      assertEquals(result?.source, "public");
+    });
     it("serves project files through the scoped SecureFs boundary", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),
