@@ -5,6 +5,10 @@ const WORKFLOW_PR_GUARD =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
 const CREATE_APP_TOKEN_ACTION =
   "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
+const TRUSTED_AGGREGATE_JOBS = new Set([
+  "quality-gate-merge",
+  "quality-gate-artifact",
+]);
 
 async function readText(path: string): Promise<string> {
   return await Deno.readTextFile(new URL(`../../${path}`, import.meta.url));
@@ -42,12 +46,16 @@ function workflowStepBlock(workflow: string, stepName: string): string {
   assert(start >= 0, `expected ${stepName} step to exist`);
 
   const nextStep = workflow.indexOf("\n      - ", start + marker.length);
-  return nextStep === -1 ? workflow.slice(start) : workflow.slice(start, nextStep);
+  return nextStep === -1
+    ? workflow.slice(start)
+    : workflow.slice(start, nextStep);
 }
 
 describe("repository hardening", () => {
   it("keeps the client bundle report authoritative and its comment best-effort", async () => {
-    const workflow = await readText(".github/workflows/client-bundle-report.yml");
+    const workflow = await readText(
+      ".github/workflows/client-bundle-report.yml",
+    );
     const compute = workflowStepBlock(workflow, "Compute client bundle report");
     const comment = workflowStepBlock(workflow, "Post sticky PR comment");
 
@@ -96,7 +104,11 @@ describe("repository hardening", () => {
     const policy = await readText("SECURITY.md");
 
     assert(policy.includes("same-repository pull requests"));
-    assert(policy.includes("External fork pull requests do not run code-checking CI"));
+    assert(
+      policy.includes(
+        "External fork pull requests do not run code-checking CI",
+      ),
+    );
   });
 
   it("keeps npm publishing tokenless and provenance-backed", async () => {
@@ -111,13 +123,20 @@ describe("repository hardening", () => {
     assert(workflow.includes("package-manager-cache: false"));
     assert(workflow.includes("scripts/ci/publish-npm-packages.sh rc-publish"));
     assert(workflow.includes("scripts/ci/publish-npm-packages.sh preflight"));
-    assert(workflow.includes("scripts/ci/publish-npm-packages.sh release-publish"));
+    assert(
+      workflow.includes("scripts/ci/publish-npm-packages.sh release-publish"),
+    );
     assert(workflow.includes("deno run -A scripts/ci/prepare-rc-build.ts"));
 
-    const compatibilityArtifact = jobBlock(workflow, "npm-compatibility-artifact");
+    const compatibilityArtifact = jobBlock(
+      workflow,
+      "npm-compatibility-artifact",
+    );
     const prerelease = jobBlock(workflow, "prerelease");
     assert(
-      compatibilityArtifact.indexOf("deno run -A scripts/ci/prepare-rc-build.ts") <
+      compatibilityArtifact.indexOf(
+        "deno run -A scripts/ci/prepare-rc-build.ts",
+      ) <
         compatibilityArtifact.indexOf("deno task build:npm"),
     );
     assert(prerelease.includes("npm-compatibility-artifact.ts materialize"));
@@ -125,8 +144,14 @@ describe("repository hardening", () => {
 
     assertEquals(publishScript.includes("NPM_TOKEN"), false);
     assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
-    assert(publishScript.includes("npm publish --provenance --access public --tag rc"));
-    assert(publishScript.includes("npm publish --provenance --access public 2>&1"));
+    assert(
+      publishScript.includes(
+        "npm publish --provenance --access public --tag rc",
+      ),
+    );
+    assert(
+      publishScript.includes("npm publish --provenance --access public 2>&1"),
+    );
   });
 
   it("only publishes a stable version after a version change or manual dispatch", async () => {
@@ -238,10 +263,14 @@ describe("repository hardening", () => {
   it("does not run npm lifecycle scripts while building the npm package", async () => {
     const buildScript = await readText("scripts/build/build-npm-dnt.ts");
 
-    assert(buildScript.includes('"install", "--ignore-scripts", "--legacy-peer-deps"'));
+    assert(
+      buildScript.includes(
+        '"install", "--ignore-scripts", "--legacy-peer-deps"',
+      ),
+    );
   });
 
-  it("does not execute code-checking workflows for fork pull requests", async () => {
+  it("runs only trusted non-code aggregates for fork pull requests", async () => {
     for (
       const path of [
         ".github/workflows/cicd.yml",
@@ -265,6 +294,35 @@ describe("repository hardening", () => {
           jobIf !== undefined,
           `expected ${path} job ${jobName} to declare a job-level if: condition`,
         );
+
+        if (
+          path === ".github/workflows/cicd.yml" &&
+          TRUSTED_AGGREGATE_JOBS.has(jobName)
+        ) {
+          assertEquals(
+            jobIf.trim(),
+            "if: ${{ always() }}",
+            `expected trusted aggregate ${jobName} to run and inspect skipped dependencies`,
+          );
+          assertEquals(
+            block.includes("actions/checkout@"),
+            false,
+            `expected trusted aggregate ${jobName} not to checkout repository code`,
+          );
+          assertEquals(
+            block.includes("uses: ./"),
+            false,
+            `expected trusted aggregate ${jobName} not to execute a repository-local action`,
+          );
+          assertEquals(
+            /^[ ]{10}(?:(?:deno|node|npm|npx|bun)\b|(?:bash|sh)\s+(?:\.\/)?(?:scripts|src|cli)\/|(?:\.\/)?(?:scripts|src|cli)\/)/m
+              .test(block),
+            false,
+            `expected trusted aggregate ${jobName} not to execute repository code`,
+          );
+          continue;
+        }
+
         assert(
           jobIf.includes(WORKFLOW_PR_GUARD),
           `expected ${path} job ${jobName} to carry the fork guard on its own job-level if:, not on a step`,

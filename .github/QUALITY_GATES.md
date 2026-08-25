@@ -21,7 +21,8 @@ Evidence: [CI workflow](workflows/cicd.yml) and
 manifest records package versions and SHA-256 digests. Clean-room npm install
 smoke tests and the Deno, Node, and Bun critical-flow lanes consume that same
 artifact, so compatibility results describe one build rather than separate
-rebuilds.
+rebuilds. Veryfront retains the canonical artifact for 30 days so production
+approval can publish the exact tested package set.
 
 Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
 [artifact contract](../tests/integration/ci/npm-compatibility-artifact.test.ts),

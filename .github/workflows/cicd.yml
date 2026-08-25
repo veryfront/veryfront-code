@@ -203,7 +203,7 @@ jobs:
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
-          retention-days: 7
+          retention-days: 30
 
   tests-runtime-critical-flow:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -642,7 +642,7 @@ jobs:
       - tests
       - tests-binary-e2e
       - tests-e2e-rsc-browser
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ always() }}
     steps:
       - name: Require merge correctness dependencies
         env:
@@ -750,7 +750,7 @@ jobs:
       - npm-compatibility-artifact
       - tests-npm-install-smoke
       - tests-runtime-critical-flow
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ always() }}
     steps:
       - name: Require canonical artifact compatibility
         env:

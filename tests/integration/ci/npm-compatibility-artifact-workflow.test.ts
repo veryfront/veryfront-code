@@ -91,7 +91,7 @@ describe("canonical npm artifact workflow", () => {
     );
     assertEquals(
       asRecord(upload.with, "artifact upload inputs")["retention-days"],
-      7,
+      30,
       "The tested npm artifact must remain available through production approval",
     );
     assertEquals(
@@ -181,7 +181,8 @@ describe("canonical npm artifact workflow", () => {
     for (const jobName of ["prerelease", "release"] as const) {
       const job = asRecord(jobs[jobName], `${jobName} job`);
       assert(
-        Array.isArray(job.needs) && job.needs.includes("npm-compatibility-artifact"),
+        Array.isArray(job.needs) &&
+          job.needs.includes("npm-compatibility-artifact"),
         `${jobName} must depend on the canonical npm artifact`,
       );
       const download = jobSteps(job, `${jobName} job`).find((step) =>
@@ -219,10 +220,7 @@ describe("canonical npm artifact workflow", () => {
       "tests-npm-install-smoke",
       "tests-runtime-critical-flow",
     ]);
-    assertEquals(
-      gate.if,
-      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
-    );
+    assertEquals(gate.if, "${{ always() }}");
 
     assertEquals((await runArtifactGate()).code, 0);
     for (const result of ["failure", "skipped", "cancelled"]) {
