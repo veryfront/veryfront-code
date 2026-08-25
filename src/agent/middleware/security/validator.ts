@@ -107,6 +107,19 @@ function freshStatefulPattern(pattern: RegExp): RegExp {
   return matcher;
 }
 
+function redactBlockedPattern(input: string, pattern: RegExp): string {
+  const matcher = freshStatefulPattern(pattern);
+  if (!matcher.sticky || matcher.global) return input.replace(matcher, "[REDACTED]");
+
+  // Bun does not currently honor lastIndex for non-global sticky replacements.
+  // Use exec and splice the match so every supported runtime starts at the
+  // caller-configured position without mutating the caller-owned pattern.
+  const match = matcher.exec(input);
+  if (!match) return input;
+
+  return `${input.slice(0, match.index)}[REDACTED]${input.slice(match.index + match[0].length)}`;
+}
+
 /**
  * Input Validator
  */
@@ -221,7 +234,7 @@ export class OutputFilter {
         pattern,
       });
 
-      filtered = filtered.replace(freshStatefulPattern(pattern), "[REDACTED]");
+      filtered = redactBlockedPattern(filtered, pattern);
     }
 
     if (this.config.filterPII) {
