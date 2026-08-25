@@ -1148,7 +1148,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
   });
 
-  it("targets environment agent sources and promotes eval overrides for durable eval runs", async () => {
+  it("preserves environment and preview targets for durable eval runs", async () => {
     const requests: Array<
       { method: string; pathname: string; body: Record<string, unknown> | null }
     > = [];
@@ -1174,6 +1174,52 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       createEvalAgentAdapter: (config) =>
         createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
     }));
+    const execute = async (body: Record<string, unknown>) => {
+      const runId = String(body.runId);
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
+
+      return await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const method = init?.method ?? "GET";
+              const requestBody = requestJsonBody(init);
+              requests.push({ method, pathname: url.pathname, body: requestBody });
+
+              if (method === "POST" && url.pathname.endsWith("/runs")) {
+                const publicId = String(requestBody?.public_id);
+                return Response.json({
+                  accepted: true,
+                  run: { run_id: publicId },
+                  conversation_id: conversationId,
+                }, { status: 202 });
+              }
+
+              if (method === "GET" && url.pathname.endsWith("/stream")) {
+                return new Response(
+                  [
+                    `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
+                    `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
+                    `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                  ].join(""),
+                  { headers: { "content-type": "text/event-stream" } },
+                );
+              }
+
+              return new Response("not found", { status: 404 });
+            },
+            () => handler.handle(request, createCtx(publicKeyPem)),
+          ),
+      );
+    };
     const body = {
       runId: "run_eval_durable_env_agent",
       kind: "eval",
@@ -1184,49 +1230,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runtimeTargetEnvironmentId: environmentId,
       config: { model: "model-override-1", max_steps: 3 },
     };
-    const { request, publicKeyPem } = await signedRequest(
-      "/api/control-plane/runs/run_eval_durable_env_agent/execute",
-      body,
-      { "x-token": "runtime-token" },
-      "https://veryfront.org",
-    );
-
-    const result = await withEnvValue(
-      "VERYFRONT_API_BASE_URL",
-      "https://api.example.test/",
-      () =>
-        withMockFetch(
-          async (input, init) => {
-            const url = new URL(String(input));
-            const method = init?.method ?? "GET";
-            const requestBody = requestJsonBody(init);
-            requests.push({ method, pathname: url.pathname, body: requestBody });
-
-            if (method === "POST" && url.pathname.endsWith("/runs")) {
-              const runId = String(requestBody?.public_id);
-              return Response.json({
-                accepted: true,
-                run: { run_id: runId },
-                conversation_id: conversationId,
-              }, { status: 202 });
-            }
-
-            if (method === "GET" && url.pathname.endsWith("/stream")) {
-              return new Response(
-                [
-                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
-                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
-                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
-                ].join(""),
-                { headers: { "content-type": "text/event-stream" } },
-              );
-            }
-
-            return new Response("not found", { status: 404 });
-          },
-          () => handler.handle(request, createCtx(publicKeyPem)),
-        ),
-    );
+    const result = await execute(body);
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -1237,6 +1241,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
     const agentInput = createRunRequest.input as Record<string, unknown>;
     assertEquals(agentInput.agent_id, "researcher");
+    assertEquals(agentInput.messages, []);
     assertEquals(agentInput.source_target_kind, "environment");
     assertEquals(agentInput.runtime_target_kind, "environment");
     assertEquals(agentInput.target_environment_id, environmentId);
@@ -1258,6 +1263,27 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         },
       },
     });
+
+    requests.length = 0;
+    const branchId = "44444444-4444-4444-8444-444444444444";
+    const previewResult = await execute({
+      ...body,
+      runId: "run_eval_durable_preview_agent",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: undefined,
+      runtimeTargetBranchId: branchId,
+    });
+
+    assertExists(previewResult.response);
+    assertEquals(previewResult.response.status, 200);
+    const previewRequest = requests[0]?.body?.request as Record<string, unknown>;
+    const previewInput = previewRequest.input as Record<string, unknown>;
+    assertEquals(previewInput.source_target_kind, "preview_branch");
+    assertEquals(previewInput.runtime_target_kind, "preview_branch");
+    assertEquals(previewInput.target_environment_id, undefined);
+    assertEquals(previewInput.target_branch_id, branchId);
+    assertEquals(previewInput.messages, []);
+    assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {
