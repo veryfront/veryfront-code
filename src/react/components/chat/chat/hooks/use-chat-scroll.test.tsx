@@ -91,7 +91,7 @@ describe("useChatScroll (superset)", () => {
   });
 
   it("pins to the bottom while content grows and yields once the user scrolls up", async () => {
-    const dom = new JSDOM('<div id="root"></div>');
+    const componentDom = new JSDOM('<div id="root"></div>');
     // Fake ResizeObserver: capture each observer's callback so the test can
     // fire it after mutating the fake layout metrics.
     const observers: Array<{ target: Element; fire: () => void }> = [];
@@ -105,10 +105,11 @@ describe("useChatScroll (superset)", () => {
       }
       disconnect() {}
     }
-    (dom.window as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    (componentDom.window as unknown as { ResizeObserver: unknown }).ResizeObserver =
+      FakeResizeObserver;
     // The fake ResizeObserver is defined on the JSDOM window first so the shared
     // installer copies it over its default stub.
-    const restore = installComponentDom(dom, {
+    const restore = installComponentDom(componentDom, {
       windowGlobals: ["ResizeObserver", "Event"],
     });
     let root: Root | undefined;
@@ -125,10 +126,12 @@ describe("useChatScroll (superset)", () => {
       // jsdom has no Element.scrollTo; the hook calls it on mount, so stub it
       // before rendering and record every call.
       const scrollToCalls: ScrollToOptions[] = [];
-      dom.window.HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number) {
+      componentDom.window.HTMLElement.prototype.scrollTo = function (
+        options?: ScrollToOptions | number,
+      ) {
         if (typeof options === "object") scrollToCalls.push(options);
       };
-      const container = dom.window.document.getElementById("root")!;
+      const container = componentDom.window.document.getElementById("root")!;
       root = createRoot(container);
       flushSync(() => root!.render(<Fixture />));
       scrollToCalls.length = 0;
@@ -150,7 +153,8 @@ describe("useChatScroll (superset)", () => {
       });
       const contentObserver = observers.find((o) => o.target === content);
       assert(contentObserver, "content ResizeObserver attached");
-      const scroll = () => flushSync(() => viewport.dispatchEvent(new dom.window.Event("scroll")));
+      const scroll = () =>
+        flushSync(() => viewport.dispatchEvent(new componentDom.window.Event("scroll")));
 
       // Reader scrolls up past the threshold: pin released.
       layout.scrollHeight = 300;
