@@ -127,23 +127,39 @@ export function parseEsmShSpecifier(
 }
 
 /**
+ * Path segments CDNs use to introduce a package coordinate, as jsDelivr does in
+ * `https://cdn.jsdelivr.net/npm/chart.js`.
+ */
+const PACKAGE_COORDINATE_ROUTES: ReadonlySet<string> = new Set(["npm", "jsr"]);
+
+/**
  * Reports whether a remote mapping addresses a file rather than a package root.
  *
- * The last path segment decides. One carrying an extension is a file, so a
- * subpath cannot go below it. One carrying an `@` is a versioned package
- * coordinate rather than a filename, which is what keeps
- * `https://cdn.jsdelivr.net/npm/lodash@4.17.21` a package root despite its
- * dots. That distinction is why this is not simply "the segment contains a dot".
+ * The last path segment decides, but only after the package-coordinate shapes
+ * are recognised, because an npm name can look exactly like a filename:
  *
- * An extension list was tried first and kept needing new entries, one report at
- * a time, for TypeScript, then wasm and css, then svg. The shape of the name is
- * the durable signal, not the set of extensions anyone happened to hit.
+ * - A segment carrying an `@` is a versioned coordinate, which keeps
+ *   `https://cdn.jsdelivr.net/npm/lodash@4.17.21` a package root.
+ * - A segment directly after a package route is a package name, which keeps
+ *   `https://cdn.jsdelivr.net/npm/chart.js` one despite the `.js`. The scope is
+ *   allowed to sit between them.
+ * - Otherwise a segment carrying an extension is a file.
+ *
+ * An extension allowlist was tried first and kept needing entries one report at
+ * a time. The shape of the name is the durable signal, but only once the
+ * coordinate forms are taken out first, since `chart.js` and `pkg.js` are
+ * indistinguishable as bare names.
  */
 function addressesRemoteFile(mapping: string): boolean {
   const boundary = mapping.search(/[?#]/);
   const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
-  const lastSegment = path.slice(path.lastIndexOf("/") + 1);
+  const segments = path.split("/");
+  const lastSegment = segments.at(-1) ?? "";
   if (lastSegment.includes("@")) return false;
+
+  const parent = segments.at(-2) ?? "";
+  const routeSegment = parent.startsWith("@") ? segments.at(-3) ?? "" : parent;
+  if (PACKAGE_COORDINATE_ROUTES.has(routeSegment)) return false;
 
   return /\.[A-Za-z0-9]+$/.test(lastSegment);
 }

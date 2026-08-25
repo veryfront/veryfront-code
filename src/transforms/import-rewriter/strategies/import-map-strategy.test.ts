@@ -456,6 +456,38 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("appends a subpath to a dotted package root on an npm CDN", () => {
+      // `chart.js` after /npm/ is a package name, not a filename. A bare
+      // `pkg.js` on a plain host is still read as a file, which is the
+      // distinction the route segment supplies.
+      const map: ImportMapConfig = { imports: { pkg: "https://cdn.jsdelivr.net/npm/chart.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/auto", map),
+        "https://cdn.jsdelivr.net/npm/chart.js/auto",
+        "a package route marks what follows it as a coordinate",
+      );
+    });
+
+    it("appends a subpath to a scoped dotted package root on an npm CDN", () => {
+      const map: ImportMapConfig = {
+        imports: { pkg: "https://cdn.jsdelivr.net/npm/@scope/chart.js" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/auto", map),
+        "https://cdn.jsdelivr.net/npm/@scope/chart.js/auto",
+        "the scope may sit between the route and the package name",
+      );
+    });
+
+    it("keeps a dotted mapping that is not on a package route as a single module", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/pkg.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg.js",
+        "without a package route a dotted last segment is a file",
+      );
+    });
+
     it("keeps a remote asset mapping as a single module whatever its extension", () => {
       const map: ImportMapConfig = { imports: { icon: "https://cdn.example/icon.svg" } };
       assertEquals(
