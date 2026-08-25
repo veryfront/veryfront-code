@@ -694,6 +694,14 @@ describe("Salesforce service-account integration source", () => {
       TypeError,
       "policy predicates",
     );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' WITH DATA CATEGORY Confidential__c AT Internal__c ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
     assertEquals(transport.captures, []);
   });
 

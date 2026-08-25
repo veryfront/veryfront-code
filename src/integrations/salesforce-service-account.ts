@@ -754,6 +754,18 @@ function collectSoqlClauseFields(query: string): Set<string> {
       if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) fields.add(field.toLowerCase());
     }
   }
+  const dataCategoryClause = extractSoqlClause(
+    masked,
+    /\bwith\s+data\s+category\b/i,
+    /\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b/gi,
+  );
+  if (dataCategoryClause) {
+    const syntaxKeywords = new Set(["and", "at", "above", "below", "above_or_below"]);
+    for (const match of dataCategoryClause.matchAll(/[a-z][a-z0-9_]*/gi)) {
+      const identifier = match[0].toLowerCase();
+      if (!syntaxKeywords.has(identifier)) fields.add(identifier);
+    }
+  }
   return fields;
 }
 
