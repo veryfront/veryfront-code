@@ -1,5 +1,6 @@
 export type RegistryFailureClassification =
   | "missing-version"
+  | "wrong-name"
   | "wrong-version"
   | "provenance"
   | "timeout"
@@ -112,6 +113,13 @@ function validateMetadata(
   options: PollRegistryPackageOptions,
 ): void {
   const spec = `${options.packageName}@${options.version}`;
+  if (metadata.name !== options.packageName) {
+    throw new RegistryReleaseError(
+      "wrong-name",
+      `${spec} returned package name ${metadata.name ?? "<missing>"}.`,
+      registryErrorContext(options, "package name mismatch"),
+    );
+  }
   if (metadata.version !== options.version) {
     throw new RegistryReleaseError(
       "wrong-version",
@@ -323,6 +331,7 @@ export function formatRegistryReleaseFailure(error: unknown): string {
   if (error instanceof RegistryReleaseError) {
     switch (error.classification) {
       case "missing-version":
+      case "wrong-name":
       case "wrong-version":
       case "provenance":
       case "timeout":

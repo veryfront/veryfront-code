@@ -466,6 +466,56 @@ describe("npm package publishing", () => {
     });
   }
 
+  it("reports a sanitized npm lookup failure when an existing RC version gitHead cannot be read", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-auth-jwt" }),
+      );
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  printf "%s\\n" "npm error code E503" >&2',
+          '  printf "%s\\n" "npm error auth Bearer fixture-lookup-token" >&2',
+          '  printf "%s\\n" "npm error cache=/tmp/npm-private/git-head.log" >&2',
+          "  return 42",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.1069",
+        },
+      );
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(output.code, 42, stderr);
+      assertStringIncludes(
+        stderr,
+        "npm registry gitHead lookup failed for @veryfront/ext-auth-jwt@0.1.1069 (status 42)",
+      );
+      assertStringIncludes(stderr, "npm error code E503");
+      assertStringIncludes(stderr, "Bearer <REDACTED>");
+      assertStringIncludes(stderr, "cache=<path>");
+      assertEquals(stderr.includes("fixture-lookup-token"), false);
+      assertEquals(stderr.includes("/tmp/npm-private"), false);
+      assertEquals(
+        stderr.includes("gitHead does not match this commit"),
+        false,
+      );
+    });
+  });
+
   it("skips an RC package already published for the same commit", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;

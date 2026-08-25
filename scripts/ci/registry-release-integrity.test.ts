@@ -168,6 +168,56 @@ describe("registry release integrity polling", () => {
     assertStringIncludes(error.message, "returned version 0.1.1252");
   });
 
+  for (const returnedName of [undefined, "@veryfront/ext-wrong"]) {
+    const nameCase = returnedName === undefined ? "missing" : "mismatched";
+    it(`classifies a ${nameCase} registry package name distinctly`, async () => {
+      const error = await captureError(() =>
+        pollRegistryPackage({
+          packageName: PACKAGE_NAME,
+          version: VERSION,
+          expectedGitHead: GIT_HEAD,
+          maxAttempts: 1,
+          retryDelayMs: 0,
+          requestTimeoutMs: 100,
+          fetcher: () =>
+            Promise.resolve(
+              Response.json(publishedPackage({ name: returnedName })),
+            ),
+          delay: () => Promise.resolve(),
+        })
+      );
+
+      assertEquals(error.classification, "wrong-name");
+    });
+  }
+
+  it("does not include a registry-controlled package name in failure logs", async () => {
+    const injectedName = "@veryfront/ext-wrong\n::error::injected";
+    const error = await captureError(() =>
+      pollRegistryPackage({
+        packageName: PACKAGE_NAME,
+        version: VERSION,
+        expectedGitHead: GIT_HEAD,
+        maxAttempts: 1,
+        retryDelayMs: 0,
+        requestTimeoutMs: 100,
+        fetcher: () =>
+          Promise.resolve(
+            Response.json(publishedPackage({ name: injectedName })),
+          ),
+        delay: () => Promise.resolve(),
+      })
+    );
+
+    const output = formatRegistryReleaseFailure(error);
+    assertEquals(
+      output,
+      `REGISTRY RELEASE FAIL [wrong-name] for ${PACKAGE_NAME}@${VERSION}: package name mismatch.`,
+    );
+    assertEquals(output.includes(injectedName), false);
+    assertEquals(output.includes("::error::injected"), false);
+  });
+
   it("fails immediately when gitHead does not match the release commit", async () => {
     let attempts = 0;
     const error = await captureError(() =>

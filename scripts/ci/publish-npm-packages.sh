@@ -146,7 +146,18 @@ rc_publish_package_dir() {
   PUBLISH_SPEC="${2:-${PACKAGE_DIR}}"
   PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
   if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
-    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>/dev/null || true)"
+    set +e
+    PUBLISHED_GIT_HEAD="$(npm view "${PACKAGE_NAME}@${VERSION}" gitHead 2>&1)"
+    PUBLISHED_GIT_HEAD_STATUS=$?
+    set -e
+    if [ "${PUBLISHED_GIT_HEAD_STATUS}" -ne 0 ]; then
+      echo "::error::npm registry gitHead lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${PUBLISHED_GIT_HEAD_STATUS})." >&2
+      SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISHED_GIT_HEAD}")"
+      if [ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]; then
+        printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+      fi
+      return "${PUBLISHED_GIT_HEAD_STATUS}"
+    fi
     if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
       echo "::notice::${PACKAGE_NAME}@${VERSION} already published for this commit; skipping npm publish"
       return 0
