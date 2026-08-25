@@ -10,11 +10,12 @@ import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
-import { validateHTTPImports } from "./http-validator.ts";
+import { validateHTTPImports, validateModuleSpecifierHosts } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
+import { parseExtensionManifest } from "#veryfront/extensions/manifest-reader.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -59,6 +60,14 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+
+/**
+ * A specifier the HTTP plugin fetches rather than a path. URL schemes are
+ * case-insensitive, so every reading of an import-map target has to agree on
+ * that or a target such as `HTTPS://example.com/mod.js` is kept as remote in
+ * one place and resolved as a project path in another.
+ */
+const REMOTE_URL_SPECIFIER = /^https?:\/\//i;
 const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
@@ -175,14 +184,32 @@ async function loadModule(args: {
 
   if (modulePath.endsWith(".js")) {
     const bundler = selectedTypeScriptBundler();
-    if (!bundler) return loadJSModule(modulePath);
+    if (!bundler) {
+      return loadValidatedJSModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        undefined,
+        allowHostTypeScriptConfigReads,
+      );
+    }
     const decoratorOptions = await readProjectTypeScriptDecoratorOptions(
       projectDir,
       await createProjectSourceSnapshot(projectDir, adapter),
       allowHostTypeScriptConfigReads,
     );
     if (!bundlerForcesTypeScript(bundler, decoratorOptions)) {
-      return loadJSModule(modulePath);
+      return loadValidatedJSModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
     }
     return loadAndTranspileModule(
       modulePath,
@@ -229,6 +256,25 @@ async function loadModule(args: {
         allowHostTypeScriptConfigReads,
       );
     }
+
+    // Deno's direct module loader bypasses the HTTP bundler plugin and
+    // resolves the whole import graph itself, not just this file. Vet the
+    // statically walkable local graph before importing; a graph the walk
+    // cannot fully constrain must bundle instead, where the HTTP plugin
+    // enforces every remote fetch.
+    const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
+    if (!await canDirectImportModuleGraph({ modulePath, projectDir, fs, allowedHosts })) {
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
+    }
+
     try {
       return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
@@ -463,17 +509,512 @@ function loadJSModule(modulePath: string): Promise<APIRoute> {
   return import(`file://${modulePath}`);
 }
 
+/**
+ * A direct import hands the whole module graph to the runtime's own loader, so
+ * the entry file's allow-list check alone would leave local helpers and remote
+ * transitive imports unvalidated. Walk the statically visible local graph,
+ * validating every file's remote specifiers against the allow-list.
+ *
+ * Returns false when the graph contains anything the walk cannot soundly
+ * constrain — a remote import (even an allowed one, since only the bundler's
+ * HTTP plugin enforces what that module imports in turn), a specifier that
+ * resolves outside the project, or a file that cannot be read. Those loads
+ * must bundle instead. Throws when a walked file names a disallowed host.
+ */
+async function canDirectImportModuleGraph(args: {
+  modulePath: string;
+  projectDir: string;
+  fs: FileSystem;
+  allowedHosts: string[];
+}): Promise<boolean> {
+  const { projectDir, fs, allowedHosts } = args;
+  const projectRoot = pathHelper.resolve(projectDir);
+  const pending = [pathHelper.resolve(args.modulePath)];
+  const visited = new Set<string>();
+  const importMap = await readDenoImportMap(fs, projectRoot);
+  let canDirectImport = true;
+
+  while (pending.length > 0) {
+    const filePath = pending.pop() as string;
+    if (visited.has(filePath)) continue;
+    visited.add(filePath);
+
+    if (!isWithinDirectory(projectRoot, filePath)) return false;
+
+    // A `.json` module is data: the runtime parses it as JSON, so it can
+    // neither execute nor name an import. Scanning it as JavaScript would
+    // reject an ordinary value such as `{ "label": "Function" }`.
+    if (isJSONModulePath(filePath)) continue;
+
+    let source: string;
+    try {
+      source = await fs.readTextFile(filePath);
+    } catch {
+      return false;
+    }
+
+    // Reuse the parser-aware public validator so direct and bundled routes
+    // enforce the same remote-import, Worker, and generated-code contract.
+    const scan = await validateHTTPImports(source, allowedHosts);
+    const preservesLocalWorkerLocation = scan.parserBacked &&
+      scan.localWorkerSpecifiers.length > 0;
+    if (
+      scan.hasUnconstrainedDynamicImport ||
+      (scan.requiresBundling && !preservesLocalWorkerLocation)
+    ) {
+      canDirectImport = false;
+    }
+
+    // A worker's entry is executed by the worker's own loader, which neither
+    // this file's import list nor the HTTP plugin ever sees. Vet it as part of
+    // the graph; one whose base this scanner does not follow cannot be walked,
+    // so the route bundles instead.
+    for (const workerSpecifier of scan.localWorkerSpecifiers) {
+      if (!workerSpecifier.startsWith("./") && !workerSpecifier.startsWith("../")) return false;
+      pending.push(resolveContainedLocalModule(projectRoot, filePath, workerSpecifier));
+    }
+
+    const walkMappedTarget = (target: string): void => {
+      if (pathHelper.isAbsolute(target)) {
+        pending.push(modulePathOfSpecifier(target));
+        return;
+      }
+      if (canDirectImportSpecifier(target)) return;
+      validateModuleSpecifierHosts([target], allowedHosts);
+      canDirectImport = false;
+    };
+
+    for (const specifier of scan.specifiers) {
+      if (importMap !== null) {
+        const target = lookupImportMapEntry(importMap, specifier, filePath);
+        if (target !== null) {
+          walkMappedTarget(target);
+          continue;
+        }
+      }
+
+      if (specifier.startsWith("./") || specifier.startsWith("../")) {
+        pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
+        continue;
+      }
+      // Explicit installed-dependency schemes are safe to leave to the
+      // runtime; every other absolute or custom scheme bundles.
+      if (canDirectImportSpecifier(specifier)) continue;
+      if (!isBareModuleSpecifier(specifier)) return false;
+
+      // A bare specifier is whatever the project's own Deno import map makes
+      // of it, and the bundler never reads that map. Resolve it here so an
+      // alias for an installed package or a project file keeps loading
+      // directly, while one the map turns into a remote URL still bundles,
+      // where the HTTP plugin governs every fetch.
+      if (importMap === null) return false;
+      // Unmapped: the runtime can only resolve it to an installed package.
+      continue;
+    }
+  }
+
+  return canDirectImport;
+}
+
+function resolveContainedLocalModule(
+  projectRoot: string,
+  referrerFile: string,
+  specifier: string,
+): string {
+  let resolved: string;
+  try {
+    resolved = pathHelper.fromFileUrl(
+      new URL(modulePathOfSpecifier(specifier), pathHelper.toFileUrl(referrerFile)),
+    );
+  } catch {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] handler build failed: local module URL cannot be resolved: ${specifier}`,
+      }),
+    );
+  }
+
+  if (!isWithinDirectory(projectRoot, resolved)) {
+    throw toError(
+      createError({
+        type: "api",
+        message: `[API] handler build failed: local module URL escapes project: ${specifier}`,
+      }),
+    );
+  }
+  return resolved;
+}
+
+/**
+ * The filesystem path a module specifier names, without the `?query` or `#hash`
+ * a module URL may carry. Deno loads `./helper.ts?v=1` from `./helper.ts`, so
+ * the walk has to look for the file under that name and not the whole URL.
+ */
+function modulePathOfSpecifier(specifier: string): string {
+  const suffix = specifier.search(/[?#]/);
+  return suffix === -1 ? specifier : specifier.slice(0, suffix);
+}
+
+function moduleSuffixOfSpecifier(specifier: string): string {
+  return specifier.slice(modulePathOfSpecifier(specifier).length);
+}
+
+/** Whether the runtime loads this path as JSON data rather than as a module it executes. */
+function isJSONModulePath(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".json");
+}
+
+/** Whether the runtime resolves this specifier through an import map or an installed package. */
+export function isBareModuleSpecifier(specifier: string): boolean {
+  if (
+    specifier.startsWith("/") || specifier.startsWith("./") || specifier.startsWith("../")
+  ) {
+    return false;
+  }
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier);
+}
+
+/** Whether a non-relative specifier is independent of Deno import-map remapping. */
+export function canDirectImportSpecifier(specifier: string): boolean {
+  if (specifier.startsWith("./") || specifier.startsWith("../")) return true;
+  if (specifier.startsWith("/")) return false;
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(specifier)?.[1]?.toLowerCase();
+  return scheme !== undefined && ["npm", "jsr", "node"].includes(scheme);
+}
+
+/** A Deno import map with paths normalized against the file that declared it. */
+export interface DenoImportMap {
+  imports: Record<string, string>;
+  scopes: Record<string, Record<string, string>>;
+}
+
+/**
+ * The reading of a project's files the config parser needs. The host
+ * filesystem satisfies it, and so does a project snapshot, whose adapter is the
+ * only place an adapter-backed project's config exists.
+ */
+export interface ModuleTextReader {
+  readTextFile(path: string): Promise<string>;
+}
+
+const DENO_CONFIG_FILENAMES = ["deno.json", "deno.jsonc"] as const;
+
+/**
+ * The import map the runtime applies to a directly imported route, or null
+ * when the project has one this loader cannot vet.
+ *
+ * Deno resolves a route's bare specifiers through the project's own config,
+ * which the bundler never reads. A config's `importMap` field is followed to
+ * the file it names, and scope prefixes are preserved so both the graph walk
+ * and the bundler select mappings using the importing file. Null means
+ * "undecidable": a config
+ * this parser cannot read in full, whose every bare specifier then bundles. A
+ * project with no Deno config has no map: bare specifiers can only reach
+ * installed packages.
+ */
+export async function readDenoImportMap(
+  fs: ModuleTextReader,
+  projectDir: string,
+): Promise<DenoImportMap | null> {
+  for (const filename of DENO_CONFIG_FILENAMES) {
+    const config = await readJSONObject(fs, pathHelper.join(projectDir, filename));
+    if (config === "missing") continue;
+    if (config === null) return null;
+    // Deno merges inherited import maps before resolving a module. Until this
+    // loader models that merge, treating the child alone as complete could
+    // approve a direct load that Deno remaps to an unchecked remote module.
+    if (config.extends !== undefined) return null;
+
+    const declared = config.importMap === undefined
+      ? readImportMap(config, projectDir)
+      : await readSeparateImportMapFile(fs, projectDir, config.importMap);
+    if (declared === null) return null;
+    if (config.importMap === undefined || config.scopes === undefined) return declared;
+
+    const configScopes = readImportMapScopes(config.scopes, projectDir);
+    if (configScopes === null) return null;
+    return { imports: declared.imports, scopes: { ...declared.scopes, ...configScopes } };
+  }
+
+  return { imports: {}, scopes: {} };
+}
+
+/**
+ * The parsed object at `filePath`, `"missing"` when there is no such file, and
+ * null when it is present but not a plain JSON object this parser can read.
+ */
+async function readJSONObject(
+  fs: ModuleTextReader,
+  filePath: string,
+): Promise<Record<string, unknown> | null | "missing"> {
+  let text: string;
+  try {
+    text = await fs.readTextFile(filePath);
+  } catch {
+    return "missing";
+  }
+
+  let parsed: unknown;
+  try {
+    // Comments and trailing commas are legal in a Deno config, so the strict
+    // JSON reading would report a well-formed config as unreadable and send
+    // every alias it declares to a bundler that has never seen it. A config
+    // this parser still cannot read must not be mistaken for a project without
+    // one, and stays null.
+    parsed = parseExtensionManifest<unknown>(text, "jsonc", filePath);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * The mappings of a standalone import-map file a Deno config points at, or
+ * null when it names something this loader cannot read as one.
+ */
+async function readSeparateImportMapFile(
+  fs: ModuleTextReader,
+  projectDir: string,
+  importMapPath: unknown,
+): Promise<DenoImportMap | null> {
+  if (typeof importMapPath !== "string") return null;
+  // Deno resolves the path against the config file, which lives at the root.
+  const resolved = pathHelper.resolve(projectDir, importMapPath);
+  if (!isWithinDirectory(pathHelper.resolve(projectDir), resolved)) return null;
+
+  const map = await readJSONObject(fs, resolved);
+  if (map === "missing" || map === null) return null;
+
+  // A standalone map's relative targets and scope prefixes are resolved
+  // against the map file, not against the config that names it.
+  return readImportMap(map, pathHelper.dirname(resolved));
+}
+
+function readImportMap(map: Record<string, unknown>, baseDir: string): DenoImportMap | null {
+  const imports = readImportMapImports(map.imports, baseDir);
+  if (imports === null) return null;
+  const scopes = readImportMapScopes(map.scopes, baseDir);
+  return scopes === null ? null : { imports, scopes };
+}
+
+/** The declared mappings, or null when any entry is not a plain string pair. */
+function readImportMapImports(
+  imports: unknown,
+  baseDir: string,
+): Record<string, string> | null {
+  if (imports === undefined) return {};
+  if (typeof imports !== "object" || imports === null || Array.isArray(imports)) return null;
+
+  const mappings: Record<string, string> = {};
+  for (const [key, value] of Object.entries(imports)) {
+    if (typeof value !== "string") return null;
+    const normalizedKey = normalizeImportMapKey(key, baseDir);
+    const normalizedTarget = normalizeImportMapTarget(value, baseDir);
+    if (normalizedKey === null || normalizedTarget === null) return null;
+    defineRecordEntry(mappings, normalizedKey, normalizedTarget);
+  }
+  return mappings;
+}
+
+function readImportMapScopes(
+  scopes: unknown,
+  baseDir: string,
+): Record<string, Record<string, string>> | null {
+  if (scopes === undefined) return {};
+  if (typeof scopes !== "object" || scopes === null || Array.isArray(scopes)) return null;
+
+  const normalized: Record<string, Record<string, string>> = {};
+  for (const [prefix, imports] of Object.entries(scopes)) {
+    const scoped = readImportMapImports(imports, baseDir);
+    if (scoped === null) return null;
+    const normalizedPrefix = normalizeImportMapScope(prefix, baseDir);
+    if (normalizedPrefix === null) return null;
+    defineRecordEntry(normalized, normalizedPrefix, scoped);
+  }
+  return normalized;
+}
+
+function defineRecordEntry<T>(record: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(record, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function importMapBaseUrl(baseDir: string): URL {
+  const url = pathHelper.toFileUrl(pathHelper.resolve(baseDir));
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url;
+}
+
+function resolveImportMapRelativePath(value: string, baseDir: string): string {
+  return pathHelper.fromFileUrl(new URL(value, importMapBaseUrl(baseDir)));
+}
+
+function withTrailingPathSeparator(path: string): string {
+  return path.endsWith(pathHelper.sep) ? path : `${path}${pathHelper.sep}`;
+}
+
+function normalizeImportMapTarget(target: string, baseDir: string): string | null {
+  if (/^file:/i.test(target)) return normalizeFileUrlSpecifier(target);
+  if (!target.startsWith("./") && !target.startsWith("../")) return target;
+  const modulePath = modulePathOfSpecifier(target);
+  const resolved = resolveImportMapRelativePath(modulePath, baseDir) +
+    moduleSuffixOfSpecifier(target);
+  return target.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
+}
+
+function normalizeImportMapKey(key: string, baseDir: string): string | null {
+  if (/^file:/i.test(key)) return normalizeFileUrlSpecifier(key);
+  if (!key.startsWith("./") && !key.startsWith("../")) return key;
+  const modulePath = modulePathOfSpecifier(key);
+  const resolved = resolveImportMapRelativePath(modulePath, baseDir);
+  const normalizedPath = modulePath.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
+  return normalizedPath + moduleSuffixOfSpecifier(key);
+}
+
+function normalizeFileUrlSpecifier(specifier: string): string | null {
+  const moduleUrl = modulePathOfSpecifier(specifier);
+  try {
+    const url = new URL(moduleUrl);
+    const resolved = pathHelper.fromFileUrl(url);
+    const normalizedPath = url.pathname.endsWith("/")
+      ? withTrailingPathSeparator(resolved)
+      : resolved;
+    return normalizedPath + moduleSuffixOfSpecifier(specifier);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeImportMapScope(prefix: string, baseDir: string): string | null {
+  if (prefix.startsWith("./") || prefix.startsWith("../")) {
+    const resolved = resolveImportMapRelativePath(prefix, baseDir);
+    return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
+  }
+  if (!/^file:/i.test(prefix)) return prefix;
+
+  try {
+    const url = new URL(prefix);
+    const resolved = pathHelper.fromFileUrl(url);
+    return url.pathname.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The target the import map selects for `specifier`, or null when it leaves it
+ * alone. Matching scope prefixes are tried from longest to shortest; if none
+ * maps the specifier, lookup falls back to the top-level imports.
+ *
+ * An exact key wins over a trailing-slash prefix, and the longest prefix wins
+ * among prefixes, which is how the runtime picks between overlapping entries;
+ * a prefix key carries the remaining specifier onto each of its targets.
+ */
+export function lookupImportMapEntry(
+  importMap: DenoImportMap,
+  specifier: string,
+  referrer?: string,
+): string | null {
+  const normalizedSpecifier = normalizeImportMapLookupSpecifier(specifier, referrer);
+  if (referrer !== undefined) {
+    const matchingScopes = Object.entries(importMap.scopes)
+      .filter(([prefix]) => modulePathOfSpecifier(referrer).startsWith(prefix))
+      .sort(([left], [right]) => right.length - left.length);
+    for (const [, imports] of matchingScopes) {
+      const target = lookupSpecifierMapping(imports, normalizedSpecifier);
+      if (target !== null) return target;
+    }
+  }
+
+  return lookupSpecifierMapping(importMap.imports, normalizedSpecifier);
+}
+
+function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string): string {
+  if (
+    referrer === undefined ||
+    (!specifier.startsWith("./") && !specifier.startsWith("../"))
+  ) {
+    return specifier;
+  }
+  const modulePath = modulePathOfSpecifier(specifier);
+  const resolved = pathHelper.fromFileUrl(
+    new URL(modulePath, pathHelper.toFileUrl(modulePathOfSpecifier(referrer))),
+  );
+  return resolved + moduleSuffixOfSpecifier(specifier);
+}
+
+function lookupSpecifierMapping(
+  imports: Record<string, string>,
+  specifier: string,
+): string | null {
+  if (Object.prototype.hasOwnProperty.call(imports, specifier)) {
+    const exact = imports[specifier];
+    if (typeof exact === "string") return exact;
+  }
+
+  let longestPrefix = "";
+  for (const key of Object.keys(imports)) {
+    if (!key.endsWith("/") || !specifier.startsWith(key)) continue;
+    if (key.length > longestPrefix.length) longestPrefix = key;
+  }
+  if (longestPrefix === "") return null;
+
+  const target = imports[longestPrefix];
+  if (typeof target !== "string") return null;
+  const suffix = specifier.slice(longestPrefix.length);
+  return target + suffix;
+}
+
+/** Direct .js imports bypass the HTTP bundler plugin exactly like the direct Deno TypeScript path; vet the graph the same way and bundle when it cannot be constrained. */
+async function loadValidatedJSModule(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  fs: FileSystem,
+  config?: VeryfrontConfig,
+  decoratorOptions?: TypeScriptDecoratorOptions,
+  allowHostTypeScriptConfigReads = false,
+): Promise<APIRoute> {
+  const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
+  if (await canDirectImportModuleGraph({ modulePath, projectDir, fs, allowedHosts })) {
+    return loadJSModule(modulePath);
+  }
+  return loadAndTranspileModule(
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    decoratorOptions,
+    allowHostTypeScriptConfigReads,
+  );
+}
+
 function createImportMapPlugin(
   projectDir: string,
   sourceSnapshot: ProjectSourceSnapshot,
+  allowedHosts: string[],
+  denoImports: DenoImportMap,
   config?: VeryfrontConfig,
 ): Plugin {
-  const importMap = config?.resolve?.importMap?.imports ?? {};
-  const importMapEntries = Object.keys(importMap);
+  // A project's own veryfront config wins over its Deno config for the same
+  // specifier, matching how the rest of the build reads resolve options.
+  const configuredImports = config?.resolve?.importMap?.imports ?? {};
+  const importMapEntries = new Set([
+    ...Object.keys(denoImports.imports),
+    ...Object.values(denoImports.scopes).flatMap((scope) => Object.keys(scope)),
+    ...Object.keys(configuredImports),
+  ]);
 
-  if (importMapEntries.length === 0) return { name: "import-map", setup() {} };
+  if (importMapEntries.size === 0) return { name: "import-map", setup() {} };
 
-  logger.debug(`Using import map with ${importMapEntries.length} entries`);
+  logger.debug(`Using import map with ${importMapEntries.size} entries`);
 
   return {
     name: "import-map",
@@ -488,39 +1029,47 @@ function createImportMapPlugin(
           return { path: args.path, external: true };
         }
 
-        if (args.namespace === "import-map" && args.path.startsWith(".")) {
-          const importerDir = pathHelper.dirname(args.importer);
-          const absolutePath = pathHelper.resolve(importerDir, args.path);
+        if (pathHelper.isAbsolute(args.path) && args.namespace !== "import-map") return undefined;
+
+        const configuredPath = lookupSpecifierMapping(configuredImports, args.path);
+        const referrer = args.importer ||
+          (args.resolveDir ? `${args.resolveDir}${pathHelper.sep}` : undefined);
+        const resolvedPath = configuredPath ??
+          lookupImportMapEntry(denoImports, args.path, referrer);
+
+        if (!resolvedPath && args.namespace === "import-map" && args.path.startsWith(".")) {
+          const modulePath = modulePathOfSpecifier(args.path);
+          const absolutePath = resolveContainedLocalModule(projectDir, args.importer, modulePath);
 
           logger.debug(
             `[API] Import map relative resolve: ${args.path} (from ${args.importer}) -> ${absolutePath}`,
           );
 
-          return { path: absolutePath, namespace: "import-map" };
-        }
-
-        if (pathHelper.isAbsolute(args.path) && args.namespace !== "import-map") return undefined;
-
-        let resolvedPath = importMap[args.path];
-        if (!resolvedPath) {
-          for (const [key, value] of Object.entries(importMap)) {
-            if (key.endsWith("/") && args.path.startsWith(key)) {
-              resolvedPath = value + args.path.slice(key.length);
-              break;
-            }
-          }
+          return {
+            path: absolutePath,
+            namespace: "import-map",
+            suffix: moduleSuffixOfSpecifier(args.path),
+          };
         }
 
         if (!resolvedPath) return undefined;
 
-        if (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://")) {
-          logger.debug(`Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
-          return undefined;
+        if (/^(?:npm|jsr|node):/.test(resolvedPath)) {
+          return { path: resolvedPath, external: true };
         }
 
-        const absolutePath = pathHelper.isAbsolute(resolvedPath)
-          ? resolvedPath
-          : pathHelper.resolve(projectDir, resolvedPath);
+        if (REMOTE_URL_SPECIFIER.test(resolvedPath)) {
+          // Hand it to the HTTP plugin's namespace rather than to esbuild's
+          // default resolver, which cannot fetch a URL: that plugin is what
+          // enforces the remote allow-list on the module and its own imports.
+          logger.debug(`Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
+          return { path: resolvedPath, namespace: "http-url" };
+        }
+
+        const mappedModulePath = modulePathOfSpecifier(resolvedPath);
+        const absolutePath = pathHelper.isAbsolute(mappedModulePath)
+          ? mappedModulePath
+          : pathHelper.resolve(projectDir, mappedModulePath);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
           logger.error(
@@ -531,7 +1080,11 @@ function createImportMapPlugin(
 
         logger.debug(`Import map resolved: ${args.path} -> ${absolutePath}`);
 
-        return { path: absolutePath, namespace: "import-map" };
+        return {
+          path: absolutePath,
+          namespace: "import-map",
+          suffix: moduleSuffixOfSpecifier(resolvedPath),
+        };
       });
 
       build.onLoad(
@@ -540,6 +1093,7 @@ function createImportMapPlugin(
           sourceSnapshot,
           projectDir,
           errorLabel: "file via import map",
+          allowedHosts,
         }),
       );
     },
@@ -550,8 +1104,9 @@ function createNamespaceOnLoadHandler(options: {
   sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
   errorLabel: string;
+  allowedHosts: string[];
 }) {
-  const { sourceSnapshot, projectDir, errorLabel } = options;
+  const { sourceSnapshot, projectDir, errorLabel, allowedHosts } = options;
 
   return wrapWithCurrentContext(async (args: { path: string }) => {
     try {
@@ -561,6 +1116,10 @@ function createNamespaceOnLoadHandler(options: {
         FILE_EXTENSIONS,
         projectDir,
       );
+      // A `.json` module is data the bundler parses as JSON, so it can neither
+      // execute nor name an import. Scanning it as JavaScript would reject an
+      // ordinary value such as `{ "label": "Function" }`.
+      if (!isJSONModulePath(filePath)) await validateHTTPImports(contents, allowedHosts);
 
       return {
         contents,
@@ -579,6 +1138,7 @@ function createNamespaceOnLoadHandler(options: {
 function createProjectAliasPlugin(
   sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
+  allowedHosts: string[],
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
 
@@ -586,7 +1146,8 @@ function createProjectAliasPlugin(
     name: "vf-project-alias",
     setup(build) {
       build.onResolve({ filter: /^@\// }, (args) => {
-        const absolutePath = pathHelper.resolve(projectRoot, args.path.slice(2));
+        const aliasedPath = args.path.slice(2);
+        const absolutePath = pathHelper.resolve(projectRoot, modulePathOfSpecifier(aliasedPath));
         if (!isWithinDirectory(projectRoot, absolutePath)) {
           logger.error(
             `[API] Project alias escapes project: ${args.path} -> ${absolutePath}`,
@@ -594,7 +1155,11 @@ function createProjectAliasPlugin(
           return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
         }
 
-        return { path: absolutePath, namespace: "vf-project-alias" };
+        return {
+          path: absolutePath,
+          namespace: "vf-project-alias",
+          suffix: moduleSuffixOfSpecifier(aliasedPath),
+        };
       });
 
       build.onLoad(
@@ -603,6 +1168,7 @@ function createProjectAliasPlugin(
           sourceSnapshot,
           projectDir,
           errorLabel: "via project alias",
+          allowedHosts,
         }),
       );
     },
@@ -613,6 +1179,7 @@ function createProjectAliasPlugin(
 function createAdapterResolvePlugin(
   sourceSnapshot: ProjectSourceSnapshot,
   projectDir: string,
+  allowedHosts: string[],
 ): Plugin {
   return {
     name: "vf-adapter-resolve",
@@ -623,7 +1190,8 @@ function createAdapterResolvePlugin(
         const baseDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
         if (!baseDir) return undefined;
 
-        const absolutePath = pathHelper.resolve(baseDir, args.path);
+        const modulePath = modulePathOfSpecifier(args.path);
+        const absolutePath = pathHelper.resolve(baseDir, modulePath);
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
           logger.error(
@@ -639,7 +1207,11 @@ function createAdapterResolvePlugin(
             args.importer || "stdin"
           }) -> ${absolutePath}`,
         );
-        return { path: absolutePath, namespace: "vf-adapter" };
+        return {
+          path: absolutePath,
+          namespace: "vf-adapter",
+          suffix: moduleSuffixOfSpecifier(args.path),
+        };
       });
 
       // Wrap the onLoad callback with wrapWithCurrentContext to preserve the
@@ -653,6 +1225,7 @@ function createAdapterResolvePlugin(
           sourceSnapshot,
           projectDir,
           errorLabel: "via adapter",
+          allowedHosts,
         }),
       );
     },
@@ -684,6 +1257,7 @@ function projectBoundaryError(path: string): { errors: Array<{ text: string }> }
 
 function createProjectBoundaryPlugin(
   sourceSnapshot: ProjectSourceSnapshot,
+  allowedHosts: string[],
 ): Plugin {
   return {
     name: "vf-project-boundary",
@@ -691,6 +1265,10 @@ function createProjectBoundaryPlugin(
       build.onLoad({ filter: /.*/ }, async (args) => {
         try {
           const source = await sourceSnapshot.read(args.path);
+          // JSON is parsed as data, never executed; see the note above.
+          if (!isJSONModulePath(source.logicalPath)) {
+            await validateHTTPImports(source.contents, allowedHosts);
+          }
           return {
             contents: source.contents,
             loader: getLoaderForFile(source.logicalPath),
@@ -761,7 +1339,16 @@ function buildTranspiledModuleSource(
       const loader = getEsbuildLoader(resolvedPath);
 
       const allowedHosts = await loadSecurityConfig(projectDir, adapter, config);
-      validateHTTPImports(source, allowedHosts);
+      await validateHTTPImports(source, allowedHosts);
+
+      // Read through the project snapshot, so an adapter-backed project's own
+      // config is visible: the host filesystem cannot see one. An undecidable
+      // config contributes nothing: those specifiers resolve exactly as they
+      // did before the map was consulted.
+      const denoImports = await readDenoImportMap(sourceSnapshot, projectDir) ?? {
+        imports: {},
+        scopes: {},
+      };
 
       const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
       const typeScriptBundler = selectedTypeScriptBundler();
@@ -844,11 +1431,11 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
-          createImportMapPlugin(projectDir, sourceSnapshot, config),
-          createProjectAliasPlugin(sourceSnapshot, projectDir),
-          createAdapterResolvePlugin(sourceSnapshot, projectDir),
+          createImportMapPlugin(projectDir, sourceSnapshot, allowedHosts, denoImports, config),
+          createProjectAliasPlugin(sourceSnapshot, projectDir, allowedHosts),
+          createAdapterResolvePlugin(sourceSnapshot, projectDir, allowedHosts),
           createHTTPPlugin({ allowedHosts, projectDir }),
-          createProjectBoundaryPlugin(sourceSnapshot),
+          createProjectBoundaryPlugin(sourceSnapshot, allowedHosts),
         ],
         // Only the opt-in decorator transform needs a working directory: adding
         // it unconditionally would change how the default esbuild path reports

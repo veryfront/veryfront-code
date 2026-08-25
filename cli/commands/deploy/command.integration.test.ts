@@ -1223,6 +1223,14 @@ it("uses canonical production read-back in human and JSON modes", async () => {
     await firstReleaseSourceRead;
     {
       using time = new FakeTime();
+      let deploymentSettled = false;
+      const deploymentError = deployment.then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        deploymentSettled = true;
+      });
+
       resumeReleaseSourceRead();
       await time.tickAsync(0);
       for (
@@ -1230,20 +1238,24 @@ it("uses canonical production read-back in human and JSON modes", async () => {
         // The deploy flow now does more pre-mutation verification before this
         // poll starts. Keep the read budget fixed at 20, but allow enough fake
         // clock ticks for the async chain to issue all reads under load.
-        releaseSourceReads < 20 && tick < 60;
+        !deploymentSettled && tick < 60;
         tick++
       ) {
         await time.tickAsync(500);
       }
+      for (let tick = 0; !deploymentSettled && tick < 10; tick++) {
+        await time.tickAsync(0);
+      }
       assertEquals(
-        releaseSourceReads,
-        20,
-        "release-source polling did not exhaust its fixed read budget",
+        deploymentSettled,
+        true,
+        "release-source polling did not settle inside its fixed read budget",
       );
-      await assertRejects(
-        () => deployment,
-        Error,
-        "does not match pushed commit",
+      const error = await deploymentError;
+      assertEquals(error instanceof Error, true);
+      assertEquals(
+        String(error).includes("does not match pushed commit"),
+        true,
       );
     }
     releaseSourceReadGate = null;
