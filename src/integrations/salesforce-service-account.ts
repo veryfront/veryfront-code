@@ -156,6 +156,12 @@ function endpointTypeToJsonSchema(
   }
 }
 
+const CURATED_SOQL_RESTRICTIONS =
+  "Custom queries must keep the default query's selected fields and object, may only filter or " +
+  "sort by fields the default query already references, and must preserve the default query's " +
+  "WHERE predicates (additional conditions can only be AND-ed). Functions, subqueries, and " +
+  "side-effecting clauses are rejected.";
+
 function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
@@ -167,9 +173,13 @@ function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unkn
     ) {
       continue;
     }
+    const curatedSoql = key === "q" && definition.in === "query" &&
+      typeof definition.default === "string";
     properties[key] = {
       ...endpointTypeToJsonSchema(definition.type),
-      description: definition.description,
+      description: curatedSoql
+        ? `${definition.description} ${CURATED_SOQL_RESTRICTIONS}`
+        : definition.description,
       ...(definition.exposeDefault === true && definition.default !== undefined
         ? { default: definition.default }
         : {}),
@@ -548,6 +558,230 @@ function validateEndpointInputType(
   }
 }
 
+function maskSoqlStrings(query: string): string {
+  let masked = "";
+  let inString = false;
+  for (let index = 0; index < query.length; index++) {
+    const character = query[index]!;
+    if (character === "\\" && inString && index + 1 < query.length) {
+      masked += "  ";
+      index++;
+      continue;
+    }
+    if (character === "'" && inString && query[index + 1] === "'") {
+      masked += "  ";
+      index++;
+      continue;
+    }
+    if (character === "'") {
+      inString = !inString;
+      masked += " ";
+      continue;
+    }
+    masked += inString ? " " : character;
+  }
+  if (inString) throw new TypeError("Salesforce SOQL query contains an unterminated string");
+  return masked;
+}
+
+function collapseSoqlWhitespace(value: string): string {
+  let result = "";
+  let pendingSpace = false;
+  for (const character of value.trim()) {
+    if (/\s/.test(character)) {
+      pendingSpace = result.length > 0;
+      continue;
+    }
+    if (pendingSpace) result += " ";
+    result += character;
+    pendingSpace = false;
+  }
+  return result;
+}
+
+function removeSoqlWhitespace(value: string): string {
+  let result = "";
+  for (const character of value) {
+    if (!/\s/.test(character)) result += character;
+  }
+  return result;
+}
+
+function countSoqlCommas(value: string): number {
+  let count = 0;
+  for (const character of value) {
+    if (character === ",") count++;
+  }
+  return count;
+}
+
+function normalizeSoqlProjection(value: string): string[] {
+  return value.split(",").map((field) => collapseSoqlWhitespace(field).toLowerCase()).sort((a, b) =>
+    a.localeCompare(b)
+  );
+}
+
+function normalizeSoqlClause(value: string): string {
+  return collapseSoqlWhitespace(value)
+    .replace(/ ?(!=|<=|>=|<|>|=) ?/g, "$1")
+    .toLowerCase();
+}
+
+/**
+ * Locate a clause by keyword token boundaries (so `)ORDER BY` is recognized as
+ * readily as ` ORDER BY `) and return the text between the start keyword and
+ * the next terminating keyword.
+ */
+function extractSoqlClause(
+  query: string,
+  startPattern: RegExp,
+  endPattern: RegExp,
+): string | undefined {
+  const start = startPattern.exec(query);
+  if (!start) return undefined;
+  const contentStart = start.index + start[0].length;
+  endPattern.lastIndex = contentStart;
+  const end = endPattern.exec(query);
+  return query.slice(contentStart, end ? end.index : query.length);
+}
+
+const SOQL_WHERE_START_PATTERN = /\bwhere\b/i;
+const SOQL_WHERE_END_PATTERN =
+  /\b(?:order\s+by|group\s+by|with\s+data\s+category|limit|offset)\b/gi;
+
+/**
+ * Extract the raw WHERE clause from a SOQL query. Clause boundaries are
+ * located in the string-masked query (masking is length-preserving), so
+ * keyword matching tolerates any whitespace and quoted literals can never
+ * open or close the clause; the clause text is then sliced from the original
+ * query at those offsets so string values are preserved.
+ */
+function extractSoqlWhereClause(query: string): string | undefined {
+  const masked = maskSoqlStrings(query);
+  const start = SOQL_WHERE_START_PATTERN.exec(masked);
+  if (!start) return undefined;
+  const contentStart = start.index + start[0].length;
+  SOQL_WHERE_END_PATTERN.lastIndex = contentStart;
+  const end = SOQL_WHERE_END_PATTERN.exec(masked);
+  return query.slice(contentStart, end ? end.index : query.length);
+}
+
+function collectSoqlClauseFields(query: string): Set<string> {
+  const fields = new Set<string>();
+  const masked = collapseSoqlWhitespace(maskSoqlStrings(query));
+  for (const match of masked.matchAll(/[a-z][a-z0-9_.]*/gi)) {
+    let operatorStart = match.index + match[0].length;
+    while (operatorStart < masked.length && masked[operatorStart] === " ") operatorStart++;
+    const remainder = masked.slice(operatorStart, operatorStart + 10).toLowerCase();
+    if (
+      remainder.startsWith("=") || remainder.startsWith("!=") ||
+      remainder.startsWith("<") || remainder.startsWith(">") ||
+      /^(?:like|not in|in|includes|excludes)(?:$|[ (])/.test(remainder)
+    ) fields.add(match[0].toLowerCase());
+  }
+  for (const startPattern of [/\border\s+by\b/i, /\bgroup\s+by\b/i]) {
+    const clause = extractSoqlClause(
+      masked,
+      startPattern,
+      /\b(?:order\s+by|group\s+by|limit|offset|having|with)\b/gi,
+    );
+    if (!clause) continue;
+    for (const entry of clause.split(",")) {
+      const field = collapseSoqlWhitespace(entry).split(" ")[0];
+      if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) fields.add(field.toLowerCase());
+    }
+  }
+  return fields;
+}
+
+function parseSoqlShape(query: string): { projection: string; object: string } | undefined {
+  const trimmed = query.trim();
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith("select ")) return undefined;
+  const fromIndex = lower.indexOf(" from ", "select ".length);
+  if (fromIndex === -1) return undefined;
+  const projection = trimmed.slice("select ".length, fromIndex);
+  const object = /^[a-z][a-z0-9_]*/i.exec(trimmed.slice(fromIndex + " from ".length))?.[0];
+  return projection && object ? { projection, object } : undefined;
+}
+
+function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unknown>): void {
+  if (getToolId(tool) === "salesforce__run_soql_query") return;
+  const queryDefinition = tool.endpoint?.params?.q;
+  if (
+    queryDefinition?.in !== "query" ||
+    typeof queryDefinition.default !== "string" ||
+    typeof args.q !== "string" ||
+    args.q.trim() === ""
+  ) {
+    return;
+  }
+
+  const expected = collapseSoqlWhitespace(maskSoqlStrings(queryDefinition.default));
+  const supplied = collapseSoqlWhitespace(maskSoqlStrings(args.q));
+  if (/\/\*|\*\/|--/.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow comments");
+  }
+  if (/\bfor\s+(?:view|reference|update)\b/i.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow side-effecting clauses");
+  }
+  if (/\bupdate\s+(?:tracking|viewstat)\b/i.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow side-effecting clauses");
+  }
+  for (const match of supplied.matchAll(/[a-z][a-z0-9_]*\s*\(/gi)) {
+    const token = match[0].replace("(", "").trim().toLowerCase();
+    if (!["where", "and", "or", "not", "in", "includes", "excludes"].includes(token)) {
+      throw new TypeError("Salesforce curated tool SOQL does not allow predicate functions");
+    }
+  }
+  const expectedMatch = parseSoqlShape(expected);
+  const suppliedMatch = parseSoqlShape(supplied);
+  const suppliedKeywords = supplied.match(/\b(?:select|from)\b/gi) ?? [];
+  if (
+    !expectedMatch ||
+    !suppliedMatch ||
+    suppliedKeywords.length !== 2 ||
+    // Compare comma counts first so an attacker-sized projection is rejected
+    // without materializing and sorting an unbounded field array.
+    countSoqlCommas(suppliedMatch.projection) !== countSoqlCommas(expectedMatch.projection) ||
+    normalizeSoqlProjection(suppliedMatch.projection).join(",") !==
+      normalizeSoqlProjection(expectedMatch.projection).join(",") ||
+    suppliedMatch.object.toLowerCase() !== expectedMatch.object.toLowerCase()
+  ) {
+    throw new TypeError(
+      "Salesforce curated tool SOQL must preserve its selected fields and object",
+    );
+  }
+
+  const allowedFields = new Set(
+    normalizeSoqlProjection(expectedMatch.projection).map(removeSoqlWhitespace),
+  );
+  for (const field of collectSoqlClauseFields(queryDefinition.default)) allowedFields.add(field);
+  for (const field of collectSoqlClauseFields(args.q)) {
+    if (!allowedFields.has(field)) {
+      throw new TypeError(
+        "Salesforce curated tool SOQL may only filter or sort by authorized root-object fields",
+      );
+    }
+  }
+
+  const expectedWhere = extractSoqlWhereClause(queryDefinition.default);
+  if (expectedWhere) {
+    const suppliedWhere = extractSoqlWhereClause(args.q);
+    const suppliedMaskedWhere = extractSoqlWhereClause(supplied);
+    const requiredPredicate = normalizeSoqlClause(expectedWhere);
+    const actualPredicate = suppliedWhere ? normalizeSoqlClause(suppliedWhere) : "";
+    const suffix = actualPredicate.slice(requiredPredicate.length).trimStart();
+    if (
+      !actualPredicate.startsWith(requiredPredicate) ||
+      (suffix !== "" && !suffix.startsWith("and ")) ||
+      !suppliedMaskedWhere || /\bor\b/i.test(suppliedMaskedWhere)
+    ) {
+      throw new TypeError("Salesforce curated tool SOQL must preserve its policy predicates");
+    }
+  }
+}
+
 function buildSalesforceRequest(
   endpoint: SalesforceEndpoint,
   args: Record<string, unknown>,
@@ -735,6 +969,7 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
       }
       const args = snapshotArguments(rawArgs);
       validateEndpointInputs(tool.endpoint, args);
+      validateCuratedSoql(tool, args);
       const credentialResolution = resolveCredentials();
       if (credentialResolution.status !== "ok") return credentialResolution.result;
 
