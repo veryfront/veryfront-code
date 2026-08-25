@@ -61,6 +61,17 @@ describe("npm compatibility artifact", () => {
     assertEquals(publicMessage.includes(npmStderr), false);
     assertEquals(publicMessage.includes("token=attacker-controlled"), false);
     assertEquals(publicMessage.includes("::error::injected"), false);
+
+    const unsafePackageName = "@veryfront/ext-alpha\n::error::package-injected";
+    const unsafePackageError = new NpmCompatibilityArtifactError(
+      "pack",
+      `npm pack failed for ${unsafePackageName}`,
+      { packageName: unsafePackageName },
+    );
+    assertEquals(
+      formatNpmCompatibilityArtifactCliError(unsafePackageError, "pack"),
+      "npm compatibility artifact pack failed.",
+    );
   });
 
   it("packs into a destination relative to the caller working directory", async () => {
