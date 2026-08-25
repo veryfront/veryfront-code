@@ -149,7 +149,7 @@ describe("repository hardening", () => {
     const publishInvocations = flattenedPublishScript.match(/npm publish "[^\n]*/g) ?? [];
     assertEquals(publishInvocations.length, 1);
     assert(
-      publishInvocations[0].includes('npm publish "${PUBLISH_SPEC}" "$@"'),
+      publishInvocations[0]?.includes('npm publish "${PUBLISH_SPEC}" "$@"'),
     );
 
     const retryCallSites = flattenedPublishScript.match(
