@@ -6,17 +6,22 @@
  * @module extensions/ext-document-kreuzberg/test
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertExists, assertRejects, assertStringIncludes } from "@std/assert";
+import { toFileUrl } from "@std/path";
 import { describe, it } from "@std/testing/bdd";
 import JSZip from "jszip";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import factory, {
   EXTRACTION_TIMEOUT_MS,
+  extractWithNativeProcessDeno,
   KreuzbergDocumentExtractor,
   type KreuzbergDocumentExtractorDeps,
+  type NativeExtractionMode,
 } from "./index.ts";
 import { extractionConfigForMimeType } from "./extraction-config.ts";
+import { loadKreuzbergNative } from "./kreuzberg.ts";
 
 function silentLogger(): ExtensionLogger {
   return {
@@ -287,6 +292,41 @@ async function extractPptxWithProgressWorker(buffer: ArrayBuffer): Promise<{
   }
 }
 
+async function buildTwoPagePdfWithText(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  for (const text of ["First page marker", "Second page marker"]) {
+    const page = pdf.addPage([612, 792]);
+    page.drawText(text, { x: 40, y: 700, size: 18, font });
+  }
+  const bytes = await pdf.save({ useObjectStreams: false });
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function writeFixtureProcessScript(source: string): Promise<{
+  scriptUrl: URL;
+  cleanup: () => Promise<void>;
+}> {
+  const dir = await Deno.makeTempDir({ prefix: "kreuzberg-process-fixture-" });
+  const path = `${dir}/fixture-process.ts`;
+  await Deno.writeTextFile(path, source);
+  return {
+    scriptUrl: toFileUrl(path),
+    cleanup: async () => {
+      await Deno.remove(dir, { recursive: true });
+    },
+  };
+}
+
+const nativeKreuzbergAvailable = await (async () => {
+  try {
+    await loadKreuzbergNative();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 describe("ext-document-kreuzberg extension", () => {
   it("declares the expected name and contract", () => {
     const ext = factory();
@@ -325,16 +365,14 @@ describe("ext-document-kreuzberg extension", () => {
     });
   });
 
-  it("uses native extraction for PDFs in Deno before falling back to the WASM worker", async () => {
-    const calls: Array<{ bytes: string; mimeType: string; config: unknown }> = [];
+  it("isolates non-progress native PDF extraction in a whole-file subprocess parse", async () => {
+    const calls: Array<{ bytes: string; mimeType: string; mode: NativeExtractionMode }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
-      loadNativeKreuzberg: async () => ({
-        extractBytes: async (data, mimeType, config) => {
-          calls.push({ bytes: new TextDecoder().decode(data), mimeType, config });
-          return { content: "native pdf text" };
-        },
-      }),
+      extractWithNativeProcessDeno: async (buffer, mimeType, _options, mode) => {
+        calls.push({ bytes: new TextDecoder().decode(buffer), mimeType, mode });
+        return "native pdf text";
+      },
       extractInWorkerDeno: async () => {
         throw new Error("worker should not be used for PDFs when native extraction is available");
       },
@@ -348,31 +386,20 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(calls, [{
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
-      config: {
-        images: { extractImages: false },
-        pdfOptions: {
-          extractImages: false,
-          extractMetadata: false,
-          extractAnnotations: false,
-          hierarchy: { enabled: false, includeBbox: false },
-        },
-      },
+      mode: "whole-file",
     }]);
   });
 
   it("uses progress-capable native extraction for PDFs in Deno when progress is requested", async () => {
     const progressEvents: DocumentExtractionProgressEvent[] = [];
-    const calls: Array<{ bytes: string; mimeType: string }> = [];
+    const calls: Array<{ bytes: string; mimeType: string; mode: NativeExtractionMode }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
-      extractWithNativeProgressDeno: async (buffer, mimeType, options) => {
-        calls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
+      extractWithNativeProcessDeno: async (buffer, mimeType, options, mode) => {
+        calls.push({ bytes: new TextDecoder().decode(buffer), mimeType, mode });
         options.onProgress?.({ unit: "page", current: 1, total: 1, characters: 15 });
         return "progress pdf text";
       },
-      loadNativeKreuzberg: async () => ({
-        extractBytes: async () => ({ content: "opaque pdf text" }),
-      }),
       extractInWorkerDeno: async () => {
         throw new Error("worker should not be used for progress-capable PDFs");
       },
@@ -387,7 +414,11 @@ describe("ext-document-kreuzberg extension", () => {
     });
 
     assertEquals(content, "progress pdf text");
-    assertEquals(calls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
+    assertEquals(calls, [{
+      bytes: "%PDF-1.4\n",
+      mimeType: "application/pdf",
+      mode: "progress",
+    }]);
     assertEquals(progressEvents, [{ unit: "page", current: 1, total: 1, characters: 15 }]);
   });
 
@@ -395,7 +426,8 @@ describe("ext-document-kreuzberg extension", () => {
     const progressEvents: DocumentExtractionProgressEvent[] = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
-      extractWithNativeProgressDeno: async (_buffer, _mimeType, options) => {
+      extractWithNativeProcessDeno: async (_buffer, _mimeType, options, mode) => {
+        assertEquals(mode, "progress");
         options.onProgress?.({ unit: "slide", current: 1, total: 2, characters: 20 });
         options.onProgress?.({ unit: "slide", current: 2, total: 2, characters: 25 });
         return "progress pptx text";
@@ -422,8 +454,8 @@ describe("ext-document-kreuzberg extension", () => {
     ]);
   });
 
-  it("falls back to the previous PDF extraction path when progress extraction fails", async () => {
-    const nativeCalls: Array<{ bytes: string; mimeType: string; config: unknown }> = [];
+  it("falls back to the isolated WASM worker when native PDF extraction fails", async () => {
+    const workerCalls: Array<{ bytes: string; mimeType: string }> = [];
     const warnings: Array<{ message: string; details: unknown[] }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
@@ -432,17 +464,12 @@ describe("ext-document-kreuzberg extension", () => {
           warnings.push({ message, details });
         },
       },
-      extractWithNativeProgressDeno: async () => {
+      extractWithNativeProcessDeno: async () => {
         throw new Error("page split failed");
       },
-      loadNativeKreuzberg: async () => ({
-        extractBytes: async (data, mimeType, config) => {
-          nativeCalls.push({ bytes: new TextDecoder().decode(data), mimeType, config });
-          return { content: "native fallback pdf text" };
-        },
-      }),
-      extractInWorkerDeno: async () => {
-        throw new Error("worker should not be used when native fallback is available");
+      extractInWorkerDeno: async (buffer, mimeType) => {
+        workerCalls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
+        return "worker fallback pdf text";
       },
     };
     const extractor = new KreuzbergDocumentExtractor(deps);
@@ -452,23 +479,14 @@ describe("ext-document-kreuzberg extension", () => {
       onProgress: () => {},
     });
 
-    assertEquals(content, "native fallback pdf text");
-    assertEquals(nativeCalls, [{
+    assertEquals(content, "worker fallback pdf text");
+    assertEquals(workerCalls, [{
       bytes: "%PDF-1.4\n",
       mimeType: "application/pdf",
-      config: {
-        images: { extractImages: false },
-        pdfOptions: {
-          extractImages: false,
-          extractMetadata: false,
-          extractAnnotations: false,
-          hierarchy: { enabled: false, includeBbox: false },
-        },
-      },
     }]);
     assertEquals(warnings, [{
       message:
-        "[ext-document-kreuzberg] native progress extraction failed; falling back to opaque extraction",
+        "[ext-document-kreuzberg] native process extraction failed; falling back to isolated worker extraction",
       details: [{
         mimeType: "application/pdf",
         error: "page split failed",
@@ -569,10 +587,8 @@ describe("ext-document-kreuzberg extension", () => {
     const workerCalls: Array<{ bytes: string; mimeType: string }> = [];
     const deps: KreuzbergDocumentExtractorDeps = {
       isDenoRuntime: true,
-      loadNativeKreuzberg: async () => {
-        throw new Error("Cannot find native binding", {
-          cause: new Error("Cannot find module '@kreuzberg/node-linux-x64'"),
-        });
+      extractWithNativeProcessDeno: async () => {
+        throw new Error("Cannot find native binding");
       },
       extractInWorkerDeno: async (buffer, mimeType) => {
         workerCalls.push({ bytes: new TextDecoder().decode(buffer), mimeType });
@@ -587,4 +603,137 @@ describe("ext-document-kreuzberg extension", () => {
     assertEquals(content, "worker pdf text");
     assertEquals(workerCalls, [{ bytes: "%PDF-1.4\n", mimeType: "application/pdf" }]);
   });
+
+  it("extracts PPTX slide progress through the real native extraction subprocess", async () => {
+    const buffer = await buildPptxWithPresentationOrder();
+    const events: DocumentExtractionProgressEvent[] = [];
+
+    const content = await extractWithNativeProcessDeno(
+      buffer,
+      PPTX_MIME_TYPE,
+      {
+        onProgress: (event) => {
+          events.push(event);
+        },
+      },
+      "progress",
+    );
+
+    assertStringIncludes(content, "Presentation first");
+    assertStringIncludes(content, "Filename first");
+    assertEquals(
+      events.map((event) => ({ unit: event.unit, current: event.current, total: event.total })),
+      [
+        { unit: "slide", current: 1, total: 2 },
+        { unit: "slide", current: 2, total: 2 },
+      ],
+    );
+  });
+
+  it("surfaces subprocess parse failures as errors without crashing the host", async () => {
+    const buffer = new TextEncoder().encode("not a pdf at all").buffer.slice(0) as ArrayBuffer;
+
+    await assertRejects(
+      () => extractWithNativeProcessDeno(buffer, "application/pdf", {}, "progress"),
+      Error,
+    );
+  });
+
+  it("contains a native parser crash inside the extraction subprocess", async () => {
+    // The fixture consumes the request like the real extraction process, then
+    // dies from a genuine SIGABRT the way a native parser abort would. The
+    // parent must survive and turn the crash into a structured error.
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      const { default: process } = await import("node:process");
+      process.abort();
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      const error = await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(buffer, "application/pdf", {}, "whole-file", {
+            scriptUrl: fixture.scriptUrl,
+          }),
+        Error,
+        "Native extraction process exited without a result",
+      );
+      assertStringIncludes(error.message, "SIGABRT");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("kills a hung extraction subprocess at the hard timeout", async () => {
+    const fixture = await writeFixtureProcessScript(`
+      for await (const _chunk of Deno.stdin.readable) { /* consume request */ }
+      setInterval(() => {}, 1_000);
+      await new Promise(() => {});
+    `);
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(
+            buffer,
+            "application/pdf",
+            { hardTimeoutMs: 2_000 },
+            "whole-file",
+            { scriptUrl: fixture.scriptUrl },
+          ),
+        Error,
+        "Text extraction exceeded the hard timeout after 2s",
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  (nativeKreuzbergAvailable ? it : it.ignore)(
+    "extracts a PDF whole-file through the real extraction subprocess",
+    async () => {
+      const buffer = await buildTwoPagePdfWithText();
+
+      const content = await extractWithNativeProcessDeno(
+        buffer,
+        "application/pdf",
+        {},
+        "whole-file",
+      );
+
+      assertStringIncludes(content, "First page marker");
+      assertStringIncludes(content, "Second page marker");
+    },
+  );
+
+  (nativeKreuzbergAvailable ? it : it.ignore)(
+    "streams per-page progress from the real extraction subprocess",
+    async () => {
+      const buffer = await buildTwoPagePdfWithText();
+      const events: DocumentExtractionProgressEvent[] = [];
+
+      const content = await extractWithNativeProcessDeno(
+        buffer,
+        "application/pdf",
+        {
+          onProgress: (event) => {
+            events.push(event);
+          },
+        },
+        "progress",
+      );
+
+      assertStringIncludes(content, "First page marker");
+      assertStringIncludes(content, "Second page marker");
+      assertEquals(
+        events.map((event) => ({ unit: event.unit, current: event.current, total: event.total })),
+        [
+          { unit: "page", current: 1, total: 2 },
+          { unit: "page", current: 2, total: 2 },
+        ],
+      );
+    },
+  );
 });

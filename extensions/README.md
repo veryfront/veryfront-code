@@ -353,7 +353,7 @@ check for drift and to enforce the sensitive capability policies below.
 | `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`                 | Connects to external cache infrastructure    |
 | `ext-redis`                       | `net:outbound`, `env:read` for Redis connection settings | Connects distributed runtime infrastructure  |
 | `ext-db-sqlite`                   | `fs:read`, `fs:write`                                    | Opens native SQLite databases                |
-| `ext-document-kreuzberg`          | `fs:read`                                                | Parses uploaded or user-provided documents   |
+| `ext-document-kreuzberg`          | `fs:read`, `process:spawn` for `deno`                    | Parses untrusted documents in a subprocess   |
 | `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                  | Exports telemetry and reads collector config |
 | `ext-observability-sentry`        | `net:outbound`                                           | Sends scrubbed application errors to Sentry  |
 | `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`   | Exports eval reports to an external endpoint |
