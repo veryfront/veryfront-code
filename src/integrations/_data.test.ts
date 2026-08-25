@@ -1372,6 +1372,18 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("keeps QuickBooks OAuth requests on the Intuit API origin", () => {
+    const quickbooks = getConnector("quickbooks");
+
+    for (const tool of quickbooks.tools) {
+      const endpoint = tool.endpoint;
+      if (!endpoint) continue;
+
+      assertEquals(new URL(endpoint.url).origin, "https://quickbooks.api.intuit.com");
+      assertEquals(endpoint.params?.host, undefined);
+    }
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);
