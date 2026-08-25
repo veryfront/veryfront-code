@@ -72,13 +72,17 @@ describe("registry release workflow", () => {
       assert(
         jobSteps.some((step) =>
           step.name ===
-            (jobName === "prerelease" ? "Publish tested RC npm artifact" : "Build and publish")
+            (jobName === "prerelease"
+              ? "Publish tested RC npm artifact"
+              : "Publish tested stable npm artifact")
         ),
         `${jobName} must publish npm packages`,
       );
       const publishStep = namedStep(
         job,
-        jobName === "prerelease" ? "Publish tested RC npm artifact" : "Build and publish",
+        jobName === "prerelease"
+          ? "Publish tested RC npm artifact"
+          : "Publish tested stable npm artifact",
       );
       assertEquals(
         asRecord(publishStep.env, `${jobName} publish environment`).VERSION,

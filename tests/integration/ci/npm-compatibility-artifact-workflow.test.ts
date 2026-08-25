@@ -171,6 +171,40 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
+  it("publishes the tested artifact for both prerelease and stable releases", async () => {
+    const jobs = await readJobs();
+    for (const jobName of ["prerelease", "release"] as const) {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      assert(
+        Array.isArray(job.needs) && job.needs.includes("npm-compatibility-artifact"),
+        `${jobName} must depend on the canonical npm artifact`,
+      );
+      const download = jobSteps(job, `${jobName} job`).find((step) =>
+        String(step.uses).startsWith("actions/download-artifact@") &&
+        asRecord(step.with, `${jobName} artifact download`).name ===
+          "npm-compatibility-${{ github.sha }}"
+      );
+      assert(download, `${jobName} must download the tested npm artifact`);
+      const publish = namedStep(
+        job,
+        jobName === "prerelease"
+          ? "Publish tested RC npm artifact"
+          : "Publish tested stable npm artifact",
+      );
+      assertStringIncludes(
+        String(publish.run),
+        "npm-compatibility-artifact.ts materialize dist/npm-compatibility npm",
+      );
+      assertEquals(
+        jobSteps(job, `${jobName} job`).filter((step) =>
+          String(step.run).includes("deno task build:npm")
+        ).length,
+        0,
+        `${jobName} must not rebuild the tested npm artifact`,
+      );
+    }
+  });
+
   it("publishes a stable aggregate that fails for every non-success result", async () => {
     const jobs = await readJobs();
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
