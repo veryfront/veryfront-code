@@ -75,7 +75,12 @@ async function validateRemoteModuleSource(
   readonly contents: string;
   readonly loader: "js";
 }> {
-  await validateHTTPImports(contents, allowedHosts);
+  const scan = await validateHTTPImports(contents, allowedHosts);
+  if (scan.localWorkerSpecifiers.length > 0) {
+    throw new TypeError(
+      "[API] handler build failed: a fetched remote module cannot start a local Worker whose graph is outside remote source validation.",
+    );
+  }
   return { contents, loader: "js" };
 }
 

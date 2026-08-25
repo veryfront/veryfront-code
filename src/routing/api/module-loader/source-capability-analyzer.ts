@@ -459,8 +459,10 @@ function protoAssignmentMutationTarget(node: ASTNode): ASTNode | undefined {
   const left = node.left;
   if (
     (left.type !== "MemberExpression" && left.type !== "OptionalMemberExpression") ||
-    memberPropertyName(left) !== "__proto__" || !isNode(left.object)
+    !isNode(left.object)
   ) return undefined;
+  const property = memberPropertyName(left);
+  if (property !== "__proto__" && !(left.computed === true && property === null)) return undefined;
   return left.object;
 }
 
@@ -885,7 +887,10 @@ function identifierResolvesToGlobalObject(
 function isValueOfCall(
   node: ASTNode,
 ): node is ASTNode & { callee: ASTNode & { object: ASTNode } } {
-  if (node.type !== "CallExpression" || !isNode(node.callee)) return false;
+  if (
+    (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") ||
+    !isNode(node.callee)
+  ) return false;
   const callee = node.callee;
   return isMemberExpressionWithObject(callee) && memberPropertyName(callee) === "valueOf";
 }

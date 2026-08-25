@@ -515,6 +515,17 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const g = globalThis?.valueOf();` +
+              ` new g.Worker("https://blocked.example/worker.js", { type: "module" });`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "optional valueOf returns the same capability-bearing global object",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const R = Reflect; const name = ["e", "v", "a", "l"].join("");` +
               ` const run = R.get(globalThis, name); run(payload);`,
             [],
@@ -625,6 +636,18 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "Object.assign can copy an own __proto__ property through the inherited setter",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const holder = {}; const key = ["__", "proto__"].join("");` +
+              ` holder[key] = () => {}; const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an unresolved assignment key may invoke the inherited __proto__ setter",
       );
     });
 

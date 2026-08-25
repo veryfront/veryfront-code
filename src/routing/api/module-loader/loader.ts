@@ -639,6 +639,9 @@ function inspectDirectModuleSpecifier(
     pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
     return "direct";
   }
+  // Package `imports` aliases resolve through the nearest package.json and may
+  // target another project-local module that this direct walk has not read.
+  if (specifier.startsWith("#")) return "bundle";
   // Explicit installed-dependency schemes are safe to leave to the runtime;
   // every other absolute or custom scheme bundles.
   if (canDirectImportSpecifier(specifier)) return "direct";
@@ -679,7 +682,7 @@ function resolveContainedLocalModule(
   let resolved: string;
   try {
     resolved = pathHelper.fromFileUrl(
-      new URL(modulePathOfSpecifier(specifier), pathHelper.toFileUrl(referrerFile)),
+      new URL(encodedModulePathOfSpecifier(specifier), pathHelper.toFileUrl(referrerFile)),
     );
   } catch {
     throw toError(
@@ -710,6 +713,12 @@ function modulePathOfSpecifier(specifier: string): string {
   return splitModuleSpecifier(specifier).modulePath;
 }
 
+/** The module URL path before its single URL-decoding step. */
+function encodedModulePathOfSpecifier(specifier: string): string {
+  const suffixStart = specifier.search(/[?#]/);
+  return suffixStart === -1 ? specifier : specifier.slice(0, suffixStart);
+}
+
 function moduleSuffixOfSpecifier(specifier: string): string {
   return splitModuleSpecifier(specifier).suffix;
 }
@@ -720,7 +729,9 @@ function splitModuleSpecifier(specifier: string): { modulePath: string; suffix: 
   const suffix = suffixStart === -1 ? "" : specifier.slice(suffixStart);
   if (!rawModulePath.includes("%")) return { modulePath: rawModulePath, suffix };
   try {
-    return { modulePath: decodeURIComponent(rawModulePath), suffix };
+    // Decode ordinary filename characters such as `%68`, but keep URL
+    // delimiters such as `%3F`, `%23`, and `%2F` encoded until URL resolution.
+    return { modulePath: decodeURI(rawModulePath), suffix };
   } catch {
     return { modulePath: rawModulePath, suffix };
   }

@@ -1903,6 +1903,43 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("preserves encoded URL delimiters while walking a local import", async () => {
+    for (
+      const { specifier, actualFile, decoyFile } of [
+        {
+          specifier: "./helper%3Fignored.ts",
+          actualFile: "helper?ignored.ts",
+          decoyFile: "helper",
+        },
+        {
+          specifier: "./helper%253Fignored.ts",
+          actualFile: "helper%3Fignored.ts",
+          decoyFile: "helper?ignored.ts",
+        },
+      ]
+    ) {
+      const projectDir = await makeTempDir();
+      await fs.writeTextFile(join(projectDir, decoyFile), `export const value = "decoy";`);
+      await fs.writeTextFile(
+        join(projectDir, actualFile),
+        `export const value = eval('"actual"');`,
+      );
+      const modulePath = join(projectDir, "route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        `import { value } from "${specifier}";` +
+          `\nexport const GET = () => new Response(value);`,
+      );
+
+      await assertRejects(
+        () => loadHandlerModule({ projectDir, modulePath, adapter, config: undefined }),
+        Error,
+        "dynamic code generation",
+        "the graph walk must decode the selected filename exactly once",
+      );
+    }
+  });
+
   it("rejects prepared absolute imports from an unrelated node_modules directory", async () => {
     const projectDir = await makeTempDir();
     const unrelatedDir = await makeTempDir();
@@ -3085,6 +3122,31 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       Error,
       "Remote import blocked by allow-list",
       "the validator must inspect the module Deno selects, not the local path before remapping",
+    );
+  });
+
+  denoIt("does not direct-import an unchecked package imports alias", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "package.json"),
+      JSON.stringify({ imports: { "#helper": "./helper.ts" } }),
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "helper.ts"),
+      `export const value = eval('"blocked"');`,
+    );
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      `import { value } from "#helper";` +
+        `\nexport const GET = () => new Response(value);`,
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "dynamic code generation",
+      "package imports aliases must pass through the validated bundle graph",
     );
   });
 

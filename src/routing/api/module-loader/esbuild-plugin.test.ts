@@ -408,6 +408,42 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("rejects local Worker entries declared by a fetched remote module", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(
+              `new Worker("./worker.ts", { type: "module" }); export const ok = true;`,
+              { status: 200 },
+            )) as typeof fetch,
+        );
+        await assertRejects(
+          async () =>
+            await loadHandler!({
+              path: "https://esm.sh/module-with-worker",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            }),
+          Error,
+          "local Worker",
+          "a remote module's relative Worker graph cannot escape source validation",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
     it("blocks internal module targets before invoking fetch", async () => {
       let fetchCalls = 0;
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
