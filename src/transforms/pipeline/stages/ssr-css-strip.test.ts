@@ -129,22 +129,22 @@ describe("css-strip plugin", () => {
 
     assertStringIncludes(
       result,
-      "const __vfCssExport_styles = new Proxy({},",
+      "const __vfCssExport_0 = new Proxy({},",
       "a re-exported css default must be backed by a scoped proxy stub",
     );
     assertStringIncludes(
       result,
-      "export { __vfCssExport_styles as styles };",
+      "export { __vfCssExport_0 as styles };",
       "a re-exported css default must stay exported under its original name",
     );
     assertStringIncludes(
       result,
-      `const __vfCssExport_root = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
+      `const __vfCssExport_1 = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
       "a re-exported named css binding must be backed by its scoped class",
     );
     assertStringIncludes(
       result,
-      "export { __vfCssExport_root as root };",
+      "export { __vfCssExport_1 as root };",
       "a re-exported named css binding must stay exported under its original name",
     );
     assertEquals(
@@ -178,7 +178,7 @@ describe("css-strip plugin", () => {
     );
     assertStringIncludes(
       result,
-      "export { __vfCssExport_styles as styles };",
+      "export { __vfCssExport_0 as styles };",
       "the css re-export must still be exported as `styles` through a safe local",
     );
     await assertParsesAsModule(
@@ -202,12 +202,12 @@ describe("css-strip plugin", () => {
     );
     assertStringIncludes(
       result,
-      `const __vfCssExport_class = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
+      `const __vfCssExport_0 = "${toScopedCssModuleClass(MODULE_KEY, "container")}";`,
       "the reserved export name must be backed by a safe local binding",
     );
     assertStringIncludes(
       result,
-      "export { __vfCssExport_class as class };",
+      "export { __vfCssExport_0 as class };",
       "the safe local binding must still be exported under the original export name",
     );
     await assertParsesAsModule(
@@ -229,12 +229,12 @@ describe("css-strip plugin", () => {
     );
     assertStringIncludes(
       result,
-      "const __vfCssExport_class = ",
+      "const __vfCssExport_0 = ",
       "the reserved namespace export must be backed by a safe local binding",
     );
     assertStringIncludes(
       result,
-      "export { __vfCssExport_class as class };",
+      "export { __vfCssExport_0 as class };",
       "the safe local proxy stub must be exported under the original export name",
     );
     await assertParsesAsModule(
@@ -367,6 +367,42 @@ describe("css-strip plugin", () => {
     assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
   });
 
+  it("preserves quoted aliases on css namespace re-exports", async () => {
+    const ctx = createContext(
+      `export * as "styles-map" from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      (namespace["styles-map"] as Record<string, Record<string, string>>)?.default?.container,
+      toScopedCssModuleClass(MODULE_KEY, "container"),
+      "an arbitrary namespace export name must keep the CSS module namespace shape",
+    );
+    assertEquals(ctx.metadata.get("cssImports"), ["./Button.module.css"]);
+  });
+
+  it("allocates disjoint locals for identifier and encoded-looking export names", async () => {
+    const ctx = createContext(
+      `export { a as $61_2d_62, b as "a-b" } from "./Button.module.css";`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(
+      namespace.$61_2d_62,
+      toScopedCssModuleClass(MODULE_KEY, "a"),
+      "an identifier export must retain its own generated local",
+    );
+    assertEquals(
+      namespace["a-b"],
+      toScopedCssModuleClass(MODULE_KEY, "b"),
+      "a quoted export must not collide with an identifier that resembles its encoding",
+    );
+  });
+
   it("serializes decoded unscoped css binding names as valid string literals", async () => {
     const ctx = createContext(
       String
@@ -387,6 +423,18 @@ describe("css-strip plugin", () => {
       "a decoded backslash must survive generated module serialization exactly once",
     );
     assertEquals(ctx.metadata.get("cssImports"), ["./theme.css"]);
+  });
+
+  it("escapes HTML raw-text delimiters in generated JavaScript strings", async () => {
+    const ctx = createContext(
+      `import { "</script>" as boundary } from "./theme.css"; export { boundary };`,
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(result.includes("</script>"), false);
+    assertEquals(namespace.boundary, "</script>");
   });
 
   it("does not treat `from` inside a quoted css export name as the keyword", async () => {

@@ -35,9 +35,19 @@ function cssModuleProxyExpression(): string {
   return "new Proxy({}, { get: (_, p) => String(p) })";
 }
 
+/** Serialize data embedded in generated JavaScript without leaving HTML raw-text delimiters. */
+function serializeJavaScriptString(value: string): string {
+  return JSON.stringify(value).replace(
+    /[<>\u2028\u2029]/g,
+    (char) => `\\u${char.codePointAt(0)?.toString(16).padStart(4, "0")}`,
+  );
+}
+
 function scopedCssModuleProxyExpression(moduleKey: string): string {
   const scope = getCssModuleScope(moduleKey);
-  return `new Proxy({}, { get: (_, p) => typeof p === "string" ? "${scope.base}_" + String(p).replace(/[^\\w-]/g, "_") + "__${scope.hash}" : "" })`;
+  const base = serializeJavaScriptString(`${scope.base}_`);
+  const hash = serializeJavaScriptString(`__${scope.hash}`);
+  return `new Proxy({}, { get: (_, p) => typeof p === "string" ? ${base} + String(p).replace(/[^\\w-]/g, "_") + ${hash} : "" })`;
 }
 
 type NamedImportBinding = { imported: string; local: string };
@@ -169,12 +179,18 @@ function parseQuotedExportName(token: string | undefined): string | undefined {
   return decoded;
 }
 
+function parseExportNameToken(token: string | undefined): string | undefined {
+  const trimmed = token?.trim();
+  if (!trimmed) return undefined;
+  return /^[_$a-zA-Z][\w$]*$/.test(trimmed) ? trimmed : parseQuotedExportName(trimmed);
+}
+
 function cssBindingValue(imported: string, cssModuleKey: string | undefined): string {
   if (imported === "default") {
     return cssModuleKey ? scopedCssModuleProxyExpression(cssModuleKey) : cssModuleProxyExpression();
   }
   const className = cssModuleKey ? toScopedCssModuleClass(cssModuleKey, imported) : imported;
-  return JSON.stringify(className);
+  return serializeJavaScriptString(className);
 }
 
 /**
@@ -193,21 +209,22 @@ function cssNamespaceExpression(cssModuleKey: string | undefined): string {
 }
 
 const CSS_EXPORT_LOCAL_PREFIX = "__vfCssExport_";
+type AllocateCssExportLocal = () => string;
 
 /**
  * A `__vfCssExport_` prefix that no text in `code` already contains.
  *
  * The generated locals share the module scope with the module's own bindings,
- * so a source that already declares `__vfCssExport_styles` would be redeclared
+ * so a source that already declares `__vfCssExport_0` would be redeclared
  * by a fixed prefix and stop parsing. `$` is a valid identifier character, so
  * lengthening the prefix until it appears nowhere in the source makes every
- * derived name unique against the module rather than merely against its
- * siblings.
+ * counter-derived name unique against the module and its generated siblings.
  */
-function cssExportLocalPrefix(code: string): string {
+function createCssExportLocalAllocator(code: string): AllocateCssExportLocal {
   let prefix = CSS_EXPORT_LOCAL_PREFIX;
   while (code.includes(prefix)) prefix += "$";
-  return prefix;
+  let nextLocal = 0;
+  return () => `${prefix}${nextLocal++}`;
 }
 
 /**
@@ -217,22 +234,19 @@ function cssExportLocalPrefix(code: string): string {
  * `const styles = fallback; export { default as styles } from "./x.module.css"`
  * is a valid module, and emitting `export const styles` would redeclare it.
  * Reserved words such as `class` are legal export names but illegal `const`
- * names, so the same indirection keeps those parseable as well. Export names
- * are unique per module, and `localPrefix` is unique against the module's own
- * source, so the derived local name collides with nothing.
+ * names, so the same indirection keeps those parseable as well. A transform-wide
+ * allocator keeps the local independent of attacker-controlled export text and
+ * collision-free across every rewritten statement in the module.
  */
 function exportBindingStatement(
-  localPrefix: string,
+  allocateLocal: AllocateCssExportLocal,
   exportName: string,
   value: string,
 ): string {
   if (exportName === "default") return `export default ${value};`;
   const identifierName = /^[_$a-zA-Z][\w$]*$/.test(exportName);
-  const localSuffix = identifierName
-    ? exportName
-    : `$${Array.from(exportName, (char) => char.codePointAt(0)?.toString(16) ?? "").join("_")}`;
-  const exportedName = identifierName ? exportName : JSON.stringify(exportName);
-  const localName = `${localPrefix}${localSuffix}`;
+  const exportedName = identifierName ? exportName : serializeJavaScriptString(exportName);
+  const localName = allocateLocal();
   return `const ${localName} = ${value}; export { ${localName} as ${exportedName} };`;
 }
 
@@ -294,7 +308,7 @@ function findFromKeywordIndex(statement: string): number {
 function generateCSSReExportStub(
   trimmed: string,
   specifier: string,
-  localPrefix: string,
+  allocateLocal: AllocateCssExportLocal,
 ): string {
   const stripped = `/* css re-export stripped: ${specifier} */`;
   const fromIndex = findFromKeywordIndex(trimmed);
@@ -304,10 +318,15 @@ function generateCSSReExportStub(
   const clause = trimmed.slice("export".length, fromIndex).trim();
 
   // Namespace re-export: export * as styles from "./X.module.css"
-  const nsMatch = clause.match(/^\*\s*as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-  if (nsMatch?.[1]) {
+  const nsMatch = clause.match(/^\*\s*as\s+(.+)$/);
+  const namespaceExportName = parseExportNameToken(nsMatch?.[1]);
+  if (namespaceExportName !== undefined) {
     return `${
-      exportBindingStatement(localPrefix, nsMatch[1], cssNamespaceExpression(cssModuleKey))
+      exportBindingStatement(
+        allocateLocal,
+        namespaceExportName,
+        cssNamespaceExpression(cssModuleKey),
+      )
     } /* css re-export: ${specifier} */`;
   }
 
@@ -320,7 +339,7 @@ function generateCSSReExportStub(
 
   const statements = bindings.map((binding) =>
     exportBindingStatement(
-      localPrefix,
+      allocateLocal,
       binding.local,
       cssBindingValue(binding.imported, cssModuleKey),
     )
@@ -336,13 +355,17 @@ function generateCSSReExportStub(
  * - Default import: `import styles from "./X.module.css"` → Proxy stub
  * - Named imports: `import { a } from "./X.css"` → null stubs
  */
-function generateCSSStub(statement: string, specifier: string, localPrefix: string): string {
+function generateCSSStub(
+  statement: string,
+  specifier: string,
+  allocateLocal: AllocateCssExportLocal,
+): string {
   const trimmed = statement.trim();
 
   // Re-export from CSS: export { default as styles } from './module.css'
   // Minified output drops the space: `export{default as styles}from"..."`.
   if (/^export(?![\w$])/.test(trimmed)) {
-    return generateCSSReExportStub(trimmed, specifier, localPrefix);
+    return generateCSSReExportStub(trimmed, specifier, allocateLocal);
   }
 
   // Side-effect import: import "./globals.css"
@@ -437,7 +460,7 @@ export const cssStripPlugin: TransformPlugin = {
     if (!hasCssImports) return ctx.code;
 
     const cssSpecifiers: string[] = [];
-    const localPrefix = cssExportLocalPrefix(ctx.code);
+    const allocateExportLocal = createCssExportLocalAllocator(ctx.code);
 
     const result = await rewriteImports(ctx.code, (imp, statement) => {
       if (!isCSSImport(imp.n)) return null;
@@ -447,7 +470,7 @@ export const cssStripPlugin: TransformPlugin = {
         : undefined;
       const specifierForStub = moduleKey ?? imp.n!;
       if (imp.d > -1) return generateDynamicCSSStub(specifierForStub);
-      return generateCSSStub(statement, specifierForStub, localPrefix);
+      return generateCSSStub(statement, specifierForStub, allocateExportLocal);
     });
 
     if (cssSpecifiers.length > 0) {
