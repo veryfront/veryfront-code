@@ -2396,9 +2396,14 @@ describe("automated review workflow", () => {
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
         "Could not resolve a valid review target commit",
-        'workflowRun?.conclusion !== "success"',
       ]
     ) assert(targetScript.includes(required));
+    assert(
+      targetScript.replaceAll(/\s+/g, " ").includes(
+        'context.eventName === "workflow_run" && workflowRun?.conclusion !== "success"',
+      ),
+      "merge-group target resolution must not require a workflow-run conclusion",
+    );
     assert(
       !targetScript.includes("createCommitStatus"),
       "read-only target resolution must not receive status authority",

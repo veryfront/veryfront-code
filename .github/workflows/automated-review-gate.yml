@@ -227,7 +227,10 @@ jobs:
               core.setFailed(`Could not capture the review status boundary: ${error}`);
               return;
             }
-            if (workflowRun?.conclusion !== "success") {
+            if (
+              context.eventName === "workflow_run" &&
+              workflowRun?.conclusion !== "success"
+            ) {
               core.setFailed("The review wakeup did not complete successfully");
             }
 
