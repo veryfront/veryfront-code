@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveAppComponentPath } from "./app-resolver.ts";
-import { VeryfrontError } from "#veryfront/errors/index.ts";
+import { isVeryfrontError, VeryfrontError } from "#veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
@@ -129,15 +129,16 @@ describe("rendering/layouts/utils/app-resolver", () => {
       const adapter = createMockAdapter(new Set([privatePath]));
       adapter.fs.realPath = (path: string) =>
         path === privatePath ? Promise.reject(failure) : Promise.resolve(path);
-      const config = { app: privatePath } as unknown as VeryfrontConfig;
+      const config = { app: "src/app.tsx" } as unknown as VeryfrontConfig;
 
       const error = await assertRejects(() => resolveAppComponentPath(projectDir, adapter, config));
 
-      if (!(error instanceof Error)) throw error;
-      assertEquals(error.message, "Failed to canonicalize app component path");
+      assertEquals(isVeryfrontError(error), true);
+      if (!isVeryfrontError(error)) throw error;
+      assertEquals(error.slug, "component-error");
+      assertEquals(error.message, "App component path could not be resolved");
       assertEquals(error.message.includes(privatePath), false);
-      assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
-      assertEquals(error.cause, failure);
+      assertStrictEquals(error.cause, failure);
     });
 
     it("should throw when config.app path does not exist", async () => {

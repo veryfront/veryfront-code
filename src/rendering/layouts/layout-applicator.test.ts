@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type LayoutApplicationOptions, LayoutApplicator } from "./layout-applicator.ts";
 import * as React from "react";
@@ -13,6 +13,7 @@ import {
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 
 /** Passthrough stand-ins for the framework providers, so the tree stays readable. */
 const Pass = ({ children }: { children?: React.ReactNode }) => children;
@@ -478,7 +479,7 @@ describe("LayoutApplicator helpers", () => {
     );
   });
 
-  it("propagates reserved component compilation failures", async () => {
+  it("preserves reserved component compilation failures as private causes", async () => {
     const failure = new Error("reserved component compilation failed");
     const applicator = new LayoutApplicator(
       {
@@ -513,6 +514,10 @@ describe("LayoutApplicator helpers", () => {
       )
     );
 
-    assertEquals(error, failure);
+    assertEquals(isVeryfrontError(error), true);
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertEquals(error.message, "Reserved component could not be loaded");
+    assertStrictEquals(error.cause, failure);
   });
 });

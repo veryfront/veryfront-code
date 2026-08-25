@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectAncestorDirs,
@@ -10,6 +10,7 @@ import {
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry/general.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 
 describe("rendering/app-reserved", () => {
   it("returns null when reserved component candidates are absent", async () => {
@@ -88,11 +89,12 @@ describe("rendering/app-reserved", () => {
       )
     );
 
-    if (!(error instanceof Error)) throw error;
-    assertEquals(error.message, "Failed to load reserved component");
+    assertEquals(isVeryfrontError(error), true);
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertEquals(error.message, "Reserved component could not be loaded");
     assertEquals(error.message.includes(privatePath), false);
-    assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
-    assertEquals(error.cause, failure);
+    assertStrictEquals(error.cause, failure);
   });
 
   it("sanitizes reserved component read failures", async () => {
@@ -117,11 +119,12 @@ describe("rendering/app-reserved", () => {
       )
     );
 
-    if (!(error instanceof Error)) throw error;
-    assertEquals(error.message, "Failed to read reserved component");
+    assertEquals(isVeryfrontError(error), true);
+    if (!isVeryfrontError(error)) throw error;
+    assertEquals(error.slug, "component-error");
+    assertEquals(error.message, "Reserved component could not be read");
     assertEquals(error.message.includes(privatePath), false);
-    assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
-    assertEquals(error.cause, failure);
+    assertStrictEquals(error.cause, failure);
   });
 
   it("does not search reserved component paths after request cancellation", async () => {
