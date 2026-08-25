@@ -1,8 +1,8 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
-import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
+import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
@@ -212,6 +212,62 @@ Deno.test("agent service routes scope the exact inbound signal to all preparatio
   assertEquals(observedSignals[0]?.aborted, true);
   assertEquals(observedSignals[1]?.aborted, true);
   assertEquals(getHostedRequestPreparationSignal(), undefined);
+});
+
+it("agent service routes classify AG-UI setup failures", async () => {
+  const authFailure = createRouteSet({
+    prepareExecution: () => Promise.reject(new HostedServiceAuthError(401, "Token required")),
+  });
+  const authResponse = await authFailure.routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+  );
+
+  assertEquals(
+    authResponse.status,
+    401,
+    "an auth failure during setup keeps its auth status",
+  );
+  assertStringIncludes(
+    await authResponse.text(),
+    "UNAUTHENTICATED",
+    "an auth failure during setup streams its auth error code",
+  );
+
+  const overloaded = createRouteSet({
+    prepareExecution: () => Promise.reject(new Error("The provider is overloaded right now")),
+  });
+  const overloadedResponse = await overloaded.routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+  );
+
+  assertEquals(
+    overloadedResponse.status,
+    503,
+    "provider overload must keep its retry signal",
+  );
+  assertStringIncludes(
+    await overloadedResponse.text(),
+    "OVERLOADED_ERROR",
+    "provider overload streams its classified error code",
+  );
+
+  const unclassified = createRouteSet({
+    prepareExecution: () => Promise.reject(new Error("boom")),
+  });
+  const unclassifiedResponse = await unclassified.routeSet.handleAgUiRequest(
+    createAuthenticatedRequest("/api/ag-ui", createAgUiBody()),
+  );
+
+  assertEquals(
+    unclassifiedResponse.status,
+    500,
+    "an unclassified setup failure is a 500",
+  );
+  assertStringIncludes(
+    await unclassifiedResponse.text(),
+    "EXTERNAL_SERVICE_ERROR",
+    "an unclassified setup failure streams the default provider error code",
+  );
 });
 
 Deno.test("agent service routes preserve forwarded AG-UI target agent ids", async () => {
@@ -661,6 +717,29 @@ Deno.test("agent service routes reject control-plane source mismatches", async (
   assertEquals(preparedRequests.length, 0);
 });
 
+it("agent service routes reject control-plane run id mismatches", async () => {
+  const { routeSet, preparedRequests } = createRouteSet();
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-2/stream",
+      createRuntimeAgentInvocationBody(),
+    ),
+    runId: "run-2",
+  });
+
+  assertEquals(
+    response.status,
+    400,
+    "a path run id that disagrees with the envelope must be rejected",
+  );
+  assertEquals(
+    await response.json(),
+    { errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" },
+    "a control-plane run id mismatch keeps its registered error code",
+  );
+  assertEquals(preparedRequests.length, 0, "a mismatched run must never reach preparation");
+});
+
 Deno.test("agent service routes enforce durable root lineage", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunExecuteRequest({
@@ -682,6 +761,58 @@ Deno.test("agent service routes cancel AG-UI runs", async () => {
   });
 
   assertEquals(response.status, 204);
+});
+
+it("agent service routes accept cancellation of a live AG-UI run", async () => {
+  const { routeSet, tracker } = createRouteSet();
+  tracker.sessionManager.startRun({ runId: "run-1", threadId: crypto.randomUUID() });
+
+  const response = await routeSet.handleDurableChatRunCancelRequest({
+    request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 202, "cancelling a live run must be reported as accepted");
+  assertEquals(
+    await response.json(),
+    { accepted: true },
+    "an accepted cancellation returns the shared acceptance envelope",
+  );
+  assertEquals(
+    tracker.sessionManager.cancelRun("run-1"),
+    false,
+    "the cancelled run must no longer be cancellable",
+  );
+});
+
+it("agent service routes require auth to cancel AG-UI runs", async () => {
+  const { routeSet } = createRouteSet();
+  const response = await routeSet.handleDurableChatRunCancelRequest({
+    request: new Request("https://agent.example.test/api/runs/run-1", { method: "DELETE" }),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 401, "cancelling a run must require credentials");
+  assertEquals(
+    await response.json(),
+    { errorCode: "UNAUTHENTICATED" },
+    "an unauthenticated cancel keeps the shared auth error code",
+  );
+});
+
+it("agent service routes reject cancel requests without a run id", async () => {
+  const { routeSet } = createRouteSet();
+  const response = await routeSet.handleDurableChatRunCancelRequest({
+    request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),
+    runId: undefined,
+  });
+
+  assertEquals(response.status, 400, "a cancel without a run id must be rejected");
+  assertEquals(
+    await response.json(),
+    { errorCode: "VALIDATION_ERROR" },
+    "a missing run id is reported as a validation error",
+  );
 });
 
 it("grants durable-chat runs the integration tools carried by the verified token", async () => {

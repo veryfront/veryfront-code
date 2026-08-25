@@ -5,6 +5,7 @@ import {
   connectUpstreamWebSocket,
   resolveUpstreamWebSocketStreamFactory,
   UpstreamWebSocket,
+  type UpstreamWebSocketConnection,
   type UpstreamWebSocketStream,
 } from "./websocket-client.ts";
 import { buildRendererBridgeRequest } from "./websocket-bridge.ts";
@@ -43,9 +44,13 @@ function startUpstreamServer(options: { rejectWith?: number } = {}): UpstreamSer
         });
       }
       const { socket, response } = Deno.upgradeWebSocket(req);
+      socket.binaryType = "arraybuffer";
       sockets.add(socket);
       socket.onmessage = (event) => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(`echo:${event.data}`);
+        if (socket.readyState !== WebSocket.OPEN) return;
+        // Binary frames are echoed verbatim so the caller can check byte fidelity.
+        if (typeof event.data === "string") socket.send(`echo:${event.data}`);
+        else socket.send(event.data as ArrayBuffer);
       };
       socket.onclose = () => sockets.delete(socket);
       return response;
@@ -183,6 +188,104 @@ describe("upstream WebSocket client", () => {
     }
   });
 
+  it("bridges binary frames byte-for-byte without reordering later frames", async () => {
+    const server = startUpstreamServer();
+    try {
+      const socket = connectUpstreamWebSocket(server.url, identityHeaders());
+      const frames: Array<string | number[]> = [];
+      let resolveFrames: () => void = () => {};
+      const collected = new Promise<void>((resolve) => {
+        resolveFrames = resolve;
+      });
+      socket.onmessage = (event) => {
+        const { data } = event;
+        frames.push(typeof data === "string" ? data : Array.from(data));
+        if (frames.length === 3) resolveFrames();
+      };
+      // Bound the handshake wait too: if connection setup regresses and the
+      // socket errors or closes without ever opening, an unbounded `onopen`
+      // await would wedge the worker before the frame timeout below is armed.
+      let openTimer: number | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          socket.onopen = () => resolve();
+          socket.onerror = () => reject(new Error("the upstream handshake errored before opening"));
+          socket.onclose = (event) =>
+            reject(new Error(`the upstream socket closed before opening (code ${event.code})`));
+          openTimer = setTimeout(
+            () => reject(new Error("timed out waiting for the upstream handshake to open")),
+            5_000,
+          );
+        });
+      } finally {
+        if (openTimer !== undefined) clearTimeout(openTimer);
+        socket.onerror = null;
+        socket.onclose = null;
+      }
+
+      const buffer = new Uint8Array([1, 2, 3, 4, 5]);
+      socket.send(buffer.subarray(2));
+      socket.send(new Blob([new Uint8Array([9, 8])]));
+      socket.send("after-blob");
+      // Bound the wait: if the bridge drops or misorders a frame, `collected`
+      // never settles, and an unbounded await would wedge the test worker
+      // instead of failing. The timer is always cleared so the bounded wait
+      // does not itself leak an op.
+      let frameTimer: number | undefined;
+      try {
+        await Promise.race([
+          collected,
+          new Promise<void>((_, reject) => {
+            frameTimer = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `timed out waiting for 3 forwarded frames; received ${frames.length}`,
+                  ),
+                ),
+              5_000,
+            );
+          }),
+        ]);
+      } finally {
+        if (frameTimer !== undefined) clearTimeout(frameTimer);
+      }
+
+      assertEquals(
+        frames[0],
+        [3, 4, 5],
+        "a view with a non-zero byteOffset must forward only its own bytes",
+      );
+      assertEquals(frames[1], [9, 8], "a Blob frame must forward exactly its own bytes");
+      assertEquals(
+        frames[2],
+        "echo:after-blob",
+        "an awaited Blob conversion must not reorder later frames",
+      );
+
+      // Bound the teardown wait the same way as the waits above: a close
+      // handshake that never completes would wedge the worker after the
+      // assertions already passed.
+      let closeTimer: number | undefined;
+      try {
+        const closed = new Promise<void>((resolve, reject) => {
+          socket.onclose = () => resolve();
+          socket.onerror = () => reject(new Error("the upstream socket errored during teardown"));
+          closeTimer = setTimeout(
+            () => reject(new Error("timed out waiting for the upstream socket to close")),
+            5_000,
+          );
+        });
+        socket.close(1000, "done");
+        await closed;
+      } finally {
+        if (closeTimer !== undefined) clearTimeout(closeTimer);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
   it("surfaces a rejected handshake as an error and a close", async () => {
     // Exactly what production sees today when the renderer answers 502.
     const server = startUpstreamServer({ rejectWith: 502 });
@@ -238,6 +341,55 @@ describe("upstream WebSocket client", () => {
     assertEquals(closeCalls[0], { closeCode: 1011, reason: "Server connection error" });
     assertEquals(closeCalls[1], undefined);
     assertEquals(socket.readyState, WebSocket.CLOSING);
+  });
+
+  it("discards an upstream connection that arrives after close", async () => {
+    let admit: (connection: UpstreamWebSocketConnection) => void = () => {};
+    const opened = new Promise<UpstreamWebSocketConnection>((resolve) => {
+      admit = resolve;
+    });
+    const stream: UpstreamWebSocketStream = {
+      opened,
+      closed: new Promise(() => {}),
+      close() {},
+    };
+    let opens = 0;
+    let cancels = 0;
+
+    const socket = new UpstreamWebSocket("ws://renderer/_ws", new Headers(), () => stream);
+    socket.onopen = () => {
+      opens++;
+    };
+    socket.close(1000, "done");
+
+    const writable = new WritableStream<string | Uint8Array>();
+    admit({
+      readable: new ReadableStream<string | Uint8Array>({
+        cancel() {
+          cancels++;
+        },
+      }),
+      writable,
+    });
+    await opened;
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+
+    assertEquals(opens, 0, "a connection inherited after close must not fire onopen");
+    assertEquals(
+      socket.readyState,
+      WebSocket.CLOSING,
+      "readyState must never move backwards from CLOSING to OPEN",
+    );
+    assertEquals(
+      cancels,
+      1,
+      "the inherited readable must be cancelled so the renderer connection is not leaked",
+    );
+    assertEquals(
+      writable.locked,
+      false,
+      "a discarded connection must not take a writer on the inherited writable",
+    );
   });
 
   it("passes the headers straight through to the stream factory", () => {

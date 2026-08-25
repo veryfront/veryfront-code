@@ -40,6 +40,7 @@ const TEST_MAX_PATH_CHARACTERS = 4_096;
 const TEST_MAX_ERROR_BODY_BYTES = 64 * 1_024;
 const TEST_MAX_ERROR_MESSAGE_CHARACTERS = 4_096;
 const TEST_PUBLIC_LISTING_MAX_PAGES = 50;
+const TEST_IN_FLIGHT_DEADLINE_MS = 250;
 
 function createUnboundedTestListingBudget() {
   return {
@@ -1189,7 +1190,7 @@ Deno.test("getStrictRuntimeProjectFiles cancels a late terminal response after i
   const error = await assertRejects(() =>
     getStrictRuntimeProjectFiles({
       ...baseOptions,
-      operationTimeoutMs: 1,
+      operationTimeoutMs: TEST_IN_FLIGHT_DEADLINE_MS,
       fetch: () => {
         fetchCalls += 1;
         return lateFetch.promise;
@@ -1199,7 +1200,7 @@ Deno.test("getStrictRuntimeProjectFiles cancels a late terminal response after i
 
   assertEquals((error as Error).name, "TimeoutError");
   assertStringIncludes(getErrorMessage(error), "aggregate deadline");
-  assertEquals(fetchCalls, 1);
+  assertEquals(fetchCalls, 1, "the deadline must end a request that started, not replace it");
 
   lateFetch.resolve(
     streamResponse(
@@ -1213,6 +1214,7 @@ Deno.test("getStrictRuntimeProjectFiles cancels a late terminal response after i
 
 Deno.test("getStrictRuntimeProjectFiles bounds a stalled terminal response body", async () => {
   const responseCancelled = createDeferred<void>();
+  let fetchCalls = 0;
   const body = new ReadableStream<Uint8Array>({
     cancel() {
       responseCancelled.resolve();
@@ -1222,13 +1224,17 @@ Deno.test("getStrictRuntimeProjectFiles bounds a stalled terminal response body"
   const error = await assertRejects(() =>
     getStrictRuntimeProjectFiles({
       ...baseOptions,
-      operationTimeoutMs: 1,
-      fetch: () => Promise.resolve(new Response(body)),
+      operationTimeoutMs: TEST_IN_FLIGHT_DEADLINE_MS,
+      fetch: () => {
+        fetchCalls += 1;
+        return Promise.resolve(new Response(body));
+      },
     })
   );
 
   assertEquals((error as Error).name, "TimeoutError");
   assertStringIncludes(getErrorMessage(error), "aggregate deadline");
+  assertEquals(fetchCalls, 1, "a body that never opened is never cancelled below");
   await responseCancelled.promise;
   assertEquals(body.locked, false);
 });

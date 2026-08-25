@@ -15,7 +15,16 @@ interface CacheEntry {
   projectDir: string;
 }
 
+export interface LayoutDiscoveryIdentity {
+  projectId?: string;
+  contentSourceId?: string;
+  /** Explicitly disable the legacy adapter-scoped cache for mutable callers. */
+  cache?: boolean;
+}
+
 const MAX_CACHE_SIZE = 500;
+const legacyAdapterIds = new WeakMap<object, number>();
+let nextLegacyAdapterId = 1;
 const layoutDiscoveryCache = new LRUCache<string, CacheEntry>({
   maxEntries: MAX_CACHE_SIZE,
 });
@@ -57,14 +66,41 @@ export async function discoverNestedLayouts(
   rootDir: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  identity?: LayoutDiscoveryIdentity,
 ): Promise<LayoutItem[]> {
-  const key = simpleHash(projectDir, pageFilePath, rootDir);
-  const cached = layoutDiscoveryCache.get(key);
+  // Production collectors pass project and source identities. Legacy direct
+  // callers retain adapter-scoped caching for compatibility; mutable collectors
+  // pass cache:false when no trustworthy snapshot identity is available.
+  let legacyAdapterId: number | undefined;
+  if (identity === undefined) {
+    legacyAdapterId = legacyAdapterIds.get(adapter);
+    if (legacyAdapterId === undefined) {
+      legacyAdapterId = nextLegacyAdapterId++;
+      legacyAdapterIds.set(adapter, legacyAdapterId);
+    }
+  }
+
+  const key = identity?.cache === false
+    ? null
+    : identity?.projectId && identity.contentSourceId
+    ? simpleHash(
+      identity.projectId,
+      identity.contentSourceId,
+      projectDir,
+      pageFilePath,
+      rootDir,
+    )
+    : identity === undefined
+    ? simpleHash(`legacy-adapter-${legacyAdapterId}`, projectDir, pageFilePath, rootDir)
+    : null;
+  const cached = key ? layoutDiscoveryCache.get(key) : undefined;
   if (cached) {
     cached.accessedAt = Date.now();
     discoveryLog.debug("Layout cache HIT", {
       pageFilePath,
       rootDir,
+      projectId: identity?.projectId,
+      contentSourceId: identity?.contentSourceId,
       layoutCount: cached.layouts.length,
       layoutPaths: cached.layouts.map((l) => l.path),
     });
@@ -75,6 +111,8 @@ export async function discoverNestedLayouts(
     pageFilePath,
     rootDir,
     projectDir,
+    projectId: identity?.projectId,
+    contentSourceId: identity?.contentSourceId,
   });
 
   const layouts = await discoverNestedLayoutsImpl(pageFilePath, rootDir, adapter);
@@ -85,7 +123,9 @@ export async function discoverNestedLayouts(
     layoutPaths: layouts.map((l) => l.path),
   });
 
-  layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });
+  if (key) {
+    layoutDiscoveryCache.set(key, { layouts, accessedAt: Date.now(), projectDir });
+  }
 
   return layouts;
 }

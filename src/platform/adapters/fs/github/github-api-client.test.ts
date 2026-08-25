@@ -29,6 +29,15 @@ function createClient(): GitHubApiClient {
   return new GitHubApiClient(mockConfig);
 }
 
+// Same retry budget as mockConfig, but with backoff delays small enough that an
+// exhausted retry sequence stays inside a unit test's time budget.
+function createFastRetryClient(): GitHubApiClient {
+  return new GitHubApiClient({
+    ...mockConfig,
+    retry: { maxRetries: mockConfig.retry.maxRetries, initialDelay: 1, maxDelay: 1 },
+  });
+}
+
 function assertMethod(client: GitHubApiClient, name: keyof GitHubApiClient): void {
   const value = client[name];
   assertExists(value);
@@ -102,6 +111,228 @@ describe("GitHubApiClient", () => {
 
     it("should return null for initial rate limit info", () => {
       assertEquals(createClient().getRateLimitInfo(), null);
+    });
+  });
+
+  describe("getBlobBytesWithinLimit", () => {
+    it("rejects an expected size above the byte limit before fetching", async () => {
+      let fetchCalls = 0;
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(new Response(new Uint8Array()));
+        },
+        async () => {
+          await assertRejects(
+            () => createClient().getBlobBytesWithinLimit("sha-1", 5, 4),
+            RangeError,
+            "GitHub blob exceeds 4 bytes",
+          );
+        },
+      );
+
+      assertEquals(fetchCalls, 0, "expectedSize above byteLimit must reject before any fetch");
+    });
+
+    it("rejects a truncated blob body instead of zero-padding it", async () => {
+      await withMockFetch(
+        () => Promise.resolve(new Response(new Uint8Array([1, 2]))),
+        async () => {
+          await assertRejects(
+            () => createClient().getBlobBytesWithinLimit("sha-1", 4, 4),
+            Error,
+            "does not match its admitted 4-byte tree entry",
+          );
+        },
+      );
+    });
+
+    it("rejects a blob body longer than its admitted tree entry", async () => {
+      await withMockFetch(
+        () => Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5]))),
+        async () => {
+          await assertRejects(
+            () => createClient().getBlobBytesWithinLimit("sha-1", 4, 8),
+            Error,
+            "does not match its admitted 4-byte tree entry",
+          );
+        },
+      );
+    });
+
+    it("rejects a declared Content-Length above the limit before streaming the body", async () => {
+      let bodyCancelled = false;
+      await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+                },
+                cancel() {
+                  bodyCancelled = true;
+                },
+              }),
+              { headers: { "Content-Length": "5" } },
+            ),
+          ),
+        async () => {
+          // The pre-stream guard and the over-long-chunk guard report different
+          // messages, so the message pins which branch rejected this response.
+          await assertRejects(
+            () => createClient().getBlobBytesWithinLimit("sha-1", 4, 4),
+            Error,
+            "exceeds 4 bytes before streaming",
+          );
+        },
+      );
+
+      assertEquals(
+        bodyCancelled,
+        true,
+        "a Content-Length above the limit must cancel the body instead of streaming it",
+      );
+    });
+
+    it("returns the exact admitted bytes", async () => {
+      const result = await withMockFetch(
+        () => Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4]))),
+        () => createClient().getBlobBytesWithinLimit("sha-1", 4, 4),
+      );
+
+      assertEquals(
+        [...result],
+        [1, 2, 3, 4],
+        "bounded blob read returns the exact admitted bytes",
+      );
+    });
+  });
+
+  describe("HTTP failure policy", () => {
+    it("attempts a 404 exactly once and classifies it as a file error", async () => {
+      let fetchCalls = 0;
+      const error = await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(new Response("Not found", { status: 404 }));
+        },
+        () => assertRejects(() => createFastRetryClient().getTree("main"), Error),
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(fetchCalls, 1, "a 404 must not be retried");
+      assertEquals(
+        (error as { statusCode?: number }).statusCode,
+        404,
+        "the API error carries its status code",
+      );
+      assertEquals(
+        error.name,
+        "VeryfrontError[file]",
+        "a missing file must not be classified as a transient network fault",
+      );
+    });
+
+    it("attempts a 401 exactly once and classifies it as a config error", async () => {
+      let fetchCalls = 0;
+      const error = await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(new Response("Bad credentials", { status: 401 }));
+        },
+        () => assertRejects(() => createFastRetryClient().getTree("main"), Error),
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(fetchCalls, 1, "an auth failure must not be retried");
+      assertEquals(
+        error.name,
+        "VeryfrontError[config]",
+        "an auth failure must be classified as a configuration fault",
+      );
+    });
+
+    it("retries a 403 once the rate limit is exhausted", async () => {
+      let fetchCalls = 0;
+      const resetSeconds = Math.floor(Date.now() / 1000);
+      const error = await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(
+            new Response("rate limited", {
+              status: 403,
+              headers: {
+                "X-RateLimit-Limit": "60",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Used": "60",
+                "X-RateLimit-Reset": String(resetSeconds),
+              },
+            }),
+          );
+        },
+        () => assertRejects(() => createFastRetryClient().getTree("main"), Error),
+      );
+
+      assertInstanceOf(error, Error);
+      assertEquals(
+        fetchCalls,
+        mockConfig.retry.maxRetries,
+        "an exhausted rate limit must consume the whole retry budget",
+      );
+      assertEquals(
+        error.message,
+        `GitHub API rate limit exceeded. Resets at ${new Date(resetSeconds * 1000).toISOString()}`,
+        "the rate limit error names the reset instant",
+      );
+    });
+
+    it("retries a 500 up to the retry budget", async () => {
+      let fetchCalls = 0;
+      await withMockFetch(
+        () => {
+          fetchCalls++;
+          return Promise.resolve(new Response("boom", { status: 500 }));
+        },
+        () => assertRejects(() => createFastRetryClient().getTree("main"), Error),
+      );
+
+      assertEquals(
+        fetchCalls,
+        mockConfig.retry.maxRetries,
+        "server errors exhaust the retry budget",
+      );
+    });
+
+    it("records rate limit headers from a successful response", async () => {
+      const resetSeconds = 1_700_000_000;
+      const client = createClient();
+
+      await withMockFetch(
+        () =>
+          Promise.resolve(
+            Response.json({ sha: "tree", tree: [], truncated: false }, {
+              headers: {
+                "X-RateLimit-Limit": "60",
+                "X-RateLimit-Remaining": "42",
+                "X-RateLimit-Used": "18",
+                "X-RateLimit-Reset": String(resetSeconds),
+              },
+            }),
+          ),
+        () => client.getTree("main"),
+      );
+
+      assertEquals(
+        client.getRateLimitInfo(),
+        {
+          limit: 60,
+          remaining: 42,
+          reset: new Date(resetSeconds * 1000),
+          used: 18,
+        },
+        "a successful response records its rate limit headers",
+      );
     });
   });
 

@@ -131,16 +131,71 @@ describe("platform/adapters/fs/veryfront/file-list-index", () => {
   describe("index reuse", () => {
     it("should reuse index when cache key is unchanged", async () => {
       let callCount = 0;
-      const fileList = [{ path: "a.ts", content: "content" }];
+      const entry = { path: "a.ts", content: "v1" };
+      const fileList: Array<{ path: string; content: string }> = [entry];
       const index = new FileListIndex(async () => {
         callCount++;
         return fileList;
       });
 
-      await index.lookup("a.ts");
-      await index.lookup("a.ts");
-      // Both lookups call getFileListCache but second should reuse the built index
-      assertEquals(callCount, 2); // getFileListCache is called each time, but index is reused
+      assertEquals(await index.lookup("a.ts"), "v1", "the first lookup builds the index");
+
+      // Mutating content in place leaves the cache key (length, first and last
+      // path) untouched, so a reused index must still answer with the old value.
+      entry.content = "v2";
+      assertEquals(
+        await index.lookup("a.ts"),
+        "v1",
+        "an unchanged cache key must reuse the built index rather than re-walking the file list",
+      );
+
+      // Both lookups call getFileListCache but the second reuses the built index.
+      assertEquals(callCount, 2, "getFileListCache is consulted on every lookup");
+
+      fileList.push({ path: "b.ts", content: "v3" });
+      assertEquals(
+        await index.lookup("b.ts"),
+        "v3",
+        "a changed file-list key must rebuild the index",
+      );
+    });
+  });
+
+  describe("expired cache entry", () => {
+    it("keeps serving a warm index after the cache entry expires", async () => {
+      let calls = 0;
+      const index = new FileListIndex(async () => {
+        calls++;
+        return calls === 1 ? [{ path: "a.ts", content: "content-a" }] : undefined;
+      });
+
+      assertEquals(await index.lookup("a.ts"), "content-a", "the first read builds the index");
+      assertEquals(await index.match("a.ts"), {
+        status: "hit",
+        fresh: false,
+        path: "a.ts",
+        content: "content-a",
+      }, "an expired cache entry must keep serving the warm index, marked stale");
+    });
+
+    it("discards an index older than the staleness limit", async () => {
+      let calls = 0;
+      const index = new FileListIndex(async () => {
+        calls++;
+        return calls === 1 ? [{ path: "a.ts", content: "content-a" }] : undefined;
+      });
+
+      assertEquals(await index.lookup("a.ts"), "content-a", "the first read builds the index");
+
+      // Age the index past the limit rather than sleeping through it.
+      (index as unknown as { indexBuiltAt: number }).indexBuiltAt = Date.now() -
+        (5 * 60 * 1000 + 1);
+
+      assertEquals(
+        await index.match("a.ts"),
+        { status: "unavailable", fresh: false },
+        "a too-stale in-memory index must be discarded rather than served",
+      );
     });
   });
 });

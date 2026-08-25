@@ -51,7 +51,11 @@ describe("veryfront/adapter-content-context", () => {
     };
 
     assertEquals(hasContentContextChanged(null, branchContext), true);
-    assertEquals(hasContentContextChanged(branchContext, branchContext), false);
+    assertEquals(
+      hasContentContextChanged({ ...branchContext }, { ...branchContext }),
+      false,
+      "structurally identical contexts must not force a cache clear",
+    );
     assertEquals(
       hasContentContextChanged(branchContext, {
         sourceType: "branch",
@@ -59,6 +63,52 @@ describe("veryfront/adapter-content-context", () => {
         branch: "feature/auth",
       }),
       true,
+    );
+    assertEquals(
+      hasContentContextChanged(branchContext, {
+        sourceType: "branch",
+        projectSlug: "other",
+        branch: "main",
+      }),
+      true,
+      "a projectSlug switch must be treated as a context change",
+    );
+    assertEquals(
+      hasContentContextChanged(branchContext, {
+        sourceType: "environment",
+        projectSlug: "demo",
+        branch: "main",
+      }),
+      true,
+      "a sourceType switch must be treated as a context change",
+    );
+    assertEquals(
+      hasContentContextChanged({
+        sourceType: "environment",
+        projectSlug: "demo",
+        environmentName: "production",
+        releaseId: "rel-1",
+      }, {
+        sourceType: "environment",
+        projectSlug: "demo",
+        environmentName: "preview",
+        releaseId: "rel-1",
+      }),
+      true,
+      "an environmentName switch must be treated as a context change",
+    );
+    assertEquals(
+      hasContentContextChanged({
+        sourceType: "release",
+        projectSlug: "demo",
+        releaseId: "rel-1",
+      }, {
+        sourceType: "release",
+        projectSlug: "demo",
+        releaseId: "rel-2",
+      }),
+      true,
+      "a releaseId switch must be treated as a context change",
     );
   });
 

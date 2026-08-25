@@ -27,6 +27,9 @@ function browserUpgradeHeaders(host: string): Headers {
     connection: "Upgrade",
     "sec-websocket-version": "13",
     "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+    "sec-websocket-extensions": "permessage-deflate",
+    "sec-websocket-accept": "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+    "sec-websocket-protocol": "hmr",
   });
 }
 
@@ -119,6 +122,21 @@ describe("proxy renderer WebSocket bridge identity", () => {
     assertEquals(bridge.headers.get("x-token"), "vf_proxy_minted_project_token");
     assertEquals(bridge.headers.get("x-project-slug"), "support-agent-agodnc");
     assertEquals(bridge.headers.get("x-environment"), "preview");
+    for (
+      const header of [
+        "sec-websocket-key",
+        "sec-websocket-version",
+        "sec-websocket-extensions",
+        "sec-websocket-accept",
+        "sec-websocket-protocol",
+      ]
+    ) {
+      assertEquals(
+        bridge.headers.get(header),
+        null,
+        `${header} belongs to the browser socket and must not reach the renderer hop`,
+      );
+    }
   });
 
   it("never lets the browser's query string name the tenant", async () => {

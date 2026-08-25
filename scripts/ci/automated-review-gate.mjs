@@ -291,6 +291,36 @@ function latestReviewResetTime(statuses, pullNumber, baseBinding) {
   return latest;
 }
 
+/**
+ * Read the durable epoch GitHub recorded when the base branch was retargeted.
+ *
+ * The reset status is written by the run that observes the `edited` event, so
+ * it does not exist yet while that run resolves its target. A comment, wakeup,
+ * or merge-group run for the same head can reach evidence resolution first and
+ * would otherwise accept a review submitted against the old base and rebind it
+ * to the new one. The timeline entry exists the moment GitHub records the
+ * retarget, so every run reads the same boundary no matter which one wins.
+ */
+function latestBaseChangeTime(timeline) {
+  let latest;
+  for (const item of timeline) {
+    if (item?.event !== "base_ref_changed") continue;
+    const changedAt = Date.parse(item?.created_at ?? "");
+    if (!Number.isFinite(changedAt)) return Number.POSITIVE_INFINITY;
+    if (latest === undefined || changedAt > latest) latest = changedAt;
+  }
+  return latest;
+}
+
+/** The latest boundary that review evidence has to be newer than. */
+function reviewEvidenceEpoch(statuses, timeline, pullNumber, baseBinding) {
+  const reset = latestReviewResetTime(statuses, pullNumber, baseBinding);
+  const retarget = latestBaseChangeTime(timeline);
+  if (reset === undefined) return retarget;
+  if (retarget === undefined) return reset;
+  return Math.max(reset, retarget);
+}
+
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
   {
@@ -641,7 +671,7 @@ export async function publishAutomatedReviewStatus({
               login,
               pullAuthor,
             }),
-          latestReviewResetTime(statuses, pullNumber, baseBinding),
+          reviewEvidenceEpoch(statuses, timeline, pullNumber, baseBinding),
         );
       }
     } catch (error) {
@@ -895,7 +925,7 @@ export async function publishMergeGroupReviewStatus({
           login,
           pullAuthor: pull?.data?.user?.login,
         }),
-      latestReviewResetTime(statuses, pullNumber, baseBinding),
+      reviewEvidenceEpoch(statuses, timeline, pullNumber, baseBinding),
     );
     if (!liveReview) {
       throw new Error("Pull request does not have current review evidence");

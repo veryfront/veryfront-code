@@ -1324,6 +1324,107 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
+  it("rejects pre-retarget proof before the base-edit run writes its reset", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          created_at: "2026-08-25T07:59:59Z",
+        })]],
+        timeline: [[{
+          event: "base_ref_changed",
+          id: 5,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(
+      result.state,
+      "pending",
+      "a comment or wakeup run that wins the race with the base-edit run must not rebind old-base proof",
+    );
+    assertEquals(
+      result.review,
+      undefined,
+      "evidence older than the recorded retarget is not proof for the new base",
+    );
+    assertEquals(
+      fixture.published[0]?.state,
+      "pending",
+      "the published status must stay closed until proof for the new base exists",
+    );
+  });
+
+  it("accepts proof submitted after the recorded retarget", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          created_at: "2026-08-25T08:00:01Z",
+        })]],
+        timeline: [[{
+          event: "base_ref_changed",
+          id: 5,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(
+      result.state,
+      "success",
+      "a retarget epoch must not invalidate review evidence that followed it",
+    );
+    assertEquals(
+      result.review?.source,
+      "codex-comment",
+      "the post-retarget verdict is the proof the status reports",
+    );
+  });
+
+  it("closes the gate when a recorded retarget cannot be timestamped", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment()]],
+        timeline: [[{ event: "base_ref_changed", id: 5 }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(
+      result.state,
+      "pending",
+      "an unreadable retarget timestamp must fail closed, not accept old proof",
+    );
+    assertEquals(
+      result.review,
+      undefined,
+      "no evidence can be newer than an unreadable retarget boundary",
+    );
+  });
+
   it("fails accepted proof when the base changes during reconciliation", async () => {
     const fixture = githubFixture({
       pages: { comments: [[codexComment()]] },
@@ -1506,7 +1607,6 @@ describe("merge queue review propagation", () => {
       sourceHeadSha: HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
-
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
     assertEquals(fixture.published[0]?.state, "success");
@@ -2605,6 +2705,68 @@ describe("automated review workflow", () => {
     assert(
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",
+    );
+
+    const mergeGroupFailureJob = record(
+      jobs.merge_group_failure,
+      "merge group failure job",
+    );
+    assertEquals(
+      mergeGroupFailureJob.needs,
+      ["target", "merge_group"],
+      "an unresolved resolver and an unfinished publisher must both close the queue gate",
+    );
+    assertEquals(
+      mergeGroupFailureJob.if,
+      "failure() && github.event_name == 'merge_group'",
+      "the queue fallback runs only for a merge group that failed to publish",
+    );
+    assertEquals(
+      record(
+        mergeGroupFailureJob.permissions,
+        "merge group failure permissions",
+      ),
+      { statuses: "write" },
+      "the queue fallback only writes the missing status",
+    );
+    assertEquals(
+      record(
+        mergeGroupFailureJob.concurrency,
+        "merge group failure concurrency",
+      ),
+      publisherConcurrency,
+      "the queue fallback must serialize with source and queue publication",
+    );
+    const mergeGroupFailureSteps = mergeGroupFailureJob.steps;
+    assert(
+      Array.isArray(mergeGroupFailureSteps) &&
+        mergeGroupFailureSteps.length === 1,
+      "the queue fallback must not check out or import the gate it reports on",
+    );
+    const mergeGroupFailureScript = String(
+      record(
+        record(mergeGroupFailureSteps[0], "merge group failure step").with,
+        "merge group failure inputs",
+      ).script,
+    );
+    for (
+      const required of [
+        "context.payload.merge_group?.head_sha",
+        "createCommitStatus",
+        'state: "failure"',
+        'context: "Automated review"',
+        "core.setFailed",
+      ]
+    ) {
+      assert(
+        mergeGroupFailureScript.includes(required),
+        "the queue fallback must fail the merge group commit by its own payload",
+      );
+    }
+    assert(
+      !mergeGroupFailureScript.includes("import(") &&
+        !mergeGroupFailureScript.includes("needs.target.outputs"),
+      "an unimportable gate or an unresolved target must still produce a status",
     );
   });
 

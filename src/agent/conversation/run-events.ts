@@ -45,6 +45,52 @@ function serializeToolInput(input: unknown): string {
   }
 }
 
+/** Serialize tool output while preserving strings that would otherwise decode as JSON. */
+export function serializeConversationToolResultContent(value: unknown): {
+  content: string;
+  contentEncoding?: "text";
+} {
+  if (typeof value === "string") {
+    try {
+      JSON.parse(value);
+      return { content: value, contentEncoding: "text" };
+    } catch {
+      return { content: value };
+    }
+  }
+
+  try {
+    const encoded = JSON.stringify(value ?? null);
+    // `JSON.stringify` returns `undefined`, not a string, for a top-level
+    // function or symbol. Storing that would drop the result's content
+    // entirely, so fall through to the textual rendering below.
+    if (typeof encoded === "string") return { content: encoded };
+  } catch {
+    // A value that cannot be encoded at all falls through the same way.
+  }
+
+  // `String(value)` is a lossy rendering, not a JSON encoding: a bigint
+  // renders as bare digits that a reader would decode back into a number it
+  // cannot represent. Mark it text so replay returns the stored characters.
+  return { content: String(value), contentEncoding: "text" };
+}
+
+/**
+ * Carry a chunk's provider-execution marker into the durable record.
+ *
+ * The version 1 reader replays a stored result as a provider tool result only
+ * when the durable call records that it was provider-executed; a call that
+ * dropped the marker replays as an opaque legacy custom event instead. The
+ * marker is written on both the call start and the call end because producers
+ * do not agree on which one carries it: the live lifecycle adapter synthesizes
+ * an unmarked `tool-input-start` and marks only `tool-input-available`.
+ */
+function providerExecutionMarker(
+  chunk: { providerExecuted?: boolean },
+): { providerExecuted?: true } {
+  return chunk.providerExecuted === true ? { providerExecuted: true } : {};
+}
+
 function encodeCustomDataEvent(
   chunk: Extract<ChatStreamEvent, { type: `data-${string}` }>,
 ): ConversationRunEvent[] {
@@ -157,18 +203,6 @@ export class ConversationRunEventEncoder {
     this.streamedToolInputs.delete(toolCallId);
   }
 
-  private serializeToolResultContent(value: unknown): string {
-    if (typeof value === "string") {
-      return value;
-    }
-
-    try {
-      return JSON.stringify(value ?? null);
-    } catch {
-      return String(value);
-    }
-  }
-
   encode(chunk: ChatStreamEvent): ConversationRunEvent[] {
     return this.stampElapsed(this.encodeChunk(chunk));
   }
@@ -257,6 +291,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallStart,
           toolCallId: chunk.toolCallId,
           toolCallName: chunk.toolName,
+          ...providerExecutionMarker(chunk),
         }];
 
       case "tool-input-delta":
@@ -277,7 +312,11 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         return events;
       }
 
@@ -291,12 +330,16 @@ export class ConversationRunEventEncoder {
             delta: serializeToolInput(chunk.input),
           });
         }
-        events.push({ type: conversationRunEventTypes.toolCallEnd, toolCallId: chunk.toolCallId });
+        events.push({
+          type: conversationRunEventTypes.toolCallEnd,
+          toolCallId: chunk.toolCallId,
+          ...providerExecutionMarker(chunk),
+        });
         events.push({
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -313,7 +356,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.output),
+          ...serializeConversationToolResultContent(chunk.output),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }
@@ -328,7 +371,7 @@ export class ConversationRunEventEncoder {
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),
           toolCallId: chunk.toolCallId,
-          content: this.serializeToolResultContent(chunk.errorText),
+          ...serializeConversationToolResultContent(chunk.errorText),
           role: "tool",
           ...(this.toolInputs.has(chunk.toolCallId)
             ? { input: this.toolInputs.get(chunk.toolCallId) }

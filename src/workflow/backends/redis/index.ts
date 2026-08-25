@@ -18,6 +18,7 @@ import type {
 } from "../../types.ts";
 import {
   assertWorkflowRunUpdate,
+  type PersistedPendingApproval,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -884,7 +885,7 @@ export class RedisBackend implements WorkflowBackend {
     });
   }
 
-  private serializeApproval(approval: PendingApproval): string {
+  private serializeApproval(approval: PersistedPendingApproval): string {
     return JSON.stringify({
       ...approval,
       requestedAt: approval.requestedAt.toISOString(),
@@ -1323,7 +1324,7 @@ export class RedisBackend implements WorkflowBackend {
     });
   }
 
-  async savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
+  async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
@@ -1363,7 +1364,7 @@ export class RedisBackend implements WorkflowBackend {
     runId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
-    approval: PendingApproval,
+    approval: PersistedPendingApproval,
   ): Promise<boolean> {
     const client = await this.ensureClient();
     const result = await client.eval(
@@ -1389,7 +1390,7 @@ export class RedisBackend implements WorkflowBackend {
     return Number(result) === 1;
   }
 
-  private parseApproval(raw: string): PendingApproval {
+  private parseApproval(raw: string): PersistedPendingApproval {
     const data = JSON.parse(raw);
     return {
       ...data,
@@ -1399,17 +1400,20 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  private async getApprovals(runId: string): Promise<PendingApproval[]> {
+  private async getApprovals(runId: string): Promise<PersistedPendingApproval[]> {
     const client = await this.ensureClient();
     const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
     return rawList.map((raw) => this.parseApproval(raw));
   }
 
-  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+  async getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]> {
     return (await this.getApprovals(runId)).filter((approval) => approval.status === "pending");
   }
 
-  async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
+  async getPendingApproval(
+    runId: string,
+    approvalId: string,
+  ): Promise<PersistedPendingApproval | null> {
     const approvals = await this.getPendingApprovals(runId);
     return approvals.find((a) => a.id === approvalId) || null;
   }
@@ -1417,7 +1421,7 @@ export class RedisBackend implements WorkflowBackend {
   async updatePendingApproval(
     runId: string,
     approvalId: string,
-    patch: Partial<PendingApproval>,
+    patch: Partial<PersistedPendingApproval>,
   ): Promise<void> {
     const client = await this.ensureClient();
     // Locate-and-write in a single Lua step so a concurrent append/decision
@@ -1468,9 +1472,9 @@ export class RedisBackend implements WorkflowBackend {
     workflowId?: string;
     approver?: string;
     status?: "pending" | "expired";
-  }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
+  }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
     const client = await this.ensureClient();
-    const result: Array<{ runId: string; approval: PendingApproval }> = [];
+    const result: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
 
     const approvalsPrefix = `${this.storagePrefix()}approvals:`;
     const keys = await client.keys(`${approvalsPrefix}*`);

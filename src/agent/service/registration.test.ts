@@ -119,10 +119,43 @@ describe("agent/agent-service-registration", () => {
       runtime: "node",
     });
 
+    const firstReplicaRestarted = await resolveAgentServiceRegistrationInput({
+      config: globalAgentServiceConfig({
+        POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
+        POD_UID: "11111111-1111-4111-a111-111111111111",
+        POD_IP: "10.192.4.10",
+      }),
+      serviceName: "veryfront-agent",
+      agentId: "veryfront",
+      version: "0.1.0",
+      runtime: "node",
+    });
+    const firstReplicaRescheduled = await resolveAgentServiceRegistrationInput({
+      config: globalAgentServiceConfig({
+        POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
+        POD_UID: "11111111-1111-4111-a111-111111111111",
+        POD_IP: "10.192.4.99",
+      }),
+      serviceName: "veryfront-agent",
+      agentId: "veryfront",
+      version: "0.1.0",
+      runtime: "node",
+    });
+
     assertEquals(firstReplica?.baseUrl, secondReplica?.baseUrl);
     assertEquals(firstReplica?.serviceKey.startsWith("veryfront-agent:"), true);
     assertEquals(secondReplica?.serviceKey.startsWith("veryfront-agent:"), true);
     assertEquals(firstReplica?.serviceKey !== secondReplica?.serviceKey, true);
+    assertEquals(
+      firstReplicaRestarted?.serviceKey,
+      firstReplica?.serviceKey,
+      "the same pod must keep its service key across restarts",
+    );
+    assertEquals(
+      firstReplicaRescheduled?.serviceKey,
+      firstReplica?.serviceKey,
+      "POD_UID takes precedence, so a changed pod IP must not mint a new service key",
+    );
   });
 
   it("skips auto registration when the token or public URL is missing", async () => {
@@ -185,6 +218,29 @@ describe("agent/agent-service-registration", () => {
       Error,
       "VERYFRONT_API_TOKEN is required",
     );
+
+    await assertRejects(
+      () =>
+        resolveAgentServiceRegistrationInput({
+          config: {
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_API_TOKEN: "token-1",
+            VERYFRONT_PROJECT_ID: undefined,
+            VERYFRONT_AGENT_SERVICE_URL: undefined,
+            VERYFRONT_AGENT_SERVICE_KEY: undefined,
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+            VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: 30_000,
+            VERYFRONT_AGENT_SERVICE_REGION: undefined,
+          },
+          serviceName: "docs-agent",
+          agentId: "support",
+          version: undefined,
+          runtime: "node",
+        }),
+      Error,
+      "VERYFRONT_AGENT_SERVICE_URL is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled",
+      "explicit registration must fail loudly when the service URL is missing",
+    );
   });
 
   it("registers the push service and heartbeats with bearer auth", async () => {
@@ -220,7 +276,18 @@ describe("agent/agent-service-registration", () => {
       calls[1]?.url,
       "https://api.example.com/agent-runtimes/push-services/22222222-2222-4222-a222-222222222222/heartbeat",
     );
-    assertEquals(new Headers(calls[0]?.init?.headers).get("Authorization"), "Bearer token-1");
+    assertEquals(
+      new Headers(calls[0]?.init?.headers).get("Authorization"),
+      "Bearer token-1",
+      "registration must carry bearer auth",
+    );
+    assertEquals(calls[0]?.init?.method, "POST", "registration must be a POST");
+    assertEquals(
+      new Headers(calls[1]?.init?.headers).get("Authorization"),
+      "Bearer token-1",
+      "heartbeats must carry bearer auth",
+    );
+    assertEquals(calls[1]?.init?.method, "POST", "the heartbeat must be a POST");
     assertEquals(JSON.parse(String(calls[0]?.init?.body)), {
       service_name: "docs-agent",
       service_key: "docs-agent:test",
@@ -379,7 +446,17 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         totalDelayMs < intervalMs,
         `backoff of ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
       );
+      assert(
+        totalDelayMs > 0,
+        `backoff for a ${intervalMs}ms interval must not collapse to zero`,
+      );
     }
+
+    assertEquals(
+      heartbeatRetrySchedule(30_000).delaysMs,
+      [250, 500],
+      "a full-size interval gets the documented doubling backoff from the 250ms base",
+    );
   });
 
   it("never runs two heartbeat ticks at once, even when attempts outlast the interval", async () => {
@@ -444,7 +521,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
       activeSignals.add(signal);
       return new Promise<Response>((_resolve, reject) => {
@@ -550,7 +628,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
       activeSignals.add(signal);
       maxConcurrent = Math.max(maxConcurrent, activeSignals.size);
@@ -595,7 +674,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
@@ -627,7 +707,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       assert(signal, "heartbeat requests must carry an abort signal");
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
@@ -666,7 +747,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       inFlight++;
       return abortAwareDelayedJsonResponse(serviceResponse, slowLatencyMs, signal).then(
         (response) => {
@@ -733,7 +815,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      const signal = init?.signal;
+      const requestInit: RequestInit | undefined = init;
+      const signal = requestInit?.signal;
       return abortAwareDelayedJsonResponse(serviceResponse, slowLatencyMs, signal);
     };
 
