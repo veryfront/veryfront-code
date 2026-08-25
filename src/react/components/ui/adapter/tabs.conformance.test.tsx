@@ -138,6 +138,67 @@ function runTabsConformance(label: string, Wrap: React.FC<{ children: React.Reac
         await unmount();
       }
     });
+
+    for (
+      const [offLabel, off] of [
+        ["disabled", { disabled: true }],
+        ["aria-disabled", { "aria-disabled": "true" }],
+      ] as const
+    ) {
+      it(`roving navigation steps over a ${offLabel} tab`, async () => {
+        const { host, unmount } = render(
+          <Wrap>
+            <SkipHarness off={off} />
+          </Wrap>,
+        );
+        try {
+          const [a, b, c] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+          assert(a && b && c, "three tabs render");
+
+          key(a, "ArrowRight");
+          assert(
+            c.getAttribute("aria-selected") === "true",
+            `ArrowRight skips the ${offLabel} tab`,
+          );
+          assert(
+            b.getAttribute("aria-selected") === "false",
+            `the ${offLabel} tab is never selected by roving navigation`,
+          );
+
+          key(c, "ArrowLeft");
+          assert(
+            a.getAttribute("aria-selected") === "true",
+            `ArrowLeft also skips the ${offLabel} tab`,
+          );
+        } finally {
+          await unmount();
+        }
+      });
+    }
+
+    it("lets a caller that cancels its own click veto the selection", async () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <VetoHarness />
+        </Wrap>,
+      );
+      try {
+        const [a, b] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
+        assert(a && b, "two tabs render");
+
+        click(b);
+        assert(
+          a.getAttribute("aria-selected") === "true",
+          "a caller that preventDefaults its onClick vetoes selection",
+        );
+        assert(
+          b.getAttribute("aria-selected") === "false",
+          "the vetoed tab does not activate",
+        );
+      } finally {
+        await unmount();
+      }
+    });
   });
 }
 
@@ -191,69 +252,6 @@ describe("Tabs adapter conformance - builtin keyboard navigation", () => {
       await unmount();
     }
   });
-
-  for (
-    const [label, off] of [
-      ["disabled", { disabled: true }],
-      ["aria-disabled", { "aria-disabled": "true" }],
-    ] as const
-  ) {
-    it(`roving navigation steps over a ${label} tab`, async () => {
-      const { host, unmount } = render(
-        <Identity>
-          <SkipHarness off={off} />
-        </Identity>,
-      );
-      try {
-        const [a, b, c] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
-        assert(a && b && c, "three tabs render");
-
-        key(a!, "ArrowRight");
-        assert(
-          c!.getAttribute("aria-selected") === "true",
-          `ArrowRight skips the ${label} tab`,
-        );
-        assert(
-          b!.getAttribute("aria-selected") === "false",
-          `the ${label} tab is never selected by roving navigation`,
-        );
-
-        key(c!, "ArrowLeft");
-        assert(
-          a!.getAttribute("aria-selected") === "true",
-          `ArrowLeft also skips the ${label} tab`,
-        );
-      } finally {
-        await unmount();
-      }
-    });
-  }
-});
-
-describe("Tabs adapter conformance - builtin click composition", () => {
-  it("lets a caller that cancels its own click veto the selection", async () => {
-    const { host, unmount } = render(
-      <Identity>
-        <VetoHarness />
-      </Identity>,
-    );
-    try {
-      const [a, b] = Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]'));
-      assert(a && b, "two tabs render");
-
-      click(b!);
-      assert(
-        a!.getAttribute("aria-selected") === "true",
-        "a caller that preventDefaults its onClick vetoes selection",
-      );
-      assert(
-        b!.getAttribute("aria-selected") === "false",
-        "the vetoed tab does not activate",
-      );
-    } finally {
-      await unmount();
-    }
-  });
 });
 
 // (2) an INDEPENDENT contract-only engine - its own tablist context, same skin.
@@ -266,10 +264,25 @@ const altTabs: TabsParts = {
       <AltCtx.Provider value={{ value, onValueChange }}>{children}</AltCtx.Provider>
     </div>
   ),
-  Tab: ({ value, asChild, onClick, ref, ...props }) => {
+  Tab: ({ value, asChild, onClick, onKeyDown, ref, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const isActive = ctx?.value === value;
     const Comp = asChild ? Slot : "button";
+    const moveFocus = (
+      event: React.KeyboardEvent<HTMLButtonElement>,
+      direction: 1 | -1,
+    ) => {
+      const list = event.currentTarget.closest<HTMLElement>('[role="tablist"]');
+      const tabs = Array.from(list?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])
+        .filter((tab) =>
+          !tab.hasAttribute("disabled") && tab.getAttribute("aria-disabled") !== "true"
+        );
+      const currentIndex = tabs.indexOf(event.currentTarget);
+      if (currentIndex === -1 || tabs.length === 0) return;
+      const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+      next?.focus();
+      next?.click();
+    };
     return (
       <Comp
         {...(asChild ? {} : { type: "button" as const })}
@@ -277,9 +290,21 @@ const altTabs: TabsParts = {
         role="tab"
         aria-selected={isActive}
         data-state={isActive ? "active" : "inactive"}
+        tabIndex={isActive ? 0 : -1}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
-          ctx?.onValueChange(value);
+          if (!e.defaultPrevented) ctx?.onValueChange(value);
+        }}
+        onKeyDown={(e: React.KeyboardEvent<HTMLButtonElement>) => {
+          onKeyDown?.(e);
+          if (e.defaultPrevented) return;
+          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            e.preventDefault();
+            moveFocus(e, 1);
+          } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            moveFocus(e, -1);
+          }
         }}
         {...props}
       />

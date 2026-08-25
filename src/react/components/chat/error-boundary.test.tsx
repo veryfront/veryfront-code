@@ -28,9 +28,12 @@ async function mounted(
       click: (el) =>
         flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))),
     });
-    await unmountReactRoot(root);
   } finally {
-    restore();
+    try {
+      await unmountReactRoot(root);
+    } finally {
+      restore();
+    }
   }
 }
 

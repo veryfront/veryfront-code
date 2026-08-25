@@ -42,21 +42,23 @@ async function withDropZone(
     return null;
   }
 
+  const rootElement = document.getElementById("root");
+  assert(rootElement, "Expected root element to exist");
+  const root = createRoot(rootElement);
   try {
-    const rootElement = document.getElementById("root");
-    assert(rootElement, "Expected root element to exist");
-    const root = createRoot(rootElement);
     flushSync(() => root.render(<Capture />));
 
     await body(() => {
       assert(result, "Expected the hook result to be captured");
       return result;
     });
-
-    await unmountReactRoot(root);
   } finally {
-    Object.assign(globalThis, previous);
-    dom.window.close();
+    try {
+      await unmountReactRoot(root);
+    } finally {
+      Object.assign(globalThis, previous);
+      dom.window.close();
+    }
   }
 }
 
@@ -79,6 +81,23 @@ describe("useDropZone", () => {
         read().isDragActive,
         false,
         "a drag carrying no Files must not activate the zone",
+      );
+
+      flushSync(() => read().onDragEnter?.(dragEvent(["Files"])));
+      flushSync(() => read().onDragLeave?.(dragEvent(["Files"])));
+      assertEquals(
+        read().isDragActive,
+        false,
+        "an ignored non-file enter must not keep a later file drag active",
+      );
+
+      flushSync(() => read().onDragLeave?.(dragEvent(["text/plain"])));
+      flushSync(() => read().onDragEnter?.(dragEvent(["Files"])));
+      flushSync(() => read().onDragLeave?.(dragEvent(["Files"])));
+      assertEquals(
+        read().isDragActive,
+        false,
+        "an ignored non-file leave must not corrupt the file-drag counter",
       );
     });
   });
