@@ -12,9 +12,12 @@
  * ```typescript
  * // app/api/workflows/[...path]/route.ts
  * import { createWorkflowHandler } from "veryfront/workflow";
+ * import { getSession } from "../../../../lib/auth.ts";
  * import { workflows } from "../../../../lib/workflows.ts";
  *
- * export const { GET, POST } = createWorkflowHandler(workflows);
+ * export const { GET, POST } = createWorkflowHandler(workflows, {
+ *   authorize: async (request) => (await getSession(request))?.user.id ?? null,
+ * });
  * ```
  */
 
@@ -34,6 +37,12 @@ import { projectPendingApproval } from "../runtime/pending-approval-metadata.ts"
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
+  /**
+   * Authorize a request and return the authenticated approver identity.
+   * Return null to deny access. The handler uses this server-derived identity
+   * for approval decisions instead of trusting the request body.
+   */
+  authorize: (request: Request) => string | null | Promise<string | null>;
   /**
    * Path this handler is mounted at. It has to match the `apiBase` the hooks
    * use, because the handler resolves a route by what follows it.
@@ -82,6 +91,13 @@ function routeSegments(pathname: string, basePath: string): string[] | null {
     if (actual[index] !== segment) return null;
   }
   return actual.slice(base.length);
+}
+
+function canonicalWorkflowPath(basePath: string, segments: readonly string[]): string {
+  const encoded = [...toSegments(basePath), ...segments].map((segment) =>
+    encodeURIComponent(segment)
+  );
+  return `/${encoded.join("/")}`;
 }
 
 function problem(message: string, status: number): Response {
@@ -356,15 +372,21 @@ function runEventStream(
  */
 export function createWorkflowHandler(
   client: WorkflowClient,
-  options: WorkflowHandlerOptions = {},
+  options: WorkflowHandlerOptions,
 ): WorkflowHandlers {
-  const basePath = options.basePath ?? DEFAULT_BASE_PATH;
+  const basePath = (options.basePath ?? DEFAULT_BASE_PATH).replace(/\/+$/, "") || "/";
 
   function GET(request: Request): Promise<Response> {
     return answering(async () => {
       const url = new URL(request.url);
       const segments = routeSegments(url.pathname, basePath);
       if (!segments) return problem("Not a workflow route", 404);
+      if (url.pathname !== canonicalWorkflowPath(basePath, segments)) {
+        return problem("Workflow route must use its canonical path", 400);
+      }
+      if (!await options.authorize(request)) {
+        return problem("Workflow request is not authorized", 403);
+      }
 
       const [first, runId, third, approvalId] = segments;
 
@@ -411,6 +433,11 @@ export function createWorkflowHandler(
       const url = new URL(request.url);
       const segments = routeSegments(url.pathname, basePath);
       if (!segments) return problem("Not a workflow route", 404);
+      if (url.pathname !== canonicalWorkflowPath(basePath, segments)) {
+        return problem("Workflow route must use its canonical path", 400);
+      }
+      const authorizedApprover = await options.authorize(request);
+      if (!authorizedApprover) return problem("Workflow request is not authorized", 403);
 
       const [first, second, third, approvalId] = segments;
 
@@ -443,23 +470,29 @@ export function createWorkflowHandler(
           );
         }
 
-        const resolved = decision.approved
-          ? await client.approve(
+        if (decision.approved) {
+          await client.approve(
             second,
             approvalId,
-            decision.approver,
-            decision.comment,
-            decision.data,
-          )
-          : await client.reject(
-            second,
-            approvalId,
-            decision.approver,
+            authorizedApprover,
             decision.comment,
             decision.data,
           );
+        } else {
+          await client.reject(
+            second,
+            approvalId,
+            authorizedApprover,
+            decision.comment,
+            decision.data,
+          );
+        }
 
-        return Response.json({ approvalId, approved: decision.approved, result: resolved ?? null });
+        return Response.json({
+          approvalId,
+          approved: decision.approved,
+          resolvedBy: authorizedApprover,
+        });
       }
 
       return problem(`Unknown workflow route ${url.pathname}`, 404);

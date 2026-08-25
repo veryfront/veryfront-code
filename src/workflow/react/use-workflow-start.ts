@@ -1,11 +1,19 @@
 import { useCallback, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
-import { workflowMutationHeaders } from "./mutation-headers.ts";
+import {
+  normalizeWorkflowApiBase,
+  useStableWorkflowHeaders,
+  workflowMutationHeaders,
+} from "./mutation-headers.ts";
 
 /** Options accepted by use workflow start. */
 export interface UseWorkflowStartOptions {
   workflowId: string;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   onStart?: (runId: string) => void;
   onError?: (error: Error) => void;
 }
@@ -23,7 +31,16 @@ export interface UseWorkflowStartResult<TInput = unknown> {
 export function useWorkflowStart<TInput = unknown>(
   options: UseWorkflowStartOptions,
 ): UseWorkflowStartResult<TInput> {
-  const { workflowId, apiBase = "/api/workflows", onStart, onError } = options;
+  const {
+    workflowId,
+    apiBase = "/api/workflows",
+    headers,
+    credentials,
+    onStart,
+    onError,
+  } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
 
   const [isStarting, setIsStarting] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
@@ -35,10 +52,14 @@ export function useWorkflowStart<TInput = unknown>(
       setError(null);
 
       try {
-        const requestUrl = `${apiBase}/${workflowId}/start`;
+        const requestUrl = `${normalizedApiBase}/${encodeURIComponent(workflowId)}/start`;
         const response = await fetch(requestUrl, {
           method: "POST",
-          headers: workflowMutationHeaders(requestUrl, { "Content-Type": "application/json" }),
+          headers: workflowMutationHeaders(requestUrl, {
+            ...Object.fromEntries(stableHeaders),
+            "Content-Type": "application/json",
+          }),
+          credentials,
           body: JSON.stringify({ input }),
         });
 
@@ -69,7 +90,7 @@ export function useWorkflowStart<TInput = unknown>(
         setIsStarting(false);
       }
     },
-    [apiBase, onError, onStart, workflowId],
+    [credentials, normalizedApiBase, onError, onStart, stableHeaders, workflowId],
   );
 
   const resetError = useCallback((): void => {

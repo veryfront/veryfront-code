@@ -122,6 +122,13 @@ function postRaw(path: string, body: string): Request {
   });
 }
 
+function authorizedHandler(
+  client: WorkflowClient,
+  options: { basePath?: string } = {},
+): ReturnType<typeof createWorkflowHandler> {
+  return createWorkflowHandler(client, { ...options, authorize: () => "tester" });
+}
+
 describe("createWorkflowHandler", () => {
   let client: WorkflowClient;
   let handlers: ReturnType<typeof createWorkflowHandler>;
@@ -134,7 +141,7 @@ describe("createWorkflowHandler", () => {
     client.register(
       workflow({ id: "slow", steps: [step("only", { tool: slowTool("slow") })] }),
     );
-    handlers = createWorkflowHandler(client);
+    handlers = authorizedHandler(client);
   });
 
   afterEach(async (): Promise<void> => {
@@ -186,6 +193,32 @@ describe("createWorkflowHandler", () => {
     const run = await client.getRun(runId);
     expect(run?.input).toEqual({ topic: "x" });
     expect(run?.nodeStates.only?.output).toEqual({ ok: true, input: { topic: "x" } });
+  });
+
+  it("denies requests that the application does not authorize", async () => {
+    const denied = createWorkflowHandler(client, { authorize: () => null });
+
+    expect((await denied.GET(get("/api/workflows/runs"))).status).toBe(403);
+    expect(
+      (await denied.POST(post("/api/workflows/pipeline/start", { input: {} }))).status,
+    ).toBe(403);
+  });
+
+  it("rejects a non-canonical operation path before authorization", async () => {
+    let authorizationCalls = 0;
+    const routeAware = createWorkflowHandler(client, {
+      authorize: () => {
+        authorizationCalls++;
+        return "tester";
+      },
+    });
+
+    const response = await routeAware.POST(
+      post("/api/workflows/runs/not-a-run/%63ancel"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(authorizationCalls).toBe(0);
   });
 
   it("decodes an encoded workflow ID before lookup", async () => {
@@ -247,7 +280,7 @@ describe("createWorkflowHandler", () => {
     client.register(
       workflow({ id: "pipeline", steps: [step("only", { tool: passthroughTool("noop") })] }),
     );
-    handlers = createWorkflowHandler(client);
+    handlers = authorizedHandler(client);
 
     const runId = await startRun();
     backend.pendingApprovalReads = 0;
@@ -410,11 +443,16 @@ describe("createWorkflowHandler", () => {
     const decided = await handlers.POST(
       post(`/api/workflows/runs/${runId}/approvals/${approvalId}`, {
         approved: true,
-        approver: "tester",
+        approver: "impersonated-user",
         data: { confirmed: true },
       }),
     );
     expect(decided.status).toBe(200);
+    expect(await decided.json()).toEqual({
+      approvalId,
+      approved: true,
+      resolvedBy: "tester",
+    });
 
     // A 200 alone cannot tell an approval from a rejection: the run has to
     // leave the wait and run the step behind it.
@@ -474,7 +512,7 @@ describe("createWorkflowHandler", () => {
   });
 
   it("resolves routes against a custom basePath", async () => {
-    const mounted = createWorkflowHandler(client, { basePath: "/api/flows" });
+    const mounted = authorizedHandler(client, { basePath: "/api/flows/" });
 
     const response = await mounted.POST(post("/api/flows/pipeline/start", { input: {} }));
     expect(response.status).toBe(200);
@@ -515,7 +553,7 @@ describe("createWorkflowHandler", () => {
       backend: new ExplodingMemoryBackend({ debug: false }),
       debug: false,
     });
-    handlers = createWorkflowHandler(client);
+    handlers = authorizedHandler(client);
 
     const response = await handlers.GET(get("/api/workflows/runs"));
 
@@ -605,7 +643,7 @@ describe("createWorkflowHandler", () => {
       await client.destroy();
       const backend = new GatedActivationMemoryBackend({ debug: false });
       client = createWorkflowClient({ backend, debug: false });
-      handlers = createWorkflowHandler(client);
+      handlers = authorizedHandler(client);
       const firstStarted = Promise.withResolvers<void>();
       const releaseFirst = Promise.withResolvers<void>();
       const secondStarted = Promise.withResolvers<void>();
@@ -810,7 +848,7 @@ describe("createWorkflowHandler", () => {
       await client.destroy();
       const backend = new MemoryBackend({ debug: false });
       client = createWorkflowClient({ backend, debug: false });
-      handlers = createWorkflowHandler(client);
+      handlers = authorizedHandler(client);
       const writer = createWorkflowClient({ backend, debug: false });
       writer.register(
         workflow({ id: "shared-slow", steps: [step("only", { tool: slowTool("shared-slow") })] }),

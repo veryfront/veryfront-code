@@ -6,7 +6,11 @@ import type {
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
-import { workflowMutationHeaders } from "./mutation-headers.ts";
+import {
+  normalizeWorkflowApiBase,
+  useStableWorkflowHeaders,
+  workflowMutationHeaders,
+} from "./mutation-headers.ts";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -15,6 +19,10 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 export interface UseWorkflowOptions {
   runId: string;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   pollInterval?: number;
   autoRefresh?: boolean;
   onStatusChange?: (status: WorkflowStatus, previousStatus: WorkflowStatus) => void;
@@ -43,6 +51,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   const {
     runId,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     pollInterval = DEFAULT_POLL_INTERVAL_MS,
     autoRefresh = true,
     onStatusChange,
@@ -50,6 +60,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     onError,
     onApprovalRequired,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
 
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -74,8 +86,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}`, {
+      const response = await fetch(`${normalizedApiBase}/runs/${encodeURIComponent(runId)}`, {
         signal: abortControllerRef.current?.signal,
+        headers: stableHeaders,
+        credentials,
       });
 
       if (!response.ok) {
@@ -116,7 +130,16 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       setError(fetchError);
       onError?.(fetchError);
     }
-  }, [apiBase, onApprovalRequired, onComplete, onError, onStatusChange, runId]);
+  }, [
+    credentials,
+    normalizedApiBase,
+    onApprovalRequired,
+    onComplete,
+    onError,
+    onStatusChange,
+    runId,
+    stableHeaders,
+  ]);
 
   const refresh = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -128,10 +151,11 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const requestUrl = `${apiBase}/runs/${runId}/cancel`;
+      const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/cancel`;
       const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(requestUrl),
+        headers: workflowMutationHeaders(requestUrl, stableHeaders),
+        credentials,
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -145,16 +169,17 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       setError(cancelError);
       throw cancelError;
     }
-  }, [apiBase, refresh, runId]);
+  }, [credentials, normalizedApiBase, refresh, runId, stableHeaders]);
 
   const retry = useCallback(async (): Promise<void> => {
     if (!runId) return;
 
     try {
-      const requestUrl = `${apiBase}/runs/${runId}/retry`;
+      const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/retry`;
       const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(requestUrl),
+        headers: workflowMutationHeaders(requestUrl, stableHeaders),
+        credentials,
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -168,7 +193,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       setError(retryError);
       throw retryError;
     }
-  }, [apiBase, refresh, runId]);
+  }, [credentials, normalizedApiBase, refresh, runId, stableHeaders]);
 
   useEffect(() => {
     abortControllerRef.current = new AbortController();

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
+import { normalizeWorkflowApiBase, useStableWorkflowHeaders } from "./mutation-headers.ts";
 
 /** Default interval for auto-refreshing the workflow list */
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000;
@@ -13,6 +14,10 @@ export interface UseWorkflowListOptions {
   createdBefore?: Date;
   pageSize?: number;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   autoRefresh?: boolean;
   refreshInterval?: number;
 }
@@ -41,9 +46,13 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     createdBefore,
     pageSize = 20,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     autoRefresh = false,
     refreshInterval = DEFAULT_REFRESH_INTERVAL_MS,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
 
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [totalCount, setTotalCount] = useState<number | undefined>();
@@ -88,7 +97,10 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     async (append = false): Promise<void> => {
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
-        const response = await fetch(`${apiBase}/runs?${queryString}`);
+        const response = await fetch(`${normalizedApiBase}/runs?${queryString}`, {
+          headers: stableHeaders,
+          credentials,
+        });
 
         if (!response.ok) {
           throw REQUEST_ERROR.create({
@@ -112,7 +124,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         setError(err instanceof Error ? err : new Error(String(err)));
       }
     },
-    [apiBase, buildQueryString, cursor, filter],
+    [buildQueryString, credentials, cursor, filter, normalizedApiBase, stableHeaders],
   );
 
   useEffect(() => {

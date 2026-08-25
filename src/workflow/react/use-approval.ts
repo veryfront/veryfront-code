@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
-import { workflowMutationHeaders } from "./mutation-headers.ts";
+import {
+  normalizeWorkflowApiBase,
+  useStableWorkflowHeaders,
+  workflowMutationHeaders,
+} from "./mutation-headers.ts";
 
 /** Options accepted by use approval. */
 export interface UseApprovalOptions {
   runId: string;
   approvalId: string;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   approver?: string;
   onDecision?: (decision: ApprovalDecision) => void;
   onError?: (error: Error) => void;
@@ -32,10 +40,14 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     runId,
     approvalId,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     approver = "unknown",
     onDecision,
     onError,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
 
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,7 +63,12 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
 
     async function fetchApproval(): Promise<void> {
       try {
-        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`);
+        const response = await fetch(
+          `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/approvals/${
+            encodeURIComponent(approvalId)
+          }`,
+          { headers: stableHeaders, credentials },
+        );
 
         if (!response.ok) {
           throw REQUEST_ERROR.create({
@@ -73,7 +90,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     }
 
     fetchApproval();
-  }, [runId, approvalId, apiBase, onError, toError]);
+  }, [runId, approvalId, credentials, normalizedApiBase, onError, stableHeaders, toError]);
 
   const submitDecision = useCallback(
     async (decision: ApprovalDecision): Promise<void> => {
@@ -83,10 +100,16 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       setError(null);
 
       try {
-        const requestUrl = `${apiBase}/runs/${runId}/approvals/${approvalId}`;
+        const requestUrl = `${normalizedApiBase}/runs/${encodeURIComponent(runId)}/approvals/${
+          encodeURIComponent(approvalId)
+        }`;
         const response = await fetch(requestUrl, {
           method: "POST",
-          headers: workflowMutationHeaders(requestUrl, { "Content-Type": "application/json" }),
+          headers: workflowMutationHeaders(requestUrl, {
+            ...Object.fromEntries(stableHeaders),
+            "Content-Type": "application/json",
+          }),
+          credentials,
           body: JSON.stringify(decision),
         });
 
@@ -97,6 +120,22 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
           });
         }
 
+        const responseText = await response.text();
+        let responseBody: { resolvedBy?: unknown } = {};
+        if (responseText) {
+          try {
+            responseBody = JSON.parse(responseText) as { resolvedBy?: unknown };
+          } catch {
+            // Successful legacy/proxied endpoints may return a non-JSON body.
+          }
+        }
+        const resolvedDecision: ApprovalDecision = {
+          ...decision,
+          approver: typeof responseBody.resolvedBy === "string"
+            ? responseBody.resolvedBy
+            : decision.approver,
+        };
+
         setApproval((prev) => {
           if (!prev) return null;
 
@@ -104,12 +143,12 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
             ...prev,
             status: decision.approved ? "approved" : "rejected",
             resolvedAt: new Date(),
-            resolvedBy: decision.approver,
+            resolvedBy: resolvedDecision.approver,
             comment: decision.comment,
           };
         });
 
-        onDecision?.(decision);
+        onDecision?.(resolvedDecision);
       } catch (err) {
         const submitError = toError(err);
         setError(submitError);
@@ -119,7 +158,16 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         setIsSubmitting(false);
       }
     },
-    [runId, approvalId, apiBase, onDecision, onError, toError],
+    [
+      runId,
+      approvalId,
+      credentials,
+      normalizedApiBase,
+      onDecision,
+      onError,
+      stableHeaders,
+      toError,
+    ],
   );
 
   const approve = useCallback(

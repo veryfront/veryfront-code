@@ -117,14 +117,25 @@ catch-all route to answer all of them at once:
 ```ts theme={null}
 // app/api/workflows/[...path]/route.ts
 import { createWorkflowHandler } from "veryfront/workflow";
+import { getSession } from "../../../../lib/auth.ts";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: async (request) => (await getSession(request))?.user.id ?? null,
+});
 ```
 
 Pass the same client the rest of the app starts workflows with. A client created
 inside the route file would carry its own in-memory backend and would not see
 those runs.
+
+The `authorize` callback must validate the request with your server-side session
+implementation and return the authenticated user's stable ID. It can also deny
+access to individual routes. Returning `null` denies the request. Veryfront uses
+the returned ID for approval decisions and does not trust the approver name in
+the browser request. Non-canonical route encodings are rejected before this
+callback runs, so route-specific policies cannot authorize a different path
+from the operation the handler dispatches.
 
 The handler covers every path the hooks call:
 
@@ -150,7 +161,9 @@ without polling the run endpoint:
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 export function observeWorkflowRun(runId: string): EventSource {
-  const events = new EventSource(`/api/workflows/runs/${runId}/events`);
+  const events = new EventSource(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/events`,
+  );
 
   events.addEventListener("snapshot", (message) => {
     const run = JSON.parse((message as MessageEvent).data);

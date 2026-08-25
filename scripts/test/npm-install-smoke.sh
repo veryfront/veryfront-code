@@ -355,7 +355,9 @@ cat >"$WORKDIR/app/api/workflows/[...path]/route.ts" <<'EOF'
 import { createWorkflowHandler } from "veryfront/workflow";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: () => "npm-smoke-test",
+});
 EOF
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"

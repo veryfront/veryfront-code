@@ -5,6 +5,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { useApproval, type UseApprovalResult } from "./use-approval.ts";
 import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
+import { useWorkflowList } from "./use-workflow-list.ts";
 import { useWorkflowStart, type UseWorkflowStartResult } from "./use-workflow-start.ts";
 
 function installDom(): () => void {
@@ -43,6 +44,164 @@ function installDom(): () => void {
 }
 
 describe("useWorkflowStart", () => {
+  it("does not refetch when inline authorization headers are semantically unchanged", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let fetchCount = 0;
+
+    globalThis.fetch = ((input: string | URL | Request) => {
+      fetchCount++;
+      const url = String(input);
+      if (url.includes("/approvals/")) {
+        return Promise.resolve(Response.json({ id: "approval-1", status: "pending" }));
+      }
+      if (url.includes("/runs?")) {
+        return Promise.resolve(Response.json({ runs: [], cursor: undefined }));
+      }
+      return Promise.resolve(Response.json({
+        id: "run-1",
+        status: "running",
+        nodeStates: {},
+        currentNodes: [],
+        pendingApprovals: [],
+      }));
+    }) as typeof fetch;
+
+    function Capture(): null {
+      const headers = { Authorization: "Bearer stable-token" };
+      useApproval({ runId: "run-1", approvalId: "approval-1", headers });
+      useWorkflow({ runId: "run-1", autoRefresh: false, headers });
+      useWorkflowList({ autoRefresh: false, headers });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assertEquals(fetchCount, 3);
+
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assertEquals(fetchCount, 3);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("encodes workflow IDs before calling the handler route", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    globalThis.fetch = ((input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return Promise.resolve(Response.json({ runId: "run-1" }));
+    }) as typeof fetch;
+
+    function Capture(): null {
+      hook = useWorkflowStart({
+        workflowId: "billing:v2+manual",
+        apiBase: "/api/workflows/",
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await hook!.start({});
+      assertEquals(
+        requestedUrl,
+        "/api/workflows/billing%3Av2%2Bmanual/start",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("accepts a successful empty approval response", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let hook: UseApprovalResult | null = null;
+    const approvers: string[] = [];
+
+    globalThis.fetch =
+      ((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === "POST"
+          ? Promise.resolve(new Response(null, { status: 204 }))
+          : Promise.resolve(
+            Response.json({ id: "approval-1", status: "pending" }),
+          )) as typeof fetch;
+
+    function Capture(): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        approver: "legacy-user",
+        onDecision: (decision) => approvers.push(decision.approver),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await hook!.approve();
+      assertEquals(approvers, ["legacy-user"]);
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("uses the server-derived approver identity after a decision", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let hook: UseApprovalResult | null = null;
+    const decisions: Array<{ approver: string }> = [];
+
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return Promise.resolve(Response.json({ resolvedBy: "session-user" }));
+      }
+      return Promise.resolve(Response.json({
+        id: "approval-1",
+        runId: "run-1",
+        status: "pending",
+        message: "Approve?",
+        createdAt: new Date().toISOString(),
+      }));
+    }) as typeof fetch;
+
+    function Capture(): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        approver: "impersonated-user",
+        onDecision: (decision) => decisions.push(decision),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await hook!.approve();
+      assertEquals(decisions[0]?.approver, "session-user");
+    } finally {
+      flushSync(() => root.unmount());
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("returns the production CSRF cookie in the workflow mutation header", async () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
@@ -145,11 +304,13 @@ describe("useWorkflowStart", () => {
     const restoreDom = installDom();
     const originalFetch = globalThis.fetch;
     let requestHeaders = new Headers();
+    let requestCredentials: RequestCredentials | undefined;
     let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
 
     document.cookie = "__Host-vf_csrf=host-token; Path=/; Secure";
     globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
       requestHeaders = new Headers(init?.headers);
+      requestCredentials = init?.credentials;
       return Promise.resolve(Response.json({ runId: "run-1" }));
     }) as typeof fetch;
 
@@ -157,6 +318,8 @@ describe("useWorkflowStart", () => {
       hook = useWorkflowStart({
         workflowId: "content-pipeline",
         apiBase: "https://workflows.example/api/workflows",
+        headers: { Authorization: "Bearer public-session-token" },
+        credentials: "include",
       });
       return null;
     }
@@ -167,6 +330,8 @@ describe("useWorkflowStart", () => {
       await hook!.start({});
 
       assertEquals(requestHeaders.get("x-csrf-token"), null);
+      assertEquals(requestHeaders.get("authorization"), "Bearer public-session-token");
+      assertEquals(requestCredentials, "include");
     } finally {
       flushSync(() => root.unmount());
       globalThis.fetch = originalFetch;
