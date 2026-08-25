@@ -23,6 +23,7 @@ import { SECURITY_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
 import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import {
   IsolatedSsrRendererProviderName,
@@ -36,7 +37,6 @@ import {
 } from "./worker-egress-guard.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
-import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import {
   isIsolatedApiPreparationSupported,
   ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
@@ -1282,13 +1282,8 @@ export interface IsolationPosture {
 /**
  * Resolve the host-owned isolation flags once per process.
  *
- * A build that cannot honour `WORKER_ISOLATION_API` has no configuration that
- * serves traffic: every API route dead-ends in `prepareHandlerModule`. The flag
- * is downgraded in exactly one case — the operator already granted host-realm
- * execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. The downgrade cannot
- * grant more than that, since every execution gate is a conjunction with
- * `allowHostProjectCodeExecution`. Without the grant the flag stands and API
- * ownership fails closed with a typed 503.
+ * A build that cannot honour `WORKER_ISOLATION_API` must fail closed. A broad
+ * host-execution grant does not override an API-specific isolation posture.
  */
 function resolveFlags(): void {
   if (_flagsResolved) return;
@@ -1304,9 +1299,7 @@ function resolveFlags(): void {
 
   const preparationSupported = isIsolatedApiPreparationSupported();
   const hostExecutionGranted = isHostProjectExecutionOverrideEnabled();
-  const downgraded = apiRequested && !preparationSupported && hostExecutionGranted;
-
-  _apiIsolation = apiRequested && !downgraded;
+  _apiIsolation = apiRequested;
   _flagsResolved = true;
 
   const effectiveSurfaces = [_apiIsolation, _dataIsolation, _ssrIsolation]
@@ -1362,20 +1355,9 @@ function resolveFlags(): void {
     });
   }
 
-  if (downgraded) {
-    logger.warn(
-      "WORKER_ISOLATION_API downgraded to host-realm execution under an explicit operator grant",
-      {
-        flag: "WORKER_ISOLATION_API",
-        requested: true,
-        effective: false,
-        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
-        grantedBy: "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
-      },
-    );
-  } else if (apiRequested && !preparationSupported) {
+  if (apiRequested && !preparationSupported) {
     logger.error(
-      "WORKER_ISOLATION_API cannot be honoured by this runtime and host project execution is not granted; project API routes will fail closed",
+      "WORKER_ISOLATION_API cannot be honoured by this runtime; project API routes will fail closed",
       {
         flag: "WORKER_ISOLATION_API",
         requested: true,
