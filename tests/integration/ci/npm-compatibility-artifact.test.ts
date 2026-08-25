@@ -1,14 +1,11 @@
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  makeTempDirWithOptions,
-  remove,
-  withTempDir,
-} from "#veryfront/testing/deno-compat.ts";
+import { makeTempDirWithOptions, remove, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#std/path/join";
 import { relative } from "#std/path/relative";
 import {
@@ -59,7 +56,9 @@ describe("npm compatibility artifact", () => {
         );
 
         assertEquals(manifest.packages.length, 1);
-        await Deno.stat(join(absoluteDestination, manifest.packages[0].file));
+        const packageEntry = manifest.packages[0];
+        assertExists(packageEntry);
+        await Deno.stat(join(absoluteDestination, packageEntry.file));
       } finally {
         await remove(absoluteDestination, { recursive: true });
       }
@@ -71,6 +70,8 @@ describe("npm compatibility artifact", () => {
       "vf-npm-artifact-source-",
       "vf-npm-artifact-output-",
     ], async ([root, destination]) => {
+      assertExists(root);
+      assertExists(destination);
       await writePackage(root, {
         name: "veryfront",
         version: "1.2.3",
@@ -125,10 +126,14 @@ describe("npm compatibility artifact", () => {
       "vf-npm-artifact-source-",
       "vf-npm-artifact-output-",
     ], async ([root, destination]) => {
+      assertExists(root);
+      assertExists(destination);
       await writePackage(root, { name: "veryfront", version: "1.2.3" });
       const manifest = await createNpmCompatibilityArtifact(root, destination);
+      const packageEntry = manifest.packages[0];
+      assertExists(packageEntry);
       await Deno.writeTextFile(
-        join(destination, manifest.packages[0].file),
+        join(destination, packageEntry.file),
         "tampered",
       );
 
@@ -145,6 +150,8 @@ describe("npm compatibility artifact", () => {
       "vf-npm-artifact-source-",
       "vf-npm-artifact-output-",
     ], async ([root, destination]) => {
+      assertExists(root);
+      assertExists(destination);
       await writePackage(root, {
         name: "veryfront",
         version: "1.2.3",
@@ -169,6 +176,9 @@ describe("npm compatibility artifact", () => {
       "vf-npm-artifact-output-",
       "vf-npm-artifact-materialized-",
     ], async ([root, artifact, destination]) => {
+      assertExists(root);
+      assertExists(artifact);
+      assertExists(destination);
       await writePackage(root, {
         name: "veryfront",
         version: "1.2.3",
