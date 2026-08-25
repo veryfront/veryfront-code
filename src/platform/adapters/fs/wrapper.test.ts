@@ -207,6 +207,26 @@ describe("FSAdapterWrapper", () => {
 
       assertEquals(refreshedReason, "review-comment");
     });
+
+    it("rejects an accessor-valued refreshSourceSnapshot", () => {
+      let getterCalls = 0;
+      const fsAdapter = createMockFSAdapter();
+      Object.defineProperty(fsAdapter, "refreshSourceSnapshot", {
+        configurable: true,
+        get() {
+          getterCalls++;
+          return () => Promise.resolve();
+        },
+      });
+
+      assertThrows(
+        () => new FSAdapterWrapper(fsAdapter),
+        TypeError,
+        "must be a data-property method",
+        "an accessor-valued refreshSourceSnapshot must be rejected",
+      );
+      assertEquals(getterCalls, 0, "the accessor must never be invoked during capture");
+    });
   });
 
   describe("source snapshot freshness", () => {

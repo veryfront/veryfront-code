@@ -145,6 +145,21 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL, "openai/gpt-5.2-mini");
   });
 
+  it("maps legacy boolean registration aliases onto the canonical modes", () => {
+    assertEquals(
+      parseHostedAgentServiceConfig({ VERYFRONT_AGENT_SERVICE_REGISTRATION: "true" })
+        .VERYFRONT_AGENT_SERVICE_REGISTRATION,
+      "enabled",
+      "legacy REGISTRATION=true must normalize to enabled",
+    );
+    assertEquals(
+      parseHostedAgentServiceConfig({ VERYFRONT_AGENT_SERVICE_REGISTRATION: "false" })
+        .VERYFRONT_AGENT_SERVICE_REGISTRATION,
+      "disabled",
+      "legacy REGISTRATION=false must normalize to disabled",
+    );
+  });
+
   it("rejects invalid API URLs", () => {
     assertThrows(() => parseHostedAgentServiceConfig({ VERYFRONT_API_URL: "not-a-url" }));
   });

@@ -2,7 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
+import { addPendingInvalidation, removePendingInvalidation } from "./invalidation-state.ts";
 import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
 
 interface StubFile {
@@ -814,15 +815,32 @@ describe("file list fan-out (issue inbox#32)", () => {
     // The fan-out gate disables snapshot recovery while the index can answer.
     // Raised in review: nothing pinned that recovery still works when it
     // cannot — i.e. that the gate narrows the path rather than closing it.
+    // The oracle is the recovered file itself: a request counter cannot tell a
+    // snapshot refresh apart from the ordinary listing probe.
     const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
-    const { adapter, counts } = createDraftAdapter(files, true, true);
+    const { adapter } = createDraftAdapter(files, true, true);
 
-    const before = counts.listFiles;
-    assertEquals(await adapter.resolveFile("app/added-later"), null);
     assertEquals(
-      counts.listFiles > before,
-      true,
-      "a recoverable snapshot must still refresh when the index cannot answer",
+      (await adapter.readdir("app")).map((entry) => entry.path),
+      ["app/page.tsx"],
+      "the pre-edit listing answers from the index",
+    );
+
+    files.push({ path: "lib/util.ts", content: "export const util = 1;" });
+
+    const branchSourcePrefix = buildFileCacheKeyPrefix(adapter.getContentContext());
+    let entries: Array<{ path: string }>;
+    try {
+      addPendingInvalidation(branchSourcePrefix);
+      entries = await adapter.readdir("lib");
+    } finally {
+      removePendingInvalidation(branchSourcePrefix);
+    }
+
+    assertEquals(
+      entries.map((entry) => entry.path),
+      ["lib/util.ts"],
+      "a recoverable snapshot must refresh and list the new file when the index cannot answer",
     );
   });
 

@@ -378,9 +378,22 @@ describe("integration.ts", () => {
       assertEquals(enhanced.id, denoAdapter.id);
       assertEquals(enhanced.name, denoAdapter.name);
       assertEquals(enhanced.capabilities, denoAdapter.capabilities);
+      for (const key of ["env", "server", "shell", "serve"]) {
+        assertEquals(
+          typeof (enhanced as unknown as Record<string, unknown>)[key],
+          typeof (denoAdapter as unknown as Record<string, unknown>)[key],
+          `${key} must survive materialization`,
+        );
+      }
       // `shutdown` lives on the prototype and closes over instance state, so it
-      // must survive materialization already bound to the source adapter.
-      assertEquals(typeof enhanced.shutdown, "function");
+      // must survive materialization already bound to the source adapter. An
+      // unbound copy called as a bare function throws on `this`.
+      const { shutdown } = enhanced as { shutdown: () => Promise<void> };
+      assertEquals(
+        await shutdown().then(() => "resolved").catch((error) => String(error)),
+        "resolved",
+        "a destructured shutdown must stay bound to the source adapter",
+      );
     });
   });
 });

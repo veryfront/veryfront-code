@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapAgentService, runAgentServiceMain } from "./bootstrap.ts";
 import type { AbortRejectionProcessTarget } from "./abort-rejection-guard.ts";
@@ -119,5 +119,49 @@ describe("agent/agent-service-bootstrap", () => {
     ]);
     assertStrictEquals(exitCode, 1);
     assertStrictEquals(processTarget.listenerCount(), 1);
+  });
+
+  it("propagates fatal startup errors when no exit hook is provided", async () => {
+    const events: string[] = [];
+    const processTarget = createProcessTarget();
+
+    await assertRejects(
+      () =>
+        runAgentServiceMain({
+          processTarget: processTarget.target,
+          initializeApplicationErrors: () => {
+            events.push("initialize-application-errors");
+          },
+          initializeTelemetry: () => {
+            events.push("initialize-telemetry");
+            return true;
+          },
+          start: () => {
+            events.push("start");
+            throw new Error("startup failed");
+          },
+          onStartupError: (error) => {
+            events.push(error instanceof Error ? error.message : String(error));
+          },
+          onFinally: () => {
+            events.push("cleanup");
+          },
+        }),
+      Error,
+      "startup failed",
+      "a startup error must propagate when no exit hook is provided",
+    );
+
+    assertEquals(
+      events,
+      [
+        "initialize-application-errors",
+        "initialize-telemetry",
+        "start",
+        "startup failed",
+        "cleanup",
+      ],
+      "onFinally must still run when the error propagates",
+    );
   });
 });

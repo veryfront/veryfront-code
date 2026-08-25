@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  ControlPlaneBranchBindingError,
   isAuthenticInternalControlPlaneCandidate,
   isVerifiedInternalControlPlaneRequest,
   resolveVerifiedControlPlaneBranchBinding,
@@ -181,11 +182,28 @@ describe("control-plane signature: body binding", () => {
   });
 
   it("rejects a body that does not match the signed request_hash", async () => {
-    await assertRejects(() =>
-      resolveBinding(
-        RUN_BODY,
-        JSON.stringify({ run: { project: {} }, agentSource: { type: "release" }, tampered: true }),
-      )
+    const error = await assertRejects(
+      () =>
+        resolveBinding(
+          RUN_BODY,
+          JSON.stringify({
+            run: { project: {} },
+            agentSource: { type: "release" },
+            tampered: true,
+          }),
+        ),
+      ControlPlaneBranchBindingError,
+      "Invalid control-plane signature",
+    );
+    assertInstanceOf(
+      error,
+      ControlPlaneBranchBindingError,
+      "the rejection must be the typed control-plane binding error, not a bare Error",
+    );
+    assertEquals(
+      error.status,
+      401,
+      "a body-hash mismatch must be the typed 401 the proxy handler can map to a sanitized response",
     );
   });
 });

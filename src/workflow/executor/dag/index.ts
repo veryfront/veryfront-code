@@ -328,7 +328,14 @@ export class DAGExecutor {
       // actually succeeded, and those would re-execute on resume. We capture
       // the earliest waiting/failed node (preserving index-order precedence) and
       // return only after all states are recorded.
-      let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
+      let outcome:
+        | {
+          kind: "waiting" | "failed";
+          nodeId: string;
+          waitConfig?: WaitNodeConfig;
+          error?: string;
+        }
+        | undefined;
       const checkpointNodes: string[] = [];
 
       for (let i = 0; i < batch.length; i++) {
@@ -383,7 +390,13 @@ export class DAGExecutor {
         if (nodeResult.waiting) {
           // A composite reports the child that actually suspended. Falling back
           // to this node covers a top-level wait, which is its own waiting node.
-          if (!outcome) outcome = { kind: "waiting", nodeId: nodeResult.waitingNode ?? nodeId };
+          if (!outcome) {
+            outcome = {
+              kind: "waiting",
+              nodeId: nodeResult.waitingNode ?? nodeId,
+              waitConfig: nodeResult.waitingConfig,
+            };
+          }
           continue;
         }
 
@@ -432,6 +445,7 @@ export class DAGExecutor {
           completed: false,
           waiting: true,
           waitingNode: outcome.nodeId,
+          waitingConfig: outcome.waitConfig,
           context,
           nodeStates,
           contextPatch,
@@ -774,6 +788,7 @@ export class DAGExecutor {
       contextPatch: result.contextPatch,
       waiting: result.waiting,
       waitingNode: result.waitingNode,
+      waitingConfig: result.waitingConfig,
     };
   }
 
@@ -850,6 +865,7 @@ export class DAGExecutor {
       contextPatch: result.contextPatch,
       waiting: result.waiting,
       waitingNode: result.waitingNode,
+      waitingConfig: result.waitingConfig,
     };
   }
 
@@ -886,6 +902,7 @@ export class DAGExecutor {
       state,
       contextPatch: createSetContextPatch(),
       waiting: true,
+      waitingConfig: config,
     };
   }
 
@@ -973,6 +990,7 @@ export class DAGExecutor {
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting: result.waiting,
       waitingNode: result.waitingNode,
+      waitingConfig: result.waitingConfig,
     };
   }
 

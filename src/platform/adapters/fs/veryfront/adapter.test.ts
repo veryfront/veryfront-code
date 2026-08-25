@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
@@ -649,6 +654,22 @@ describe("VeryfrontFSAdapter", () => {
         projectSlug: "test-project",
         releaseId: "release-old",
       });
+
+      const statOps = (adapter as unknown as { statOps: { clearIndex: () => void } }).statOps;
+      const dirOps = (adapter as unknown as { dirOps: { clearTree: () => void } }).dirOps;
+      const originalClearIndex = statOps.clearIndex;
+      const originalClearTree = dirOps.clearTree;
+      let indexClears = 0;
+      let treeClears = 0;
+      statOps.clearIndex = () => {
+        indexClears++;
+        originalClearIndex.call(statOps);
+      };
+      dirOps.clearTree = () => {
+        treeClears++;
+        originalClearTree.call(dirOps);
+      };
+
       adapter.setContentContext({
         sourceType: "release",
         projectSlug: "test-project",
@@ -656,6 +677,17 @@ describe("VeryfrontFSAdapter", () => {
       });
 
       assertEquals(adapter.getContentContext()?.releaseId, "release-new");
+      assertEquals(indexClears, 1, "a release switch must clear the stat index");
+      assertEquals(treeClears, 1, "a release switch must clear the directory tree");
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-new",
+      });
+
+      assertEquals(indexClears, 1, "an unchanged context must not clear the stat index");
+      assertEquals(treeClears, 1, "an unchanged context must not clear the directory tree");
     });
 
     it("should not clear caches when context is identical", () => {
@@ -754,14 +786,92 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("dispose", () => {
-    it("should dispose without error", () => {
-      createAdapter().dispose();
+    it("should clear the cache, bump the snapshot generation and allow re-initialization", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: "v1",
+          content: "hello",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "hello");
+
+      const versionBeforeDispose = adapter.getSourceSnapshotVersion();
+      assertEquals(
+        adapter.getCacheStats().cache.size > 0,
+        true,
+        "an initialized read must leave something in the file cache",
+      );
+      const callsBeforeDispose = listAllFilesCalls;
+
+      adapter.dispose();
+
+      assertEquals(adapter.getCacheStats().cache.size, 0, "dispose clears the file cache");
+      assertNotEquals(
+        adapter.getSourceSnapshotVersion(),
+        versionBeforeDispose,
+        "dispose bumps the source snapshot generation",
+      );
+
+      await adapter.initialize();
+      assertEquals(
+        listAllFilesCalls > callsBeforeDispose,
+        true,
+        "dispose resets initialized so a later initialize re-fetches",
+      );
     });
 
     it("should allow calling dispose multiple times", () => {
       const adapter = createAdapter();
       adapter.dispose();
+      const versionAfterFirst = adapter.getSourceSnapshotVersion();
+
       adapter.dispose();
+
+      assertNotEquals(
+        adapter.getSourceSnapshotVersion(),
+        versionAfterFirst,
+        "every dispose bumps the source snapshot generation",
+      );
+      assertEquals(
+        adapter.getCacheStats().cache.size,
+        0,
+        "the file cache stays cleared after a repeated dispose",
+      );
     });
   });
 

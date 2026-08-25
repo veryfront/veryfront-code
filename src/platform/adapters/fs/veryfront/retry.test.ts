@@ -37,6 +37,20 @@ describe("platform/adapters/fs/veryfront/retry", () => {
       assertEquals(callCount, 2);
     });
 
+    it("should not retry a non-TypeError whose message merely mentions fetch", async () => {
+      let callCount = 0;
+      await assertRejects(
+        () =>
+          withRetryOnTransient(() => {
+            callCount++;
+            throw new Error("fetch failed");
+          }, "test"),
+        Error,
+        "fetch failed",
+      );
+      assertEquals(callCount, 1, "a plain Error mentioning fetch is not treated as transient");
+    });
+
     it("should retry once on 500 status error", async () => {
       let callCount = 0;
       const result = await withRetryOnTransient(() => {
