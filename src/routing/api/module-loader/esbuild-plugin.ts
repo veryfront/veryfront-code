@@ -325,8 +325,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 return {
                   errors: [
                     {
-                      text:
-                        `Integrity mismatch for ${args.path}: expected ${lockfileEntry.integrity}, got ${integrity}`,
+                      text: `Integrity mismatch for ${
+                        describeRemoteModuleUrl(args.path)
+                      }: expected ${lockfileEntry.integrity}, got ${integrity}`,
                     } as Message,
                   ],
                 };
@@ -373,7 +374,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           return {
             errors: [
               {
-                text: `Failed to fetch ${args.path}: ${res.status}`,
+                text: `Failed to fetch ${describeRemoteModuleUrl(args.path)}: ${res.status}`,
               } as Message,
             ],
           };

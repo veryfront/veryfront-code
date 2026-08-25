@@ -1043,7 +1043,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         const errors = (second as { errors?: Array<{ text: string }> }).errors;
         assertExists(errors?.[0], "strict builds must return an esbuild error");
         assertEquals(
-          errors[0].text.includes(`Integrity mismatch for ${requestUrl}`),
+          errors[0].text.includes("Integrity mismatch for https://esm.sh"),
           true,
           "the lockfile hash mismatch must be reported, not silently refetched",
         );
