@@ -656,8 +656,9 @@ export interface WebSocketHandlerConfig {
   /**
    * Run-keyed controller ownership.
    *
-   * A socket close only detaches its publisher. The caller must invoke
-   * `releaseRun()` with the exact run registration when the run itself ends.
+   * A socket close releases its run by default. When `retainRunOnClose` is
+   * enabled, the caller must invoke `releaseRun()` with the exact run
+   * registration when the run itself ends.
    */
   registry: AgentControllerRegistry;
 
@@ -669,6 +670,15 @@ export interface WebSocketHandlerConfig {
 
   /** WebSocket upgrade implementation. Defaults to the portable runtime adapter. */
   upgradeWebSocket?: (request: Request) => WebSocketUpgradeResult;
+
+  /**
+   * Retain run-scoped state after its socket closes.
+   *
+   * Use this only when the application terminally calls `releaseRun()` for
+   * every admitted run. Defaults to false so arbitrary run IDs cannot leave
+   * persistent registry entries.
+   */
+  retainRunOnClose?: boolean;
 
   /** Enable debug logging */
   debug?: boolean;
@@ -769,6 +779,16 @@ export function createWebSocketHandler(
           });
         }
         if (!detached) return;
+        if (!config.retainRunOnClose && registry.getPublisher(runId) === undefined) {
+          try {
+            registry.releaseRun(registration.run);
+          } catch (error) {
+            logger.error("WebSocket run release failed", {
+              runId,
+              errorName: error instanceof Error ? error.name : typeof error,
+            });
+          }
+        }
         void Promise.resolve()
           .then(() => config.onClose?.(registration))
           .catch((error) => {

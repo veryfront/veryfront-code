@@ -597,8 +597,7 @@ export const GET = createWebSocketHandler({
   onClose: ({ publisher, run }) => {
     eventSubscriptions.get(publisher)?.();
     eventSubscriptions.delete(publisher);
-    // A socket close detaches only this transport generation. Call
-    // registry.releaseRun(run) when the workflow run itself terminates.
+    // The default close path also releases the run registry entry.
     console.log(`Client disconnected: ${run.runId}`);
   },
 });
