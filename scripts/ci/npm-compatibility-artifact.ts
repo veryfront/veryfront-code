@@ -103,9 +103,7 @@ async function packPackage(
   }).output();
   if (!output.success) {
     throw new Error(
-      `npm pack failed for ${packageDirectory}: ${
-        new TextDecoder().decode(output.stderr).trim()
-      }`,
+      `npm pack failed for ${packageDirectory}: ${new TextDecoder().decode(output.stderr).trim()}`,
     );
   }
   const result = JSON.parse(
@@ -132,13 +130,9 @@ export async function createNpmCompatibilityArtifact(
       manifest: await readPackageManifest(directory),
     })),
   );
-  packageSources.sort((left, right) =>
-    compareText(left.manifest.name, right.manifest.name)
-  );
+  packageSources.sort((left, right) => compareText(left.manifest.name, right.manifest.name));
 
-  const root = packageSources.find(({ manifest }) =>
-    manifest.name === "veryfront"
-  );
+  const root = packageSources.find(({ manifest }) => manifest.name === "veryfront");
   if (!root) throw new Error("npm compatibility artifact requires veryfront");
   for (const { manifest } of packageSources) {
     if (manifest.version !== root.manifest.version) {

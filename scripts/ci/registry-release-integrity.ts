@@ -102,9 +102,7 @@ function validateMetadata(
   if (predicateType !== SLSA_PROVENANCE_V1) {
     throw new RegistryReleaseError(
       "provenance",
-      `${spec} does not expose npm SLSA provenance (${
-        predicateType ?? "missing"
-      }).`,
+      `${spec} does not expose npm SLSA provenance (${predicateType ?? "missing"}).`,
     );
   }
 }

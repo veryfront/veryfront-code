@@ -152,6 +152,23 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(task, "scripts/ci/npm-compatibility-artifact.ts");
     assertStringIncludes(task, "scripts/ci/registry-release-integrity.ts");
     assertStringIncludes(task, "tests/integration/ci/");
+    const formatCommand = task.split(" && ").find((command) =>
+      command.startsWith("deno fmt --check")
+    );
+    assert(formatCommand, "lint:ci-typescript must include a format check");
+    for (
+      const ciTypeScriptFile of [
+        "scripts/ci/npm-compatibility-artifact.ts",
+        "scripts/ci/registry-release-integrity.ts",
+        "scripts/ci/registry-release-integrity.test.ts",
+      ]
+    ) {
+      assertStringIncludes(
+        formatCommand,
+        ciTypeScriptFile,
+        `${ciTypeScriptFile} must be covered by the format check`,
+      );
+    }
     for (const entrypoint of ["lint:ci", "verify", "verify:quick"]) {
       assertStringIncludes(
         denoConfig.tasks[entrypoint],
