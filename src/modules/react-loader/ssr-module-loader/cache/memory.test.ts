@@ -14,6 +14,7 @@ import {
   releaseTransformSlot,
   tryAcquireTransformSlot,
 } from "./memory.ts";
+import { buildCrossProjectImportCacheKey } from "../cross-project-import-loader.ts";
 import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { getTransformPerProjectLimit } from "../constants.ts";
 import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -272,13 +273,110 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
 
       globalModuleCache.set("prefix:project-1:module-a", { tempPath: "/tmp/a", contentHash: "a" });
       globalModuleCache.set("prefix:project-2:module-b", { tempPath: "/tmp/b", contentHash: "b" });
+      globalCrossProjectCache.set("prefix:project-1:mod", {
+        tempPath: "/tmp/x1.mjs",
+        contentHash: "x1",
+      });
+      const prefixSharingProjectKey = buildCrossProjectImportCacheKey({
+        projectId: "project-1-extra",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(prefixSharingProjectKey, {
+        tempPath: "/tmp/x2.mjs",
+        contentHash: "x2",
+      });
+      const colonSpecifierKey = buildCrossProjectImportCacheKey({
+        projectId: "project-1",
+        specifier: "@acme/component:variant:deep",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(colonSpecifierKey, {
+        tempPath: "/tmp/colon-specifier.mjs",
+        contentHash: "colon-specifier",
+      });
+      const foreignSpecifierContainingProjectIdKey = buildCrossProjectImportCacheKey({
+        projectId: "project-2",
+        specifier: "prefix:project-1:component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(foreignSpecifierContainingProjectIdKey, {
+        tempPath: "/tmp/foreign-specifier.mjs",
+        contentHash: "foreign-specifier",
+      });
+      const opaqueProjectIdKey = buildCrossProjectImportCacheKey({
+        projectId: "project:01J2XYZ",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(opaqueProjectIdKey, {
+        tempPath: "/tmp/opaque-project-id.mjs",
+        contentHash: "opaque-project-id",
+      });
+      const opaqueSuffixSharingProjectKey = buildCrossProjectImportCacheKey({
+        projectId: "tenant:project:01J2XYZ",
+        specifier: "@acme/component",
+        reactVersion: "1.0.0",
+        registryBaseUrl: "https://registry.example.com",
+      });
+      globalCrossProjectCache.set(opaqueSuffixSharingProjectKey, {
+        tempPath: "/tmp/opaque-suffix-sharing-project.mjs",
+        contentHash: "opaque-suffix-sharing-project",
+      });
+      globalCrossProjectCache.set("prefix:project-2:mod", {
+        tempPath: "/tmp/y.mjs",
+        contentHash: "y",
+      });
 
       clearSSRModuleCacheForProject("project-1");
 
       assertEquals(globalModuleCache.has("prefix:project-1:module-a"), false);
       assertEquals(globalModuleCache.has("prefix:project-2:module-b"), true);
+      assertEquals(
+        globalCrossProjectCache.has("prefix:project-1:mod"),
+        false,
+        "project invalidation must evict its cross-project entries",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(prefixSharingProjectKey),
+        true,
+        "a prefix-sharing project's cross-project entry must survive exact project invalidation",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(colonSpecifierKey),
+        false,
+        "cross-project entries with colon-containing specifiers must be evicted for their owner",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(foreignSpecifierContainingProjectIdKey),
+        true,
+        "a foreign entry must survive when only its specifier contains the cleared project id",
+      );
+      assertEquals(
+        globalCrossProjectCache.has("prefix:project-2:mod"),
+        true,
+        "another project's cross-project entries must survive",
+      );
+
+      clearSSRModuleCacheForProject("project:01J2XYZ");
+
+      assertEquals(
+        globalCrossProjectCache.has(opaqueProjectIdKey),
+        false,
+        "opaque project ids containing colons must still own their cache entries",
+      );
+      assertEquals(
+        globalCrossProjectCache.has(opaqueSuffixSharingProjectKey),
+        true,
+        "a foreign opaque project id sharing the cleared suffix must survive",
+      );
 
       globalModuleCache.clear();
+      globalCrossProjectCache.clear();
     });
 
     it("should clear in-progress entries for a specific project", () => {

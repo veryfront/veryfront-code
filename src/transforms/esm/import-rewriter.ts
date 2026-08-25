@@ -62,10 +62,6 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   });
 }
 
-function normalizeVersionedSpecifier(specifier: string): string {
-  return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
-}
-
 function shouldSkipRewrite(specifier: string): boolean {
   return (
     specifier.startsWith("http://") ||
@@ -96,12 +92,14 @@ export function rewriteBareImports(
 
         if (shouldSkipRewrite(specifier)) return null;
 
-        const normalized = normalizeVersionedSpecifier(specifier);
-
-        let finalSpecifier = normalized;
-        if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
-          finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
-        } else if (!hasVersionSpecifier(specifier)) {
+        const hasExplicitVersion = hasVersionSpecifier(specifier);
+        let finalSpecifier = specifier;
+        if (
+          !hasExplicitVersion &&
+          (specifier === "tailwindcss" || specifier.startsWith("tailwindcss/"))
+        ) {
+          finalSpecifier = specifier.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
+        } else if (!hasExplicitVersion) {
           warnUnversionedImport(specifier, projectId);
         }
 

@@ -220,6 +220,36 @@ describe("agent/hosted-ag-ui-chat-request", () => {
     });
   });
 
+  it("preserves not-found status for missing projects", async () => {
+    const response = await buildParsedHostedAgUiRequest({
+      agUiInput: createAgUiInput({
+        context: [{ description: "veryfront.projectId", value: '"project-1"' }],
+      }),
+      authToken: "auth-token",
+      userId: "user-1",
+      verifyProjectAccess: () =>
+        Promise.resolve({
+          success: false,
+          error: {
+            errorCode: "NOT_FOUND",
+            message: "missing",
+            statusCode: 404,
+          },
+        }),
+    });
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected project-access response");
+    }
+
+    assertEquals(response.status, 404, "missing projects must surface as 404");
+    assertEquals(
+      await response.json(),
+      { errorCode: "NOT_FOUND", message: "missing" },
+      "body must echo the access error",
+    );
+  });
+
   it("preserves hosted validation error envelopes", async () => {
     const response = await createHostedAgUiValidationErrorResponse(
       Response.json(

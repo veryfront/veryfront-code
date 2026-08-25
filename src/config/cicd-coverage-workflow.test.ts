@@ -132,7 +132,7 @@ describe("cicd coverage workflow", () => {
 
   it("blocks live provider egress in every Deno unit coverage path", async () => {
     const providerDenyNet =
-      "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+      "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai,mcp.context7.com";
 
     // The deny-net flag lives once in scripts/test/suites.ts; the coverage
     // runners import it rather than restating the host list. This pins the

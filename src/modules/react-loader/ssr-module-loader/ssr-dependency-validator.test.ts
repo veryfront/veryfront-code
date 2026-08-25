@@ -7,7 +7,7 @@ import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   cachedCodeUsesResolvedDependencies,
   SSRDependencyValidator,
@@ -33,6 +33,7 @@ describe("SSRDependencyValidator", () => {
         resolvedDependencies,
       ),
       false,
+      "a parent importing the outdated dependency output must not be reused",
     );
     assertEquals(
       await cachedCodeUsesResolvedDependencies(
@@ -40,7 +41,134 @@ describe("SSRDependencyValidator", () => {
         resolvedDependencies,
       ),
       true,
+      "a parent importing the resolved dependency output must be reused",
     );
+  });
+
+  it("rejects a cached parent that mixes fresh and stale dependency outputs", async () => {
+    const resolvedDependencies = {
+      localImportPaths: new Map([
+        ["./a.ts", "/cache/a.v2.js"],
+        ["./b.ts", "/cache/b.v2.js"],
+      ]),
+      crossProjectPaths: new Map<string, string>(),
+    };
+
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        [
+          'import a from "file:///cache/a.v2.js";',
+          'import b from "file:///cache/b.v1.js";',
+        ].join("\n"),
+        resolvedDependencies,
+      ),
+      false,
+      "a parent importing one stale child output must not be reused",
+    );
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        [
+          'import a from "file:///cache/a.v2.js";',
+          'import b from "file:///cache/b.v2.js";',
+        ].join("\n"),
+        resolvedDependencies,
+      ),
+      true,
+      "a parent importing every resolved child output must be reused",
+    );
+  });
+
+  it("rejects a cached parent that imports a stale cross-project dependency output", async () => {
+    const resolvedDependencies = {
+      localImportPaths: new Map([["./a.ts", "/cache/a.v2.js"]]),
+      crossProjectPaths: new Map([["@other/pkg", "/cache/cross.v2.js"]]),
+    };
+
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        [
+          'import a from "file:///cache/a.v2.js";',
+          'import cross from "file:///cache/cross.v1.js";',
+        ].join("\n"),
+        resolvedDependencies,
+      ),
+      false,
+      "a parent importing a stale cross-project output must not be reused",
+    );
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        [
+          'import a from "file:///cache/a.v2.js";',
+          'import cross from "file:///cache/cross.v2.js";',
+        ].join("\n"),
+        resolvedDependencies,
+      ),
+      true,
+      "a parent importing the resolved cross-project output must be reused",
+    );
+  });
+
+  it("reads in-project dependencies through the runtime adapter filesystem", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const projectDir = join(tempDir, "project");
+    const dependencyPath = join(projectDir, "child.tsx");
+    const adapterReads: string[] = [];
+    const transformedSources: Array<string | undefined> = [];
+    // denoAdapter is a class instance, so delegate through the prototype chain
+    // instead of spreading, which would drop every method it inherits.
+    const adapterFs = Object.create(denoAdapter.fs) as typeof denoAdapter.fs;
+    adapterFs.readFile = (path: string) => {
+      adapterReads.push(path);
+      return Promise.resolve('export const child = "from-adapter";');
+    };
+    const adapter = Object.create(denoAdapter, {
+      fs: { value: adapterFs },
+    }) as typeof denoAdapter;
+    const validator = new SSRDependencyValidator(
+      (_filePath, source) => {
+        transformedSources.push(source);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      projectDir,
+    );
+
+    try {
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(dependencyPath, 'export const child = "from-disk";');
+
+      const importPaths = await validator.processLocalImports(
+        [{ absolutePath: dependencyPath, specifier: "./child.tsx" }],
+        join(projectDir, "page.tsx"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(
+        adapterReads,
+        [dependencyPath],
+        "in-project dependencies must be read through the adapter filesystem",
+      );
+      assertEquals(
+        transformedSources,
+        ['export const child = "from-adapter";'],
+        "the adapter filesystem content must be transformed, not the on-disk bytes",
+      );
+      assertEquals(
+        importPaths.get("./child.tsx"),
+        "/tmp/child.js",
+        "the transformed dependency output must be mapped for the specifier",
+      );
+      assertEquals(
+        validator.missingDependencies,
+        [],
+        "an in-project dependency read through the adapter must not be reported missing",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
   });
 
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {

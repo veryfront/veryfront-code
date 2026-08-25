@@ -15,6 +15,7 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
+import { decodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
@@ -348,6 +349,43 @@ export function clearSSRModuleCache(): void {
   });
 }
 
+/**
+ * Cross-project cache keys put the raw import specifier before a framed owner.
+ * Parse backward from the stable `:registry:` suffix so arbitrary delimiters
+ * in the specifier or opaque project id cannot change cache ownership.
+ */
+function parseCrossProjectCacheKeyOwner(
+  key: string,
+): { isCrossProjectKey: boolean; projectId?: string } {
+  const registryMarker = ":registry:";
+  const markerIndex = key.lastIndexOf(registryMarker);
+  if (markerIndex < 0) return { isCrossProjectKey: false };
+
+  const ownerMarker = ":owner:";
+  const ownerMarkerIndex = key.lastIndexOf(ownerMarker, markerIndex);
+  if (ownerMarkerIndex >= 0) {
+    const encodedOwner = key.slice(ownerMarkerIndex + ownerMarker.length, markerIndex);
+    if (!encodedOwner.includes(":")) {
+      return {
+        isCrossProjectKey: true,
+        projectId: decodeCacheKeySegment(encodedOwner) ?? undefined,
+      };
+    }
+  }
+
+  // Compatibility for cache entries built before owner segments were framed.
+  const baseKey = key.slice(0, markerIndex);
+  const reactVersionSeparator = baseKey.lastIndexOf(":");
+  if (reactVersionSeparator < 0) return { isCrossProjectKey: true };
+  const projectSeparator = baseKey.lastIndexOf(":", reactVersionSeparator - 1);
+  if (projectSeparator < 0) return { isCrossProjectKey: true };
+
+  return {
+    isCrossProjectKey: true,
+    projectId: baseKey.slice(projectSeparator + 1, reactVersionSeparator),
+  };
+}
+
 export function clearSSRModuleCacheForProject(
   projectId: string,
   options: ClearSSRModuleCacheForProjectOptions = {},
@@ -363,7 +401,11 @@ export function clearSSRModuleCacheForProject(
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
+    const crossProjectOwner = parseCrossProjectCacheKeyOwner(key);
+    const belongsToProject = crossProjectOwner.isCrossProjectKey
+      ? crossProjectOwner.projectId === projectId
+      : isKeyForProject(key, projectId);
+    if (!belongsToProject) continue;
     globalCrossProjectCache.delete(key);
   }
 

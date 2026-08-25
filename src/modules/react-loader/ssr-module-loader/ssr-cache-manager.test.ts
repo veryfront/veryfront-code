@@ -10,14 +10,33 @@ import {
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import { MockCacheBackend } from "#veryfront/cache/testing/index.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
-describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+class FakeDistributedCache implements CacheBackend {
+  readonly type = "redis" as const;
+  private values = new Map<string, string>();
+
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.values.get(key) ?? null);
+  }
+
+  set(key: string, value: string): Promise<void> {
+    this.values.set(key, value);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.values.delete(key);
+    return Promise.resolve();
+  }
+}
+
+describe("SSRCacheManager", () => {
   it("separates hosted preview and production transform cache identities", () => {
     const baseOptions = {
       projectDir: "/project",
@@ -107,7 +126,7 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
 
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
-    const distributedCache = new MockCacheBackend({ type: "redis", ignoreTtl: true });
+    const distributedCache = new FakeDistributedCache();
     const projectId = `project-${crypto.randomUUID()}`;
     const contentSourceId = `preview-${crypto.randomUUID()}`;
     const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
@@ -161,6 +180,88 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       __injectCachesForTests(null);
       await remove(vfmodDir, { recursive: true }).catch(() => {});
       await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects redis cache entries holding esm.sh/_vf_modules URLs", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const cacheManager = new SSRCacheManager({
+      projectDir,
+      projectId: `project-${crypto.randomUUID()}`,
+      contentSourceId: `preview-${crypto.randomUUID()}`,
+      adapter: denoAdapter,
+      dev: true,
+    });
+    const poisonedCode = [
+      `import x from "https://esm.sh/_vf_modules/react@18.3.1/index.js";`,
+      `export default x;`,
+    ].join("\n");
+
+    try {
+      assertEquals(
+        await cacheManager.validateCachedCode(
+          poisonedCode,
+          join(projectDir, "pages", "index.tsx"),
+          "redis-cache",
+          {
+            checkLocalPaths: false,
+            checkInvalidEsmShPath: true,
+          },
+        ),
+        false,
+        "redis entries holding esm.sh/_vf_modules URLs must be re-transformed",
+      );
+
+      assertEquals(
+        await cacheManager.validateCachedCode(
+          poisonedCode,
+          join(projectDir, "pages", "index.tsx"),
+          "redis-cache",
+          {
+            checkLocalPaths: false,
+            checkInvalidEsmShPath: false,
+          },
+        ),
+        true,
+        "the esm.sh/_vf_modules check must be gated by checkInvalidEsmShPath",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("classifies content sources as production or preview", () => {
+    const cases: Array<{ contentSourceId?: string; dev: boolean; expected: boolean }> = [
+      { contentSourceId: "preview-main", dev: false, expected: false },
+      { contentSourceId: "preview", dev: false, expected: false },
+      { contentSourceId: "preview-draft", dev: false, expected: false },
+      { contentSourceId: "preview-main", dev: true, expected: false },
+      { contentSourceId: "release-1", dev: true, expected: true },
+      { contentSourceId: "production", dev: true, expected: true },
+      { contentSourceId: "production-eu", dev: true, expected: true },
+      { contentSourceId: "prod-eu", dev: true, expected: true },
+      { contentSourceId: "local-main", dev: true, expected: false },
+      { contentSourceId: "local-main", dev: false, expected: true },
+      { contentSourceId: undefined, dev: true, expected: false },
+      { contentSourceId: undefined, dev: false, expected: true },
+    ];
+
+    for (const { contentSourceId, dev, expected } of cases) {
+      const cacheManager = new SSRCacheManager({
+        projectDir: "/project",
+        projectId: "project-a",
+        contentSourceId,
+        adapter: denoAdapter,
+        dev,
+      });
+
+      assertEquals(
+        cacheManager.isProductionContentSource(),
+        expected,
+        `contentSourceId ${contentSourceId ?? "(none)"} with dev=${dev} must classify as ${
+          expected ? "production" : "non-production"
+        }`,
+      );
     }
   });
 

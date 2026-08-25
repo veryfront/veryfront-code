@@ -90,6 +90,33 @@ describe("modules/react-loader/ssr-module-loader/transform-capacity", () => {
     }
   });
 
+  it("returns the semaphore permit after a completed transform", async () => {
+    clearSSRModuleCache();
+    const loader = createLoader("capacity-release", false);
+    const semaphore = getTransformSemaphore();
+    const availableBefore = semaphore.available;
+
+    try {
+      assertEquals(
+        await transformCapacity(loader)(
+          "/projects/capacity/ok.tsx",
+          "build",
+          () => Promise.resolve("ran"),
+        ),
+        "ran",
+        "a transform within capacity must run its operation",
+      );
+
+      assertEquals(
+        semaphore.available,
+        availableBefore,
+        "a completed transform must return its semaphore permit",
+      );
+    } finally {
+      clearSSRModuleCache();
+    }
+  });
+
   it("should queue a dev burst past the production deadline and succeed once permits free", async () => {
     clearSSRModuleCache();
     const loader = createLoader("capacity-dev", true);

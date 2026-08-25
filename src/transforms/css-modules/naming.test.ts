@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  getCssModuleScope,
   normalizeCssModuleKey,
   resolveCssModuleKey,
   rewriteCssModuleContent,
@@ -22,8 +23,56 @@ describe("css-modules/naming", () => {
       "/project",
     );
 
-    assertEquals(relative, "/project/pages/home/Button.module.css");
-    assertEquals(alias, "/project/styles/Button.module.css");
+    assertEquals(
+      relative,
+      "/project/pages/home/Button.module.css",
+      "relative specifiers resolve against the importing file directory",
+    );
+    assertEquals(
+      alias,
+      "/project/styles/Button.module.css",
+      "@/ aliases resolve against the project directory",
+    );
+    assertEquals(
+      resolveCssModuleKey(
+        "../styles/Button.module.css",
+        "/project/pages/home/index.tsx",
+        "/project",
+      ),
+      "/project/pages/styles/Button.module.css",
+      "parent segments collapse so one stylesheet keeps one module key",
+    );
+    assertEquals(
+      resolveCssModuleKey(
+        "../styles/Button.module.css",
+        "/project/pages/home/index.tsx",
+        "/project",
+      ),
+      resolveCssModuleKey(
+        "./Button.module.css",
+        "/project/pages/styles/index.tsx",
+        "/project",
+      ),
+      "the same file resolves to the same key from either importer",
+    );
+  });
+
+  it("normalizes module keys", () => {
+    assertEquals(
+      normalizeCssModuleKey("file:///p/Button.module.css?v=2#x"),
+      "/p/Button.module.css",
+      "strips the file:// prefix and the query/hash suffix",
+    );
+    assertEquals(
+      normalizeCssModuleKey("C:\\p\\/Button.module.css"),
+      "/C:/p/Button.module.css",
+      "converts backslashes and collapses duplicate slashes",
+    );
+    assertEquals(
+      getCssModuleScope("file:///p/Button.module.css?v=2").hash,
+      getCssModuleScope("/p/Button.module.css").hash,
+      "suffixed and plain keys hash identically",
+    );
   });
 
   it("generates stable scoped class names", () => {
@@ -32,9 +81,36 @@ describe("css-modules/naming", () => {
     const second = toScopedCssModuleClass(key, "container");
     const different = toScopedCssModuleClass(key, "header");
 
-    assertEquals(first, second);
-    assertEquals(first === different, false);
-    assertEquals(first.startsWith("Button_container__"), true);
+    assertEquals(first, second, "the same module key and local name are stable");
+    assertEquals(
+      first === different,
+      false,
+      "different local names get different scoped classes",
+    );
+    assertEquals(
+      first.startsWith("Button_container__"),
+      true,
+      "the scoped class keeps the module base and the local name",
+    );
+
+    const inModuleA = toScopedCssModuleClass("/a/Button.module.css", "container");
+    const inModuleB = toScopedCssModuleClass("/b/Button.module.css", "container");
+
+    assertEquals(
+      inModuleA === inModuleB,
+      false,
+      "same class name in different module keys must get different hash segments",
+    );
+    assertEquals(
+      inModuleA.startsWith("Button_container__"),
+      true,
+      "base and local name stay stable across module keys",
+    );
+    assertEquals(
+      inModuleB.startsWith("Button_container__"),
+      true,
+      "base and local name stay stable across module keys",
+    );
   });
 
   it("rewrites module selectors and preserves :global()", () => {

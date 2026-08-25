@@ -1,5 +1,8 @@
 /**
- * Declare and register resources exposable over MCP.
+ * Declare and register schema-backed URI resources exposable over MCP. URI
+ * templates support hierarchical, rootless, embedded, and query parameters;
+ * opaque identifiers remain literal. Captures are percent-decoded exactly once,
+ * malformed escapes do not match, and `mcp.enabled: false` hides list and read.
  *
  * @module resource
  *

@@ -28,6 +28,27 @@ describe("parseBarePackageSpecifier", () => {
     });
   });
 
+  it("parses scoped packages with no version", () => {
+    assertEquals(
+      parseBarePackageSpecifier("@tanstack/react-query"),
+      { packageName: "@tanstack/react-query", version: null, subpath: null },
+      "an unversioned scoped package must still parse",
+    );
+    assertEquals(
+      parseBarePackageSpecifier("@scope/pkg/runtime"),
+      { packageName: "@scope/pkg", version: null, subpath: "/runtime" },
+      "an unversioned scoped package with a subpath must split name from subpath",
+    );
+  });
+
+  it("returns null for a specifier it cannot parse", () => {
+    assertEquals(
+      parseBarePackageSpecifier(""),
+      null,
+      "the documented null return must be reachable",
+    );
+  });
+
   it("parses scoped packages with subpaths", () => {
     assertEquals(parseBarePackageSpecifier("@scope/pkg@1.2.3/runtime"), {
       packageName: "@scope/pkg",

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { waitFor } from "#veryfront/testing/deno-compat";
 import {
   composeAbortSignals,
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
@@ -16,6 +17,15 @@ const BASE_INPUT = {
   activeToolTimeoutMs: 300_000,
   postToolIdleTimeoutMs: 120_000,
 };
+
+/** Yield one event loop turn so a pending unhandled rejection has a chance to surface. */
+async function flushEventLoop(): Promise<void> {
+  let ticked = false;
+  globalThis.setTimeout(() => {
+    ticked = true;
+  }, 0);
+  await waitFor(() => ticked);
+}
 
 Deno.test("resolveHostedChildStreamWatchdogState returns tool_running when a tool is active", () => {
   const state = resolveHostedChildStreamWatchdogState({
@@ -182,8 +192,9 @@ Deno.test("withHostedChildStreamIdleTimeout settles an abandoned next() when the
     // Now reject the promise the watchdog abandoned when it threw.
     rejectPendingNext?.(new Error("stream aborted after watchdog gave up"));
 
-    // Let microtasks/macrotasks flush so any unhandled rejection would surface.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Let the deferred return() run and the loop turn so any unhandled rejection would surface.
+    await waitFor(() => returnCalled);
+    await flushEventLoop();
 
     assertEquals(
       unhandled.length,
@@ -247,8 +258,8 @@ Deno.test("withHostedChildStreamIdleTimeout surfaces the original error when ret
     // Settle the abandoned next() so its rejection does not surface either.
     rejectPendingNext?.(new Error("stream aborted after watchdog gave up"));
 
-    // Let microtasks/macrotasks flush so any unhandled rejection would surface.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Let the loop turn so any unhandled rejection would surface.
+    await flushEventLoop();
 
     assertEquals(
       unhandled.length,
@@ -261,9 +272,10 @@ Deno.test("withHostedChildStreamIdleTimeout surfaces the original error when ret
 });
 
 Deno.test("withHostedChildStreamIdleTimeout continues when timeout callback asks to retry", async () => {
+  const gate = Promise.withResolvers<void>();
   async function* stallingThenResumingStream() {
     yield 1;
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    await gate.promise;
     yield 2;
   }
 
@@ -279,13 +291,108 @@ Deno.test("withHostedChildStreamIdleTimeout continues when timeout callback asks
       }),
       onIdleTimeout: () => {
         idleTimeoutCalls += 1;
-        return idleTimeoutCalls <= 3 ? "continue" : undefined;
+        gate.resolve();
+        return "continue";
       },
     })
   ) {
     values.push(value);
   }
 
-  assertEquals(values, [1, 2]);
-  assert(idleTimeoutCalls >= 1);
+  assertEquals(values, [1, 2], "the stream must resume after a retried idle timeout");
+  assertEquals(idleTimeoutCalls, 1, "exactly one idle timeout before the gated resume");
+});
+
+Deno.test("withHostedChildStreamIdleTimeout throws when the retry callback stops asking to continue", async () => {
+  // The stream only resumes after a third timeout, which a correct watchdog never
+  // reaches: it must throw as soon as the callback stops answering "continue".
+  const lateGate = Promise.withResolvers<void>();
+  async function* stallingStream() {
+    yield 1;
+    await lateGate.promise;
+    yield 2;
+  }
+
+  const values: number[] = [];
+  let idleTimeoutCalls = 0;
+
+  const error = await assertRejects(
+    async () => {
+      for await (
+        const value of withHostedChildStreamIdleTimeout({
+          stream: stallingStream(),
+          getWatchdogState: () => ({
+            phase: "post_tool_idle",
+            timeoutMs: 5,
+          }),
+          onIdleTimeout: () => {
+            idleTimeoutCalls += 1;
+            if (idleTimeoutCalls >= 3) {
+              lateGate.resolve();
+            }
+            return idleTimeoutCalls === 1 ? "continue" : undefined;
+          },
+        })
+      ) {
+        values.push(value);
+      }
+    },
+    HostedChildStreamIdleTimeoutError,
+  );
+
+  assertEquals(values, [1], "the watchdog must throw before the stream resumes");
+  assertEquals(error.phase, "post_tool_idle", "the thrown error must carry the watchdog phase");
+  assertEquals(error.timeoutMs, 5, "the thrown error must carry the watchdog timeout");
+  assertEquals(
+    idleTimeoutCalls,
+    2,
+    "the watchdog must consult the callback again after a retry before throwing",
+  );
+});
+
+Deno.test("withHostedChildStreamIdleTimeout stops iterating once the child run abort signal fires", async () => {
+  const controller = new AbortController();
+  let returned = false;
+  const stream: AsyncIterable<number> = {
+    [Symbol.asyncIterator]: () => {
+      const source = [1, 2][Symbol.iterator]();
+      return {
+        next: () => {
+          const next = source.next();
+          return Promise.resolve(
+            next.done ? { done: true, value: undefined } : { done: false, value: next.value },
+          );
+        },
+        return: () => {
+          returned = true;
+          return Promise.resolve({ done: true, value: undefined });
+        },
+      };
+    },
+  };
+
+  const values: number[] = [];
+  const error = await assertRejects(
+    async () => {
+      for await (
+        const value of withHostedChildStreamIdleTimeout({
+          stream,
+          abortSignal: controller.signal,
+          getWatchdogState: () => ({
+            phase: "generic_idle",
+            timeoutMs: 1_000,
+          }),
+        })
+      ) {
+        values.push(value);
+        controller.abort();
+      }
+    },
+    Error,
+  );
+
+  assertEquals(error.name, "AbortError", "a child run abort must surface as an AbortError");
+  assertEquals(values, [1], "no values may be yielded after the child run abort");
+  await waitFor(() => returned);
+  assertEquals(returned, true, "the source iterator must be closed when the abort is observed");
 });

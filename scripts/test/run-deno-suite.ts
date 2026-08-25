@@ -1,6 +1,10 @@
 import { parseArgs } from "#std/flags";
 import { planSuiteFiles, type SuitePlanId } from "./run-suite.ts";
-import { DENO_TEST_ENV, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
+import {
+  buildTestProcessEnv,
+  DENO_TEST_ENV,
+  PROVIDER_EGRESS_DENY_NET,
+} from "./suites.ts";
 
 type DenoSuitePlanId = Exclude<
   SuitePlanId,
@@ -15,7 +19,7 @@ type DenoSuitePlanId = Exclude<
  * deny-net; coverage skipped trace-leaks) and nothing noticed.
  */
 export interface DenoSuiteProfile {
-  /** Merged over the parent env when the runner spawns `deno test`. */
+  /** Merged over the parent env after provider credentials are removed. */
   readonly env: Readonly<Record<string, string>>;
   /** Install src/testing/preload.ts (test isolation + unpinned transport). */
   readonly preload: boolean;
@@ -201,7 +205,11 @@ if (import.meta.main) {
       ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
       passthroughArgs: flags.passthroughArgs,
     }),
-    env: { ...DENO_SUITE_PROFILES[suite].env },
+    clearEnv: true,
+    env: buildTestProcessEnv(
+      Deno.env.toObject(),
+      DENO_SUITE_PROFILES[suite].env,
+    ),
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

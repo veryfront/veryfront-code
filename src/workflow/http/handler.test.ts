@@ -1,14 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
+
+import { delay } from "#std/async.ts";
+import { expect } from "#std/expect.ts";
+
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { expect } from "#std/expect.ts";
-import { delay } from "#std/async.ts";
 import type { Tool } from "#veryfront/tool";
-import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
-import { MemoryBackend } from "../backends/memory.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
+import { MemoryBackend } from "../backends/memory.ts";
 import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
+import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { createWorkflowHandler } from "./handler.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
@@ -55,10 +60,20 @@ function slowTool(id: string): Tool {
     type: "function",
     description: `Slow test tool: ${id}`,
     inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-    execute: async () => {
-      await delay(5_000);
-      return { ok: true };
-    },
+    execute: (_input, context) =>
+      new Promise((resolve, reject) => {
+        const signal = context?.abortSignal;
+        const timeoutId = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve({ ok: true });
+        }, 5_000);
+        const abort = () => {
+          clearTimeout(timeoutId);
+          reject(signal?.reason);
+        };
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      }),
   };
 }
 
@@ -162,9 +177,8 @@ describe("createWorkflowHandler", () => {
     // useWorkflowStart reads `runId` (falling back to `id`) off this body.
     const body = await response.json() as { runId?: string };
     expect(typeof body.runId).toBe("string");
-
-    // The route's whole job is forwarding the posted input into the run.
-    const runId = body.runId as string;
+    if (!body.runId) throw new Error("expected a workflow run ID");
+    const runId = body.runId;
     await until(
       async () => (await client.getRun(runId))?.status === "completed",
       `run ${runId} to finish`,
@@ -308,6 +322,7 @@ describe("createWorkflowHandler", () => {
 
     const response = await handlers.POST(post(`/api/workflows/runs/${runId}/cancel`));
     expect(response.status).toBe(200);
+    await delay(0);
   });
 
   it("answers a refused retry instead of throwing out of the route", async () => {
@@ -322,6 +337,7 @@ describe("createWorkflowHandler", () => {
     expect(response.status).toBe(409);
     const body = await response.json() as { message?: string };
     expect(body.message).toContain("cancelled");
+    await delay(0);
   });
 
   it("retries a failed run instead of using paused-run resume", async () => {
@@ -453,6 +469,11 @@ describe("createWorkflowHandler", () => {
 
     const response = await mounted.POST(post("/api/flows/pipeline/start", { input: {} }));
     expect(response.status).toBe(200);
+    const { runId } = await response.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
 
     // The default mount point must not answer once basePath moved.
     expect((await mounted.GET(get("/api/workflows/runs"))).status).toBe(404);
@@ -502,6 +523,12 @@ describe("createWorkflowHandler", () => {
 
     const invalidLimit = await handlers.GET(get("/api/workflows/runs?limit=1001"));
     expect(invalidLimit.status).toBe(400);
+
+    const exponentLimit = await handlers.GET(get("/api/workflows/runs?limit=1e2"));
+    expect(exponentLimit.status).toBe(400);
+
+    const hexadecimalCursor = await handlers.GET(get("/api/workflows/runs?cursor=0x10"));
+    expect(hexadecimalCursor.status).toBe(400);
   });
 
   it("rejects an invalid approval decision shape", async () => {
@@ -693,6 +720,43 @@ describe("createWorkflowHandler", () => {
       expect(frames[0]?.[1].status).toBe("cancelled");
       expect(nextCalls).toBe(0);
       expect(closeCalls).toBe(1);
+    });
+
+    it("does not reread the raw initial status after encoding a valid terminal snapshot", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted };
+      let statusReads = 0;
+      Object.defineProperty(initial, "status", {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          statusReads++;
+          if (statusReads > 1) {
+            throw new Error("status can only be read once");
+          }
+          return "completed";
+        },
+      });
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => Promise.resolve({ value: undefined, done: true as const }),
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      assertEquals(frames.map(([name]) => name), ["snapshot"]);
+      assertEquals(frames[0]?.[1].status, "completed");
+      assertEquals(statusReads, 1);
     });
 
     it("streams transitions written by a separate client sharing the backend", async () => {
@@ -909,12 +973,164 @@ describe("createWorkflowHandler", () => {
       expect(closeCalls).toBe(1);
     });
 
+    it("sends a sanitized error and closes when the snapshot cannot be encoded", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      let nextCalls = 0;
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial: {
+          ...persisted,
+          status: "running",
+          input: 1n,
+        },
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => {
+              nextCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      // Reconnecting re-reads the same stored run, so the client must not retry.
+      assertEquals(frames, [["error", {
+        code: "workflow_snapshot_serialization_failed",
+        message: "Workflow run snapshot could not be serialized",
+        retryable: false,
+      }]]);
+      assertEquals(nextCalls, 0);
+      assertEquals(returnCalls, 1);
+      assertEquals(closeCalls, 1);
+    });
+
+    it("does not reread status after projecting an ongoing snapshot", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      // A stateful accessor can serialize cleanly and then throw on the
+      // follow-up terminal-status read; the stream must use the projected
+      // snapshot and not synthesize a false serialization error.
+      let statusReads = 0;
+      const initial = { ...persisted };
+      Object.defineProperty(initial, "status", {
+        enumerable: true,
+        get(): WorkflowRun["status"] {
+          statusReads++;
+          if (statusReads > 1) throw new Error("stateful status detail");
+          return "running";
+        },
+      });
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial: initial as WorkflowRun,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      assertEquals(frames.map(([name]) => name), ["snapshot"]);
+      assertEquals(frames[0]?.[1].status, "running");
+      assertEquals(statusReads, 1);
+      assertEquals(JSON.stringify(frames).includes("stateful status detail"), false);
+      assertEquals(returnCalls, 1);
+      assertEquals(closeCalls, 1);
+    });
+
+    it("logs only a classification when the snapshot raises run content", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = {
+        ...persisted,
+        status: "running" as const,
+        input: {
+          toJSON: () => {
+            throw Object.assign(new Error("sensitive customer detail"), {
+              name: "sensitive customer detail",
+            });
+          },
+        },
+      };
+      Object.defineProperty(initial, "id", {
+        configurable: true,
+        get: () => {
+          throw new Error("sensitive customer id");
+        },
+      });
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+            return: () => Promise.resolve({ value: undefined, done: true as const }),
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const entries: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "error" && entry.component === "workflow-http") {
+          entries.push(entry);
+        }
+      });
+      let frames: Array<[string, Record<string, unknown>]>;
+      try {
+        const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+        frames = await readStream(response);
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(frames.map(([name]) => name), ["error"]);
+      assertEquals(entries.length, 1);
+      // The logger hoists the `runId` context key to the `run_id` entry field.
+      assertEquals(entries[0]?.run_id, runId);
+      assertEquals(entries[0]?.context, { errorName: "serialization_error" });
+      assertEquals(entries[0]?.error, undefined);
+      assertEquals(JSON.stringify(entries).includes("sensitive customer detail"), false);
+      assertEquals(JSON.stringify(frames).includes("sensitive customer detail"), false);
+    });
+
     it("pulls at most one backend event while the consumer is backpressured", async () => {
       const runId = await startRun();
       const persisted = await client.getRun(runId);
       if (!persisted) throw new Error("expected the run to exist");
       const initial = { ...persisted, status: "running" as const };
       const pending = Promise.withResolvers<IteratorResult<never>>();
+      const nextCalled = Promise.withResolvers<void>();
       let nextCalls = 0;
       let returnCalls = 0;
       replaceObservation({
@@ -924,6 +1140,7 @@ describe("createWorkflowHandler", () => {
           [Symbol.asyncIterator]: () => ({
             next: () => {
               nextCalls++;
+              nextCalled.resolve();
               return pending.promise;
             },
             return: () => {
@@ -940,8 +1157,8 @@ describe("createWorkflowHandler", () => {
       if (!reader) throw new Error("expected an SSE response body");
 
       expect(await readFrame(reader)).toContain("event: snapshot");
-      await until(() => Promise.resolve(nextCalls === 1), "one backend event pull");
-      await delay(20);
+      await nextCalled.promise;
+      await Promise.resolve();
       expect(nextCalls).toBe(1);
 
       await reader.cancel();

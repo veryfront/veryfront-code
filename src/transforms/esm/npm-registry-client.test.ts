@@ -335,16 +335,53 @@ describe("npm-registry-client dependency contracts", () => {
     assertEquals(postedSpecifiers, PLATFORM_RESOLUTION_MAX_PENDING + 1);
   });
 
-  it("settles rejected platform writes without an unhandled rejection", async () => {
-    let attempts = 0;
-    _setDependencyResolutionPosterForTest(() => {
-      attempts++;
-      return Promise.reject(new Error("platform unavailable"));
+  it("settles rejected platform writes without abandoning the remaining batches", async () => {
+    let now = 0;
+    const requests: string[][] = [];
+    _setClockForTest(() => now);
+    _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+      requests.push(specifiers);
+      return requests.length === 1
+        ? Promise.reject(new Error("platform unavailable"))
+        : Promise.resolve();
     });
 
-    schedulePlatformDependencyResolution("project-ref", "zod", "^3", MAIN_SCHEDULE);
+    // One more than PLATFORM_RESOLUTION_BATCH_SIZE, so the rejected first batch
+    // is followed by a second batch that must still be posted.
+    for (let i = 0; i < 101; i++) {
+      scheduleUndeclaredDependencyResolution(
+        "project-ref",
+        `package-${i}`,
+        MAIN_SCHEDULE,
+      );
+    }
     await _pendingResolutions();
-    assertEquals(attempts, 1);
+
+    assertEquals(requests.length, 2, "a failed batch must not abandon the remaining batches");
+    assertEquals(
+      requests[1]?.length,
+      1,
+      "the batch following a failed one carries its single remaining specifier",
+    );
+
+    now = 60_000;
+    scheduleUndeclaredDependencyResolution(
+      "project-ref",
+      "package-0",
+      MAIN_SCHEDULE,
+    );
+    await _pendingResolutions();
+
+    assertEquals(
+      requests.length,
+      3,
+      "a failed batch releases its pending-attempt slots instead of leaking them",
+    );
+    assertEquals(
+      requests[2],
+      ["package-0"],
+      "a specifier from the failed batch can be retried after the dedupe TTL",
+    );
   });
 
   it("allows a retry after the dedupe TTL", async () => {

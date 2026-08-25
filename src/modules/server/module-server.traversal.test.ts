@@ -38,7 +38,7 @@ describe("serveModule path traversal", () => {
     ["single-encoded dot-dot", "/_vf_modules/%2e%2e%2fsecret.js"],
     ["double-encoded dot-dot", "/_vf_modules/%252e%252e%252fsecret.js"],
     ["encoded slash only", "/_vf_modules/..%2fsecret.js"],
-    ["backslash variant", "/_vf_modules/..\\secret.js"],
+    ["encoded backslash", "/_vf_modules/..%5csecret.js"],
     ["absolute-ish path", "/_vf_modules//etc/passwd.js"],
   ] as const;
 
@@ -51,6 +51,16 @@ describe("serveModule path traversal", () => {
         body.includes(SECRET),
         false,
         `${label} leaked the out-of-root file (status ${response.status})`,
+      );
+      assertEquals(
+        response.status === 200 && body.includes(SECRET),
+        false,
+        `${label} must never serve the out-of-root file`,
+      );
+      assertEquals(
+        [403, 404].includes(response.status),
+        true,
+        `${label} must be rejected, got status ${response.status}`,
       );
     });
   }

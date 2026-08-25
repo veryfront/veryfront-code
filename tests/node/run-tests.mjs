@@ -6,6 +6,7 @@ import process from "node:process";
 import { splitIntoShards } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { loadSuitePlan } from "../load-suite-plan.mjs";
+import { buildRuntimeTestProcessEnv } from "../../scripts/test/runtime-env.mjs";
 
 function resolveConcurrency(envKeys) {
   for (const key of envKeys) {
@@ -41,8 +42,10 @@ if (suite && suite !== "runtime:node") {
   throw new Error(`Unsupported Node suite profile: ${suite}`);
 }
 const patterns = rawArgs.filter((arg) => arg !== suiteArg);
-ensureNpmNodeModulesLinks();
-const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "NODE_TEST_CONCURRENCY"]);
+const concurrency = resolveConcurrency([
+  "VF_TEST_CONCURRENCY",
+  "NODE_TEST_CONCURRENCY",
+]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "NODE_TEST_SHARDS"]);
 const autoShards = concurrency >= 4 ? Math.min(4, Math.floor(concurrency / 2)) : 1;
 const shardCount = shardOverride ?? autoShards;
@@ -54,15 +57,21 @@ const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 
 function selectedTestFiles() {
-  return loadSuitePlan({
+  const files = loadSuitePlan({
     suite: suite ?? "runtime:node",
     patterns,
     include: includePatterns,
     exclude: envExcludePatterns,
   });
+  if (files.length === 0) {
+    console.error(
+      "Node test runner selected no test files for the active filters.",
+    );
+    process.exit(1);
+  }
+  return files;
 }
 
 function buildNodeArgs(files, perShardConcurrency) {
@@ -76,43 +85,25 @@ function buildNodeArgs(files, perShardConcurrency) {
   ];
 }
 
-const env = { ...process.env };
-// Match the Deno test tasks' explicit host-test contract. This keeps guarded
-// outbound consumers on deterministic injected transports in Node tests while
-// production processes, which never run through this harness, remain pinned.
-env.DENO_TESTING = "1";
-if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
-if (!env.NODE_ENV) env.NODE_ENV = "production";
-if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-// Don't scale time by default - many tests have timing-sensitive operations
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
-for (
-  const key of [
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
-    "GOOGLE_API_KEY",
-    "GOOGLE_GENERATIVE_AI_API_KEY",
-    "GOOGLE_GEMINI_BASE_URL",
-  ]
-) {
-  delete env[key];
-}
+const env = buildRuntimeTestProcessEnv(process.env);
 
 async function runShardedTests() {
   const files = selectedTestFiles();
-  if (files.length === 0) {
-    return hasFilters ? true : null;
-  }
+  ensureNpmNodeModulesLinks();
 
   const shards = splitIntoShards(files, shardCount);
-  const perShardConcurrency = Math.max(1, Math.floor(concurrency / shards.length));
+  const perShardConcurrency = Math.max(
+    1,
+    Math.floor(concurrency / shards.length),
+  );
 
   const runs = shards.map((shardFiles) =>
     new Promise((resolvePromise) => {
       const nodeArgs = buildNodeArgs(shardFiles, perShardConcurrency);
-      const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
+      const child = spawn(process.execPath, nodeArgs, {
+        stdio: "inherit",
+        env,
+      });
       child.on("error", (error) => {
         console.error("Failed to start node tests:", error);
         resolvePromise(1);
@@ -130,10 +121,6 @@ async function runShardedTests() {
 if (shardCount > 1) {
   runShardedTests()
     .then((ok) => {
-      if (ok === null) {
-        process.exit(0);
-        return;
-      }
       process.exit(ok ? 0 : 1);
     })
     .catch((error) => {
@@ -142,9 +129,7 @@ if (shardCount > 1) {
     });
 } else {
   const runtimeFiles = selectedTestFiles();
-  if (runtimeFiles.length === 0) {
-    process.exit(0);
-  }
+  ensureNpmNodeModulesLinks();
   const nodeArgs = buildNodeArgs(runtimeFiles, concurrency);
   const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
   child.on("error", (error) => {

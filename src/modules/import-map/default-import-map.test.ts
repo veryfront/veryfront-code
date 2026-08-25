@@ -43,6 +43,26 @@ describe("modules/import-map/default-import-map", () => {
       const imports = getImports();
 
       assertEquals(
+        Object.keys(imports).filter((key) => key.startsWith("veryfront/")).sort(),
+        [
+          "veryfront/chat",
+          "veryfront/context",
+          "veryfront/fonts",
+          "veryfront/head",
+          "veryfront/markdown",
+          "veryfront/mdx",
+          "veryfront/react",
+          "veryfront/react/context",
+          "veryfront/react/fonts",
+          "veryfront/react/head",
+          "veryfront/react/router",
+          "veryfront/router",
+          "veryfront/ui",
+          "veryfront/workflow",
+        ],
+        "every React-bearing veryfront export must stay mapped",
+      );
+      assertEquals(
         imports["veryfront/ui"],
         "/_vf_modules/_veryfront/react/components/ui/index.js?ssr=true",
       );
@@ -69,13 +89,22 @@ describe("modules/import-map/default-import-map", () => {
     it("should map veryfront aliases to module server URLs", () => {
       const imports = getImports();
 
-      const headUrl = imports["veryfront/head"];
-      assertExists(headUrl);
-      assert(
-        headUrl.startsWith("/_vf_modules/_veryfront/react/"),
-        `Expected module server URL starting with /_vf_modules/_veryfront/react/ but got: ${headUrl}`,
+      const coreReactUrl = "/_vf_modules/_veryfront/react/runtime/core.js?ssr=true";
+      assertEquals(
+        imports["veryfront/head"],
+        coreReactUrl,
+        "veryfront/head must map to the React runtime core module",
       );
-      assert(headUrl.includes("?ssr=true"), `Expected ssr=true param but got: ${headUrl}`);
+      assertEquals(
+        imports["veryfront/router"],
+        coreReactUrl,
+        "veryfront/router must map to the React runtime core module",
+      );
+      assertEquals(
+        imports["veryfront/context"],
+        coreReactUrl,
+        "veryfront/context must map to the React runtime core module",
+      );
     });
 
     it("should map veryfront/head and veryfront/react/head to the same file", () => {

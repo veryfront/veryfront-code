@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { splitSpecifierSuffix } from "./specifier-suffix.ts";
+import { type SplitSpecifier, splitSpecifierSuffix } from "./specifier-suffix.ts";
 
 describe("transforms/shared/specifier-suffix", () => {
   const cases: ReadonlyArray<readonly [string, string, string]> = [
@@ -47,5 +47,33 @@ describe("transforms/shared/specifier-suffix", () => {
     } finally {
       Math.min = mathMin;
     }
+  });
+
+  it("uses the captured string primordials after project code replaces String.prototype", () => {
+    const stringIndexOf = String.prototype.indexOf;
+    const stringSlice = String.prototype.slice;
+    let result: SplitSpecifier | null = null;
+
+    try {
+      String.prototype.indexOf = () => {
+        throw new Error("poisoned String.prototype.indexOf");
+      };
+      String.prototype.slice = () => {
+        throw new Error("poisoned String.prototype.slice");
+      };
+
+      result = splitSpecifierSuffix("@/Card.tsx?raw#hero");
+    } finally {
+      String.prototype.indexOf = stringIndexOf;
+      String.prototype.slice = stringSlice;
+    }
+
+    // Asserted only after restoration: the assertion library itself formats
+    // strings, so it cannot run inside the poisoned window.
+    assertEquals(
+      result,
+      { path: "@/Card.tsx", suffix: "?raw#hero" },
+      "splitting must not go through patched String.prototype methods",
+    );
   });
 });

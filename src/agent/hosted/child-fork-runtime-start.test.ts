@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentResponse } from "../schemas/index.ts";
 import {
@@ -81,6 +81,8 @@ describe("agent/hosted-child-fork-runtime-start", () => {
 
   it("starts a durable child monitor that aborts the fork stream on terminal child state", async () => {
     const monitorCalls: MonitorHostedChildRunStatusInput[] = [];
+    let terminalError: HostedChildTerminalStateError | undefined;
+    let capturedRunStepSignal: AbortSignal | undefined;
     const started = startHostedChildForkRuntimeWithHostTools(
       createStartInput({
         durableChildRun: {
@@ -93,7 +95,15 @@ describe("agent/hosted-child-fork-runtime-start", () => {
         childRunMonitorPollIntervalMs: 25,
         monitorChildRunStatus: async (input) => {
           monitorCalls.push(input);
-          input.onTerminal(new HostedChildTerminalStateError("cancelled", input.identifiers));
+          terminalError = new HostedChildTerminalStateError("cancelled", input.identifiers);
+          input.onTerminal(terminalError);
+        },
+        runStep: async (input) => {
+          capturedRunStepSignal = input.abortSignal;
+          return {
+            stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+            responsePromise: Promise.resolve(createResponse()),
+          };
         },
       }),
     );
@@ -104,7 +114,23 @@ describe("agent/hosted-child-fork-runtime-start", () => {
     assertEquals(monitorCalls.length, 1);
     assertEquals(monitorCalls[0]?.abortSignal?.aborted, false);
     assertEquals(started.forkStreamAbortController.signal.aborted, true);
-    assertEquals(started.forkStreamAbortController.signal.reason instanceof Error, true);
+    assertStrictEquals(
+      started.forkStreamAbortController.signal.reason,
+      terminalError,
+      "the abort reason must be the exact terminal error handed to onTerminal",
+    );
+
+    await (async () => {
+      for await (const _part of started.streamResult.fullStream) {
+        // Drain so the fork runtime invokes runStep with its composed signal.
+      }
+    })().catch(() => undefined);
+
+    assertEquals(
+      capturedRunStepSignal?.aborted,
+      true,
+      "the fork runtime must receive the composed abort signal",
+    );
   });
 
   it("aborts the fork without fabricating a terminal state when monitoring is exhausted", async () => {

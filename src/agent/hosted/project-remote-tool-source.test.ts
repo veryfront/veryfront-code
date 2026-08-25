@@ -15,7 +15,8 @@ import {
   createHostedProjectRemoteToolSource,
   createHostedProjectRemoteToolSources,
 } from "./project-remote-tool-source.ts";
-import { NETWORK_ERROR, PERMISSION_DENIED, VeryfrontError } from "#veryfront/errors";
+import { NETWORK_ERROR, PERMISSION_DENIED, TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
+import { FakeTime } from "#std/testing/time";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 
 function projectFileTool(name: string): ToolDefinition {
@@ -218,6 +219,72 @@ describe("hosted project remote tool catalog resilience", () => {
         project_reference: "project-1",
       },
     }]);
+  });
+
+  it("treats framework timeout errors as transient", async () => {
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls > 1) {
+            throw TIMEOUT_ERROR.create({ detail: "timed out" });
+          }
+          return [
+            projectFileTool("create_file"),
+            projectFileTool("get_file"),
+            projectFileTool("update_file"),
+          ];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    await source.listTools();
+    assertEquals(
+      (await source.listTools()).map((tool) => tool.name),
+      ["create_file", "get_file", "update_file"],
+      "VeryfrontError timeout must keep the cached catalog",
+    );
+    assertEquals(listCalls, 2, "the framework timeout must have reached the source once");
+  });
+
+  it("honors the backoff window after a transient failure", async () => {
+    using time = new FakeTime();
+    let listCalls = 0;
+    const source = createHostedProjectRemoteToolSource({
+      source: {
+        id: "veryfront-mcp",
+        async listTools() {
+          listCalls++;
+          if (listCalls === 2) {
+            throw new DOMException("Chat stream idle timeout", "TimeoutError");
+          }
+          return [projectFileTool("create_file")];
+        },
+        async executeTool() {
+          return { success: true };
+        },
+      },
+      defaultProjectId: "project-1",
+    });
+
+    await source.listTools();
+    await source.listTools();
+    assertEquals(
+      (await source.listTools()).map((tool) => tool.name),
+      ["create_file"],
+      "cached catalog must be served inside the backoff window",
+    );
+    assertEquals(listCalls, 2, "third call inside the backoff window must not hit the source");
+
+    time.tick(1_001);
+    await source.listTools();
+    assertEquals(listCalls, 3, "call after the backoff window must refresh");
   });
 
   it("does not reuse a catalog after a project switch", async () => {
@@ -1254,4 +1321,25 @@ Deno.test("createHostedProjectRemoteToolSource uses activatedRemoteToolNames as 
   activatedSet.add("write_file");
   const resultAfter = await source.executeTool("write_file", {});
   assertEquals(resultAfter, { ok: true });
+});
+
+Deno.test("createHostedProjectRemoteToolSource treats null activatedRemoteToolNames as no name filter", async () => {
+  const source = createHostedProjectRemoteToolSource({
+    source: createRemoteSource({
+      tools: [simpleTool("read_file"), simpleTool("write_file")],
+    }),
+    allowedToolNames: new Set(["read_file"]),
+    activatedRemoteToolNames: null,
+  });
+
+  assertEquals(
+    (await source.listTools()).map((tool) => tool.name),
+    ["read_file", "write_file"],
+    "null activation gate must disable name filtering",
+  );
+  assertEquals(
+    await source.executeTool("write_file", {}),
+    { ok: true },
+    "tool outside allowedToolNames must execute when the activation gate is null",
+  );
 });

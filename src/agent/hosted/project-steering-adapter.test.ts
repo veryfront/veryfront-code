@@ -374,6 +374,53 @@ Body.`;
   });
 });
 
+Deno.test("refreshProjectSkillIds keeps a none skill selector policy at zero skills", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      skillDocumentParserProvider,
+      projectFilesClient: createProjectFilesClient({
+        getProjectFile: async ({ path }) =>
+          path === "skills/global/SKILL.md" || path === "skills/new-skill/SKILL.md"
+            ? {
+              path,
+              content: `---
+description: ${path}
+---
+Body.`,
+            }
+            : null,
+        getProjectFiles: async () => [
+          { path: "skills/global/SKILL.md" },
+          { path: "skills/new-skill/SKILL.md" },
+        ],
+      }),
+    });
+
+    const context: HostedProjectSkillIdsContext = {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: ["global"],
+      skillSelectorPolicy: { kind: "none" as const },
+    };
+
+    await adapter.refreshProjectSkillIds(context);
+
+    assertEquals(
+      context.availableSkillIds,
+      [],
+      "none policy must expose zero skills even when the catalog has entries",
+    );
+    assertEquals(
+      context.skillSelectorPolicy,
+      { kind: "none" },
+      "none policy must survive refresh unchanged",
+    );
+  });
+});
+
 Deno.test("refreshProjectSkillIds rejects unresolved authored allowlist entries without narrowing", async () => {
   await withSkillsDir(async (skillsDir) => {
     const adapter = createHostedProjectSteeringAdapter({

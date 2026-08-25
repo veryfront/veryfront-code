@@ -62,6 +62,12 @@ describe("package-registry", () => {
     it("should not modify exact versions", () => {
       assertEquals(stripSemverRange("19.1.1"), "19.1.1");
     });
+
+    it("strips the remaining documented range prefixes", () => {
+      assertEquals(stripSemverRange("<=19.0.0"), "19.0.0", "strips <=");
+      assertEquals(stripSemverRange("<19.0.0"), "19.0.0", "strips <");
+      assertEquals(stripSemverRange("=19.0.0"), "19.0.0", "strips bare =");
+    });
   });
 
   describe("isValidReactVersion", () => {
@@ -1174,6 +1180,51 @@ describe("createDependencyPinningSource project identity", () => {
     });
     assertEquals(source.fs, undefined);
     assertEquals(source.projectId, "project-abc");
+  });
+
+  it("keeps the host-filesystem fast path for a local project that carries an adapter", () => {
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("{}"),
+        stat: () =>
+          Promise.resolve({
+            size: 2,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(1),
+          }),
+      },
+    } as unknown as Parameters<typeof createDependencyPinningSource>[0]["adapter"];
+
+    const local = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+      adapter,
+      isLocalProject: true,
+    });
+    assertEquals(
+      local.fs,
+      undefined,
+      "a local project keeps the host-filesystem fast path even when an adapter is present",
+    );
+    assertEquals(
+      local.cacheNamespace,
+      undefined,
+      "a local project keeps its unnamespaced cache identity",
+    );
+
+    const proxied = createDependencyPinningSource({
+      projectDir: "/project",
+      projectId: "project-abc",
+      adapter,
+      isLocalProject: false,
+    });
+    assertEquals(
+      proxied.fs,
+      adapter?.fs,
+      "a non-local project reads package.json through the adapter",
+    );
   });
 
   it("should leave the project id undefined when none is supplied", () => {

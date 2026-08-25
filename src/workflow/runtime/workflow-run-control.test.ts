@@ -188,6 +188,34 @@ class ClaimDelayedRunningUpdateBackend extends MemoryBackend {
   }
 }
 
+class ClaimPersistedAssignmentRejectsBackend extends MemoryBackend {
+  readonly replacementWorkerId = "run-execution:replacement";
+
+  constructor(private readonly replaceBeforeReject: boolean) {
+    super();
+  }
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running" && patch.workerId === "run-execution:execution-a") {
+      const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+      if (this.replaceBeforeReject) {
+        await super.updateRun(runId, {
+          status: "running",
+          workerId: this.replacementWorkerId,
+          context: { input: {}, replacement: true },
+        });
+      }
+      if (updated) throw new Error("claim write acknowledgement failed");
+      return updated;
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class ClaimPendingClaimLostBackend extends MemoryBackend {
   replacementWorkerId = "run-execution:replacement";
 
@@ -259,6 +287,43 @@ class ClaimStalledOwnerLostBackend extends MemoryBackend {
   }
 }
 
+class ClaimStalledFailureOwnerLostBackend extends MemoryBackend {
+  replacementWorkerId = "run-execution:replacement";
+
+  private async replaceOwner(runId: string): Promise<void> {
+    await super.updateRun(runId, {
+      status: "running",
+      workerId: this.replacementWorkerId,
+    });
+  }
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "failed") await this.replaceOwner(runId);
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "failed" && expectedWorkerId.startsWith("mgr:")) {
+      await this.replaceOwner(runId);
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
 class ClaimMissingPolicyBackend extends MemoryBackend {
   override async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = await super.getRun(runId);
@@ -313,6 +378,18 @@ class ReconcileOwnerChangesBackend extends MemoryBackend {
       expectedWorkerId,
       patch,
     );
+  }
+}
+
+class ReconcileDeleteOnHydrateBackend extends MemoryBackend {
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    _expectedStatuses: WorkflowRun["status"][],
+    _expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.context?.env) await this.deleteRun(runId);
+    return false;
   }
 }
 
@@ -632,6 +709,45 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(createCalled, true);
   });
 
+  it("fails the attempted execution owner when claim assignment persists then rejects", async () => {
+    const backend = new ClaimPersistedAssignmentRejectsBackend(false);
+    const run = createRun("claim-persisted-assignment-rejects");
+    await backend.createRun(run);
+    let createCalled = false;
+
+    const outcome = await claim(backend, run, {
+      createRunExecution: (config) => {
+        createCalled = true;
+        return Promise.resolve(config.executionId);
+      },
+    });
+
+    assertEquals(outcome.status, "failed-after-claim");
+    assertEquals(createCalled, false);
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.workerId, "run-execution:execution-a");
+    assertEquals(
+      persisted?.error?.message.includes("claim write acknowledgement failed"),
+      true,
+    );
+  });
+
+  it("does not fail a replacement owner after claim assignment persists then rejects", async () => {
+    const backend = new ClaimPersistedAssignmentRejectsBackend(true);
+    const run = createRun("claim-persisted-assignment-replaced");
+    await backend.createRun(run);
+
+    const outcome = await claim(backend, run);
+
+    assertEquals(outcome.status, "failed-after-claim");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.context.replacement, true);
+    assertEquals(persisted?.error, undefined);
+  });
+
   it("skips pending runs when another owner wins the running claim", async () => {
     const backend = new ClaimPendingClaimLostBackend();
     const run = createRun("claim-pending-owner-lost");
@@ -709,6 +825,53 @@ describe("workflow/runtime/workflow-run-control claim", () => {
     assertEquals(persisted?.error, undefined);
   });
 
+  it("does not fail a stalled run reclaimed after the manager claim", async () => {
+    const backend = new ClaimStalledFailureOwnerLostBackend();
+    const storedRun = {
+      ...createRun("claim-stalled-policy-failure-owner-lost"),
+      status: "running" as const,
+      heartbeatAt: new Date(Date.now() - 120_000),
+      workerId: "run-execution:stale",
+    };
+    await backend.createRun(storedRun);
+
+    const outcome = await claim(backend, withoutSourcePolicy(storedRun), {
+      managerId: "manager-stalled-policy-failure",
+      executionId: "execution-stalled-policy-failure",
+    });
+
+    assertEquals(outcome.status, "failed-before-claim");
+    const persisted = await backend.getRun(storedRun.id);
+    assertEquals(persisted?.status, "running");
+    assertEquals(persisted?.workerId, backend.replacementWorkerId);
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("fails a stalled invalid run only while the manager still owns it", async () => {
+    const backend = new MemoryBackend();
+    const storedRun = {
+      ...createRun("claim-stalled-policy-failure-owned"),
+      status: "running" as const,
+      heartbeatAt: new Date(Date.now() - 120_000),
+      workerId: "run-execution:stale",
+    };
+    await backend.createRun(storedRun);
+
+    const outcome = await claim(backend, withoutSourcePolicy(storedRun), {
+      managerId: "manager-stalled-policy-failure-owned",
+      executionId: "execution-stalled-policy-failure-owned",
+    });
+
+    assertEquals(outcome.status, "failed-before-claim");
+    const persisted = await backend.getRun(storedRun.id);
+    assertEquals(persisted?.status, "failed");
+    assertEquals(persisted?.workerId, "mgr:manager-stalled-policy-failure-owned");
+    assertEquals(
+      persisted?.error?.message.includes("source integration policy snapshot"),
+      true,
+    );
+  });
+
   it("resets startedAt to the new claim time when recovering a stalled run", async () => {
     using _time = new FakeTime(new Date("2026-01-01T00:00:00.000Z"));
     const backend = new MemoryBackend();
@@ -761,6 +924,68 @@ describe("workflow/runtime/workflow-run-control claim", () => {
 });
 
 describe("workflow/runtime/workflow-run-control reconcile", () => {
+  it("omits an absent approval comment while preserving structured data", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-optional-decision-fields"),
+      status: "waiting" as const,
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: run.id,
+        approvalId: "approval-optional-fields",
+        nodeId: "review",
+        decision: {
+          approved: true,
+          approver: "reviewer",
+          data: { confirmed: true },
+        },
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(persisted?.context.review, {
+      approved: true,
+      approver: "reviewer",
+      data: { confirmed: true },
+      decidedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assertEquals(persisted?.nodeStates.review?.output, {
+      approved: true,
+      approver: "reviewer",
+      data: { confirmed: true },
+    });
+  });
+
+  it("reports a deleted run as terminal when env hydration loses its update", async () => {
+    const backend = new ReconcileDeleteOnHydrateBackend();
+    const run = {
+      ...createRun("reconcile-hydrate-deleted"),
+      status: "running" as const,
+      workerId: "run-execution:owner",
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "hydrate-env",
+        run,
+        env: { MODE: "new" },
+        expectedWorkerId: run.workerId,
+      },
+    });
+
+    assertEquals(outcome.status, "skipped-terminal");
+    assertEquals(outcome.run, undefined);
+  });
+
   it("keeps cancellation terminal during approval rejection", async () => {
     const backend = new ReconcileCancelOnPatchBackend();
     const run = {

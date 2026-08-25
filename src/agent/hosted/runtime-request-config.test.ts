@@ -78,6 +78,26 @@ it("ordinary hosted request resolution ignores forwarded private tool exposure s
     (result as unknown as Record<string, unknown>).serverResolvedToolExposureCheckpoint,
     undefined,
   );
+  assertEquals(
+    result.requestedAllowedTools,
+    [],
+    "an agent without configured tools must resolve to no allowed tools regardless of forwarded checkpoint",
+  );
+  assertEquals(
+    result.requestedAllowedProviderTools,
+    [],
+    "forwarded checkpoint must not add provider tools",
+  );
+  assertEquals(
+    result.includeRuntimeEssentialToolsWhenEmpty,
+    true,
+    "no runtime overrides were supplied",
+  );
+  assertEquals(
+    JSON.stringify(result).includes("delete_project"),
+    false,
+    "forwarded private checkpoint must not influence any resolved field",
+  );
 });
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 

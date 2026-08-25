@@ -7,10 +7,11 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
 import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, SSRModuleLoader } from "./index.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
@@ -135,8 +136,11 @@ function productionGateCacheKey(
   filePath: string,
   contentHash: string,
   dev: boolean,
+  mode?: "preview",
 ): string {
-  const configHash = computeConfigHashSync({ dev });
+  // Mirrors SSRCacheManager.getConfigHash, which suffixes ":preview" so a
+  // preview compile never shares a cache entry with production.
+  const configHash = `${computeConfigHashSync({ dev })}${mode === "preview" ? ":preview" : ""}`;
   return buildSSRModuleCacheKey(
     RUNTIME_VERSION,
     projectId,
@@ -150,7 +154,18 @@ function productionGateRelativePath(filePath: string, projectDir: string): strin
     : filePath;
 }
 
+// Sanitizers stay off for one verified reason: the terminal cross-project fetch
+// case deliberately abandons an in-flight registry fetch, so http-cache.ts is
+// still holding a retryWithBackoff timer, an op_fetch_send and its
+// fetchCancelHandle when the suite ends. Per-case overrides do not help because
+// Deno reports the leak against the whole describe. The shared esbuild service
+// used to leak here too; afterAll(stopEsbuild) closes that one, so do not widen
+// this override any further.
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
   it("does not count request cancellation as a component failure", async () => {
     clearSSRModuleCache();
     const controller = new AbortController();
@@ -1037,10 +1052,26 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const source = "export default function Good() { return null; }";
       await writeTextFile(filePath, source);
 
+      const projectId = "project-retain-test";
+      const contentSourceId = "local-main";
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const configHash = computeConfigHashSync({ dev: true });
+      const reactVersion = "default";
+      const filePathCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
+      );
+      const contentCacheKey = buildSSRModuleCacheKey(
+        RUNTIME_VERSION,
+        projectId,
+        `${contentSourceId}:${reactVersion}:${configHash}:${filePath}:${contentHash}`,
+      );
+
       const loader = new SSRModuleLoader({
         projectDir,
-        projectId: "project-retain-test",
-        contentSourceId: "local-main",
+        projectId,
+        contentSourceId,
         adapter: denoAdapter,
         dev: true,
       });
@@ -1048,12 +1079,15 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const component = await loader.loadModule(filePath, source);
       assertEquals(component.name, "Good");
 
-      const matchingKeys = [...globalModuleCache.keys()].filter((k) =>
-        k.includes("project-retain-test")
+      assertEquals(
+        globalModuleCache.has(contentCacheKey),
+        true,
+        "content-hash entry must be published after a successful import",
       );
-      assert(
-        matchingKeys.length > 0,
-        "Expected cache entries to be retained after successful import",
+      assertEquals(
+        globalModuleCache.has(filePathCacheKey),
+        true,
+        "file-path index must be published so dev invalidation and HMR can find the entry",
       );
     } finally {
       await remove(projectDir, { recursive: true });
@@ -1917,6 +1951,56 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         globalModuleCache.has(injectedKey),
         true,
         "dev must keep injecting node positions for Studio Navigator",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("injects node positions for preview tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-preview-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "preview-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "preview",
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      assertEquals(
+        globalModuleCache.has(
+          productionGateCacheKey(projectId, filePath, hashCodeHex(injected), false, "preview"),
+        ),
+        true,
+        "preview must keep injecting node positions for Studio Navigator",
+      );
+      assertEquals(
+        globalModuleCache.has(
+          productionGateCacheKey(
+            projectId,
+            filePath,
+            hashCodeHex(PRODUCTION_GATE_JSX_SOURCE),
+            false,
+            "preview",
+          ),
+        ),
+        false,
+        "preview must not cache the uninjected source under the same identity",
       );
     } finally {
       await remove(projectDir, { recursive: true });

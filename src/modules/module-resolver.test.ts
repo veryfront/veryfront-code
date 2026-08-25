@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ModuleResolver } from "./module-resolver.ts";
@@ -152,10 +152,24 @@ describe("modules/module-resolver", () => {
     });
 
     it("should block path traversal attempts", async () => {
-      const resolver = createResolver({ projectDir: "/project" });
+      const resolver = createResolver({
+        projectDir: "/project",
+        files: {
+          "/etc/passwd": "root:x:0:0",
+          "/project/components/Button.tsx": "export default () => null;",
+        },
+      });
 
-      const result = await resolver.resolve("/../../etc/passwd");
-      assertEquals(result, null);
+      assertEquals(
+        await resolver.resolve("/../../etc/passwd"),
+        null,
+        "traversal guard must reject an escaping absolute specifier even when the target exists",
+      );
+      assertEquals(
+        (await resolver.resolve("/components/Button.tsx"))?.path,
+        "/project/components/Button.tsx",
+        "in-project absolute specifier still resolves",
+      );
     });
 
     it("should return null for absolute paths to nonexistent files", async () => {
@@ -192,19 +206,25 @@ describe("modules/module-resolver", () => {
 
       const result1 = await resolver.resolve("virtual:cached");
       const result2 = await resolver.resolve("virtual:cached");
-      assertEquals(result1, result2);
+      assertStrictEquals(result1, result2, "second resolve must return the cached instance");
     });
 
     it("should clear entire cache", async () => {
-      const resolver = createResolver({
-        virtualModules: new Map([["virtual:a", "a"]]),
-      });
+      const virtualModules = new Map([["virtual:a", "a"]]);
+      const resolver = createResolver({ virtualModules });
 
-      await resolver.resolve("virtual:a");
+      const first = await resolver.resolve("virtual:a");
+      assertEquals(first?.content, "a", "first resolve serves the original virtual module");
+
+      virtualModules.set("virtual:a", "b");
       resolver.clearCache();
 
       const result = await resolver.resolve("virtual:a");
-      assertEquals(result?.content, "a");
+      assertEquals(
+        result?.content,
+        "b",
+        "clearCache() with no pattern must drop every cached entry",
+      );
     });
 
     it("should clear cache by pattern", async () => {

@@ -1,11 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
+import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
+import type { HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
 import {
   __clearInFlightHttpFetches,
   createInFlightHttpFetch,
   IN_FLIGHT_HTTP_FETCH_DEPENDENCY_CYCLE,
   inFlightHttpFetches,
+  refreshDistributedCacheAsync,
   waitForInFlightFetch,
   waitForSharedInFlightHttpFetch,
 } from "./in-flight-manager.ts";
@@ -25,12 +39,40 @@ describe("transforms/esm/in-flight-manager", () => {
       assertEquals(inFlightHttpFetches instanceof Map, true);
     });
 
-    it("can store and retrieve promises", () => {
+    it("reuses one in-flight promise for the same cache key", async () => {
       __clearInFlightHttpFetches();
-      const p = Promise.resolve("result");
-      inFlightHttpFetches.set("key1", p);
-      assertEquals(inFlightHttpFetches.get("key1"), p);
-      __clearInFlightHttpFetches();
+      const pending = Promise.withResolvers<string | null>();
+
+      try {
+        const first = createInFlightHttpFetch("dedupe-key", () => pending.promise);
+        let secondComputeRan = false;
+        const second = createInFlightHttpFetch("dedupe-key", () => {
+          secondComputeRan = true;
+          return Promise.resolve("other");
+        });
+
+        assertStrictEquals(
+          second,
+          first,
+          "a second call for the same cache key reuses the in-flight promise",
+        );
+        assertStrictEquals(
+          inFlightHttpFetches.get("dedupe-key"),
+          first,
+          "the registry holds the promise handed to every caller",
+        );
+        assertEquals(
+          secondComputeRan,
+          false,
+          "the duplicate caller must not start a second fetch",
+        );
+
+        pending.resolve(null);
+        assertEquals(await first, null, "the shared flight settles once for every caller");
+      } finally {
+        pending.resolve(null);
+        __clearInFlightHttpFetches();
+      }
     });
   });
 
@@ -127,13 +169,26 @@ describe("transforms/esm/in-flight-manager", () => {
         return "/path/to/complete-graph.mjs";
       });
 
+      const time = new FakeTime();
+
       try {
         const owner = waitForSharedInFlightHttpFetch(cacheKey, promise, null);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        release.resolve();
+        let settled = false;
+        void owner.then(() => settled = true, () => settled = true);
 
+        // Well past the 30s follower timeout and its jitter window.
+        await time.tickAsync(60_000);
+        assertEquals(
+          settled,
+          false,
+          "the flight owner must not be abandoned by the follower timeout",
+        );
+
+        release.resolve();
         assertEquals(await owner, "/path/to/complete-graph.mjs");
       } finally {
+        time.restore();
+        release.resolve();
         __clearInFlightHttpFetches();
       }
     });
@@ -577,8 +632,30 @@ describe("transforms/esm/in-flight-manager", () => {
   });
 
   describe("waitForInFlightFetch", () => {
-    it("does not accept cache identities that could be written to timeout logs", () => {
-      assertEquals(waitForInFlightFetch.length, 3);
+    it("does not accept cache identities that could be written to timeout logs", async () => {
+      const records: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+
+      try {
+        assertEquals(
+          await waitForInFlightFetch(new Promise<string | null>(() => {}), 5),
+          undefined,
+          "a timed-out wait resolves undefined so the caller retries",
+        );
+      } finally {
+        unsubscribe();
+      }
+
+      const record = records.find(
+        (entry) => entry.message === "In-flight fetch wait timed out, will retry",
+      );
+      assertExists(record, "the timeout emits a retry warning");
+      assertEquals(
+        Object.keys(record.context ?? {}),
+        ["timeoutMs"],
+        "the timeout warning carries only the timeout, never a cache identity",
+      );
+      assertEquals(record.context?.timeoutMs, 5, "the warning reports the wait window it used");
     });
 
     it("resolves with the promise result", async () => {
@@ -641,6 +718,116 @@ describe("transforms/esm/in-flight-manager", () => {
 
       const error = await assertRejects(() => pendingWait);
       assertEquals(error, abortReason);
+    });
+  });
+
+  describe("refreshDistributedCacheAsync", () => {
+    const identityMetadata: HttpCacheIdentityMetadata = {
+      url: "https://esm.sh/a",
+      importMap: { imports: {} },
+    };
+
+    function recordingBackend(): { backend: CacheBackend; entries: Map<string, string> } {
+      const entries = new Map<string, string>();
+      const backend: CacheBackend = {
+        type: "memory",
+        get: (key) => Promise.resolve(entries.get(key) ?? null),
+        set: (key, value) => {
+          entries.set(key, value);
+          return Promise.resolve();
+        },
+        del: (key) => {
+          entries.delete(key);
+          return Promise.resolve();
+        },
+      };
+      return { backend, entries };
+    }
+
+    function refresh(hash: string, map: Map<string, number>): void {
+      refreshDistributedCacheAsync(
+        hash,
+        "const a = 1;",
+        "/tmp/cache",
+        "https://esm.sh/a",
+        identityMetadata,
+        () => map,
+      );
+    }
+
+    it("writes and records the refresh when no timestamp exists", async () => {
+      const { backend, entries } = recordingBackend();
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const map = new Map<string, number>();
+
+      try {
+        refresh("hash-cold", map);
+
+        await waitFor(() => entries.has(`${VERSION}:code:hash-cold`), {
+          timeout: 3_000,
+          interval: 10,
+        });
+        assertEquals(
+          map.get("hash-cold") !== undefined,
+          true,
+          "a completed refresh records its timestamp",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("does not repeat a refresh that happened inside the throttle window", async () => {
+      const { backend, entries } = recordingBackend();
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const recent = Date.now() - 60_000;
+      const map = new Map<string, number>([["hash-recent", recent]]);
+
+      try {
+        refresh("hash-recent", map);
+        // A cold hash queued afterwards proves the write path drained.
+        refresh("hash-control", map);
+
+        await waitFor(() => entries.has(`${VERSION}:code:hash-control`), {
+          timeout: 3_000,
+          interval: 10,
+        });
+        assertEquals(
+          entries.has(`${VERSION}:code:hash-recent`),
+          false,
+          "a recent refresh must not write to the distributed cache again",
+        );
+        assertEquals(
+          map.get("hash-recent"),
+          recent,
+          "a recent refresh is not repeated",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("refreshes again once the throttle window has elapsed", async () => {
+      const { backend, entries } = recordingBackend();
+      __setDistributedCacheAccessorForTests(() => Promise.resolve(backend));
+      const stale = Date.now() - 5 * 60 * 60 * 1000;
+      const map = new Map<string, number>([["hash-stale", stale]]);
+
+      try {
+        refresh("hash-stale", map);
+
+        await waitFor(() => entries.has(`${VERSION}:code:hash-stale`), {
+          timeout: 3_000,
+          interval: 10,
+        });
+        assertEquals(
+          (map.get("hash-stale") ?? 0) > stale,
+          true,
+          "an expired refresh window advances the recorded timestamp",
+        );
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+      }
     });
   });
 });

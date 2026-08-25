@@ -552,6 +552,60 @@ describe("modules/import-map/preloader", () => {
       }
     });
 
+    it("rejects non-string contentSourceId context values", async () => {
+      const adapter = createMinimalAdapter();
+      let toJSONCalls = 0;
+      const invalidSourceIds: unknown[] = [
+        42,
+        null,
+        false,
+        {
+          toJSON: () => {
+            toJSONCalls++;
+            return '"release-1"';
+          },
+        },
+      ];
+
+      for (let index = 0; index < invalidSourceIds.length; index++) {
+        const contentSourceId = invalidSourceIds[index];
+        await assertRejects(
+          () =>
+            preloadImportMap(
+              "/invalid-source-context",
+              adapter,
+              `invalid-source-${String(index)}`,
+              { contentSourceId } as never,
+            ),
+          TypeError,
+          "Import-map contentSourceId must be a string",
+        );
+      }
+
+      assertEquals(
+        toJSONCalls,
+        0,
+        "a rejected contentSourceId must never steer the canonical identity",
+      );
+    });
+
+    it("rejects non-string projectDir", async () => {
+      const adapter = createMinimalAdapter();
+
+      await assertRejects(
+        () => preloadImportMap(42 as never, adapter, "invalid-project-dir"),
+        TypeError,
+        "Import-map projectDir must be a string",
+      );
+
+      const preloader = new ImportMapPreloader({});
+      await assertRejects(
+        () => preloader.getCached("cache-key", { projectDir: 42 } as never),
+        TypeError,
+        "Import-map projectDir must be a string",
+      );
+    });
+
     it("snapshots and deep-freezes loader output before publishing it", async () => {
       const adapter = createMinimalAdapter();
       const loadedMap = {

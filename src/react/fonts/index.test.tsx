@@ -24,7 +24,73 @@ function collectGoogleFonts(fonts: readonly Font[]) {
   };
 }
 
+const PRECONNECT_LINKS: { [k: string]: string }[] = [
+  { rel: "preconnect", href: "https://fonts.googleapis.com" },
+  { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "anonymous" },
+];
+
 describe("GoogleFonts", () => {
+  it("emits only preconnect links and no style block for an empty font list", () => {
+    const head = collectGoogleFonts([]);
+
+    assertEquals(
+      head.links,
+      PRECONNECT_LINKS,
+      "empty fonts must emit only the two preconnect links, never a stylesheet",
+    );
+    assertEquals(head.styles, [], "empty fonts must not emit a style block");
+  });
+
+  it("omits the style block when no font declares a variable", () => {
+    const head = collectGoogleFonts([{ name: "Inter", weights: [400] }]);
+
+    assertEquals(
+      head.links.find(({ rel }) => rel === "stylesheet")?.href,
+      "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
+      "stylesheet link is still emitted without a variable",
+    );
+    assertEquals(head.styles, [], "no variable means no @layer base style block");
+  });
+
+  it("rejects empty, out-of-range, descending, and overlapping weights", () => {
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: [] }]),
+      RangeError,
+      "must not be empty",
+      "an empty weights array must be rejected",
+    );
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: [5000] }]),
+      RangeError,
+      "between 1 and 1000",
+      "numeric weights above 1000 must be rejected",
+    );
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: ["0..400"] }]),
+      RangeError,
+      "between 1 and 1000",
+      "range bounds below 1 must be rejected",
+    );
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: ["700..400"] }]),
+      RangeError,
+      "ordered from low to high",
+      "descending ranges must be rejected",
+    );
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: [400, 400] }]),
+      RangeError,
+      "must not overlap or repeat",
+      "repeated weights must be rejected",
+    );
+    assertThrows(
+      () => collectGoogleFonts([{ name: "Inter", weights: ["300..500", 400] }]),
+      RangeError,
+      "must not overlap or repeat",
+      "a weight inside an existing range must be rejected",
+    );
+  });
+
   it("supports frozen readonly weights without mutating caller-owned arrays", () => {
     const mutableWeights: Array<string | number> = [700, "400", 500];
     const frozenWeights = Object.freeze(["200..900"] as const);
@@ -47,8 +113,16 @@ describe("GoogleFonts", () => {
     assertEquals(mutableWeights, [700, "400", 500]);
     assertEquals(frozenWeights, ["200..900"]);
     assertEquals(
-      head.links.find(({ rel }) => rel === "stylesheet")?.href,
-      "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Source+Serif+4:ital,wght@0,200..900;1,200..900&display=swap",
+      head.links,
+      [
+        ...PRECONNECT_LINKS,
+        {
+          rel: "stylesheet",
+          href:
+            "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Source+Serif+4:ital,wght@0,200..900;1,200..900&display=swap",
+        },
+      ],
+      "both Google Fonts preconnect links must precede the stylesheet",
     );
     assertEquals(head.styles, [
       `@layer base {

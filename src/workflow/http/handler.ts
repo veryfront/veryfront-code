@@ -51,6 +51,13 @@ const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
 
+function readDecimalInteger(value: string): number {
+  if (!/^[0-9]+$/.test(value)) {
+    throw new WorkflowRequestError("Invalid workflow run filter");
+  }
+  return Number(value);
+}
+
 function toSegments(path: string): string[] {
   return path.split("/").filter(Boolean).map((segment) => {
     try {
@@ -119,13 +126,13 @@ function readFilter(url: URL): RunFilter {
   if (createdBefore) filter.createdBefore = new Date(createdBefore);
 
   const limit = params.get("limit");
-  if (limit !== null) filter.limit = Number(limit);
+  if (limit !== null) filter.limit = readDecimalInteger(limit);
 
   // The hook round-trips an opaque `cursor`; this backend paginates by offset,
   // so the cursor is the offset. Keeping it opaque on the wire leaves room to
   // change that without touching the hook.
   const cursor = params.get("cursor");
-  if (cursor !== null) filter.offset = Number(cursor);
+  if (cursor !== null) filter.offset = readDecimalInteger(cursor);
 
   try {
     return RunFilterSchema.parse(filter);
@@ -155,7 +162,7 @@ function projectContext(context: WorkflowContext): WorkflowContext {
 function projectRun(
   run: WorkflowRun,
   pendingApprovals: PendingApproval[] = run.pendingApprovals,
-): Record<string, unknown> {
+): Record<string, unknown> & Pick<WorkflowRun, "status"> {
   const {
     _tenant: _tenant,
     _runtimeStateVersion: _runtimeStateVersion,
@@ -194,6 +201,7 @@ function projectRun(
 function runEventStream(
   observation: WorkflowRunEventObservation,
   signal: AbortSignal,
+  runId: string,
 ): Response {
   const encoder = new TextEncoder();
   const iterator = observation.events[Symbol.asyncIterator]();
@@ -245,6 +253,14 @@ function runEventStream(
   const encode = (event: string, data: unknown): Uint8Array =>
     encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
+  const failStream = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    frame: { code: string; message: string; retryable: boolean },
+  ): void => {
+    controller.enqueue(encode("error", frame));
+    close();
+  };
+
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       streamController = controller;
@@ -259,8 +275,25 @@ function runEventStream(
 
       if (snapshotPending) {
         snapshotPending = false;
-        controller.enqueue(encode("snapshot", projectRun(observation.initial)));
-        if (isTerminalRunStatus(observation.initial.status)) close();
+        try {
+          const snapshot = projectRun(observation.initial);
+          controller.enqueue(encode("snapshot", snapshot));
+          if (isTerminalRunStatus(snapshot.status)) close();
+        } catch {
+          // A snapshot failure raises the run's own data (a getter or `toJSON`
+          // can throw with customer content), so log a classification rather
+          // than the error itself. Reconnecting re-reads the same stored run
+          // and fails the same way, so the failure is not retryable.
+          logger.error("Workflow run snapshot serialization failed", {
+            runId,
+            errorName: "serialization_error",
+          });
+          failStream(controller, {
+            code: "workflow_snapshot_serialization_failed",
+            message: "Workflow run snapshot could not be serialized",
+            retryable: false,
+          });
+        }
         return;
       }
 
@@ -279,14 +312,13 @@ function runEventStream(
       } catch (error) {
         if (closed) return;
         logger.error("Workflow event observation failed", {
-          runId: observation.initial.id,
+          runId,
         }, error);
-        controller.enqueue(encode("error", {
+        failStream(controller, {
           code: "workflow_observation_failed",
           message: "Workflow event observation failed",
           retryable: true,
-        }));
-        close();
+        });
       }
     },
     cancel() {
@@ -318,6 +350,8 @@ function runEventStream(
  * run-status events, and closes on a terminal run. Missing runs return 404.
  * Custom backends without atomic run observation return 501. Observation
  * failures send one sanitized `error` event with `retryable: true`, then close.
+ * A snapshot that cannot be serialized fails the same way on every reconnect,
+ * so that error event carries `retryable: false` instead.
  */
 export function createWorkflowHandler(
   client: WorkflowClient,
@@ -355,7 +389,7 @@ export function createWorkflowHandler(
         if (!observation.supported) {
           return problem("Workflow event observation is not supported", 501);
         }
-        return runEventStream(observation, request.signal);
+        return runEventStream(observation, request.signal, runId);
       }
 
       if (

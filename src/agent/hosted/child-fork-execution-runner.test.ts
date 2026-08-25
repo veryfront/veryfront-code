@@ -889,7 +889,9 @@ Deno.test("executeHostedChildForkToolInput honors full result mode", async () =>
 });
 
 Deno.test("executeHostedChildForkToolInput preserves root invocation context for nested child forks", async () => {
-  await executeHostedChildForkToolInput({
+  let prepareToolAssemblyCalls = 0;
+
+  const result = await executeHostedChildForkToolInput({
     authToken: "token",
     apiUrl: "https://api.example.com",
     projectId: "project-1",
@@ -926,6 +928,7 @@ Deno.test("executeHostedChildForkToolInput preserves root invocation context for
     resolveModelId: (modelId) => modelId,
     resolveProvider: () => "anthropic",
     prepareToolAssembly: ({ runtimeConfig }) => {
+      prepareToolAssemblyCalls += 1;
       assertEquals(
         runtimeConfig.effectivePrompt.includes('"root_conversation_id":"conversation-root-1"'),
         true,
@@ -977,6 +980,12 @@ Deno.test("executeHostedChildForkToolInput preserves root invocation context for
       },
     }),
   });
+
+  assertEquals(prepareToolAssemblyCalls, 1, "tool assembly must run exactly once");
+  assertEquals(result.success, true, "nested fork must complete");
+  if (result.success) {
+    assertEquals(result.summary.text, "Resolved.", "nested fork must surface the stream text");
+  }
 });
 
 Deno.test("executeHostedChildForkWithPreparedTools exports stable default timeout constants", () => {
