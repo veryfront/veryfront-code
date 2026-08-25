@@ -196,6 +196,11 @@ describe("invoke_agent", () => {
       "published child events must carry the parent toolCallId",
     );
     assertEquals(parsed?.agentId, "writer", "published child events must name the invoked agent");
+    assertEquals(
+      parsed?.event,
+      { type: "text-delta", id: "child-1", delta: "hi" },
+      "published child events must preserve the child stream payload",
+    );
   });
 
   it("reports an error when the invoked agent id is unknown", async () => {
