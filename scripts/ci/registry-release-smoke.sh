@@ -8,6 +8,7 @@ recovery() {
 
 registry_smoke_failure_classification() {
 	case "${1:-}" in
+		22) printf '%s\n' "configuration" ;;
 		20) printf '%s\n' "install" ;;
 		21) printf '%s\n' "behavior" ;;
 		*) printf '%s\n' "install-or-behavior" ;;

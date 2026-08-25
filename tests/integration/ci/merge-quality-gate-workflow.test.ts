@@ -102,7 +102,10 @@ describe("merge quality gate workflow", () => {
     const step = gateStep(gate);
 
     assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
-    assertEquals(gate.if, "${{ always() }}");
+    assertEquals(
+      gate.if,
+      "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}",
+    );
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       RESULT_ENV,

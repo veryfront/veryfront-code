@@ -65,6 +65,7 @@ REGISTRY_AUTH_SPEC=""
 REGISTRY_URL=""
 
 if [ -n "${VF_NPM_REGISTRY_VERSION:-}" ]; then
+  SMOKE_FAILURE_STATUS=22
   [ -n "${VF_NPM_REGISTRY_PACKAGES:-}" ] || fail "registry package list is required in registry mode"
   REGISTRY_URL="${VF_NPM_REGISTRY_URL:-https://registry.npmjs.org}"
   case "$REGISTRY_URL" in

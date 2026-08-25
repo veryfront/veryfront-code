@@ -5,14 +5,15 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDirWithOptions, remove, withTempDir } from "#veryfront/testing/deno-compat.ts";
-import { join } from "#std/path/join";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { fromFileUrl, join } from "#std/path";
 import {
   createNpmCompatibilityArtifact,
   formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
   materializeNpmCompatibilityArtifact,
   NpmCompatibilityArtifactError,
+  type NpmCompatibilityManifest,
 } from "../../../scripts/ci/npm-compatibility-artifact.ts";
 
 async function writePackage(
@@ -75,32 +76,48 @@ describe("npm compatibility artifact", () => {
   });
 
   it("packs into a destination relative to the caller working directory", async () => {
-    await withTempDir(async (root) => {
-      const workspace = await makeTempDirWithOptions({
-        prefix: "vf-npm-artifact-workspace-",
-        dir: Deno.cwd(),
-      });
-      const originalCwd = Deno.cwd();
-      try {
-        await writePackage(root, { name: "veryfront", version: "1.2.3" });
-        Deno.chdir(workspace);
+    await withTempDirs([
+      "vf-npm-artifact-source-",
+      "vf-npm-artifact-workspace-",
+    ], async ([root, workspace]) => {
+      assertExists(root);
+      assertExists(workspace);
+      await writePackage(root, { name: "veryfront", version: "1.2.3" });
 
-        const manifest = await createNpmCompatibilityArtifact(
+      const moduleUrl = new URL(
+        "../../../scripts/ci/npm-compatibility-artifact.ts",
+        import.meta.url,
+      ).href;
+      const code = `import { createNpmCompatibilityArtifact } from ${
+        JSON.stringify(moduleUrl)
+      }; await createNpmCompatibilityArtifact(Deno.args[0], "dist/npm-compatibility");`;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "--unstable-sloppy-imports",
+          `--config=${fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url))}`,
+          "--frozen",
+          code,
           root,
-          "dist/npm-compatibility",
-        );
+        ],
+        cwd: workspace,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
 
-        assertEquals(manifest.packages.length, 1);
-        const packageEntry = manifest.packages[0];
-        assertExists(packageEntry);
-        await Deno.stat(
-          join(workspace, "dist/npm-compatibility", packageEntry.file),
-        );
-      } finally {
-        Deno.chdir(originalCwd);
-        await remove(workspace, { recursive: true });
-      }
-    }, { prefix: "vf-npm-artifact-source-" });
+      const manifest = JSON.parse(
+        await Deno.readTextFile(
+          join(workspace, "dist/npm-compatibility/manifest.json"),
+        ),
+      ) as NpmCompatibilityManifest;
+      assertEquals(manifest.packages.length, 1);
+      const packageEntry = manifest.packages[0];
+      assertExists(packageEntry);
+      await Deno.stat(
+        join(workspace, "dist/npm-compatibility", packageEntry.file),
+      );
+    });
   });
 
   it("records package versions and SHA-256 digests for one packed package set", async () => {

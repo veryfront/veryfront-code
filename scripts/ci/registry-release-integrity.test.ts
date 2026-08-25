@@ -91,7 +91,7 @@ describe("registry release integrity polling", () => {
 
     assertEquals(
       requestedUrl,
-      `https://registry.example.test/npm/%40veryfront%2Fext-auth-jwt/${VERSION}`,
+      `https://registry.example.test/npm/@veryfront%2Fext-auth-jwt/${VERSION}`,
     );
   });
 

@@ -87,8 +87,11 @@ function registryVersionUrl(
   packageName: string,
   version: string,
 ): string {
+  const encodedPackageName = packageName.startsWith("@")
+    ? `@${encodeURIComponent(packageName.slice(1))}`
+    : encodeURIComponent(packageName);
   return new URL(
-    `${encodeURIComponent(packageName)}/${encodeURIComponent(version)}`,
+    `${encodedPackageName}/${encodeURIComponent(version)}`,
     normalizedRegistryUrl(registryUrl),
   ).href;
 }

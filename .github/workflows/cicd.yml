@@ -642,7 +642,7 @@ jobs:
       - tests
       - tests-binary-e2e
       - tests-e2e-rsc-browser
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
     steps:
       - name: Require merge correctness dependencies
         env:
@@ -1135,6 +1135,11 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Pin npm CLI for publication
+        env:
+          NPM_CLI_VERSION: "11.12.1"
+        run: npm install --global "npm@${NPM_CLI_VERSION}"
+
       - name: Compute RC version
         id: version
         env:
@@ -1298,6 +1303,11 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
+      - name: Pin npm CLI for publication
+        env:
+          NPM_CLI_VERSION: "11.12.1"
+        run: npm install --global "npm@${NPM_CLI_VERSION}"
+
       - name: Download tested npm compatibility artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -1446,6 +1456,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}
     needs: [quality-gate-registry, prerelease, release, version-check]
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 5
     steps:
       - name: Resolve published version

@@ -262,15 +262,16 @@ exit 0
 
     const stdout = decoder.decode(output.stdout);
     const stderr = decoder.decode(output.stderr);
-    assertEquals(output.code, 1);
+    assertEquals(output.code, 22);
     assertEquals(stdout.includes(credential), false);
     assertEquals(stderr.includes(credential), false);
     assertStringIncludes(stderr, "registry URL authority is invalid");
   });
 
-  it("classifies install and behavior failures without echoing details", async () => {
+  it("classifies configuration, install, and behavior failures without echoing details", async () => {
     for (
       const [status, classification] of [
+        [22, "configuration"],
         [20, "install"],
         [21, "behavior"],
       ] as const
@@ -305,6 +306,7 @@ exit 0
   it("emits phase-specific smoke classifications from the wrapper", async () => {
     for (
       const [status, classification] of [
+        [22, "configuration"],
         [20, "install"],
         [21, "behavior"],
       ] as const

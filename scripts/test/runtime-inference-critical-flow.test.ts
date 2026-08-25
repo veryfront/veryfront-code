@@ -154,7 +154,7 @@ describe("runtime inference critical-flow pure contract", () => {
   });
 
   it("redacts local paths from critical-flow command failures", () => {
-    const checkoutPath = "/workspace/veryfront-code";
+    const checkoutPath = Deno.cwd();
     const message = sanitizeRuntimeCriticalFlowFailureText(
       [
         "deno task build:npm --packed-dir=/private/tmp/vf/artifact failed",

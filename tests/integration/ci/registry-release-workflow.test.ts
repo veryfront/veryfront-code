@@ -179,6 +179,19 @@ describe("registry release workflow", () => {
           ? "Publish tested RC npm artifact"
           : "Publish tested stable npm artifact",
       );
+      const npmPinStep = namedStep(job, "Pin npm CLI for publication");
+      assertEquals(
+        asRecord(npmPinStep.env, `${jobName} npm pin environment`),
+        { NPM_CLI_VERSION: "11.12.1" },
+      );
+      assertEquals(
+        npmPinStep.run,
+        'npm install --global "npm@${NPM_CLI_VERSION}"',
+      );
+      assert(
+        jobSteps.indexOf(npmPinStep) < jobSteps.indexOf(publishStep),
+        `${jobName} must pin npm before publication`,
+      );
       assertEquals(
         asRecord(publishStep.env, `${jobName} publish environment`).VERSION,
         "${{ steps.version.outputs.version }}",
@@ -367,6 +380,11 @@ describe("registry release workflow", () => {
       dispatch["timeout-minutes"],
       5,
       "release dispatch must time out if token creation or dispatch hangs",
+    );
+    assertEquals(
+      dispatch.environment,
+      "production",
+      "release dispatch must remain inside the production approval boundary",
     );
     assertEquals(versionStep.id, "version");
     assertEquals(payloadStep.id, "payload");
