@@ -592,6 +592,7 @@ export class LayoutCollector {
       {
         projectId: this.projectId,
         contentSourceId,
+        cache: this.projectId !== undefined && contentSourceId !== undefined,
       },
     );
 
