@@ -214,7 +214,7 @@ Deno.test("agent service routes scope the exact inbound signal to all preparatio
   assertEquals(getHostedRequestPreparationSignal(), undefined);
 });
 
-Deno.test("agent service routes classify AG-UI setup failures", async () => {
+it("agent service routes classify AG-UI setup failures", async () => {
   const authFailure = createRouteSet({
     prepareExecution: () => Promise.reject(new HostedServiceAuthError(401, "Token required")),
   });
@@ -717,7 +717,7 @@ Deno.test("agent service routes reject control-plane source mismatches", async (
   assertEquals(preparedRequests.length, 0);
 });
 
-Deno.test("agent service routes reject control-plane run id mismatches", async () => {
+it("agent service routes reject control-plane run id mismatches", async () => {
   const { routeSet, preparedRequests } = createRouteSet();
   const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
     request: createAuthenticatedRequest(
@@ -763,7 +763,7 @@ Deno.test("agent service routes cancel AG-UI runs", async () => {
   assertEquals(response.status, 204);
 });
 
-Deno.test("agent service routes accept cancellation of a live AG-UI run", async () => {
+it("agent service routes accept cancellation of a live AG-UI run", async () => {
   const { routeSet, tracker } = createRouteSet();
   tracker.sessionManager.startRun({ runId: "run-1", threadId: crypto.randomUUID() });
 
@@ -785,7 +785,7 @@ Deno.test("agent service routes accept cancellation of a live AG-UI run", async 
   );
 });
 
-Deno.test("agent service routes require auth to cancel AG-UI runs", async () => {
+it("agent service routes require auth to cancel AG-UI runs", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunCancelRequest({
     request: new Request("https://agent.example.test/api/runs/run-1", { method: "DELETE" }),
@@ -800,7 +800,7 @@ Deno.test("agent service routes require auth to cancel AG-UI runs", async () => 
   );
 });
 
-Deno.test("agent service routes reject cancel requests without a run id", async () => {
+it("agent service routes reject cancel requests without a run id", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunCancelRequest({
     request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),

@@ -6,10 +6,39 @@ import {
   conversationRunEventTypes,
   encodeConversationRunEvents,
   normalizeEncodedConversationRunEvents,
+  serializeConversationToolResultContent,
 } from "./run-events.ts";
 import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-normalization.ts";
 
 describe("agent/conversation-run-events", () => {
+  it("stores a textual rendering for tool output JSON cannot encode", () => {
+    // `JSON.stringify` returns `undefined` rather than throwing for a top-level
+    // function or symbol, so an unguarded encode would store no content at all.
+    const fromFunction = serializeConversationToolResultContent(() => "hidden");
+    assertEquals(
+      typeof fromFunction.content,
+      "string",
+      "a function result must still store a string content value",
+    );
+    assertEquals(
+      fromFunction.contentEncoding,
+      "text",
+      "an unencodable function result must be marked text so replay never decodes it",
+    );
+
+    const fromSymbol = serializeConversationToolResultContent(Symbol("tool"));
+    assertEquals(
+      fromSymbol.content,
+      "Symbol(tool)",
+      "a symbol result must store its textual rendering",
+    );
+    assertEquals(
+      fromSymbol.contentEncoding,
+      "text",
+      "an unencodable symbol result must be marked text so replay never decodes it",
+    );
+  });
+
   it("captures active message ids from start events", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(encoder.encode({ type: "start", messageId: "msg-1" }), []);

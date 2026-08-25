@@ -60,13 +60,19 @@ export function serializeConversationToolResultContent(value: unknown): {
   }
 
   try {
-    return { content: JSON.stringify(value ?? null) };
+    const encoded = JSON.stringify(value ?? null);
+    // `JSON.stringify` returns `undefined`, not a string, for a top-level
+    // function or symbol. Storing that would drop the result's content
+    // entirely, so fall through to the textual rendering below.
+    if (typeof encoded === "string") return { content: encoded };
   } catch {
-    // `String(value)` is a lossy rendering, not a JSON encoding: a bigint
-    // renders as bare digits that a reader would decode back into a number it
-    // cannot represent. Mark it text so replay returns the stored characters.
-    return { content: String(value), contentEncoding: "text" };
+    // A value that cannot be encoded at all falls through the same way.
   }
+
+  // `String(value)` is a lossy rendering, not a JSON encoding: a bigint
+  // renders as bare digits that a reader would decode back into a number it
+  // cannot represent. Mark it text so replay returns the stored characters.
+  return { content: String(value), contentEncoding: "text" };
 }
 
 /**
