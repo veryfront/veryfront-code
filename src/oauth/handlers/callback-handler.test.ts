@@ -738,6 +738,7 @@ it("callback-handler: detaches persisted tokens from post-commit hooks", async (
     codeVerifier: CODE_VERIFIER,
     redirectUri: "http://localhost:3000/api/auth/test-provider/callback",
     scopes: ["read"],
+    scopeSource: "explicit",
     createdAt: Date.now(),
   };
   let persistedTokens: OAuthTokens | null = null;
@@ -770,6 +771,7 @@ it("callback-handler: detaches persisted tokens from post-commit hooks", async (
         TEST_CONFIG.serviceId,
       );
       assertEquals((persistedTokens as OAuthTokens | null)?.accessToken, "provider-token");
+      assertEquals((persistedTokens as OAuthTokens | null)?.scopeSource, "explicit");
     },
   );
 });

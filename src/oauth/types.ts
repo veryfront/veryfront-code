@@ -12,6 +12,9 @@ export type {
 // Import types used locally in this file
 import type { OAuthTokens } from "./schemas/index.ts";
 
+/** Provenance of the scope set recorded for one OAuth authorization. */
+export type OAuthScopeSource = "default" | "explicit";
+
 /**
  * Persisted OAuth state row. Created when init handler starts a flow and
  * consumed exactly once by the callback handler.
@@ -33,6 +36,8 @@ export interface StoredOAuthState {
    * stores; current handlers reject consumed rows that omit it.
    */
   scopes?: string[];
+  /** Whether the authorization used provider defaults or an explicit caller override. */
+  scopeSource?: OAuthScopeSource;
   createdAt: number;
   metadata?: Record<string, unknown>;
 }

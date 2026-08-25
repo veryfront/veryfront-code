@@ -78,9 +78,16 @@ const SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE = "https://www.googleapis.com/auth/driv
  * compared whole, so `drive.readonly` and `drive.file` never match on the
  * shared `auth/drive` prefix.
  */
-function isSupersededFullDriveGrant(serviceId: string, scope: string | undefined): boolean {
-  if (serviceId !== DRIVE_SERVICE_ID || typeof scope !== "string") return false;
-  return scope.split(/\s+/).includes(SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE);
+function isSupersededFullDriveGrant(serviceId: string, tokens: OAuthTokens): boolean {
+  if (
+    serviceId !== DRIVE_SERVICE_ID || tokens.scopeSource === "explicit" ||
+    typeof tokens.scope !== "string"
+  ) return false;
+  const scopes = tokens.scope.split(/\s+/);
+  for (const scope of scopes) {
+    if (scope === SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE) return true;
+  }
+  return false;
 }
 
 function assertBoundedPositiveInteger(value: number, name: string, maximum: number): void {
@@ -1109,12 +1116,24 @@ export class OAuthService extends OAuthProvider {
         detail: "OAuth authorization options must use plain data properties",
       });
     }
-    return await super.createAuthorizationUrl(
+    const authorization = await super.createAuthorizationUrl(
       {
         ...captured,
         defaultScopes: this.serviceConfig.defaultScopes,
       } as AuthorizationUrlOptions & { defaultScopes: string[] },
     );
+    return {
+      url: authorization.url,
+      state: {
+        ...authorization.state,
+        scopeSource: captured.scopes === undefined ? "default" : "explicit",
+      },
+    };
+  }
+
+  /** Whether a stored token is a superseded default Drive grant. */
+  isSupersededGrant(tokens: OAuthTokens): boolean {
+    return isSupersededFullDriveGrant(this.serviceId, tokens);
   }
 
   /**
@@ -1135,7 +1154,7 @@ export class OAuthService extends OAuthProvider {
     if (!stored) return null;
     const { tokens } = stored;
 
-    if (isSupersededFullDriveGrant(this.serviceId, tokens.scope)) {
+    if (this.isSupersededGrant(tokens)) {
       // Invalidate only the exact row that was classified. An unconditional
       // clear could race a concurrent reauthorization and delete the freshly
       // written least-privilege grant (the ABA problem the snapshot revision
@@ -1238,6 +1257,7 @@ export class OAuthService extends OAuthProvider {
           ...(result.tokens.scope === undefined && tokens.scope !== undefined
             ? { scope: tokens.scope }
             : {}),
+          ...(tokens.scopeSource === undefined ? {} : { scopeSource: tokens.scopeSource }),
         };
         const replaced = await compareAndSetTokens.call(
           tokenStore,

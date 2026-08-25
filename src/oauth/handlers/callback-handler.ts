@@ -327,11 +327,13 @@ function createOAuthCallbackRuntime(
         );
       }
 
+      const { scopeSource: _providerScopeSource, ...exchangedTokens } = result.tokens;
       const tokens = {
-        ...result.tokens,
+        ...exchangedTokens,
         ...(result.tokens.scope === undefined && storedState.scopes.length > 0
           ? { scope: storedState.scopes.join(" ") }
           : {}),
+        ...(storedState.scopeSource === undefined ? {} : { scopeSource: storedState.scopeSource }),
       };
       await tokenStore.setTokens(serviceId, storedState.userId, { ...tokens });
 

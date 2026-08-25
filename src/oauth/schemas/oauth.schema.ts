@@ -193,6 +193,7 @@ export const getOAuthTokensSchema = defineSchema((v) =>
       isSafeTokenString,
       "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
+    scopeSource: v.enum(["default", "explicit"]).optional(),
     idToken: v.string().max(MAX_OAUTH_TOKEN_VALUE_LENGTH).refine(
       isSafeTokenString,
       "Must be trimmed, nonblank, and contain no control characters",
@@ -210,6 +211,7 @@ export const getOAuthStateSchema = defineSchema((v) =>
       (scopes) => isValidOAuthScopeSet(scopes),
       "Must contain valid bounded OAuth scope tokens",
     ),
+    scopeSource: v.enum(["default", "explicit"]).optional(),
     createdAt: v.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     metadata: getOAuthStateMetadataSchema().optional(),
   })

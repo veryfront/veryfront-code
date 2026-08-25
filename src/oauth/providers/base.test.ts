@@ -1715,6 +1715,45 @@ it("OAuthService.getAccessToken clears legacy full-Drive tokens before use", asy
   assertEquals(await store.getTokens("drive", "alice"), null);
 });
 
+it("OAuthService preserves an explicitly authorized full-Drive grant", async () => {
+  const store = new MemoryTokenStore();
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+  const authorization = await service.createAuthorizationUrl({
+    redirectUri: "https://app.test/callback",
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  assertEquals(authorization.state.scopeSource, "explicit");
+
+  await store.setTokens("drive", "alice", {
+    accessToken: "explicit-full-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    scopeSource: authorization.state.scopeSource,
+    expiresAt: Date.now() + 60_000_000,
+  });
+
+  assertEquals(await service.getAccessToken("alice"), "explicit-full-drive-token");
+});
+
+it("OAuthService does not classify a URL containing the Drive scope as that scope", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "non-drive-token",
+    scope: "https://attacker.example/https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "non-drive-token");
+});
+
 it("OAuthService.getAccessToken serves explicitly requested read-only Drive grants", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("drive", "alice", {
