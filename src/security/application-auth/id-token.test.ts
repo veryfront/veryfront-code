@@ -271,6 +271,12 @@ describe("security/application-auth OIDC ID tokens", () => {
         [{ nonce: undefined }, "nonce"],
         [{ nonce: "wrong" }, "nonce"],
         [{ nonce: "n".repeat(257) }, "nonce"],
+        [{ exp: -1 }, "exp"],
+        [{ iat: -1 }, "iat"],
+        [{ nbf: -1 }, "nbf"],
+        [{ exp: Number.MAX_SAFE_INTEGER + 1 }, "exp"],
+        [{ iat: Number.MAX_SAFE_INTEGER + 1 }, "iat"],
+        [{ nbf: Number.MAX_SAFE_INTEGER + 1 }, "nbf"],
         [{ exp: NOW - 61, iat: NOW - 120 }, "expired"],
         [{ exp: NOW + 300, iat: NOW + 61 }, "issued"],
         [{ nbf: NOW + 61 }, "not yet"],
@@ -298,6 +304,91 @@ describe("security/application-auth OIDC ID tokens", () => {
         TypeError,
         message,
       );
+    }
+
+    const zeroToleranceToken = await signToken(keys.RS256, claims({ exp: NOW }));
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token: zeroToleranceToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+              clockToleranceSeconds: 0,
+            }),
+        ),
+      TypeError,
+      "expired",
+    );
+
+    const boundaryToken = await signToken(keys.RS256, claims({ exp: NOW + 60 }));
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token: boundaryToken,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW + 120,
+            }),
+        ),
+      TypeError,
+      "expired",
+    );
+  });
+
+  it("rejects unsafe verifier inputs before token parsing or JWKS lookup", async () => {
+    const keys = await material();
+    const token = await signToken(keys.RS256, claims());
+    for (
+      const [options, message] of [
+        [{ now: () => Number.NaN }, "clock"],
+        [{ now: () => Number.POSITIVE_INFINITY }, "clock"],
+        [{ now: () => -1 }, "clock"],
+        [{ now: () => Number.MAX_SAFE_INTEGER + 1 }, "clock"],
+        [{ issuer: "" }, "issuer"],
+        [{ issuer: "https://issuer.example.com/" + "i".repeat(2_049) }, "issuer"],
+        [{ clientId: "" }, "client ID"],
+        [{ clientId: "c".repeat(2_049) }, "client ID"],
+      ] satisfies ReadonlyArray<readonly [Record<string, unknown>, string]>
+    ) {
+      let calls = 0;
+      const error = await assertRejects(
+        () =>
+          withMockFetch(
+            () => {
+              calls += 1;
+              return Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk])));
+            },
+            () =>
+              verifyOidcIdToken({
+                token,
+                issuer: ISSUER,
+                clientId: CLIENT_ID,
+                nonce: NONCE,
+                jwksUri: JWKS_URI,
+                jwksCache: createJwksCache(),
+                ...options,
+              }),
+          ),
+        TypeError,
+        message,
+      );
+      assert(error instanceof Error);
+      assertEquals(calls, 0);
+      assertEquals(error.message.includes("issuer.example.com"), false);
+      assertEquals(error.message.includes("client-123"), false);
     }
   });
 

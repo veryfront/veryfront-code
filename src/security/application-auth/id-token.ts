@@ -9,6 +9,7 @@ const MAX_HEADER_BYTES = 2_048;
 const MAX_SIGNATURE_BYTES = 8_192;
 const MAX_KID_LENGTH = 256;
 const MAX_TYP_LENGTH = 64;
+const MAX_VERIFIER_STRING_LENGTH = 2_048;
 const MAX_AUDIENCES = 16;
 const MAX_CLAIM_STRING_LENGTH = 2_048;
 const MAX_SUBJECT_LENGTH = 255;
@@ -88,6 +89,9 @@ export async function verifyOidcIdToken(
   options: VerifyOidcIdTokenOptions,
 ): Promise<ApplicationIdentity> {
   try {
+    const issuer = parseVerifierString(options.issuer, "issuer");
+    const clientId = parseVerifierString(options.clientId, "client ID");
+    const currentTime = parseCurrentTime(options.now ?? (() => Date.now() / 1_000));
     const allowedAlgorithms = parseAllowedAlgorithms(options.allowedAlgorithms);
     const tolerance = parseClockTolerance(options.clockToleranceSeconds);
     const maxTokenAge = parseMaxTokenAge(options.maxTokenAgeSeconds);
@@ -106,16 +110,16 @@ export async function verifyOidcIdToken(
       signature: parsed.signature,
     });
     validateClaims(parsed.claims, {
-      issuer: options.issuer,
-      clientId: options.clientId,
+      issuer,
+      clientId,
       nonce: options.nonce,
-      now: options.now ?? (() => Math.floor(Date.now() / 1_000)),
+      currentTime,
       tolerance,
       maxTokenAge,
     });
     return createApplicationIdentity({
       issuer: parsed.claims.iss,
-      expectedIssuer: options.issuer,
+      expectedIssuer: issuer,
       subject: parsed.claims.sub,
       claims: parsed.claims,
       claimNames: {
@@ -132,6 +136,23 @@ export async function verifyOidcIdToken(
     }
     throw new TypeError("OIDC ID token verification failed", { cause: error });
   }
+}
+
+function parseVerifierString(value: string, label: "issuer" | "client ID"): string {
+  if (
+    typeof value !== "string" || value.length === 0 || value.length > MAX_VERIFIER_STRING_LENGTH
+  ) {
+    throw new TypeError(`OIDC ID token verifier ${label} must be a bounded non-empty string`);
+  }
+  return value;
+}
+
+function parseCurrentTime(now: () => number): number {
+  const current = Math.floor(now());
+  if (!Number.isSafeInteger(current) || current < 0) {
+    throw new TypeError("OIDC ID token verifier clock must return a finite non-negative value");
+  }
+  return current;
 }
 
 function parseCompactJws(token: string): ParsedToken {
@@ -391,7 +412,7 @@ function validateClaims(
     readonly issuer: string;
     readonly clientId: string;
     readonly nonce: string;
-    readonly now: () => number;
+    readonly currentTime: number;
     readonly tolerance: number;
     readonly maxTokenAge: number;
   },
@@ -402,7 +423,7 @@ function validateClaims(
   validateAudience(claims.aud, claims.azp, options.clientId);
   validateSubject(claims.sub);
   validateNonce(claims.nonce, options.nonce);
-  validateTimeClaims(claims, options.now(), options.tolerance, options.maxTokenAge);
+  validateTimeClaims(claims, options.currentTime, options.tolerance, options.maxTokenAge);
 }
 
 function validateAudience(aud: unknown, azp: unknown, clientId: string): void {
@@ -492,7 +513,7 @@ function validateTimeClaims(
   if (exp - iat > MAX_VALIDITY_WINDOW_SECONDS) {
     throw new TypeError("OIDC ID token validity window exceeds the maximum");
   }
-  if (current > exp + tolerance) {
+  if (current >= exp + tolerance) {
     throw new TypeError("OIDC ID token is expired");
   }
   if (nbf !== undefined && current + tolerance < nbf) {
@@ -507,7 +528,7 @@ function validateTimeClaims(
 }
 
 function parseIntegerClaim(value: unknown, claimName: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value)) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(`OIDC ID token ${claimName} claim must be an integer`);
   }
   return value;
