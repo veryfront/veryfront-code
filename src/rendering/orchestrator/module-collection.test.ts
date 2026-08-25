@@ -49,6 +49,11 @@ describe("module-collection", () => {
       assertEquals(modules.length, 1);
       assertEquals(modules[0]?.type, "page");
       assertEquals(modules[0]?.path, "/pages/index.tsx");
+      assertEquals(
+        modules[0]?.id,
+        "/pages/index.tsx",
+        "the page module is keyed by its own component path",
+      );
     });
 
     it("returns empty array for non-component pages", () => {
@@ -84,12 +89,20 @@ describe("module-collection", () => {
         ],
       );
 
-      assertEquals(modules.length, 3);
-      assertEquals(modules[0]?.type, "page");
-      assertEquals(modules[1]?.type, "layout");
-      assertEquals(modules[1]?.path, "/layouts/_layout.tsx");
-      assertEquals(modules[2]?.type, "layout");
-      assertEquals(modules[2]?.path, "/layouts/nested.tsx");
+      assertEquals(
+        modules,
+        [
+          { type: "page", id: "/pages/index.tsx", path: "/pages/index.tsx" },
+          { type: "layout", id: "/layouts/_layout.tsx", path: "/layouts/_layout.tsx" },
+          { type: "layout", id: "/layouts/nested.tsx", path: "/layouts/nested.tsx" },
+        ],
+        "each collected module carries its own componentPath as its identity key",
+      );
+      assertEquals(
+        new Set(modules.map((m) => m.id)).size,
+        modules.length,
+        "layout identity keys must stay distinct so layoutProps cannot collapse",
+      );
     });
 
     it("skips non-tsx layouts", () => {

@@ -10,8 +10,6 @@ function createMockBundle(code: string): MdxBundle {
     compiledCode: code,
     frontmatter: {},
     globals: {},
-    headings: [],
-    nodeMap: new Map(),
   };
 }
 
@@ -26,9 +24,17 @@ describe("rendering/orchestrator/compiler-service", () => {
   describe("compileMDX before setCompileMDX", () => {
     it("should throw when compile function not set", () => {
       const service = new CompilerService();
-      assertThrows(
+      const error = assertThrows(
         () => service.compileMDX("# Hello"),
         Error,
+        "CompilerService: compileMDX not initialized",
+        "an uninitialized compiler reports the render-classified error",
+      );
+      if (!(error instanceof Error)) throw new Error("Expected compileMDX to throw an Error");
+      assertEquals(
+        error.name,
+        "VeryfrontError[render]",
+        "the failure stays render-classified for the request handler",
       );
     });
   });
@@ -86,7 +92,18 @@ describe("rendering/orchestrator/compiler-service", () => {
     it("should throw when called without setCompileMDX", () => {
       const service = new CompilerService();
       const fn = service.getCompileFunction();
-      assertThrows(() => fn("test"), Error);
+      const error = assertThrows(
+        () => fn("test"),
+        Error,
+        "CompilerService: compileMDX not initialized",
+        "the bound function reports the same render-classified error",
+      );
+      if (!(error instanceof Error)) throw new Error("Expected compileMDX to throw an Error");
+      assertEquals(
+        error.name,
+        "VeryfrontError[render]",
+        "the failure stays render-classified for the request handler",
+      );
     });
 
     it("should work after setCompileMDX", async () => {

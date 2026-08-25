@@ -123,6 +123,69 @@ describe("module-loader/dependency-resolver", () => {
     );
   });
 
+  it("fails closed when static relative import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `import value${index} from "./value-${index}";`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 static relative imports",
+      "the static relative scan carries its own per-kind allocation bound",
+    );
+  });
+
+  it("fails closed when side-effect alias import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `import "@/value-${index}";`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 side-effect alias imports",
+      "the side-effect alias scan carries its own per-kind allocation bound",
+    );
+  });
+
+  it("accepts a module at the static import bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 500 },
+      (_, index) => `import value${index} from "@/value-${index}";`,
+    ).join("\n");
+
+    const deps = await resolveModuleDependencies({
+      adapter,
+      fileContent,
+      filePath: "/project/page.tsx",
+      projectDir: "/project",
+    });
+
+    assertEquals(
+      deps.length,
+      500,
+      "a module at exactly the bound must still resolve: the limit rejects more than 500",
+    );
+  });
+
   it("resolves and rewrites side-effect alias and relative imports", async () => {
     await withDependencyFixture(
       {
@@ -244,6 +307,100 @@ describe("module-loader/dependency-resolver", () => {
         assertEquals(deps.length, 2);
         assertStringIncludes(deps[0]?.depFilePath ?? "", "/components/Button.tsx");
         assertStringIncludes(deps[1]?.depFilePath ?? "", "/lib/value.ts");
+      },
+    );
+  });
+
+  it("resolves a relative directory import through its index file", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `import { Panel } from "./ui";`,
+          `export const page = Panel;`,
+        ].join("\n"),
+        "app/ui/index.tsx": `export const Panel = "panel";`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.length, 1);
+        assertEquals(
+          deps[0]?.depFilePath,
+          join(projectDir, "app/ui/index.tsx"),
+          "a directory import must resolve through its index file",
+        );
+      },
+    );
+  });
+
+  it("prefers a sibling file over a directory of the same name", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `import { Panel } from "./ui";`,
+          `export const page = Panel;`,
+        ].join("\n"),
+        "app/ui.tsx": `export const Panel = "file-panel";`,
+        "app/ui/index.tsx": `export const Panel = "directory-panel";`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.length, 1);
+        assertEquals(
+          deps[0]?.depFilePath,
+          join(projectDir, "app/ui.tsx"),
+          "the directory itself must never be handed on: the sibling module file wins",
+        );
+      },
+    );
+  });
+
+  it("leaves a directory import without an index file unresolved", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `import { Panel } from "./ui";`,
+          `export const page = Panel;`,
+        ].join("\n"),
+        "app/ui/panel.tsx": `export const Panel = "panel";`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.length, 1);
+        assertEquals(
+          deps[0]?.depFilePath,
+          null,
+          "a directory without an index file must not be handed on as a dependency file",
+        );
       },
     );
   });
