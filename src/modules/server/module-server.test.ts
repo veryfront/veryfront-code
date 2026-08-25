@@ -358,10 +358,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("answers a missing stylesheet module request with 404", async () => {
-    // findSourceFile resolves only the extensions this server compiles to
-    // JavaScript, so a stylesheet never reaches the transform at all. The dev
-    // styles handler serves those. Pinning it keeps the error-body helper from
-    // regrowing a CSS arm that nothing can reach.
+    // An ordinary missing stylesheet stops at the 404 path. Exceptional lookup
+    // failures still reach the CSS-formatted 500 branch covered above, so this
+    // case distinguishes absence from a storage or permission failure.
     const { serveModule } = await import("./module-server.ts");
     const projectDir = "/module-css-unreachable";
     const adapter = createMockAdapter();
