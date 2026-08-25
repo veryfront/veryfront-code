@@ -90,6 +90,28 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("does not read past application lines that only start like trailers", () => {
+      for (
+        const message of [
+          [
+            `Import "@veryfront/ext-auth-jwt" not a dependency`,
+            "at initialization",
+          ].join("\n"),
+          [
+            `Import "@veryfront/ext-auth-jwt" not a dependency`,
+            "hint: inspect setup",
+          ].join("\n"),
+        ]
+      ) {
+        assertEquals(
+          isMissingFirstPartyExtensionModule(new Error(message), [
+            "@veryfront/ext-auth-jwt",
+          ]),
+          false,
+        );
+      }
+    });
+
     it("keeps the multi-line Require stack form matching as a whole", () => {
       // Matched against the whole message before the first-line retry, because
       // this form is legitimately multi-line and its trailing lines are part of

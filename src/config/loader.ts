@@ -1723,7 +1723,7 @@ function missingPackageName(specifier: string): string | undefined {
 }
 
 const LEGACY_NPM_PACKAGE_NAME_PATTERN =
-  /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  /^(?:[A-Za-z0-9][A-Za-z0-9._-]*|@[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9_][A-Za-z0-9._-]*)$/;
 const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
 
 /** Accept existing npm names without broadening server-external configuration. */
@@ -1859,8 +1859,9 @@ function reportedMissingSpecifier(message: string): string | undefined {
  */
 const SGR_RESIDUE = /\[[0-9;]*m/g;
 
-/** The only trailers a runtime appends to a resolution error. */
-const RUNTIME_TRAILER_LINE = /^\s*(?:hint:|at\s)/;
+/** The only Deno trailers this classifier may discard after a resolution error. */
+const RUNTIME_TRAILER_LINE =
+  /^\s*(?:hint:\s+(?:If you want to use (?:the npm|a JSR) package, try running `deno add (?:npm|jsr):[^`]+`|try running `deno add`)|at\s+(?:file|https?|npm|jsr):\S+:\d+:\d+)$/;
 
 /**
  * The first line, but only when every line after it is a runtime trailer.

@@ -954,8 +954,9 @@ export default config as const;
       it("classifies dependencies without project-controlled array helpers", async () => {
         const originalPush = Array.prototype.push;
         const originalIterator = Array.prototype[Symbol.iterator];
-        const message =
-          'Module not found "npm:left-pad".\n  hint: install it\n  at file:///app/veryfront.config.ts';
+        const message = 'Module not found "npm:left-pad".\n' +
+          "  hint: If you want to use the npm package, try running `deno add npm:left-pad`\n" +
+          "    at file:///app/veryfront.config.ts:1:8";
         let error: VeryfrontError;
 
         try {
@@ -991,6 +992,16 @@ export default config as const;
 
         assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
         assertStringIncludes(error.message, "JSONStream");
+      });
+
+      it("classifies an installable scoped npm package whose name starts with underscore", async () => {
+        const error = await loadFailure(
+          "vf-config-scoped-underscore-package-",
+          `throw new Error("Cannot find package '@scope/_plugin' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "@scope/_plugin");
       });
 
       it("keeps a secret in a subpath out of any package claim", async () => {
@@ -1050,6 +1061,13 @@ export default config as const;
           "an npm: specifier carrying a version",
           "vf-config-npm-version-",
           `Module not found "npm:left-pad@1.3.0".`,
+        ],
+        [
+          "Deno's hint and location trailer form",
+          "vf-config-deno-trailer-",
+          'Module not found "npm:left-pad".\n' +
+          "  hint: If you want to use the npm package, try running `deno add npm:left-pad`\n" +
+          "    at file:///app/veryfront.config.ts:1:8",
         ],
         [
           // Node CommonJS, which is what a `.js` config without `"type":
@@ -1112,6 +1130,16 @@ export default config as const;
           "an application error whose second line is not a runtime trailer",
           "vf-config-multiline-",
           `throw new Error("Cannot find module 'db'\\ninitialization failed");\n`,
+        ],
+        [
+          "an application error whose second line only starts with at",
+          "vf-config-at-application-line-",
+          `throw new Error("Cannot find module 'db'\\nat initialization");\n`,
+        ],
+        [
+          "an application error whose second line only starts with hint",
+          "vf-config-generic-hint-line-",
+          `throw new Error("Cannot find module 'db'\\nhint: inspect setup");\n`,
         ],
         [
           // Only npm:/jsr: specifiers carry a version; Node and Bun cannot
