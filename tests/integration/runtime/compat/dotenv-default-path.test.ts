@@ -2,14 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { withTempDir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
-import { join } from "../path/index.ts";
+import { join } from "../../../../src/platform/compat/path/index.ts";
 
 it("distinguishes disabled loading from the default ./.env lookup", async () => {
   await withTempDir(async (cwd) => {
     await writeTextFile(join(cwd, ".env"), "VF_DOTENV_SENTINEL=leaked");
 
+    const dotenvModule = JSON.stringify(
+      import.meta.resolve("../../../../src/platform/compat/std/dotenv.ts"),
+    );
     const script = `
-      const { load } = await import(${JSON.stringify(import.meta.resolve("./dotenv.ts"))});
+      const { load } = await import(${dotenvModule});
       console.log(JSON.stringify([
         Object.hasOwn(await load({ envPath: null }), "VF_DOTENV_SENTINEL"),
         Object.hasOwn(await load({ envPath: "" }), "VF_DOTENV_SENTINEL"),
