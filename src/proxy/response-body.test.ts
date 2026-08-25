@@ -45,13 +45,20 @@ describe("proxy response body reader", () => {
     );
   });
 
-  // Zero-length chunks skip the byte accounting entirely, so only the chunk
-  // guard can stop an upstream that streams them forever.
-  it("rejects an upstream stream that emits unbounded empty chunks", async () => {
+  // Zero-length chunks skip the byte accounting entirely, so the fixture emits
+  // one more than MAX_RESPONSE_BODY_CHUNKS to exercise the independent guard.
+  // Keeping it finite makes a broken guard fail the rejection assertion instead
+  // of hanging the test worker forever.
+  it("rejects an upstream stream that emits too many empty chunks", async () => {
     let emitted = 0;
+    const totalChunks = 65_537;
     const response = new Response(
       new ReadableStream<Uint8Array>({
         pull(controller) {
+          if (emitted >= totalChunks) {
+            controller.close();
+            return;
+          }
           emitted++;
           controller.enqueue(new Uint8Array(0));
         },
@@ -63,12 +70,10 @@ describe("proxy response body reader", () => {
       ProxyResponseBodyError,
       "too-many-chunks",
     );
-    // MAX_RESPONSE_BODY_CHUNKS is 65_536, plus the chunk that trips the guard
-    // and one the stream queues ahead.
     assertEquals(
-      emitted <= 65_538,
-      true,
-      "the chunk guard must trip at MAX_RESPONSE_BODY_CHUNKS instead of reading forever",
+      emitted,
+      totalChunks,
+      "the chunk guard must trip on the first chunk beyond MAX_RESPONSE_BODY_CHUNKS",
     );
   });
 
