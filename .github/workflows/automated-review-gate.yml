@@ -233,11 +233,12 @@ jobs:
 
   merge_group_target_failure:
     name: close unresolved merge group review gate
-    needs: target
+    needs: [target, merge_group]
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
-      needs.target.result != 'success'
+      (needs.target.result != 'success' ||
+       needs.merge_group.result != 'success')
     permissions:
       statuses: write
     runs-on: ubuntu-latest

@@ -2424,11 +2424,19 @@ describe("automated review workflow", () => {
       jobs.merge_group_target_failure,
       "merge group target failure job",
     );
-    assertEquals(mergeGroupFailureJob.needs, "target");
+    assertEquals(
+      mergeGroupFailureJob.needs,
+      ["target", "merge_group"],
+      "the module-independent fallback must observe resolver and publisher failures",
+    );
     const mergeGroupFailureIf = String(mergeGroupFailureJob.if);
     assert(mergeGroupFailureIf.includes("always()"));
     assert(mergeGroupFailureIf.includes("github.event_name == 'merge_group'"));
     assert(mergeGroupFailureIf.includes("needs.target.result != 'success'"));
+    assert(
+      mergeGroupFailureIf.includes("needs.merge_group.result != 'success'"),
+      "a failed merge-group publisher must still close the synthetic commit gate",
+    );
     assertEquals(
       record(
         mergeGroupFailureJob.permissions,
