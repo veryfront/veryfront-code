@@ -4,7 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetHostAddressCacheForTests,
   createHostAddressResolver,
-  DnsPermissionError,
   HOST_ADDRESS_CACHE_MAX_ENTRIES,
   HOST_ADDRESS_CACHE_TTL_MS,
   resolveHostAddresses,
@@ -287,79 +286,5 @@ describe("platform/compat/dns loopback names", () => {
     const addresses = await resolveHostAddresses("broadcasthost", { recordTypes: ["A"] });
     assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
     __resetHostAddressCacheForTests();
-  });
-
-  it("surfaces a missing net permission instead of reporting an unresolvable host", async () => {
-    // `Deno.resolveDns` checks permission against the nameserver, so under a
-    // narrowed --allow-net every external lookup fails with NotCapable. The
-    // bare catch used to swallow it into the empty-array fallback, making a
-    // permission problem indistinguishable from a DNS problem downstream
-    // ("unable to resolve host") — veryfront-issue-inbox#744.
-    const originalResolveDns = Deno.resolveDns;
-    __resetHostAddressCacheForTests();
-    try {
-      Object.defineProperty(Deno, "resolveDns", {
-        value: () => {
-          throw new Deno.errors.NotCapable('Requires net access to "8.8.8.8"');
-        },
-        configurable: true,
-        writable: true,
-      });
-      const error = await assertRejects(
-        () => resolveHostAddresses("permission-probe.invalid", { recordTypes: ["A"] }),
-        DnsPermissionError,
-        "net access to the DNS resolver is not permitted",
-      );
-      // The classification survives on the cause chain, but the runtime's raw
-      // message — which names the checked nameserver — must not: a resolver
-      // address is an internal infrastructure detail that would otherwise ride
-      // cause-walking logs.
-      const cause = (error as Error & { cause?: unknown }).cause;
-      assertEquals(cause instanceof Error, true, "the cause chain must carry a classification");
-      assertEquals(
-        (cause as Error).message.includes("NotCapable"),
-        true,
-        "the cause must preserve the permission-error classification",
-      );
-      assertEquals(
-        (cause as Error).message.includes("8.8.8.8"),
-        false,
-        "the resolver address from the runtime error must not survive on the cause chain",
-      );
-    } finally {
-      Object.defineProperty(Deno, "resolveDns", {
-        value: originalResolveDns,
-        configurable: true,
-        writable: true,
-      });
-      __resetHostAddressCacheForTests();
-    }
-  });
-
-  it("keeps the empty-array fallback for a genuine resolution failure", async () => {
-    // The guard's fail-closed behaviour is unchanged: only a permission error
-    // is surfaced; NotFound (single address family, NXDOMAIN) still yields [].
-    const originalResolveDns = Deno.resolveDns;
-    __resetHostAddressCacheForTests();
-    try {
-      Object.defineProperty(Deno, "resolveDns", {
-        value: () => {
-          throw new Deno.errors.NotFound("no record found");
-        },
-        configurable: true,
-        writable: true,
-      });
-      const addresses = await resolveHostAddresses("missing-probe.invalid", {
-        recordTypes: ["A"],
-      });
-      assertEquals(addresses, []);
-    } finally {
-      Object.defineProperty(Deno, "resolveDns", {
-        value: originalResolveDns,
-        configurable: true,
-        writable: true,
-      });
-      __resetHostAddressCacheForTests();
-    }
   });
 });

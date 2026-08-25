@@ -255,7 +255,7 @@ async function resolveHostAddressesUncached(
           // into logs (AGENTS.md, secret and internal-detail safety). Retain
           // only the error's classification, never the raw message.
           throw new DnsPermissionError(
-            `net access to the DNS resolver is not permitted while resolving "${hostname}"; ` +
+            "net access to the DNS resolver is not permitted while resolving the requested host; " +
               `this usually means --allow-net is narrowed (Deno checks permission against the nameserver, not the queried host)`,
             {
               cause: new Error(
