@@ -11,42 +11,12 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { getPolymorphicButtonType, Slot } from "./slot.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-    KeyboardEvent: window.KeyboardEvent,
-    MouseEvent: window.MouseEvent,
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["HTMLButtonElement", "KeyboardEvent"],
+};
 
 describe("Slot", () => {
   it("fails closed when its child is not exactly one React element", () => {
@@ -115,7 +85,7 @@ describe("Slot", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -158,7 +128,7 @@ describe("Slot", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -194,7 +164,7 @@ describe("Slot", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
@@ -246,7 +216,7 @@ describe("Slot", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);

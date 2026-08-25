@@ -4,39 +4,12 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { useMenuContentKeyboard } from "./menu-keyboard.ts";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements: Record<string, unknown> = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    HTMLButtonElement: window.HTMLButtonElement,
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-  for (const [key, value] of Object.entries(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-  return () => {
-    for (const key of Object.keys(replacements)) {
-      const descriptor = previous.get(key);
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self", "HTMLButtonElement"],
+};
 
 function reactProps(element: HTMLElement): {
   onKeyDown?: (event: {
@@ -108,7 +81,7 @@ describe("menu keyboard behaviour", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/", pretendToBeVisual: true },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     try {
       flushSync(() => root.render(<Harness />));
@@ -166,7 +139,7 @@ describe("menu keyboard behaviour", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/", pretendToBeVisual: true },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     try {
       flushSync(() => root.render(<Harness />));

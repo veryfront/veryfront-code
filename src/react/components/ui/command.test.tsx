@@ -5,6 +5,7 @@ import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   Command,
   CommandEmpty,
@@ -18,40 +19,9 @@ import {
   handleCommandInputKeyDown,
 } from "./command.tsx";
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const replacements = {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-  };
-  const previous = new Map<string, PropertyDescriptor | undefined>();
-
-  for (const key of Object.keys(replacements)) {
-    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-  }
-  for (const [key, value] of Object.entries(replacements)) {
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      enumerable: true,
-      value,
-      writable: true,
-    });
-  }
-
-  return () => {
-    for (const [key, descriptor] of previous) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else delete (globalThis as Record<string, unknown>)[key];
-    }
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self"],
+};
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
   const startedAt = Date.now();
@@ -105,7 +75,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const selected: string[] = [];
 
@@ -183,7 +153,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const calls: string[] = [];
 
@@ -305,7 +275,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
     const renderItems = (items: string[]) => (
       <Command>
@@ -398,7 +368,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -476,7 +446,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -505,7 +475,7 @@ describe("Command", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const root = createRoot(document.getElementById("root")!);
 
     try {

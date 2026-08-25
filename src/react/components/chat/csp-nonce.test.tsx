@@ -244,7 +244,7 @@ describe("getDocumentNonce hydration behavior", () => {
       `<!doctype html><html><head><style nonce="${TEST_NONCE}">.seed{color:black}</style></head><body></body></html>`,
       { url: "https://example.com/" },
     );
-    const restoreNonced = installDomGlobals(nonced);
+    const restoreNonced = installComponentDom(nonced, DOM_OPTIONS);
     try {
       assertEquals(
         getDocumentNonce(),
@@ -259,7 +259,7 @@ describe("getDocumentNonce hydration behavior", () => {
       `<!doctype html><html><head><style>.seed{color:black}</style></head><body></body></html>`,
       { url: "https://example.com/" },
     );
-    const restoreBare = installDomGlobals(bare);
+    const restoreBare = installComponentDom(bare, DOM_OPTIONS);
     try {
       assertEquals(
         getDocumentNonce(),

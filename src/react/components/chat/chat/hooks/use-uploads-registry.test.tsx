@@ -6,6 +6,7 @@ import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { useAttachments } from "./use-uploads-registry.ts";
 
 function installDom(): () => void {
@@ -59,12 +60,11 @@ function installDom(): () => void {
 function stubFetch(
   options: { deleteStatus?: number } = {},
 ): { deletes: string[]; deleteUrls: string[]; gets: string[]; restore: () => void } {
-  const previous = globalThis.fetch;
   const deletes: string[] = [];
   const deleteUrls: string[] = [];
   const gets: string[] = [];
   let counter = 0;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
     const method = init?.method ?? "GET";
     if (method === "POST") {
@@ -94,12 +94,13 @@ function stubFetch(
     gets.push(url);
     return Promise.resolve(new Response("{}", { status: 200 }));
   }) as typeof fetch;
+  installMockFetch(mockFetch);
   return {
     deletes,
     deleteUrls,
     gets,
     restore: () => {
-      globalThis.fetch = previous;
+      restoreMockFetch();
     },
   };
 }
@@ -249,16 +250,16 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
   it("does not let a superseded endpoint refresh overwrite the current list", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending = new Map<string, {
       resolve: (response: Response) => void;
       signal?: AbortSignal | null;
     }>();
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.set(String(input), { resolve, signal: init?.signal });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     let latest: ReturnType<typeof useAttachments> | null = null;
     const Capture = ({ url }: { url: string }): null => {
@@ -302,7 +303,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       await unmountReactRoot(root);
       await flush(() => {});
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -473,8 +474,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
   it("rejects executable URLs from list and upload responses", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
         return Promise.resolve(
           Response.json({
@@ -494,6 +494,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
         }),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -517,22 +518,22 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assert(reg.get().uploadError instanceof Error);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects invalid UTF-8 list responses without replacing the cache", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const encoder = new TextEncoder();
     const invalidResponse = new Uint8Array([
       ...encoder.encode('{"items":[{"id":"server","name":"'),
       0xff,
       ...encoder.encode('","url":"/uploads/server"}]}'),
     ]);
-    globalThis.fetch =
+    const mockFetch =
       (() => Promise.resolve(new Response(invalidResponse.slice()))) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -550,16 +551,16 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assert(reg.get().refreshError instanceof Error);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("surfaces failed and duplicate refreshes without erasing the cache", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     let response = new Response("unavailable", { status: 503 });
-    globalThis.fetch = (() => Promise.resolve(response.clone())) as typeof fetch;
+    const mockFetch = (() => Promise.resolve(response.clone())) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -594,20 +595,20 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assert(reg.get().refreshError instanceof Error);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects a declared oversized list response before parsing it", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
+    const mockFetch = (() =>
       Promise.resolve(
         new Response('{"items":[]}', {
           headers: { "content-length": String(9 * 1024 * 1024) },
         }),
       )) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mount("test-oversized-response");
@@ -616,15 +617,14 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assert(reg.get().refreshError instanceof Error);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects a declared oversized upload response", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
         return Promise.resolve(
           new Response('{"id":"x"}', {
@@ -634,6 +634,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       }
       return Promise.resolve(Response.json({ items: [] }));
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mount("test-oversized-upload-response");
@@ -652,15 +653,14 @@ describe("react/components/chat/hooks/useAttachments", () => {
       );
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects a streamed upload response that crosses the bound mid-read", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "POST") {
         // No content-length, so the header pre-check is skipped and the
         // byte accumulation branch (plus reader.cancel()) is what rejects it.
@@ -678,6 +678,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       }
       return Promise.resolve(Response.json({ items: [] }));
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mount("test-streamed-upload-response");
@@ -696,7 +697,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       );
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -778,14 +779,13 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
   it("aborts an upload on endpoint switch and ignores a transport that completes late", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       method: string;
       url: string;
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({
@@ -795,6 +795,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
             resolve,
           });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({
@@ -833,21 +834,20 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("does not let a stale delete remove the current endpoint's item", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       method: string;
       url: string;
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({
@@ -857,6 +857,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
             resolve,
           });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-stale-delete", url: "/old" });
@@ -885,23 +886,23 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("latest refresh wins even when the endpoint identity is unchanged", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({ signal: init?.signal, resolve });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-latest-refresh", url: "/uploads" });
@@ -920,16 +921,15 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assertEquals(reg.get().items.map((item) => item.id), ["new"]);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("follows bounded list pagination before publishing server truth", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const requested: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL) => {
+    const mockFetch = ((input: RequestInfo | URL) => {
       const url = String(input);
       requested.push(url);
       const offset = Number(
@@ -953,6 +953,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
         ),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({
@@ -972,16 +973,15 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assertEquals(reg.get().refreshError, null);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("rejects pagination loops without issuing unbounded requests", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const requested: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL) => {
+    const mockFetch = ((input: RequestInfo | URL) => {
       requested.push(String(input));
       return Promise.resolve(
         Response.json({
@@ -992,6 +992,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
         }),
       );
     }) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       localStorage.setItem(
@@ -1012,7 +1013,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       assert(reg.get().refreshError instanceof Error);
       await unmountReactRoot(reg.root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
@@ -1080,16 +1081,16 @@ describe("react/components/chat/hooks/useAttachments", () => {
 
   it("aborts every fetch owner on unmount and consumes late rejections", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       reject: (error: Error) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           pending.push({ signal: init?.signal, reject });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
 
     try {
       const reg = mountOptions({ storageKey: "test-unmount", url: "/uploads" });
@@ -1125,23 +1126,23 @@ describe("react/components/chat/hooks/useAttachments", () => {
       await removal;
       await new Promise((resolve) => setTimeout(resolve, 0));
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });
 
   it("an abandoned concurrent endpoint render cannot steal committed refresh ownership", async () => {
     const restoreDom = installDom();
-    const previousFetch = globalThis.fetch;
     const pending: Array<{
       signal?: AbortSignal | null;
       resolve: (response: Response) => void;
     }> = [];
-    globalThis.fetch =
+    const mockFetch =
       ((_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           pending.push({ signal: init?.signal, resolve });
         })) as typeof fetch;
+    installMockFetch(mockFetch);
     let committed: ReturnType<typeof useAttachments> | null = null;
     let attemptedSuspendedRender = false;
     const never = new Promise<void>(() => undefined);
@@ -1208,7 +1209,7 @@ describe("react/components/chat/hooks/useAttachments", () => {
       );
       await unmountReactRoot(root);
     } finally {
-      globalThis.fetch = previousFetch;
+      restoreMockFetch();
       restoreDom();
     }
   });

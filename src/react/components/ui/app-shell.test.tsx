@@ -262,7 +262,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const root = createRoot(document.getElementById("root")!);
 
     try {
@@ -302,7 +302,7 @@ describe("AppShell", () => {
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { url: "https://example.com/" },
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, shellDomOptions());
     const root = createRoot(document.getElementById("root")!);
     const calls: Array<[string, boolean]> = [];
 

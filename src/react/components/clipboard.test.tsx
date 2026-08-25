@@ -5,6 +5,7 @@ import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { type ComponentDomOptions, installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { type ClipboardFeedback, copyTextToClipboard, useClipboardFeedback } from "./clipboard.ts";
 
 function defineClipboard(
@@ -17,33 +18,9 @@ function defineClipboard(
   });
 }
 
-function installDom(dom: JSDOM): () => void {
-  const window = dom.window;
-  const previous = {
-    window: globalThis.window,
-    document: globalThis.document,
-    navigator: globalThis.navigator,
-    self: globalThis.self,
-    Node: globalThis.Node,
-    Element: globalThis.Element,
-    HTMLElement: globalThis.HTMLElement,
-  };
-
-  Object.assign(globalThis, {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-  });
-
-  return () => {
-    Object.assign(globalThis, previous);
-    dom.window.close();
-  };
-}
+const DOM_OPTIONS: ComponentDomOptions = {
+  windowGlobals: ["self"],
+};
 
 async function settle(): Promise<void> {
   await Promise.resolve();
@@ -148,7 +125,7 @@ describe("copyTextToClipboard", () => {
   it("never crosses documents to use an unrelated global clipboard", async () => {
     const globalDom = new JSDOM("<!doctype html><html><body></body></html>");
     const targetDom = new JSDOM("<!doctype html><html><body></body></html>");
-    const restore = installDom(globalDom);
+    const restore = installComponentDom(globalDom, DOM_OPTIONS);
     const globalWrites: string[] = [];
     defineClipboard(globalDom.window, (text) => {
       globalWrites.push(text);
@@ -212,7 +189,7 @@ describe("useClipboardFeedback", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     const pending: Array<{
       resolve: () => void;
       reject: (error: Error) => void;
@@ -272,7 +249,7 @@ describe("useClipboardFeedback", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     defineClipboard(dom.window, () => Promise.resolve());
     let feedback: ClipboardFeedback | undefined;
 
@@ -315,7 +292,7 @@ describe("useClipboardFeedback", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
     );
-    const restore = installDom(dom);
+    const restore = installComponentDom(dom, DOM_OPTIONS);
     let release!: () => void;
     defineClipboard(dom.window, () =>
       new Promise<void>((resolve) => {
