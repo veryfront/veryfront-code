@@ -117,8 +117,6 @@ jobs:
               pull_number: pullNumber,
             });
             const pullRequest = response.data;
-            const sameRepository =
-              `${context.repo.owner}/${context.repo.repo}`;
             const headSha = process.env.TARGET_SHA;
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("The resolved review target commit is invalid");
@@ -156,12 +154,6 @@ jobs:
               headSha,
               pullUrl: pullRequest.html_url,
               isDraft: pullRequest.draft === true,
-              // Fork review events cannot publish a status. Ignore review
-              // objects for forks and accept only proof a trusted pull or
-              // comment event can reconcile. This safely stays pending until
-              // a trusted event observes status or comment proof.
-              allowPullRequestReviews:
-                pullRequest.head.repo?.full_name === sameRepository,
             });
             if (result.state === "pending") {
               core.notice(`${result.description}.`);
@@ -214,6 +206,7 @@ jobs:
 
   merge_group:
     name: reuse exact-head review for merge group
+    if: github.event_name == 'merge_group'
     permissions:
       contents: read
       pull-requests: read
@@ -248,18 +241,20 @@ jobs:
               core.setFailed(`Could not load the review gate: ${error}`);
               return;
             }
-            const pullNumber = parseMergeQueuePullNumber(
+            const queueEntry = parseMergeQueuePullNumber(
               context.payload.merge_group.head_ref,
             );
-            if (!pullNumber) {
+            if (!queueEntry) {
               core.setFailed("Could not resolve the merge queue pull request");
               return;
             }
+            const { pullNumber, sourceHeadSha } = queueEntry;
             const result = await publishMergeGroupReviewStatus({
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
               pullNumber,
+              sourceHeadSha,
               mergeGroupSha: context.payload.merge_group.head_sha,
             });
             if (result.state === "success") {

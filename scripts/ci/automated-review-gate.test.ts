@@ -61,6 +61,17 @@ function codexComment(
   };
 }
 
+function codexFindingComment(ref = HEAD.slice(0, 10)) {
+  return {
+    user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
+    body: [
+      "Codex Review: Found an actionable issue.",
+      `**Reviewed commit:** \`${ref}\``,
+    ].join("\n\n"),
+    html_url: "https://example.test/finding",
+  };
+}
+
 function associatedPull(overrides: Record<string, unknown> = {}) {
   return {
     number: 1,
@@ -154,6 +165,20 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("lets an exact-head Codex finding comment supersede an earlier no-findings comment", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexComment(), codexFindingComment()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
   it("does not let CodeRabbit satisfy the Codex gate", async () => {
     assertEquals(
       await findAutomatedReview({
@@ -189,23 +214,19 @@ describe("automated review evidence", () => {
     }
   });
 
-  it("ignores review objects for forks but accepts Codex comment proof", async () => {
-    const forkOptions = { allowPullRequestReviews: false };
+  it("accepts exact-head review evidence read by the trusted reconciler", async () => {
     assertEquals(
-      await findAutomatedReview(
-        { reviews: [review()], comments: [] },
+      (await findAutomatedReview(
+        { reviews: [review({ state: "APPROVED" })], comments: [] },
         HEAD,
-        undefined,
-        forkOptions,
-      ),
-      undefined,
+      ))?.source,
+      "pull-request-review",
     );
     assertEquals(
       (await findAutomatedReview(
-        { reviews: [review()], comments: [codexComment()] },
+        { reviews: [], comments: [codexComment()] },
         HEAD,
         () => Promise.resolve(HEAD),
-        forkOptions,
       ))?.source,
       "codex-comment",
     );
@@ -221,7 +242,6 @@ describe("automated review evidence", () => {
         { reviews: [humanApproval], comments: [] },
         HEAD,
         undefined,
-        {},
         (login: string) => Promise.resolve(login === "trusted-maintainer"),
       ))?.source,
       "human-approval",
@@ -237,7 +257,6 @@ describe("automated review evidence", () => {
           { reviews: [candidate], comments: [] },
           HEAD,
           undefined,
-          {},
           () => Promise.resolve(true),
         ),
         undefined,
@@ -248,7 +267,6 @@ describe("automated review evidence", () => {
         { reviews: [humanApproval], comments: [] },
         HEAD,
         undefined,
-        {},
         () => Promise.resolve(false),
       ),
       undefined,
@@ -592,7 +610,7 @@ describe("merge queue review propagation", () => {
       parseMergeQueuePullNumber(
         `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}`,
       ),
-      4135,
+      { pullNumber: 4135, sourceHeadSha: OTHER_HEAD },
     );
     for (
       const ref of [
@@ -615,6 +633,7 @@ describe("merge queue review propagation", () => {
       owner: "veryfront",
       repo: "veryfront-code",
       pullNumber: 1,
+      sourceHeadSha: HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -660,6 +679,7 @@ describe("merge queue review propagation", () => {
         owner: "veryfront",
         repo: "veryfront-code",
         pullNumber: 1,
+        sourceHeadSha: HEAD,
         mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, "failure");
@@ -676,9 +696,24 @@ describe("merge queue review propagation", () => {
       owner: "veryfront",
       repo: "veryfront-code",
       pullNumber: 1,
+      sourceHeadSha: HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
+
+    const sourceDrift = githubFixture({
+      pages: { statuses: [[automatedReviewStatus()]] },
+      headResponses: [OTHER_HEAD],
+    });
+    const sourceDriftResult = await publishMergeGroupReviewStatus({
+      github: sourceDrift.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(sourceDriftResult.state, "failure");
   });
 });
 
@@ -940,11 +975,7 @@ describe("automated review workflow", () => {
       "the publisher must use the same immutable SHA as its concurrency key",
     );
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
-    assert(
-      script.includes("allowPullRequestReviews") &&
-        script.includes("pullRequest.head.repo?.full_name"),
-      "the trusted reconciler must ignore review objects for fork pull requests",
-    );
+    assert(!script.includes("allowPullRequestReviews"));
     assert(
       !script.includes("context.payload.comment"),
       "deleted comments must reconcile from current API evidence, not comment payload data",
@@ -990,6 +1021,7 @@ describe("automated review workflow", () => {
     );
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
+    assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");
     assertEquals(
       record(mergeGroupJob.permissions, "merge group permissions"),
       {
@@ -1012,6 +1044,7 @@ describe("automated review workflow", () => {
     );
     assert(mergeGroupScript.includes("parseMergeQueuePullNumber"));
     assert(mergeGroupScript.includes("publishMergeGroupReviewStatus"));
+    assert(mergeGroupScript.includes("sourceHeadSha"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));
     assert(

@@ -28,12 +28,11 @@ export async function findAutomatedReview(
   { reviews, comments },
   headSha,
   resolveCommit = NO_COMMIT,
-  { allowPullRequestReviews = true } = {},
   isTrustedHuman = NO_TRUSTED_HUMAN,
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
 
-  if (allowPullRequestReviews) {
+  {
     let codexApproval;
     let codexFinding = false;
     for (const review of reviews) {
@@ -83,11 +82,12 @@ export async function findAutomatedReview(
     if (codexApproval) return codexApproval;
   }
 
+  let codexNoFindings;
+  let codexFinding = false;
   for (const comment of comments) {
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
-      typeof comment?.body !== "string" ||
-      !comment.body.startsWith(CODEX_NO_FINDINGS)
+      typeof comment?.body !== "string"
     ) continue;
     const reviewedCommits = [...comment.body.matchAll(
       new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
@@ -104,17 +104,21 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      return {
-        reviewer: CODEX_LOGIN,
-        source: "codex-comment",
-        state: "COMMENTED",
-        url: typeof comment.html_url === "string"
-          ? comment.html_url
-          : undefined,
-      };
+      if (comment.body.startsWith(CODEX_NO_FINDINGS)) {
+        codexNoFindings = {
+          reviewer: CODEX_LOGIN,
+          source: "codex-comment",
+          state: "COMMENTED",
+          url: typeof comment.html_url === "string"
+            ? comment.html_url
+            : undefined,
+        };
+      } else {
+        codexFinding = true;
+      }
     }
   }
-  return undefined;
+  return codexFinding ? undefined : codexNoFindings;
 }
 
 async function collectAll(github, endpoint, parameters, source) {
@@ -145,7 +149,6 @@ export async function publishAutomatedReviewStatus({
   headSha,
   pullUrl,
   isDraft = false,
-  allowPullRequestReviews = true,
 }) {
   let review;
   let failure;
@@ -200,7 +203,6 @@ export async function publishAutomatedReviewStatus({
             return undefined;
           }
         },
-        { allowPullRequestReviews },
         async (login) => {
           if (login === pullAuthor) return false;
           try {
@@ -272,7 +274,9 @@ export function parseMergeQueuePullNumber(headRef) {
   );
   if (!match) return undefined;
   const pullNumber = Number(match[1]);
-  return Number.isSafeInteger(pullNumber) ? pullNumber : undefined;
+  return Number.isSafeInteger(pullNumber)
+    ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+    : undefined;
 }
 
 function isTrustedReviewGateStatus(status) {
@@ -294,6 +298,7 @@ export async function publishMergeGroupReviewStatus({
   owner,
   repo,
   pullNumber,
+  sourceHeadSha,
   mergeGroupSha,
 }) {
   let failure;
@@ -305,6 +310,9 @@ export async function publishMergeGroupReviewStatus({
     if (!FULL_SHA.test(mergeGroupSha)) {
       throw new Error("Merge group commit is malformed");
     }
+    if (!FULL_SHA.test(sourceHeadSha)) {
+      throw new Error("Merge queue source commit is malformed");
+    }
     const pull = await github.rest.pulls.get({
       owner,
       repo,
@@ -312,16 +320,15 @@ export async function publishMergeGroupReviewStatus({
     });
     if (
       pull?.data?.state !== "open" ||
-      !FULL_SHA.test(pull?.data?.head?.sha ?? "")
+      pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
     ) {
-      throw new Error("Merge queue pull request is not open at a valid head");
+      throw new Error("Merge queue pull request changed from its queued head");
     }
-    const sourceHead = pull.data.head.sha;
     pullUrl = pull.data.html_url ?? pullUrl;
     const statuses = await collectAll(
       github,
       github.rest.repos.listCommitStatusesForRef,
-      { owner, repo, ref: sourceHead },
+      { owner, repo, ref: sourceHeadSha },
       "source review statuses",
     );
     const currentReviewStatus = statuses.find((status) =>
@@ -339,7 +346,7 @@ export async function publishMergeGroupReviewStatus({
     });
     if (
       current?.data?.state !== "open" ||
-      current?.data?.head?.sha !== sourceHead
+      current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
     ) {
       throw new Error(
         "Pull request head changed while propagating review evidence",
