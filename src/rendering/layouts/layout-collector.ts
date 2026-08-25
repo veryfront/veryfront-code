@@ -1,5 +1,5 @@
 import { isAbsolute, join, normalize } from "#veryfront/compat/path";
-import { memoizeHash, rendererLogger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -563,8 +563,12 @@ export class LayoutCollector {
       this.config,
     );
 
-    const contentSourceId = this.contentSourceId ?? pageInfo.bundle?.hash ??
-      memoizeHash(pageInfo.entity.content);
+    const snapshotVersion = await this.adapter.fs.getSourceSnapshotVersion?.();
+    const contentSourceId = this.contentSourceId === undefined
+      ? snapshotVersion === undefined ? undefined : `snapshot-${snapshotVersion}`
+      : snapshotVersion === undefined
+      ? this.contentSourceId
+      : `${this.contentSourceId}:snapshot-${snapshotVersion}`;
 
     return this.collectLayoutsUnified(pageFilePath, rootDir, contentSourceId);
   }
@@ -572,7 +576,7 @@ export class LayoutCollector {
   private async collectLayoutsUnified(
     pageFilePath: string,
     rootDir: string,
-    contentSourceId: string,
+    contentSourceId: string | undefined,
   ): Promise<LayoutItem[]> {
     logger.debug("collectLayoutsUnified", {
       pageFilePath,
@@ -586,7 +590,7 @@ export class LayoutCollector {
       this.projectDir,
       this.adapter,
       {
-        projectId: this.projectId ?? this.projectDir,
+        projectId: this.projectId,
         contentSourceId,
       },
     );

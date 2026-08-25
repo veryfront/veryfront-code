@@ -23,6 +23,7 @@ const LAYOUT_BUNDLE = { compiledCode: "LAYOUT_CODE" } as unknown as MdxBundle;
 function createCollectorAdapter(
   files: Record<string, string>,
   statPaths: string[] = [],
+  snapshotVersion?: { value: number },
 ): RuntimeAdapter {
   return {
     fs: {
@@ -41,6 +42,9 @@ function createCollectorAdapter(
       writeFile: () => Promise.resolve(),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
+      getSourceSnapshotVersion: snapshotVersion
+        ? () => Promise.resolve(snapshotVersion.value)
+        : undefined,
     },
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
@@ -120,6 +124,34 @@ describe("LayoutCollector", () => {
       releaseBResult.nestedLayouts,
       [],
       "a source snapshot without app/layout.tsx must not receive a cached layout from another release",
+    );
+  });
+
+  it("invalidates mutable preview discovery when the source snapshot changes", async () => {
+    clearLayoutDiscoveryCache();
+    const files: Record<string, string> = {
+      "/app/layout.tsx": "export default function Layout({ children }) { return children; }",
+    };
+    const snapshot = { value: 1 };
+    const collector = new LayoutCollector({
+      projectDir: "/",
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: createCollectorAdapter(files, [], snapshot),
+      config: {} as VeryfrontConfig,
+      compileMDX: () => Promise.resolve(LAYOUT_BUNDLE),
+    });
+
+    const initial = await collector.collectLayouts(createPageInfo("/app/page.tsx"));
+    delete files["/app/layout.tsx"];
+    snapshot.value = 2;
+    const afterEdit = await collector.collectLayouts(createPageInfo("/app/page.tsx"));
+
+    assertEquals(initial.nestedLayouts.map((layout) => layout.path), ["/app/layout.tsx"]);
+    assertEquals(
+      afterEdit.nestedLayouts,
+      [],
+      "a new mutable source snapshot must not reuse the previous layout discovery",
     );
   });
 
