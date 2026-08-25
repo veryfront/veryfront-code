@@ -83,6 +83,13 @@ if (!response.ok) {
 }
 ```
 
+`security.csrf` defaults to on in production and stays unset locally. Local
+development still issues the same token cookie so the helper sends a real
+header before deploy; validation itself remains off until `security.csrf` is
+configured. A local mutation that still arrives without a non-empty
+`x-csrf-token` header is logged once per method and path, because production
+defaults would reject it.
+
 ### Authentication
 
 `AuthHandler` accepts either one Basic credential pair or one bearer token.

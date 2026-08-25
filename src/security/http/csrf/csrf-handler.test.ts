@@ -327,6 +327,51 @@ describe("security/http/csrf/csrf-handler", () => {
       assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
     });
 
+    it("warns when a local mutation sends an empty CSRF header", async () => {
+      const localHandler = new CsrfHandler();
+      const ctx = createCtx();
+      ctx.securityConfig = {};
+      ctx.isLocalProject = true;
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+
+      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+      try {
+        await localHandler.handle(
+          new Request("http://localhost/api/empty-header", {
+            method: "POST",
+            headers: { "x-csrf-token": "" },
+          }),
+          ctx,
+        );
+        await localHandler.handle(
+          new Request("http://localhost/api/blank-header", {
+            method: "POST",
+            headers: { "x-csrf-token": "   " },
+          }),
+          ctx,
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        warnings.length,
+        2,
+        "an empty or whitespace x-csrf-token is rejected by validateCsrf in production, so it must still warn locally",
+      );
+      assertStringIncludes(
+        warnings[0]!,
+        "POST request [path redacted]",
+        "the empty-header warning names the method and redacts the path",
+      );
+      assertStringIncludes(
+        warnings[1]!,
+        "POST request [path redacted]",
+        "the whitespace-header warning names the method and redacts the path",
+      );
+    });
+
     it("does not include raw path segments in the missing-header warning", async () => {
       const localHandler = new CsrfHandler();
       const ctx = createCtx();

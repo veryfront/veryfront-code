@@ -144,6 +144,26 @@ export function validateCsrf(
 }
 
 /**
+ * Resolve the token-issuing CSRF setting for a response-serving surface.
+ *
+ * Production defaults `security.csrf` on, so `applyCsrfCookie` issues the
+ * double-submit token there. Local development leaves the setting unset and
+ * stays permissive, which used to mean no token cookie existed locally at all:
+ * every browser mutation — including the ones Veryfront's own hooks build with
+ * `csrfMutationHeaders` — had nothing to echo, so correct client code still
+ * sent no `x-csrf-token`. Issuing the same token cookie locally makes the
+ * double-submit contract exercisable before deploy without enforcing it, so
+ * the development warning is left to the mutations that genuinely omit the
+ * header. Enforcement still keys off `security.csrf`, which this never sets.
+ */
+export function csrfCookieSetting(
+  csrfConfig: boolean | CsrfConfig | undefined,
+  isLocalDevelopment: boolean,
+): boolean | CsrfConfig | undefined {
+  return csrfConfig === undefined && isLocalDevelopment ? true : csrfConfig;
+}
+
+/**
  * Set CSRF cookie on GET/HEAD responses when not already present.
  * Uses httpOnly: false so client JS can read the cookie for double-submit.
  */

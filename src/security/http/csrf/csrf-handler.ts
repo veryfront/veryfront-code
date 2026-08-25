@@ -69,7 +69,14 @@ function missingCsrfWarningKey(ctx: HandlerContext, method: string, pathname: st
 }
 
 function shouldWarnAboutProductionDefault(req: Request, ctx: HandlerContext): boolean {
-  return isExplicitlyLocalProject(ctx) && !req.headers.has(DEFAULT_CSRF_HEADER_NAME);
+  if (!isExplicitlyLocalProject(ctx)) return false;
+
+  // `validateCsrf` treats an empty header token as missing, so a wrapper that
+  // sends `getCookie(...) ?? ""` is rejected in production exactly like one
+  // that sends no header at all. Testing presence alone would hide that
+  // production-breaking request shape from this development diagnostic; header
+  // values are whitespace-normalized, so an empty string covers both.
+  return (req.headers.get(DEFAULT_CSRF_HEADER_NAME) ?? "") === "";
 }
 
 function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean {
