@@ -319,6 +319,16 @@ function parseRunObservedApprovals(
   });
 }
 
+function projectPendingApprovals(
+  approvals: PendingApproval[],
+): NonNullable<WorkflowRunObservedState["approvals"]> {
+  return approvals.map((approval) => ({
+    id: approval.id,
+    nodeId: approval.nodeId,
+    ...(approval.message !== undefined ? { message: approval.message } : {}),
+  }));
+}
+
 function serializeInitialRunObservation(run: WorkflowRun): Record<string, string> {
   const nodes: WorkflowRunObservedState["nodes"] = {};
   for (const [nodeId, node] of Object.entries(run.nodeStates)) {
@@ -493,7 +503,7 @@ if rawError and rawError ~= '' then
     table.insert(streamFields, runError.message)
   end
 end
-redis.call('xadd', ARGV[3], 'MAXLEN', '~', ARGV[4], '*', unpack(streamFields))
+redis.call('xadd', ARGV[3], 'MAXLEN', ARGV[4], '*', unpack(streamFields))
 return 1`;
 
 /**
@@ -570,7 +580,7 @@ if rawError and rawError ~= '' then
     table.insert(streamFields, runError.message)
   end
 end
-redis.call('xadd', ARGV[expectedCount + 5], 'MAXLEN', '~', ARGV[expectedCount + 6], '*', unpack(streamFields))
+redis.call('xadd', ARGV[expectedCount + 5], 'MAXLEN', ARGV[expectedCount + 6], '*', unpack(streamFields))
 return 1`;
 
 /**
@@ -1655,6 +1665,8 @@ export class RedisBackend implements WorkflowBackend {
     const runKey = this.runKey(runId);
     const streamKey = this.runObservationKey(runId);
     const approvalJournalKey = this.runObservationApprovalsKey(runId);
+    const readPendingApprovalProjection = async () =>
+      projectPendingApprovals(await this.getPendingApprovals(runId));
     const changes: AsyncIterable<WorkflowRunObservedState> = {
       [Symbol.asyncIterator]: async function* () {
         if (TERMINAL_RUN_STATUSES.has(initial.status)) {
@@ -1663,6 +1675,13 @@ export class RedisBackend implements WorkflowBackend {
         }
         let expectedRevision = initialRevision + 1;
         let lastStreamId = "0-0";
+        let lastObservedState = parseRunObservedState({
+          ...serializeInitialRunObservation(initial),
+          revision: String(initialRevision),
+        });
+        let approvalProjectionJson = JSON.stringify(
+          projectPendingApprovals(initial.pendingApprovals),
+        );
         try {
           while (!controller.signal.aborted) {
             let streams;
@@ -1681,6 +1700,27 @@ export class RedisBackend implements WorkflowBackend {
                 }
               } catch {
                 throw new Error("Workflow run observation failed");
+              }
+              // Older workers append approvals without a revision or stream
+              // record. While a run is waiting, dual-read the bounded approval
+              // list so rolling deployments still surface those requests. The
+              // repeated revision is intentional: no durable stream revision
+              // exists for this legacy write, and a later journaled record is
+              // still consumed against the unchanged contiguous expectation.
+              if (lastObservedState.status === "waiting") {
+                let approvals: NonNullable<WorkflowRunObservedState["approvals"]>;
+                try {
+                  approvals = await readPendingApprovalProjection();
+                } catch {
+                  throw new Error("Workflow run observation failed");
+                }
+                const nextProjectionJson = JSON.stringify(approvals);
+                if (nextProjectionJson !== approvalProjectionJson) {
+                  approvalProjectionJson = nextProjectionJson;
+                  const legacyApprovalState = { ...lastObservedState, approvals };
+                  lastObservedState = legacyApprovalState;
+                  yield legacyApprovalState;
+                }
               }
               await waitForObservationPoll(controller.signal);
               continue;
@@ -1708,6 +1748,10 @@ export class RedisBackend implements WorkflowBackend {
                 throw new Error("Workflow run observation failed");
               }
               expectedRevision++;
+              lastObservedState = state;
+              if (state.approvals !== undefined) {
+                approvalProjectionJson = JSON.stringify(state.approvals);
+              }
               yield state;
               if (TERMINAL_RUN_STATUSES.has(state.status)) return;
             }

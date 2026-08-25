@@ -816,6 +816,11 @@ describe("RedisBackend", () => {
         requestedAt: new Date("2025-01-02T00:00:00Z"),
         status: "pending",
       });
+      assertEquals(
+        mockRedis.lastScript.includes("'MAXLEN', '~'"),
+        false,
+        "approval projections may be trimmed only with the exact stream bound",
+      );
       await writer.updateRun(run.id, { status: "running" });
 
       // The approval save must keep the schema-v1 observation record readable
@@ -907,6 +912,52 @@ describe("RedisBackend", () => {
       ]);
     });
 
+    it("observes approvals appended by an older worker without a stream record", async () => {
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-legacy-approval-observed", { status: "waiting" });
+      await backend.createRun(run);
+      const controller = new AbortController();
+      const observation = await reader.openRunObservation(run.id, {
+        signal: controller.signal,
+      });
+      assertExists(observation);
+
+      // Simulate the pre-journal writer used during a rolling deployment. It
+      // appends the approval list but cannot bump the observation revision or
+      // add a stream record that a newer reader would otherwise consume.
+      await mockRedis.rpush(
+        "test:schema-v1:approvals:run-legacy-approval-observed",
+        JSON.stringify({
+          id: "apr-legacy",
+          nodeId: "review",
+          message: "Please review",
+          requestedAt: "2025-01-02T00:00:00.000Z",
+          status: "pending",
+        }),
+      );
+
+      const events = deriveWorkflowRunEventObservation(observation).events[
+        Symbol
+          .asyncIterator
+      ]();
+      const timeout = setTimeout(() => controller.abort(), 200);
+      try {
+        assertEquals(await events.next(), {
+          value: {
+            type: "approval.pending",
+            runId: run.id,
+            approvalId: "apr-legacy",
+            nodeId: "review",
+            message: "Please review",
+          },
+          done: false,
+        });
+      } finally {
+        clearTimeout(timeout);
+        await observation.close();
+      }
+    });
+
     it("journals owned approval appends only when ownership holds", async () => {
       const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
       await backend.createRun(run);
@@ -939,6 +990,11 @@ describe("RedisBackend", () => {
           approval("apr-owned"),
         ),
         true,
+      );
+      assertEquals(
+        mockRedis.lastScript.includes("'MAXLEN', '~'"),
+        false,
+        "owned approval projections may be trimmed only with the exact stream bound",
       );
 
       // Only the owned append may journal: a denied save that still bumped the
