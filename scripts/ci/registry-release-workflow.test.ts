@@ -68,7 +68,7 @@ describe("registry release workflow", () => {
     assertEquals(gate.needs, ["prerelease", "release", "version-check"]);
     assertEquals(
       gate.if,
-      "${{ always() && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}",
     );
     assert(registryStep, "registry quality gate must run the smoke script");
     assertEquals(
@@ -102,7 +102,7 @@ describe("registry release workflow", () => {
     ]);
     assertEquals(
       dispatch.if,
-      "${{ always() && needs.quality-gate-registry.result == 'success' }}",
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}",
     );
     assertEquals(dispatchActions.length, 3);
     assertEquals(

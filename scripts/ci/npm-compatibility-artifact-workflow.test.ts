@@ -174,7 +174,10 @@ describe("canonical npm artifact workflow", () => {
       "tests-npm-install-smoke",
       "tests-runtime-critical-flow",
     ]);
-    assertEquals(gate.if, "${{ always() }}");
+    assertEquals(
+      gate.if,
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+    );
 
     assertEquals((await runArtifactGate()).code, 0);
     for (const result of ["failure", "skipped", "cancelled"]) {

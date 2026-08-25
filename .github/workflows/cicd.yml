@@ -631,7 +631,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     needs: [ci, unit-tests, tests, tests-binary-e2e]
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require merge correctness dependencies
         env:
@@ -735,7 +735,7 @@ jobs:
       - npm-compatibility-artifact
       - tests-npm-install-smoke
       - tests-runtime-critical-flow
-    if: ${{ always() }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - name: Require canonical artifact compatibility
         env:
@@ -1368,7 +1368,7 @@ jobs:
 
   quality-gate-registry:
     name: quality gate (registry)
-    if: ${{ always() && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success')) }}
     needs: [prerelease, release, version-check]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1392,7 +1392,7 @@ jobs:
 
   dispatch-release:
     name: dispatch release
-    if: ${{ always() && needs.quality-gate-registry.result == 'success' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}
     needs: [quality-gate-registry, prerelease, release, version-check]
     runs-on: ubuntu-latest
     steps:
