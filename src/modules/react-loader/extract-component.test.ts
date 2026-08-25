@@ -73,7 +73,7 @@ describe("modules/react-loader/extract-component", () => {
     const Page = { $$typeof: Symbol.for("react.memo"), type: () => null };
     const loader = () => null;
     assertEquals(
-      extractComponent({ __esModule: true, Page, loader }, "memo-page.tsx"),
+      extractComponent({ __esModule: true, Page, loader }, "memo-page.tsx") as unknown,
       Page,
       "a React-tagged object and a function are both components, so declaration order decides",
     );
@@ -92,7 +92,7 @@ describe("modules/react-loader/extract-component", () => {
   it("falls back to an untagged object when no function or tagged component exists", () => {
     const Odd = { render: () => null };
     assertEquals(
-      extractComponent({ __esModule: true, Odd }, "odd.tsx"),
+      extractComponent({ __esModule: true, Odd }, "odd.tsx") as unknown,
       Odd,
       "an unrecognised component shape is still preferred over exporting nothing",
     );
@@ -101,7 +101,7 @@ describe("modules/react-loader/extract-component", () => {
   it("accepts object components such as memo and forwardRef results", () => {
     const Memoized = { $$typeof: Symbol.for("react.memo"), type: () => null };
     assertEquals(
-      extractComponent({ __esModule: true, Memoized }, "memo.tsx"),
+      extractComponent({ __esModule: true, Memoized }, "memo.tsx") as unknown,
       Memoized,
       "React.memo and React.forwardRef produce objects, which are valid components",
     );
@@ -111,7 +111,7 @@ describe("modules/react-loader/extract-component", () => {
     const Ctx = { $$typeof: Symbol.for("react.context"), Provider: () => null };
     const helper = () => null;
     assertEquals(
-      extractComponent({ __esModule: true, Ctx, helper }, "context.tsx"),
+      extractComponent({ __esModule: true, Ctx, helper }, "context.tsx") as unknown,
       Ctx,
       "a context is a renderable React type, so declaration order decides against a helper",
     );
@@ -121,7 +121,7 @@ describe("modules/react-loader/extract-component", () => {
     const Provider = { $$typeof: Symbol.for("react.provider"), _context: {} };
     const helper = () => null;
     assertEquals(
-      extractComponent({ __esModule: true, Provider, helper }, "provider.tsx"),
+      extractComponent({ __esModule: true, Provider, helper }, "provider.tsx") as unknown,
       Provider,
       "a provider is a renderable React type, so declaration order decides against a helper",
     );
@@ -131,7 +131,7 @@ describe("modules/react-loader/extract-component", () => {
     const Consumer = { $$typeof: Symbol.for("react.consumer"), _context: {} };
     const helper = () => null;
     assertEquals(
-      extractComponent({ __esModule: true, Consumer, helper }, "consumer.tsx"),
+      extractComponent({ __esModule: true, Consumer, helper }, "consumer.tsx") as unknown,
       Consumer,
       "a consumer is a renderable React type, so declaration order decides against a helper",
     );
@@ -155,7 +155,7 @@ describe("modules/react-loader/extract-component", () => {
     const Page = { $$typeof: Symbol.for("react.client.reference"), $$id: "page#default" };
     const helper = () => null;
     assertEquals(
-      extractComponent({ __esModule: true, Page, helper }, "client-ref.tsx"),
+      extractComponent({ __esModule: true, Page, helper }, "client-ref.tsx") as unknown,
       Page,
       "a client reference is a component the RSC renderer resolves, not a data export",
     );
