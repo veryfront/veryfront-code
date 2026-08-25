@@ -142,7 +142,16 @@ export class WorkflowClient {
         });
         if (userSchema) return userSchema;
 
-        const responseSchemaId = getPendingApprovalResponseSchemaId(input.approval);
+        // ApprovalManager intentionally projects its resolver input so custom
+        // resolvers cannot observe backend-only metadata. Recover the durable
+        // schema identity through this client's backend boundary instead.
+        const persistedApproval = this.backend.getPendingApproval
+          ? await this.backend.getPendingApproval(input.run.id, input.approval.id)
+          : (await this.backend.getPendingApprovals(input.run.id))
+            .find((approval) => approval.id === input.approval.id);
+        const responseSchemaId = persistedApproval
+          ? getPendingApprovalResponseSchemaId(persistedApproval)
+          : undefined;
         if (responseSchemaId !== undefined) {
           return this.responseSchemas.get(
             `${input.run.workflowId}::${responseSchemaId}`,
