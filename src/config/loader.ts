@@ -61,6 +61,7 @@ import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 const IntrinsicMap = Map;
 const IntrinsicPromise = Promise;
 const IntrinsicTextDecoder = TextDecoder;
+const IntrinsicErrorPrototype = Error.prototype;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
 const IntrinsicAbortController = AbortController;
@@ -1744,6 +1745,21 @@ function isInstallableLegacyNpmPackageName(packageName: string): boolean {
  */
 const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 
+function isIntrinsicError(value: unknown): value is Error {
+  if (typeof value !== "object" || value === null) return false;
+  let prototype: object | null;
+  try {
+    prototype = ReflectApply(ObjectGetPrototypeOf, Object, [value]) as object | null;
+    for (let depth = 0; prototype !== null && depth < 16; depth += 1) {
+      if (prototype === IntrinsicErrorPrototype) return true;
+      prototype = ReflectApply(ObjectGetPrototypeOf, Object, [prototype]) as object | null;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 /**
  * Name the package a config module imports that the runtime cannot resolve.
  *
@@ -1765,7 +1781,7 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
   // classification. `current` is narrowed to Error above, so a WeakSet fits.
   const seen = new IntrinsicWeakSet<object>();
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
-    if (!(current instanceof Error)) return undefined;
+    if (!isIntrinsicError(current)) return undefined;
     if (weakSetHas(seen, current)) return undefined;
     weakSetAdd(seen, current);
     let message: string | undefined;

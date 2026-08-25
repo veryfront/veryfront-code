@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertStringIncludes,
@@ -845,6 +846,35 @@ export default config as const;
           error.message.includes("left-pad"),
           `error must still name the package, got: ${error.message}`,
         );
+      });
+
+      it("classifies an original error after the config replaces globalThis.Error", async () => {
+        const originalError = globalThis.Error;
+        let caught: unknown;
+        try {
+          const adapter = setup();
+          await withTempDir(async (projectDir) => {
+            const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
+            const source =
+              "const failure = new Error(\"Cannot find package 'left-pad' imported from /app/veryfront.config.ts\");\n" +
+              "globalThis.Error = class ProjectError {};\n" +
+              "throw failure;\n";
+            await writeTextFile(configPath, source);
+            adapter.fs.files.set(configPath, source);
+            try {
+              await getConfig(projectDir, adapter);
+            } catch (error) {
+              caught = error;
+            }
+          }, { prefix: "vf-config-poisoned-error-" });
+        } finally {
+          globalThis.Error = originalError;
+        }
+
+        assertInstanceOf(caught, VeryfrontError);
+        const error = caught as VeryfrontError;
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
       });
 
       it("contains a cause getter that throws", async () => {
