@@ -340,8 +340,11 @@ async function resolveWorkerHostEgressAddresses(
     // permission diagnosis here or it never reaches the primary consumer
     // (veryfront-issue-inbox#744).
     if (error instanceof DnsPermissionError) {
+      // Keep the resolver's error (and its NotCapable cause) on the chain so
+      // logs that walk causes still see the original permission failure.
       throw new WorkerEgressBlockedError(
         `Worker network egress blocked: ${error.message}`,
+        { cause: error },
       );
     }
     throw error;

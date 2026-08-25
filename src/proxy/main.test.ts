@@ -65,6 +65,37 @@ describe("proxy main request URL parsing", () => {
     );
   });
 
+  it("never logs a rejected Host header verbatim", async () => {
+    const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
+
+    // A request only reaches the 400 warn branches because its Host failed
+    // parsing or validation, so the header value is attacker-chosen (a
+    // customer domain, a private hostname, or a secret pasted into the wrong
+    // field). Both branches must log a bounded shape description, never the
+    // untrusted value itself.
+    const verbatimHostLogs = source.match(/host: req\.headers\.get\("host"\) \?\? ""/g) ?? [];
+    assertEquals(
+      verbatimHostLogs.length,
+      0,
+      "a rejected Host header must not be written verbatim into proxy logs",
+    );
+    const describedHostLogs =
+      source.match(/host: describeRejectedHostHeader\(req\.headers\.get\("host"\)\)/g) ?? [];
+    assertEquals(
+      describedHostLogs.length,
+      2,
+      "both 400 warn branches must log the bounded Host description",
+    );
+    // The description itself must stay shape-only: missing/empty markers plus
+    // a length, so no substring of the client's value can reach the log line.
+    const helperIndex = source.indexOf("function describeRejectedHostHeader");
+    assertEquals(helperIndex >= 0, true, "the bounded Host description helper must exist");
+    const helper = source.slice(helperIndex, source.indexOf("\n}", helperIndex));
+    assertStringIncludes(helper, '"<missing>"');
+    assertStringIncludes(helper, '"<empty>"');
+    assertStringIncludes(helper, "${host.length} chars");
+  });
+
   it("uses an independent request body for every upstream attempt", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 

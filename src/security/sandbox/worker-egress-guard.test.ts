@@ -255,18 +255,21 @@ describe("worker-egress-guard", () => {
     // collapses everything else into a generic failure, so the permission
     // diagnosis must be translated at the guard or it never reaches the
     // consumer (veryfront-issue-inbox#744).
-    await assertRejects(
+    const permissionError = new DnsPermissionError(
+      'net access to the DNS resolver is not permitted while resolving "api.example.com"',
+    );
+    const error = await assertRejects(
       () =>
         assertWorkerHostEgressAllowed("api.example.com", {
-          resolveHost: () =>
-            Promise.reject(
-              new DnsPermissionError(
-                'net access to the DNS resolver is not permitted while resolving "api.example.com"',
-              ),
-            ),
+          resolveHost: () => Promise.reject(permissionError),
         }),
       WorkerEgressBlockedError,
       "net access to the DNS resolver is not permitted",
+    );
+    assertEquals(
+      (error as Error & { cause?: unknown }).cause,
+      permissionError,
+      "the resolver's permission error must stay on the cause chain",
     );
   });
 
