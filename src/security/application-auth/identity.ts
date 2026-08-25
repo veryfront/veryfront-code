@@ -1,4 +1,5 @@
 import type { ApplicationIdentity, AuthClaimValue, SerializedAuthClaims } from "./types.ts";
+import { types as nodeUtilTypes } from "node:util";
 
 const MAX_CLAIMS_JSON_BYTES = 64 * 1024;
 const MAX_OBJECT_KEYS = 128;
@@ -26,6 +27,7 @@ const numberIsFinite = NativeNumber.isFinite;
 const objectCreate = NativeObject.create;
 const objectDefineProperty = NativeObject.defineProperty;
 const objectFreeze = NativeObject.freeze;
+const objectGetOwnPropertyDescriptor = NativeObject.getOwnPropertyDescriptor;
 const objectGetOwnPropertyDescriptors = NativeObject.getOwnPropertyDescriptors;
 const objectGetOwnPropertySymbols = NativeObject.getOwnPropertySymbols;
 const objectGetPrototypeOf = NativeObject.getPrototypeOf;
@@ -40,6 +42,7 @@ const textEncoderEncode = NativeTextEncoder.prototype.encode;
 const weakSetAdd = NativeWeakSet.prototype.add;
 const weakSetDelete = NativeWeakSet.prototype.delete;
 const weakSetHas = NativeWeakSet.prototype.has;
+const isProxy = nodeUtilTypes.isProxy;
 
 export interface ApplicationIdentityClaimNames {
   readonly email?: string;
@@ -114,6 +117,202 @@ export function createApplicationIdentity(
   return freeze(identity) as ApplicationIdentity;
 }
 
+export function snapshotApplicationIdentity(value: unknown): ApplicationIdentity {
+  const root = parseIdentityRoot(value);
+  const claims = parseClaimSnapshot(readRequiredIdentityField(root, "claims"));
+  const identity: ApplicationIdentity = {
+    issuer: parseIdentityIssuer(readRequiredIdentityField(root, "issuer")),
+    subject: parseSubject(readRequiredIdentityField(root, "subject")),
+    ...parseOptionalIdentityProfile(root),
+    groups: freezeArray(
+      parseSerializedStringList(readRequiredIdentityField(root, "groups"), "groups"),
+    ),
+    roles: freezeArray(
+      parseSerializedStringList(readRequiredIdentityField(root, "roles"), "roles"),
+    ),
+    groupsComplete: parseGroupsComplete(readRequiredIdentityField(root, "groupsComplete")),
+    claims,
+  };
+
+  return freeze(identity) as ApplicationIdentity;
+}
+
+function parseIdentityRoot(value: unknown): UnknownRecord {
+  if (!isPlainObject(value)) {
+    throw new TypeError("Application identity must be a plain object");
+  }
+
+  const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
+  if (symbolKeys.length > 0) {
+    throw new TypeError("Application identity contains a non-JSON-safe symbol key");
+  }
+
+  const keys = apply(objectKeys, NativeObject, [value]) as string[];
+  const required = new NativeSet([
+    "issuer",
+    "subject",
+    "groups",
+    "roles",
+    "groupsComplete",
+    "claims",
+  ]);
+  const optional = new NativeSet(["email", "name"]);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    const descriptor = apply(objectGetOwnPropertyDescriptor, NativeObject, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`Application identity ${key} contains an accessor property`);
+    }
+    if (!setContains(required, key) && !setContains(optional, key)) {
+      throw new TypeError(`Application identity contains an unsupported ${key} field`);
+    }
+  }
+  for (const key of required) {
+    if (
+      apply(objectGetOwnPropertyDescriptor, NativeObject, [
+        value,
+        key,
+      ]) === undefined
+    ) {
+      throw new TypeError(`Application identity is missing ${key}`);
+    }
+  }
+
+  const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
+    value,
+  ]) as unknown as PropertyDescriptorMap;
+  const output = apply(objectCreate, NativeObject, [null]) as UnknownRecord;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index]!;
+    const descriptor = descriptors[key] ??
+      (apply(objectGetOwnPropertyDescriptor, NativeObject, [
+        value,
+        key,
+      ]) as PropertyDescriptor | undefined);
+    if (descriptor) {
+      apply(objectDefineProperty, NativeObject, [output, key, {
+        value: descriptor,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      }]);
+    }
+  }
+  return output;
+}
+
+function readRequiredIdentityField(root: UnknownRecord, key: string): unknown {
+  const descriptor = root[key] as PropertyDescriptor | undefined;
+  if (!descriptor || !("value" in descriptor)) {
+    throw new TypeError(`Application identity is missing ${key}`);
+  }
+  return descriptor.value;
+}
+
+function parseIdentityIssuer(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_ISSUER_LENGTH) {
+    throw new TypeError("Application identity issuer must be a bounded non-empty string");
+  }
+  return value;
+}
+
+function parseOptionalIdentityProfile(
+  root: UnknownRecord,
+): Pick<ApplicationIdentity, "email" | "name"> {
+  const output: { email?: string; name?: string } = {};
+  const email = root.email as PropertyDescriptor | undefined;
+  if (email !== undefined) {
+    if (!("value" in email)) {
+      throw new TypeError("Application identity email contains an accessor property");
+    }
+    output.email = parseOptionalIdentityString(email.value, "email", MAX_PROFILE_CLAIM_LENGTH);
+  }
+  const name = root.name as PropertyDescriptor | undefined;
+  if (name !== undefined) {
+    if (!("value" in name)) {
+      throw new TypeError("Application identity name contains an accessor property");
+    }
+    output.name = parseOptionalIdentityString(name.value, "name", MAX_PROFILE_CLAIM_LENGTH);
+  }
+  return output;
+}
+
+function parseOptionalIdentityString(
+  value: unknown,
+  fieldName: "email" | "name",
+  maxLength: number,
+): string | undefined {
+  if (typeof value !== "string") {
+    throw new TypeError(`Application identity ${fieldName} must be a string`);
+  }
+  const normalized = apply(stringTrim, value, []) as string;
+  if (normalized.length === 0) return undefined;
+  if (normalized.length > maxLength) {
+    throw new TypeError(`Application identity ${fieldName} exceeds the length limit`);
+  }
+  return normalized;
+}
+
+function parseGroupsComplete(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw new TypeError("Application identity groupsComplete must be a boolean");
+  }
+  return value;
+}
+
+function parseSerializedStringList(
+  value: unknown,
+  fieldName: "groups" | "roles",
+): readonly string[] {
+  if (!arrayIsArray(value)) {
+    throw new TypeError(`Application identity ${fieldName} must be an array of strings`);
+  }
+  if (value.length > MAX_ARRAY_ENTRIES) {
+    throw new TypeError(`Application identity ${fieldName} exceeds the entry limit`);
+  }
+  const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
+    value,
+  ]) as unknown as PropertyDescriptorMap;
+  const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
+  if (symbolKeys.length > 0) {
+    throw new TypeError(`Application identity ${fieldName} contains a non-JSON-safe symbol key`);
+  }
+
+  const output: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = descriptors[index];
+    if (!descriptor) {
+      throw new TypeError(`Application identity ${fieldName} contains a sparse array entry`);
+    }
+    if (!("value" in descriptor)) {
+      throw new TypeError(
+        `Application identity ${fieldName}.${index} contains an accessor property`,
+      );
+    }
+    if (typeof descriptor.value !== "string") {
+      throw new TypeError(`Application identity ${fieldName} must contain only strings`);
+    }
+    const normalized = apply(stringTrim, descriptor.value, []) as string;
+    if (normalized.length === 0) continue;
+    if (normalized.length > MAX_GROUP_OR_ROLE_LENGTH) {
+      throw new TypeError(`Application identity ${fieldName} entry exceeds the length limit`);
+    }
+    arrayAppend(output, normalized);
+  }
+  const keys = apply(objectKeys, NativeObject, [descriptors]) as string[];
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+    const key = keys[keyIndex]!;
+    if ((apply(regexpTest, ARRAY_INDEX_PATTERN, [key]) as boolean) || key === "length") continue;
+    throw new TypeError(
+      `Application identity ${fieldName} contains a non-JSON-safe array property`,
+    );
+  }
+  return output;
+}
+
 function parseIssuer(value: unknown, expectedIssuer: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_ISSUER_LENGTH) {
     throw new TypeError("Application identity issuer must be a bounded non-empty string");
@@ -164,15 +363,12 @@ function parseClaimObject(
   weakSetInsert(state.seen, value);
   countValue(state, path);
 
-  const descriptors = apply(objectGetOwnPropertyDescriptors, NativeObject, [
-    value,
-  ]) as unknown as PropertyDescriptorMap;
   const symbolKeys = apply(objectGetOwnPropertySymbols, NativeObject, [value]) as symbol[];
   if (symbolKeys.length > 0) {
     throw new TypeError(`${path} contains a non-JSON-safe symbol key`);
   }
 
-  const keys = apply(objectKeys, NativeObject, [descriptors]) as string[];
+  const keys = apply(objectKeys, NativeObject, [value]) as string[];
   if (keys.length > MAX_OBJECT_KEYS) {
     throw new TypeError(`${path} exceeds the object key limit`);
   }
@@ -180,7 +376,10 @@ function parseClaimObject(
   const output = apply(objectCreate, NativeObject, [null]) as MutableAuthClaimRecord;
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
     const key = keys[keyIndex]!;
-    const descriptor = descriptors[key];
+    const descriptor = apply(objectGetOwnPropertyDescriptor, NativeObject, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
     if (!descriptor || !("value" in descriptor)) {
       throw new TypeError(`${path}.${key} contains an accessor property`);
     }
@@ -383,6 +582,7 @@ function isClaimRecord(value: AuthClaimValue | undefined): value is SerializedAu
 
 function isPlainObject(value: unknown): value is UnknownRecord {
   if (typeof value !== "object" || value === null || arrayIsArray(value)) return false;
+  if (isProxy(value)) return false;
   const prototype = apply(objectGetPrototypeOf, NativeObject, [value]) as object | null;
   return prototype === objectPrototype || prototype === null;
 }

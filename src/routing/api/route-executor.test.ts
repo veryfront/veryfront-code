@@ -1274,6 +1274,51 @@ describe("routing/api/route-executor", () => {
       assertEquals(await response.json(), { id: "42" });
     });
 
+    it("passes admitted identity to prepared app route worker context", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const identity = createIdentity();
+      const options = {
+        ...(await preparedRouteOptions(
+          `
+            export function GET(_req, ctx) {
+              return Response.json({
+                subject: ctx.identity?.subject ?? null,
+                sameWithinContext: ctx.identity === ctx.identity,
+                frozen: ctx.identity === null ? null : {
+                  root: Object.isFrozen(ctx.identity),
+                  groups: Object.isFrozen(ctx.identity.groups),
+                  claims: Object.isFrozen(ctx.identity.claims),
+                },
+              });
+            }
+          `,
+          "prepared-app-identity",
+        )),
+        applicationIdentity: identity,
+      };
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedAppRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        subject: "user-123",
+        sameWithinContext: true,
+        frozen: { root: true, groups: true, claims: true },
+      });
+    });
+
     it("returns a 500 error response when the prepared app route handler throws", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
@@ -1321,6 +1366,51 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "prepared pages ok");
+    });
+
+    it("passes admitted identity to prepared pages route worker context", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const identity = createIdentity();
+      const options = {
+        ...(await preparedRouteOptions(
+          `
+            export function GET(ctx) {
+              return Response.json({
+                subject: ctx.identity?.subject ?? null,
+                sameWithinContext: ctx.identity === ctx.identity,
+                frozen: ctx.identity === null ? null : {
+                  root: Object.isFrozen(ctx.identity),
+                  roles: Object.isFrozen(ctx.identity.roles),
+                  claims: Object.isFrozen(ctx.identity.claims),
+                },
+              });
+            }
+          `,
+          "prepared-pages-identity",
+        )),
+        applicationIdentity: identity,
+      };
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedPagesRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        subject: "user-123",
+        sameWithinContext: true,
+        frozen: { root: true, roles: true, claims: true },
+      });
     });
 
     it("returns a 500 error response when the prepared pages route handler throws", async () => {

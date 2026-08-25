@@ -9,6 +9,7 @@
 
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { ErrorCategory } from "#veryfront/errors";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 /**
  * Serialized request data that can cross the Worker boundary via postMessage.
@@ -137,6 +138,8 @@ export interface ExecuteAppRouteRequest {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Immutable per-request project env snapshot exposed through the handler context. */
   projectEnv?: Record<string, string>;
+  /** Required per-request application identity snapshot admitted by the host boundary. */
+  applicationIdentity: ApplicationIdentity | null;
 }
 
 export interface ExecutePagesRouteRequest {
@@ -152,6 +155,8 @@ export interface ExecutePagesRouteRequest {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   /** Immutable per-request project env snapshot exposed through the handler context. */
   projectEnv?: Record<string, string>;
+  /** Required per-request application identity snapshot admitted by the host boundary. */
+  applicationIdentity: ApplicationIdentity | null;
 }
 
 export interface InspectApiRouteMethodsRequest {

@@ -60,6 +60,7 @@ import {
 } from "#veryfront/security/project-locality.ts";
 import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -1013,6 +1014,7 @@ function executeAppRouteIsolated(
   pathname: string,
   projectDir: string,
   isLocalProject: boolean,
+  applicationIdentity: ApplicationIdentity | null,
 ): Promise<Response> {
   const method = uppercaseMethod(getRequestMethod(request));
 
@@ -1023,6 +1025,9 @@ function executeAppRouteIsolated(
         const pool = getWorkerPool();
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
+        const workerApplicationIdentity = applicationIdentity === null
+          ? null
+          : snapshotApplicationIdentity(applicationIdentity);
 
         const workerResponse = await pool.execute(
           await resolveApiWorkerId(executionScopeId, semanticContext.generation),
@@ -1038,6 +1043,7 @@ function executeAppRouteIsolated(
             projectDir,
             sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
             projectEnv: semanticContext.projectEnv,
+            applicationIdentity: workerApplicationIdentity,
           },
         );
 
@@ -1069,6 +1075,7 @@ function executePagesRouteIsolated(
   pathname: string,
   projectDir: string,
   isLocalProject: boolean,
+  applicationIdentity: ApplicationIdentity | null,
 ): Promise<Response> {
   const method = uppercaseMethod(getRequestMethod(request));
 
@@ -1079,6 +1086,9 @@ function executePagesRouteIsolated(
         const pool = getWorkerPool();
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
+        const workerApplicationIdentity = applicationIdentity === null
+          ? null
+          : snapshotApplicationIdentity(applicationIdentity);
 
         const workerResponse = await pool.execute(
           await resolveApiWorkerId(executionScopeId, semanticContext.generation),
@@ -1102,6 +1112,7 @@ function executePagesRouteIsolated(
             projectDir,
             sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
             projectEnv: semanticContext.projectEnv,
+            applicationIdentity: workerApplicationIdentity,
           },
         );
 
@@ -1155,6 +1166,7 @@ export interface PreparedRouteExecutionOptions {
   readonly modulePath: string;
   readonly projectDir: string;
   readonly isLocalProject: boolean;
+  readonly applicationIdentity?: ApplicationIdentity | null;
 }
 
 export function executePreparedAppRoute(
@@ -1172,6 +1184,7 @@ export function executePreparedAppRoute(
     pathname,
     options.projectDir,
     options.isLocalProject,
+    options.applicationIdentity ?? null,
   );
 }
 
@@ -1190,6 +1203,7 @@ export function executePreparedPagesRoute(
     pathname,
     options.projectDir,
     options.isLocalProject,
+    options.applicationIdentity ?? null,
   );
 }
 
@@ -1261,6 +1275,7 @@ export function executeAppRoute(
         pathname,
         routeOptions.projectDir,
         isLocalProject,
+        routeOptions.applicationIdentity,
       );
     }
     return resolvePromise(
@@ -1340,6 +1355,7 @@ export function executePagesRoute(
         pathname,
         isolatedProjectDir,
         isLocalProject,
+        routeOptions.applicationIdentity,
       );
     }
     return resolvePromise(
