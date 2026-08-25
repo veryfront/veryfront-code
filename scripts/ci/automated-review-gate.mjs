@@ -625,8 +625,9 @@ export async function publishAutomatedReviewStatus({
  * dismissed approval - is consumed by the run that observes it. When that run
  * cannot resolve its target or publish a status, the older success stays on
  * the head, and a later merge group reuses that cached success as if nothing
- * had been revoked. Writing a failure for the current head keeps the gate
- * closed until a later event recomputes real evidence.
+ * had been revoked. Writing failures for the current head and its active
+ * queue commits keeps every gate closed until a later event recomputes real
+ * evidence.
  */
 export async function invalidateReviewProof({
   github,
@@ -646,21 +647,18 @@ export async function invalidateReviewProof({
   if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
     throw new Error("Could not resolve the pull request head commit");
   }
-  // Reuse the publisher's failure description so the merge queue reader sees
-  // one shape of "not reviewable" and never a stale success.
   const description = `PR#${pullNumber} review status unavailable`;
-  await github.rest.repos.createCommitStatus({
+  const result = await publishReviewResolutionFailure({
+    github,
     owner,
     repo,
-    sha: headSha,
-    state: "failure",
-    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description,
-    target_url: typeof response?.data?.html_url === "string"
+    pullNumber,
+    sourceHeadSha: headSha,
+    pullUrl: typeof response?.data?.html_url === "string"
       ? response.data.html_url
       : undefined,
   });
-  return { headSha, description };
+  return { headSha, description, ...result };
 }
 
 /** Extract the pull request represented by a merge queue head ref. */

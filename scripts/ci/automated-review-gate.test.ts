@@ -1643,8 +1643,16 @@ describe("automated review request", () => {
 });
 
 describe("review proof invalidation", () => {
-  it("closes the gate on the head a dropped reconciliation left behind", async () => {
-    const fixture = githubFixture({ headResponses: [HEAD] });
+  it("closes source and queued gates a dropped reconciliation left behind", async () => {
+    const fixture = githubFixture({
+      headResponses: [HEAD],
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+    });
     const result = await invalidateReviewProof({
       github: fixture.github,
       owner: "veryfront",
@@ -1656,18 +1664,30 @@ describe("review proof invalidation", () => {
       HEAD,
       "invalidation must target the pull request head it just read",
     );
+    assertEquals(result.queueFailures, 1);
     assertEquals(
       fixture.published,
-      [{
-        owner: "veryfront",
-        repo: "veryfront-code",
-        sha: HEAD,
-        state: "failure",
-        context: "Automated review",
-        description: "PR#1 review status unavailable",
-        target_url: "https://example.test/pr/1",
-      }],
-      "a lost revocation must leave a failing status, never an older success",
+      [
+        {
+          owner: "veryfront",
+          repo: "veryfront-code",
+          sha: HEAD,
+          state: "failure",
+          context: "Automated review",
+          description: "PR#1 review status unavailable",
+          target_url: "https://example.test/pr/1",
+        },
+        {
+          owner: "veryfront",
+          repo: "veryfront-code",
+          sha: OTHER_HEAD,
+          state: "failure",
+          context: "Automated review",
+          description: "Could not revalidate review for PR #1",
+          target_url: "https://example.test/pr/1",
+        },
+      ],
+      "a lost revocation must fail both source and active queued proof",
     );
   });
 
