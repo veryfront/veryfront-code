@@ -165,7 +165,7 @@ jobs:
                 : wakeupSignal?.pullNumber);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed("Could not resolve a valid pull request number");
-              core.setOutput("key", `run-${context.runId}`);
+              if (!queueEntry) core.setOutput("key", `run-${context.runId}`);
               return;
             }
             let headSha;
@@ -203,7 +203,7 @@ jobs:
             }
             if (!fullSha.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
-              core.setOutput("key", `run-${context.runId}`);
+              if (!queueEntry) core.setOutput("key", `run-${context.runId}`);
               return;
             }
             headSha = headSha.toLowerCase();
