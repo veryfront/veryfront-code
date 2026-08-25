@@ -1188,6 +1188,70 @@ describe("npm package publishing", () => {
     });
   });
 
+  // The conflicting write can land while its gitHead never converges. The
+  // version is immutable either way, so the helper must report the unresolved
+  // identity instead of republishing over it.
+  it("fails without republishing when a conflicted RC version never reports a gitHead", async () => {
+    await withTempDir(async (stateDir) => {
+      const packageDir = `${stateDir}/package`;
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.mkdir(packageDir);
+      await Deno.writeTextFile(
+        `${packageDir}/package.json`,
+        JSON.stringify({ name: "@veryfront/ext-llm-google" }),
+      );
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          '  printf "%s\\n" "$*" >> "$NPM_LOG"',
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          // the conflicting write lands, but its gitHead stays empty forever
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 0 ]; then return 1; fi',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          "sleep() { :; }",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stderr = decoder.decode(output.stderr);
+      assertEquals(
+        output.code,
+        1,
+        `a published version without a readable gitHead must fail the RC publish: ${stderr}`,
+      );
+      assertStringIncludes(stderr, "gitHead metadata did not converge");
+      const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(
+        publishes.length,
+        1,
+        `the retry must stop once the version exists, but issued: ${
+          publishes.join(", ")
+        }`,
+      );
+    });
+  });
+
   for (
     const publishFunction of [
       "rc_publish_package_dir",
