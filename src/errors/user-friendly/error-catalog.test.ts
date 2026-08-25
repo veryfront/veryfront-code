@@ -87,12 +87,19 @@ function statementsOf(block: string): string[] {
 }
 
 // Statement index of every 'use client' expression statement in a file block.
-// Valid placement means every index is 0 — a directive-prologue check that
-// also catches a second, inert directive further down.
 function useClientIndexes(block: string): number[] {
   return statementsOf(block)
     .map((statement, index) => (directive.test(statement) ? index : -1))
     .filter((index) => index !== -1);
+}
+
+const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")$/;
+
+function invalidUseClientIndexes(block: string): number[] {
+  const statements = statementsOf(block);
+  return useClientIndexes(block).filter((index) =>
+    statements.slice(0, index).some((statement) => !stringLiteralStatement.test(statement))
+  );
 }
 
 describe("ERROR_SOLUTIONS", () => {
@@ -218,14 +225,13 @@ describe("ERROR_SOLUTIONS", () => {
         for (const block of example.split(/\n(?=\/\/ (?:❌ Wrong|✅ Correct): )/)) {
           const statements = statementsOf(block);
 
-          // Every occurrence must be first, not just the earliest one: the
-          // defect this guards against was a *second* directive sitting after
-          // the imports of a block, where it is inert.
-          for (const index of useClientIndexes(block)) {
-            assertEquals(
-              index,
-              0,
-              `${key}: 'use client' must be the first statement of its file, but one follows ` +
+          // Another string-literal directive may precede use client. Reject
+          // only occurrences after a non-directive statement, including a
+          // second inert occurrence later in the file.
+          for (const index of invalidUseClientIndexes(block)) {
+            assert(
+              false,
+              `${key}: 'use client' must stay in the directive prologue, but one follows ` +
                 `${statements[index - 1]}`,
             );
           }
@@ -276,7 +282,7 @@ describe("ERROR_SOLUTIONS", () => {
         ].join("\n");
 
         assertEquals(
-          useClientIndexes(block),
+          invalidUseClientIndexes(block),
           [1],
           "a directive after an import is inert and must be reported",
         );
@@ -289,9 +295,22 @@ describe("ERROR_SOLUTIONS", () => {
         ].join("\n");
 
         assertEquals(
-          useClientIndexes(block),
+          invalidUseClientIndexes(block),
           [1],
           "statements split at semicolons, not only at newlines",
+        );
+      });
+
+      it("keeps use client inside a multi-directive prologue", () => {
+        const block = [
+          "'use strict'; 'use client';",
+          "import { a } from './a';",
+        ].join("\n");
+
+        assertEquals(
+          invalidUseClientIndexes(block),
+          [],
+          "another string-literal directive may precede use client",
         );
       });
 
