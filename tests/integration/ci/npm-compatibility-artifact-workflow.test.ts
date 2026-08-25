@@ -251,6 +251,11 @@ describe("canonical npm artifact workflow", () => {
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
     const step = namedStep(gate, "Report npm build reuse");
     assertEquals(
+      step.if,
+      "${{ success() }}",
+      "The build reuse report must not run after the aggregate dependency check fails",
+    );
+    assertEquals(
       asRecord(step.env, "npm build reuse environment"),
       {
         BUILD_DURATION_SECONDS:

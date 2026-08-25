@@ -772,6 +772,7 @@ jobs:
           done
           exit "$failed"
       - name: Report npm build reuse
+        if: ${{ success() }}
         env:
           BUILD_DURATION_SECONDS: ${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}
           LEGACY_BUILD_COUNT: "5"
@@ -1437,6 +1438,7 @@ jobs:
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}
     needs: [quality-gate-registry, prerelease, release, version-check]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Resolve published version
         id: version

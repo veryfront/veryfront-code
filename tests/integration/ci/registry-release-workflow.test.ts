@@ -266,6 +266,11 @@ describe("registry release workflow", () => {
       dispatch.if,
       "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.quality-gate-registry.result == 'success' }}",
     );
+    assertEquals(
+      dispatch["timeout-minutes"],
+      5,
+      "release dispatch must time out if token creation or dispatch hangs",
+    );
     assertEquals(versionStep.id, "version");
     assertEquals(
       asRecord(versionStep.env, "dispatch version environment"),

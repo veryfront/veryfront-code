@@ -315,7 +315,7 @@ describe("repository hardening", () => {
             `expected trusted aggregate ${jobName} not to execute a repository-local action`,
           );
           assertEquals(
-            /^[ ]{10}(?:(?:deno|node|npm|npx|bun)\b|(?:bash|sh)\s+(?:\.\/)?(?:scripts|src|cli)\/|(?:\.\/)?(?:scripts|src|cli)\/)/m
+            /(?:run:\s*|^[ ]{10})(?:(?:deno|node|npm|npx|bun)\b|(?:bash|sh)\s+(?:\.\/)?(?:scripts|src|cli)\/|(?:\.\/)?(?:scripts|src|cli)\/)/m
               .test(block),
             false,
             `expected trusted aggregate ${jobName} not to execute repository code`,
