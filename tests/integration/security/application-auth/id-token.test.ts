@@ -182,7 +182,6 @@ describe("security/application-auth OIDC ID tokens", () => {
         [`${validSegments[0]}..${validSegments[2]}`, "non-empty"],
         [await signToken(keys.RS256, claims(), { alg: "none" }), "algorithm"],
         [await signToken(keys.RS256, claims(), { alg: "HS256" }), "algorithm"],
-        [await signToken(keys.RS256, claims(), { kid: undefined }), "kid"],
         [await signToken(keys.RS256, claims(), { kid: "" }), "kid"],
         [await signToken(keys.RS256, claims(), { kid: "k".repeat(257) }), "kid"],
         [await signToken(keys.RS256, claims(), { crit: ["exp"] }), "header"],
@@ -579,7 +578,7 @@ describe("security/application-auth OIDC ID tokens", () => {
     }
   });
 
-  it("rejects missing kids, key-type mismatches, and unknown kids without extra token-level refresh", async () => {
+  it("rejects key-type mismatches and unknown kids without extra token-level refresh", async () => {
     const keys = await material();
     const rsaToken = await signToken(keys.RS256, claims());
     await assertRejects(
@@ -628,6 +627,56 @@ describe("security/application-auth OIDC ID tokens", () => {
       "verification",
     );
     assertEquals(calls, 2);
+  });
+
+  it("allows a missing kid only when one JWKS key is algorithm-compatible", async () => {
+    const keys = await material();
+    const tokenWithoutKid = await signToken(keys.RS256, claims(), { kid: undefined });
+
+    const identity = await withMockFetch(
+      () =>
+        Promise.resolve(
+          jsonResponse(jwks([keys.RS256.publicJwk, keys.ES256.publicJwk])),
+        ),
+      () =>
+        verifyOidcIdToken({
+          token: tokenWithoutKid,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: JWKS_URI,
+          jwksCache: createJwksCache(),
+          now: () => NOW,
+        }),
+    );
+    assertEquals(identity.subject, "user-123");
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () =>
+            Promise.resolve(
+              jsonResponse(
+                jwks([
+                  keys.RS256.publicJwk,
+                  { ...keys.RS256.publicJwk, kid: "second-rsa" },
+                ]),
+              ),
+            ),
+          () =>
+            verifyOidcIdToken({
+              token: tokenWithoutKid,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: JWKS_URI,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "verification",
+    );
   });
 
   it("enforces issuer, audience, azp, subject, nonce, and time claims", async () => {

@@ -48,6 +48,8 @@ const DEFAULT_SESSION_TTL_SECONDS = 28_800;
 const MAX_SESSION_TTL_SECONDS = 2_592_000;
 const MAX_ENV_VALUE_LENGTH = 4_096;
 const MAX_CALLBACK_QUERY_LENGTH = 4_096;
+const MAX_CALLBACK_PARAMETER_COUNT = 32;
+const MAX_CALLBACK_PARAMETER_NAME_LENGTH = 128;
 const MAX_CALLBACK_VALUE_LENGTH = 2_048;
 const MAX_CALLBACK_SESSION_STATE_LENGTH = 512;
 const MAX_ID_TOKEN_LENGTH = 16_384;
@@ -415,11 +417,7 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   if (url.search.length > MAX_CALLBACK_QUERY_LENGTH) {
     throw new TypeError("OIDC callback query exceeds the size limit");
   }
-  for (const key of url.searchParams.keys()) {
-    if (!isAllowedCallbackParameter(key)) {
-      throw new TypeError("OIDC callback contains an unsupported parameter");
-    }
-  }
+  validateCallbackParameters(url);
   const state = parseRandomValue(readSingleParam(url, "state", true));
   const code = readSingleParam(url, "code", false);
   const error = readSingleParam(url, "error", false);
@@ -436,10 +434,26 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   return { state, code, error, iss };
 }
 
-function isAllowedCallbackParameter(value: string): boolean {
-  return value === "state" || value === "code" || value === "error" ||
-    value === "error_description" || value === "iss" || value === "scope" ||
-    value === "session_state";
+function validateCallbackParameters(url: URL): void {
+  const seen = new Set<string>();
+  for (const key of url.searchParams.keys()) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (seen.size > MAX_CALLBACK_PARAMETER_COUNT) {
+      throw new TypeError("OIDC callback contains too many parameters");
+    }
+    validateCallbackParameterName(key);
+    readSingleParam(url, key, false);
+  }
+}
+
+function validateCallbackParameterName(value: string): void {
+  if (
+    value.length === 0 || value.length > MAX_CALLBACK_PARAMETER_NAME_LENGTH ||
+    !/^[A-Za-z0-9_.~-]+$/u.test(value)
+  ) {
+    throw new TypeError("OIDC callback parameter name is invalid");
+  }
 }
 
 function validateCallbackScope(value: string | undefined): void {

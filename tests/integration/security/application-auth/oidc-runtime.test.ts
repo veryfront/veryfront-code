@@ -380,6 +380,8 @@ describe("security/application-auth OIDC runtime", () => {
         `state=${state}&code=ok&session_state=one&session_state=two`,
         `state=${state}&code=ok&session_state=${"s".repeat(513)}`,
         `state=${state}&code=ok&session_state=${encodeURIComponent("keycloak\nsession")}`,
+        `state=${state}&code=ok&authuser=0&authuser=1`,
+        `state=${state}&code=ok&authuser=${"x".repeat(2_049)}`,
       ]
     ) {
       const response = await runtime.handleAuthRoute(
@@ -406,6 +408,23 @@ describe("security/application-auth OIDC runtime", () => {
       cookie,
       "ok",
       "&session_state=6f730d5d-55d0-48e7-a02e-fdbcf849a4f7",
+    );
+
+    assertEquals(callback.status, 303);
+    assertEquals(callback.headers.get("Location"), "/");
+    assertEquals((callback.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="), true);
+  });
+
+  it("ignores bounded single provider extension callback parameters", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+
+    const callback = await successfulCallback(
+      runtime,
+      state,
+      nonce,
+      cookie,
+      "ok",
+      "&authuser=0&prompt=consent",
     );
 
     assertEquals(callback.status, 303);

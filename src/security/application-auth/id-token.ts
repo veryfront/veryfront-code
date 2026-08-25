@@ -328,8 +328,9 @@ function parseHeaderAlgorithm(
   return alg;
 }
 
-function parseHeaderKid(header: JsonObject): string {
+function parseHeaderKid(header: JsonObject): string | undefined {
   const kid = header.kid;
+  if (kid === undefined) return undefined;
   if (typeof kid !== "string" || kid.length === 0 || kid.length > MAX_KID_LENGTH) {
     throw new TypeError("OIDC ID token protected header kid must be a bounded non-empty string");
   }
@@ -358,7 +359,7 @@ async function verifySignatureWithRefresh(options: {
   readonly jwksUri: string;
   readonly allowInsecureLoopback: boolean;
   readonly timeoutMs?: number;
-  readonly kid: string;
+  readonly kid: string | undefined;
   readonly alg: IdTokenAlgorithm;
   readonly signingInput: Uint8Array;
   readonly signature: Uint8Array;

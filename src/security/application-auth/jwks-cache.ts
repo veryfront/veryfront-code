@@ -76,7 +76,7 @@ export interface JwksCacheOptions {
 export interface GetJwksKeyOptions {
   readonly issuer?: string;
   readonly jwksUri: string;
-  readonly kid: string;
+  readonly kid?: string;
   readonly alg: string;
   readonly forceRefresh?: boolean;
   readonly allowInsecureLoopback?: boolean;
@@ -163,7 +163,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     },
     timeoutMs: number,
     refreshKind: RefreshKind,
-    requestedKid: string,
+    requestedKid: string | undefined,
     refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ): Promise<JwksLoad> {
     const forceRefresh = refreshKind !== "none";
@@ -267,7 +267,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     keyOptions: GetJwksKeyOptions,
     refreshIfCurrent?: JwksKeySnapshot["freshness"],
   ): Promise<JwksKeySnapshot> {
-    const kid = parseKid(keyOptions.kid);
+    const kid = keyOptions.kid === undefined ? undefined : parseKid(keyOptions.kid);
     const alg = parseAlgorithm(keyOptions.alg);
     const allowInsecureLoopback = keyOptions.allowInsecureLoopback === true;
     const jwksUri = parseJwksUri(keyOptions.jwksUri, allowInsecureLoopback).href;
@@ -283,6 +283,9 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       kid,
       refreshIfCurrent,
     );
+    if (kid === undefined) {
+      return keySnapshot(selectOnlyCompatibleKey(firstLoad.document, alg), firstLoad.freshness);
+    }
     const firstKey = mapGet(firstLoad.document.keys, kid);
     if (firstKey !== undefined) {
       const compatible = compatibleKeyOrUndefined(firstKey, alg);
@@ -409,7 +412,7 @@ function samePublicJwk(left: PublicJwk, right: PublicJwk): boolean {
 async function fetchJwks(
   options: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
   timeoutMs: number,
-  requestedKid: string,
+  requestedKid: string | undefined,
 ): Promise<JwksDocument> {
   const url = parseJwksUri(options.jwksUri, options.allowInsecureLoopback);
   const parsed = await fetchJsonObject({
@@ -427,7 +430,7 @@ async function fetchJwks(
 
 async function parseJwksDocument(
   value: { readonly [key: string]: unknown },
-  requestedKid: string,
+  requestedKid: string | undefined,
 ): Promise<JwksDocument> {
   const topLevelKeys = ObjectKeys(value);
   if (topLevelKeys.length !== 1 || topLevelKeys[0] !== "keys") {
@@ -454,6 +457,22 @@ async function parseJwksDocument(
     mapSet(output, parsed.kid, parsed);
   }
   return ObjectFreeze({ keys: output });
+}
+
+function selectOnlyCompatibleKey(document: JwksDocument, alg: string): PublicJwk {
+  let selected: PublicJwk | undefined;
+  let count = 0;
+  mapForEach(document.keys, (key) => {
+    const compatible = compatibleKeyOrUndefined(key, alg);
+    if (compatible === undefined) return;
+    selected = compatible;
+    count += 1;
+  });
+  if (count === 1 && selected !== undefined) return selected;
+  if (count === 0) {
+    throw new TypeError("JWKS does not contain a compatible signing key");
+  }
+  throw new TypeError("JWKS contains multiple compatible signing keys");
 }
 
 async function parsePublicJwk(value: unknown): Promise<PublicJwk> {
