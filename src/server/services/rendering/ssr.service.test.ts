@@ -445,6 +445,53 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.etag, undefined);
       });
 
+      it("forces no-cache and suppresses etags when a render sets custom headers", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+              headers: { "x-page-state": "request-derived" },
+            } as any),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: false }),
+        );
+
+        assertEquals(result.headers, { "x-page-state": "request-derived" });
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
+      });
+
+      for (const sensitiveHeader of ["cookie", "authorization"] as const) {
+        it(
+          `forces no-cache and suppresses etags for requests with ${sensitiveHeader}`,
+          async () => {
+            const service = new SSRService({
+              rendererProvider: createMockRendererProvider(),
+            });
+            const request = new Request("http://localhost/test-page", {
+              headers: { [sensitiveHeader]: "sensitive-value" },
+            });
+
+            const result = await service.renderPage(
+              makeCtx(),
+              makeRenderOptions({ request, useNoCache: false }),
+            );
+
+            assertEquals(result.cacheStrategy, "no-cache");
+            assertEquals(result.etag, undefined);
+          },
+        );
+      }
+
       it("requests buffered delivery when the response is cacheable", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({

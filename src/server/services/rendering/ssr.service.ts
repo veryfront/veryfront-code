@@ -234,6 +234,9 @@ export class SSRService implements SSRServiceLike {
   async renderPage(ctx: HandlerContext, options: SSRRenderOptions): Promise<SSRRenderResult> {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
+    const requestHasSensitiveState = request.headers.has("cookie") ||
+      request.headers.has("authorization");
+    const mustNotCache = useNoCache || requestHasSensitiveState;
 
     // Project source without an explicit host capability is not trusted to
     // execute in the server process. Dedicated single-project runtimes may
@@ -285,7 +288,7 @@ export class SSRService implements SSRServiceLike {
       // Bind the render session to this async context so modules fetched
       // during the render are attributed to THIS render, not whichever
       // concurrent session started first.
-      const delivery = useNoCache ? "stream" : "string";
+      const delivery = mustNotCache ? "stream" : "string";
       const result = await runInRenderSession(renderSessionId, () =>
         profilePhase(
           "ssr.render_page",
@@ -345,8 +348,10 @@ export class SSRService implements SSRServiceLike {
         ...(result.cookies ? { cookies: result.cookies } : {}),
       };
       const setsCookies = (responseMetadata.cookies?.length ?? 0) > 0;
-      const cacheStrategy = useNoCache || setsCookies ? "no-cache" : "short";
-      const etag = isStreaming || setsCookies
+      const setsCustomHeaders = Object.keys(responseMetadata.headers ?? {}).length > 0;
+      const responseMustNotCache = mustNotCache || setsCookies || setsCustomHeaders;
+      const cacheStrategy = responseMustNotCache ? "no-cache" : "short";
+      const etag = isStreaming || responseMustNotCache
         ? undefined
         : computeSSRETag(result.ssrHash, result.html);
 
