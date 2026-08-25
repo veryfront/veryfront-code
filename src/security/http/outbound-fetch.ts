@@ -28,6 +28,11 @@ export class OutboundRequestBlockedError extends Error {
 export interface GuardedOutboundFetchOptions {
   /** Additional operator-owned URL policy, applied to every redirect hop. */
   authorizeUrl?: (url: URL) => void | Promise<void>;
+  /**
+   * Permit internal destinations after the caller's URL policy has explicitly
+   * admitted them. Default host fetches keep internal egress denied.
+   */
+  allowInternalEgress?: boolean;
   /** Observe each redirect after its guarded destination request succeeds. */
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
 }
@@ -97,6 +102,7 @@ async function fetchWithHostTransport(
     onRedirect: options.onRedirect,
     options: {
       allowInternalEgress: allowInternalEgress ||
+        options.allowInternalEgress === true ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
       resolveHost: transport.resolveHost,
     },

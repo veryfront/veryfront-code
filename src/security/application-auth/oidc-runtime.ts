@@ -269,6 +269,7 @@ export function createOidcApplicationAuthRuntime(
         allowedAlgorithms: options.config.signingAlgorithms,
         now,
         claimNames: options.config.claims,
+        allowInsecureLoopback: runtime.allowInsecureLoopback,
       });
       sessionCookie = await createSessionCookie({
         secret: runtime.sessionSecret,
@@ -344,7 +345,7 @@ function parseCallbackParams(url: URL, issuer: string): CallbackParams {
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key)) throw new TypeError("OIDC callback contains an unsupported parameter");
   }
-  const state = readSingleParam(url, "state", true);
+  const state = parseRandomValue(readSingleParam(url, "state", true));
   const code = readSingleParam(url, "code", false);
   const error = readSingleParam(url, "error", false);
   const iss = readSingleParam(url, "iss", false);
@@ -413,6 +414,7 @@ async function exchangeCode(options: {
         authorizeUrl(url) {
           authorizeProviderEndpoint(url, options);
         },
+        allowInternalEgress: options.allowInsecureLoopback,
       },
     );
     if (!response.ok) {
@@ -465,7 +467,7 @@ async function readBoundedText(
   try {
     while (true) {
       if (signal.aborted) throw new DOMException("aborted", "AbortError");
-      const result = await reader.read();
+      const result = await readStreamChunk(reader, signal);
       if (result.done) break;
       total += result.value.byteLength;
       if (total > maxBytes) {
@@ -484,6 +486,26 @@ async function readBoundedText(
     offset += chunk.byteLength;
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(output);
+}
+
+function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    void reader.cancel();
+    return Promise.reject(new DOMException("aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      void reader.cancel();
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    reader.read().then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
 }
 
 function parseIdToken(response: JsonObject): string {

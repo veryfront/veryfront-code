@@ -80,6 +80,48 @@ describe("security/application-auth OIDC ID tokens", () => {
     assertEquals(identity.groupsComplete, true);
   });
 
+  it("threads explicit loopback JWKS allowance through ID-token verification", async () => {
+    const keys = await material();
+    const token = await signToken(keys.RS256, claims());
+    const loopbackJwksUri = "http://127.0.0.1:8787/jwks.json";
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+          () =>
+            verifyOidcIdToken({
+              token,
+              issuer: ISSUER,
+              clientId: CLIENT_ID,
+              nonce: NONCE,
+              jwksUri: loopbackJwksUri,
+              jwksCache: createJwksCache(),
+              now: () => NOW,
+            }),
+        ),
+      TypeError,
+      "verification",
+    );
+
+    const identity = await withMockFetch(
+      () => Promise.resolve(jsonResponse(jwks([keys.RS256.publicJwk]))),
+      () =>
+        verifyOidcIdToken({
+          token,
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          nonce: NONCE,
+          jwksUri: loopbackJwksUri,
+          jwksCache: createJwksCache(),
+          allowInsecureLoopback: true,
+          now: () => NOW,
+        }),
+    );
+
+    assertEquals(identity.subject, "user-123");
+  });
+
   it("verifies configured ES256 and PS256 algorithms", async () => {
     const keys = await material();
     for (const alg of ["ES256", "PS256"] as const) {

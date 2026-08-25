@@ -75,6 +75,7 @@ export interface VerifyOidcIdTokenOptions {
   readonly maxTokenAgeSeconds?: number;
   readonly now?: () => number;
   readonly claimNames?: ApplicationIdentityClaimNames;
+  readonly allowInsecureLoopback?: boolean;
   readonly timeoutMs?: number;
 }
 
@@ -103,6 +104,7 @@ export async function verifyOidcIdToken(
     await verifySignatureWithRefresh({
       jwksCache: options.jwksCache,
       jwksUri: options.jwksUri,
+      allowInsecureLoopback: options.allowInsecureLoopback === true,
       timeoutMs: options.timeoutMs,
       kid,
       alg,
@@ -286,6 +288,7 @@ function validateTyp(value: unknown): void {
 async function verifySignatureWithRefresh(options: {
   readonly jwksCache: JwksCache;
   readonly jwksUri: string;
+  readonly allowInsecureLoopback: boolean;
   readonly timeoutMs?: number;
   readonly kid: string;
   readonly alg: IdTokenAlgorithm;
@@ -296,6 +299,7 @@ async function verifySignatureWithRefresh(options: {
     jwksUri: options.jwksUri,
     kid: options.kid,
     alg: options.alg,
+    allowInsecureLoopback: options.allowInsecureLoopback,
     timeoutMs: options.timeoutMs,
   });
   if (await verifySignature(firstKey, options.alg, options.signingInput, options.signature)) {
@@ -306,6 +310,7 @@ async function verifySignatureWithRefresh(options: {
     kid: options.kid,
     alg: options.alg,
     forceRefresh: true,
+    allowInsecureLoopback: options.allowInsecureLoopback,
     timeoutMs: options.timeoutMs,
   });
   if (await verifySignature(refreshedKey, options.alg, options.signingInput, options.signature)) {

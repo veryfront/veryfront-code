@@ -47,6 +47,7 @@ export interface GetJwksKeyOptions {
   readonly kid: string;
   readonly alg: string;
   readonly forceRefresh?: boolean;
+  readonly allowInsecureLoopback?: boolean;
   readonly timeoutMs?: number;
 }
 
@@ -71,32 +72,33 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
   const entries = new Map<string, CacheEntry>();
 
   async function load(
-    jwksUri: string,
+    fetchOptions: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
     timeoutMs: number,
     forceRefresh: boolean,
   ): Promise<JwksDocument> {
+    const cacheKey = jwksCacheKey(fetchOptions);
     const currentTime = now();
-    const current = entries.get(jwksUri);
+    const current = entries.get(cacheKey);
     if (!forceRefresh && current?.value !== undefined && current.expiresAt > currentTime) {
-      entries.delete(jwksUri);
-      entries.set(jwksUri, current);
+      entries.delete(cacheKey);
+      entries.set(cacheKey, current);
       return current.value;
     }
     if (!forceRefresh && current?.pending !== undefined) {
       return await current.pending;
     }
 
-    const pending = fetchJwks(jwksUri, timeoutMs).then((value) => {
-      entries.set(jwksUri, { value, expiresAt: now() + ttlMs });
+    const pending = fetchJwks(fetchOptions, timeoutMs).then((value) => {
+      entries.set(cacheKey, { value, expiresAt: now() + ttlMs });
       evictIfNeeded(entries, maxEntries);
       return value;
     }).catch((error) => {
-      if (entries.get(jwksUri)?.pending === pending) {
-        entries.delete(jwksUri);
+      if (entries.get(cacheKey)?.pending === pending) {
+        entries.delete(cacheKey);
       }
       throw error;
     });
-    entries.set(jwksUri, { pending, expiresAt: currentTime + ttlMs });
+    entries.set(cacheKey, { pending, expiresAt: currentTime + ttlMs });
     evictIfNeeded(entries, maxEntries);
     return await pending;
   }
@@ -105,9 +107,11 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
     async getKey(keyOptions: GetJwksKeyOptions): Promise<PublicJwk> {
       const kid = parseKid(keyOptions.kid);
       const alg = parseAlgorithm(keyOptions.alg);
-      const jwksUri = parseJwksUri(keyOptions.jwksUri).href;
+      const allowInsecureLoopback = keyOptions.allowInsecureLoopback === true;
+      const jwksUri = parseJwksUri(keyOptions.jwksUri, allowInsecureLoopback).href;
+      const fetchOptions = { jwksUri, allowInsecureLoopback };
       const timeoutMs = keyOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-      const firstDocument = await load(jwksUri, timeoutMs, keyOptions.forceRefresh === true);
+      const firstDocument = await load(fetchOptions, timeoutMs, keyOptions.forceRefresh === true);
       const firstKey = firstDocument.keys.get(kid);
       if (firstKey !== undefined) {
         return compatibleKey(firstKey, alg);
@@ -115,7 +119,7 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
       if (keyOptions.forceRefresh === true) {
         throw new TypeError("JWKS does not contain the requested kid");
       }
-      const refreshed = await load(jwksUri, timeoutMs, true);
+      const refreshed = await load(fetchOptions, timeoutMs, true);
       const refreshedKey = refreshed.keys.get(kid);
       if (refreshedKey === undefined) {
         throw new TypeError("JWKS does not contain the requested kid");
@@ -125,15 +129,19 @@ export function createJwksCache(options: JwksCacheOptions = {}): JwksCache {
   });
 }
 
-async function fetchJwks(jwksUri: string, timeoutMs: number): Promise<JwksDocument> {
-  const url = parseJwksUri(jwksUri);
+async function fetchJwks(
+  options: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
+  timeoutMs: number,
+): Promise<JwksDocument> {
+  const url = parseJwksUri(options.jwksUri, options.allowInsecureLoopback);
   const parsed = await fetchJsonObject({
     url,
     maxBytes: MAX_JWKS_BYTES,
     timeoutMs,
+    allowInternalEgress: options.allowInsecureLoopback,
     kind: "JWKS",
     authorizeUrl(candidate) {
-      validateJwksUrl(candidate);
+      validateJwksUrl(candidate, options.allowInsecureLoopback);
     },
   });
   return await parseJwksDocument(parsed);
@@ -379,7 +387,7 @@ function importAlgorithmFor(
   };
 }
 
-function parseJwksUri(value: string): URL {
+function parseJwksUri(value: string, allowInsecureLoopback: boolean): URL {
   if (typeof value !== "string" || value.length === 0 || value.length > 2_048) {
     throw new TypeError("JWKS URI must be a bounded non-empty string");
   }
@@ -389,13 +397,22 @@ function parseJwksUri(value: string): URL {
   } catch {
     throw new TypeError("JWKS URI must be an absolute URL");
   }
-  validateJwksUrl(url);
+  validateJwksUrl(url, allowInsecureLoopback);
   return url;
 }
 
-function validateJwksUrl(url: URL): void {
+function validateJwksUrl(url: URL, allowInsecureLoopback: boolean): void {
   if (url.protocol !== "https:") {
-    throw new TypeError("JWKS URI must use HTTPS");
+    if (
+      url.protocol !== "http:" ||
+      allowInsecureLoopback !== true ||
+      !isExactLoopbackHostname(url.hostname)
+    ) {
+      if (url.protocol === "http:" && allowInsecureLoopback === true) {
+        throw new TypeError("JWKS URI may use HTTP only for exact loopback hosts");
+      }
+      throw new TypeError("JWKS URI must use HTTPS");
+    }
   }
   if (url.username.length > 0 || url.password.length > 0) {
     throw new TypeError("JWKS URI must not include URL credentials");
@@ -403,6 +420,17 @@ function validateJwksUrl(url: URL): void {
   if (url.hash.length > 0) {
     throw new TypeError("JWKS URI must not include a fragment");
   }
+}
+
+function isExactLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" ||
+    hostname === "[::1]";
+}
+
+function jwksCacheKey(
+  options: { readonly jwksUri: string; readonly allowInsecureLoopback: boolean },
+): string {
+  return `${options.allowInsecureLoopback ? "loopback-http" : "https-only"}\n${options.jwksUri}`;
 }
 
 function parseCacheTtlMs(value: number | undefined): number {

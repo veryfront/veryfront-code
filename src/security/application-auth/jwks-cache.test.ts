@@ -108,6 +108,61 @@ describe("security/application-auth JWKS cache", () => {
     assertEquals(cached.n, RSA_KEY.n);
   });
 
+  it("allows HTTP JWKS only for explicit loopback development and isolates that cache key", async () => {
+    const loopbackUri = "http://127.0.0.1:8787/jwks.json";
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+          () => createJwksCache().getKey({ jwksUri: loopbackUri, kid: "rsa-1", alg: "RS256" }),
+        ),
+      TypeError,
+      "HTTPS",
+    );
+
+    const cache = createJwksCache();
+    let calls = 0;
+    const allowed = await withMockFetch(
+      () => {
+        calls += 1;
+        return Promise.resolve(jsonResponse(jwks([RSA_KEY])));
+      },
+      async () => {
+        const key = await cache.getKey({
+          jwksUri: loopbackUri,
+          kid: "rsa-1",
+          alg: "RS256",
+          allowInsecureLoopback: true,
+        });
+        await assertRejects(
+          () => cache.getKey({ jwksUri: loopbackUri, kid: "rsa-1", alg: "RS256" }),
+          TypeError,
+          "HTTPS",
+        );
+        return key;
+      },
+    );
+
+    assertEquals(allowed.kid, "rsa-1");
+    assertEquals(calls, 1);
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
+          () =>
+            createJwksCache().getKey({
+              jwksUri: "http://issuer.example.com/jwks.json",
+              kid: "rsa-1",
+              alg: "RS256",
+              allowInsecureLoopback: true,
+            }),
+        ),
+      TypeError,
+      "loopback",
+    );
+  });
+
   it("rejects malformed JWKS documents and duplicate or missing key ids", async () => {
     for (
       const [body, message] of [

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -53,6 +54,19 @@ function createRuntime() {
 }
 
 function createRuntimeWith(values: Readonly<Record<string, string | undefined>>) {
+  return createRuntimeAt(NOW, values);
+}
+
+function createRuntimeAt(
+  currentTime: number,
+  values: Readonly<Record<string, string | undefined>> = {
+    APP_URL: APP_ORIGIN,
+    OIDC_ISSUER: ISSUER,
+    OIDC_CLIENT_ID: "client-id",
+    OIDC_CLIENT_SECRET: CLIENT_SECRET,
+    OIDC_SESSION_SECRET: SESSION_SECRET,
+  },
+) {
   return createOidcApplicationAuthRuntime({
     config: {
       issuerEnvVar: "OIDC_ISSUER",
@@ -62,7 +76,7 @@ function createRuntimeWith(values: Readonly<Record<string, string | undefined>>)
       scopes: ["openid"],
     },
     env: env(values),
-    now: () => NOW,
+    now: () => currentTime,
     randomBytes: fixedRandom(),
   });
 }
@@ -93,6 +107,7 @@ function encodeBase64Url(bytes: Uint8Array): string {
 
 async function createSignedIdToken(
   claims: Readonly<Record<string, unknown>>,
+  kid = "test-key",
 ): Promise<{ readonly token: string; readonly jwk: PublicJwk }> {
   const keyPair = await crypto.subtle.generateKey(
     {
@@ -105,7 +120,7 @@ async function createSignedIdToken(
     ["sign", "verify"],
   );
   const jwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
-  const header = encodeJsonSegment({ alg: "RS256", kid: "test-key" });
+  const header = encodeJsonSegment({ alg: "RS256", kid });
   const payload = encodeJsonSegment(claims);
   const signingInput = `${header}.${payload}`;
   const signature = await crypto.subtle.sign(
@@ -117,13 +132,104 @@ async function createSignedIdToken(
     token: `${signingInput}.${encodeBase64Url(new Uint8Array(signature))}`,
     jwk: {
       kty: "RSA",
-      kid: "test-key",
+      kid,
       alg: "RS256",
       use: "sig",
       n: String(jwk.n),
       e: String(jwk.e),
     },
   };
+}
+
+function oidcMetadata(overrides: Readonly<Record<string, unknown>> = {}): Response {
+  return Response.json({
+    issuer: ISSUER,
+    authorization_endpoint: `${ISSUER}/authorize`,
+    token_endpoint: `${ISSUER}/token`,
+    jwks_uri: `${ISSUER}/jwks`,
+    ...overrides,
+  });
+}
+
+async function startTransaction(runtime = createRuntime()): Promise<{
+  readonly runtime: ReturnType<typeof createRuntime>;
+  readonly state: string;
+  readonly nonce: string;
+  readonly cookie: string;
+}> {
+  const login = await withMockFetch(
+    () => Promise.resolve(oidcMetadata()),
+    () => runtime.handleAuthRoute(new Request(`${APP_ORIGIN}/_veryfront/auth/login`)),
+  );
+  assert(login);
+  const location = login.headers.get("Location");
+  assert(location);
+  const redirect = new URL(location);
+  const state = redirect.searchParams.get("state");
+  const nonce = redirect.searchParams.get("nonce");
+  assert(state);
+  assert(nonce);
+  return { runtime, state, nonce, cookie: transactionCookie(login, state) };
+}
+
+async function successfulCallback(
+  runtime: ReturnType<typeof createRuntime>,
+  state: string,
+  nonce: string,
+  cookie: string,
+  code = "ok",
+): Promise<Response> {
+  const signed = await createSignedIdToken({
+    iss: ISSUER,
+    sub: "subject-123",
+    aud: "client-id",
+    nonce,
+    iat: NOW,
+    exp: NOW + 300,
+  });
+  const response = await withMockFetch(
+    (input) => {
+      const url = String(input);
+      if (url.endsWith("/.well-known/openid-configuration")) return Promise.resolve(oidcMetadata());
+      if (url === `${ISSUER}/token`) {
+        return Promise.resolve(Response.json({ id_token: signed.token }));
+      }
+      if (url === `${ISSUER}/jwks`) {
+        return Promise.resolve(Response.json({ keys: [signed.jwk] }));
+      }
+      return Promise.reject(new Error("unexpected OIDC fetch"));
+    },
+    () =>
+      runtime.handleAuthRoute(
+        new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=${code}`, {
+          headers: { cookie },
+        }),
+      ),
+  );
+  assert(response);
+  return response;
+}
+
+async function assertGenericFailure(response: Response, forbidden: readonly string[] = []) {
+  const body = await response.text();
+  assertEquals(response.status >= 400, true);
+  for (const value of forbidden) {
+    assertEquals(body.includes(value), false);
+    assertEquals((response.headers.get("Location") ?? "").includes(value), false);
+    assertEquals((response.headers.get("Set-Cookie") ?? "").includes(value), false);
+  }
+}
+
+function loopbackRequest(path: string): Request {
+  const request = new Request(`http://127.0.0.1:8787${path}`, {
+    headers: { host: "127.0.0.1:8787" },
+  });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 describe("security/application-auth OIDC runtime", () => {
@@ -249,6 +355,568 @@ describe("security/application-auth OIDC runtime", () => {
     }
   });
 
+  it("fails callback query and transaction boundaries closed without reflecting secrets", async () => {
+    const { runtime, state, cookie } = await startTransaction();
+    const otherState = "A".repeat(43);
+    const longValue = "x".repeat(2_049);
+    const longQuery = `state=${state}&code=${"x".repeat(4_100)}`;
+    const boundaryCases = [
+      { query: "code=sensitive-code", clears: false },
+      { query: "state=bad&code=sensitive-code", clears: false },
+      { query: `state=${state}&code=${longValue}`, clears: true },
+      { query: longQuery, clears: true },
+      { query: `state=${state}&error=${longValue}`, clears: true },
+      { query: `state=${state}&code=ok&error_description=${longValue}`, clears: true },
+      { query: `state=${state}&state=${state}&code=ok`, clears: false },
+      { query: `state=${state}&code=ok&code=again`, clears: true },
+      { query: `state=${state}&error=access_denied&error=server_error`, clears: true },
+      { query: `state=${state}&code=ok&iss=${encodeURIComponent(ISSUER)}&iss=x`, clears: true },
+      {
+        query: `state=${state}&error=access_denied&error_description=${
+          encodeURIComponent(CLIENT_SECRET)
+        }`,
+        clears: true,
+      },
+      { query: `state=${state}&code=ok&error=access_denied`, clears: true },
+      {
+        query: `state=${state}&code=ok&iss=${encodeURIComponent("https://wrong.example.test")}`,
+        clears: true,
+      },
+    ] as const;
+
+    for (const boundaryCase of boundaryCases) {
+      const response = await runtime.handleAuthRoute(
+        new Request(`${APP_ORIGIN}/_veryfront/auth/callback?${boundaryCase.query}`, {
+          headers: { cookie },
+        }),
+      );
+      assert(response);
+      await assertGenericFailure(response, ["sensitive-code", CLIENT_SECRET, longValue]);
+      assertEquals(response.status, 400);
+      assertEquals(
+        (response.headers.get("Set-Cookie") ?? "").includes(`__Host-vf_oidc_tx_${state}=;`),
+        boundaryCase.clears,
+      );
+      assertEquals(
+        (response.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+        false,
+      );
+    }
+
+    const missing = await runtime.handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${otherState}&code=ok`, {
+        headers: { cookie },
+      }),
+    );
+    assert(missing);
+    assertEquals(missing.status, 400);
+    assertEquals(
+      (missing.headers.get("Set-Cookie") ?? "").includes(`__Host-vf_oidc_tx_${otherState}=;`),
+      true,
+    );
+    assertEquals((missing.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="), false);
+
+    const expired = await createRuntimeAt(NOW + 601).handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=ok`, {
+        headers: { cookie },
+      }),
+    );
+    assert(expired);
+    assertEquals(expired.status, 400);
+    assertEquals(
+      (expired.headers.get("Set-Cookie") ?? "").includes(`__Host-vf_oidc_tx_${state}=;`),
+      true,
+    );
+
+    const drifted = createRuntimeWith({
+      APP_URL: APP_ORIGIN,
+      OIDC_ISSUER: ISSUER,
+      OIDC_CLIENT_ID: "different-client",
+      OIDC_CLIENT_SECRET: CLIENT_SECRET,
+      OIDC_SESSION_SECRET: SESSION_SECRET,
+    });
+    const configDrift = await drifted.handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=ok`, {
+        headers: { cookie },
+      }),
+    );
+    assert(configDrift);
+    assertEquals(configDrift.status, 400);
+    assertEquals(
+      (configDrift.headers.get("Set-Cookie") ?? "").includes(`__Host-vf_oidc_tx_${state}=;`),
+      true,
+    );
+  });
+
+  it("fails token response boundaries closed without creating a partial session", async () => {
+    const wrongNonce = await createSignedIdToken({
+      iss: ISSUER,
+      sub: "subject-123",
+      aud: "client-id",
+      nonce: "A".repeat(43),
+      iat: NOW,
+      exp: NOW + 300,
+    });
+    const idTokenCases: readonly {
+      readonly name: string;
+      readonly tokenResponse: Response;
+      readonly jwks?: Response;
+    }[] = [
+      { name: "redirect", tokenResponse: new Response(null, { status: 302 }) },
+      {
+        name: "non-json",
+        tokenResponse: new Response("token", { headers: { "content-type": "text/plain" } }),
+      },
+      {
+        name: "malformed-json",
+        tokenResponse: new Response("{", { headers: { "content-type": "application/json" } }),
+      },
+      {
+        name: "duplicate-key",
+        tokenResponse: new Response('{"id_token":"a","id_token":"b"}', {
+          headers: { "content-type": "application/json" },
+        }),
+      },
+      {
+        name: "oversized-body",
+        tokenResponse: new Response(`{"id_token":"${"x".repeat(65 * 1024)}"}`, {
+          headers: { "content-type": "application/json" },
+        }),
+      },
+      {
+        name: "non-2xx",
+        tokenResponse: Response.json({ error: "invalid_grant" }, { status: 400 }),
+      },
+      { name: "missing-id-token", tokenResponse: Response.json({ access_token: "ignored" }) },
+      {
+        name: "oversized-id-token",
+        tokenResponse: Response.json({ id_token: "x".repeat(16_385) }),
+      },
+      { name: "non-string-id-token", tokenResponse: Response.json({ id_token: 123 }) },
+      {
+        name: "verifier-failure",
+        tokenResponse: Response.json({ id_token: wrongNonce.token }),
+        jwks: Response.json({ keys: [wrongNonce.jwk] }),
+      },
+    ];
+
+    for (const testCase of idTokenCases) {
+      const { runtime, state, cookie } = await startTransaction();
+      let tokenCalls = 0;
+      const response = await withMockFetch(
+        (input) => {
+          const url = String(input);
+          if (url.endsWith("/.well-known/openid-configuration")) {
+            return Promise.resolve(oidcMetadata());
+          }
+          if (url === `${ISSUER}/token`) {
+            tokenCalls += 1;
+            return Promise.resolve(testCase.tokenResponse.clone());
+          }
+          if (url === `${ISSUER}/jwks` && testCase.jwks !== undefined) {
+            return Promise.resolve(testCase.jwks.clone());
+          }
+          return Promise.reject(new Error(`unexpected OIDC fetch in ${testCase.name}`));
+        },
+        () =>
+          runtime.handleAuthRoute(
+            new Request(
+              `${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=sensitive-code`,
+              {
+                headers: { cookie },
+              },
+            ),
+          ),
+      );
+      assert(response);
+      assertEquals(tokenCalls, 1);
+      assertEquals(response.status, 400);
+      await assertGenericFailure(response, ["sensitive-code", "invalid_grant", CLIENT_SECRET]);
+      const setCookie = response.headers.get("Set-Cookie") ?? "";
+      assertEquals(setCookie.includes(`__Host-vf_oidc_tx_${state}=;`), true);
+      assertEquals(setCookie.includes("__Host-vf_session="), false);
+    }
+
+    const { runtime, state, cookie } = await startTransaction();
+    let cancelled = false;
+    let stalledTimer: number | undefined;
+    let resolveStalledPull: (() => void) | undefined;
+    const stalledBody = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>((resolve) => {
+          resolveStalledPull = resolve;
+          stalledTimer = setTimeout(resolve, 5_200);
+        });
+      },
+      cancel() {
+        cancelled = true;
+        if (stalledTimer !== undefined) clearTimeout(stalledTimer);
+        resolveStalledPull?.();
+      },
+    });
+    const started = performance.now();
+    const timeoutResponse = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url.endsWith("/.well-known/openid-configuration")) {
+          return Promise.resolve(oidcMetadata());
+        }
+        if (url === `${ISSUER}/token`) {
+          return Promise.resolve(
+            new Response(stalledBody, { headers: { "content-type": "application/json" } }),
+          );
+        }
+        return Promise.reject(new Error("unexpected timeout fetch"));
+      },
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=sensitive-code`, {
+            headers: { cookie },
+          }),
+        ),
+    );
+    assert(timeoutResponse);
+    assertEquals(timeoutResponse.status, 400);
+    assertEquals(performance.now() - started < 6_500, true);
+    assertEquals(cancelled, true);
+    assertEquals(
+      (timeoutResponse.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
+  });
+
+  it("proves callback replay is local-cookie bounded and fails closed after clearing", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+    const first = await successfulCallback(runtime, state, nonce, cookie, "one-time-code");
+    assertEquals(first.status, 303);
+    assertEquals((first.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="), true);
+
+    const noTransaction = await runtime.handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=one-time-code`),
+    );
+    assert(noTransaction);
+    assertEquals(noTransaction.status, 400);
+    assertEquals(
+      (noTransaction.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
+
+    let tokenCalls = 0;
+    const replay = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url.endsWith("/.well-known/openid-configuration")) {
+          return Promise.resolve(oidcMetadata());
+        }
+        if (url === `${ISSUER}/token`) {
+          tokenCalls += 1;
+          return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+        }
+        return Promise.reject(new Error("unexpected replay fetch"));
+      },
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=one-time-code`, {
+            headers: { cookie },
+          }),
+        ),
+    );
+    assert(replay);
+    assertEquals(tokenCalls, 1);
+    assertEquals(replay.status, 400);
+    assertEquals(
+      (replay.headers.get("Set-Cookie") ?? "").includes(`__Host-vf_oidc_tx_${state}=;`),
+      true,
+    );
+    assertEquals((replay.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="), false);
+  });
+
+  it("enforces session cookie boundaries and navigation-specific admission responses", async () => {
+    const { runtime, state, nonce, cookie } = await startTransaction();
+    const callback = await successfulCallback(runtime, state, nonce, cookie);
+    const session = sessionCookie(callback);
+
+    const htmlGet = await runtime.admitRequest(
+      new Request(`${APP_ORIGIN}/dashboard?x=1`, { headers: { accept: "text/html" } }),
+    );
+    assert(htmlGet instanceof Response);
+    assertEquals(htmlGet.status, 302);
+    assertEquals(
+      htmlGet.headers.get("Location"),
+      "/_veryfront/auth/login?returnTo=%2Fdashboard%3Fx%3D1",
+    );
+
+    const htmlHead = await runtime.admitRequest(
+      new Request(`${APP_ORIGIN}/dashboard`, { method: "HEAD", headers: { accept: "text/html" } }),
+    );
+    assert(htmlHead instanceof Response);
+    assertEquals(htmlHead.status, 302);
+
+    const api = await runtime.admitRequest(new Request(`${APP_ORIGIN}/api/data`));
+    assert(api instanceof Response);
+    assertEquals(api.status, 401);
+
+    const invalidCookies = [
+      `${session}x`,
+      `${session}; ${session}`,
+      "__Host-vf_session=not-a-cookie",
+    ];
+    for (const invalidCookie of invalidCookies) {
+      const denied = await runtime.admitRequest(
+        new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: invalidCookie } }),
+      );
+      assert(denied instanceof Response);
+      assertEquals(denied.status, 401);
+      assertEquals(
+        (denied.headers.get("Set-Cookie") ?? "").startsWith("__Host-vf_session=;"),
+        true,
+      );
+    }
+
+    const expired = await createRuntimeAt(NOW + 28_801).admitRequest(
+      new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }),
+    );
+    assert(expired instanceof Response);
+    assertEquals(expired.status, 401);
+
+    const rotated = await createRuntimeWith({
+      APP_URL: APP_ORIGIN,
+      OIDC_ISSUER: ISSUER,
+      OIDC_CLIENT_ID: "client-id",
+      OIDC_CLIENT_SECRET: CLIENT_SECRET,
+      OIDC_SESSION_SECRET: "x".repeat(32),
+    }).admitRequest(new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }));
+    assert(rotated instanceof Response);
+    assertEquals(rotated.status, 401);
+
+    const mismatchedClaims = await createRuntimeWith({
+      APP_URL: APP_ORIGIN,
+      OIDC_ISSUER: "https://other-issuer.example.test",
+      OIDC_CLIENT_ID: "client-id",
+      OIDC_CLIENT_SECRET: CLIENT_SECRET,
+      OIDC_SESSION_SECRET: SESSION_SECRET,
+    }).admitRequest(new Request(`${APP_ORIGIN}/api/data`, { headers: { cookie: session } }));
+    assert(mismatchedClaims instanceof Response);
+    assertEquals(mismatchedClaims.status, 401);
+
+    const hugeClaims = await createSignedIdToken({
+      iss: ISSUER,
+      sub: "subject-123",
+      aud: "client-id",
+      nonce,
+      iat: NOW,
+      exp: NOW + 300,
+      groups: Array.from({ length: 500 }, (_, index) => `group-${index}`),
+    });
+    const hugeSession = await withMockFetch(
+      (input) => {
+        const url = String(input);
+        if (url.endsWith("/.well-known/openid-configuration")) {
+          return Promise.resolve(oidcMetadata());
+        }
+        if (url === `${ISSUER}/token`) {
+          return Promise.resolve(Response.json({ id_token: hugeClaims.token }));
+        }
+        if (url === `${ISSUER}/jwks`) {
+          return Promise.resolve(Response.json({ keys: [hugeClaims.jwk] }));
+        }
+        return Promise.reject(new Error("unexpected huge-claims fetch"));
+      },
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=huge`, {
+            headers: { cookie },
+          }),
+        ),
+    );
+    assert(hugeSession);
+    assertEquals(hugeSession.status, 400);
+    assertEquals(
+      (hugeSession.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
+  });
+
+  it("bounds environment and origin derivation while supporting independent parallel flows", async () => {
+    for (
+      const values of [
+        {
+          APP_URL: APP_ORIGIN,
+          OIDC_ISSUER: ISSUER,
+          OIDC_CLIENT_ID: "client-id",
+          OIDC_CLIENT_SECRET: CLIENT_SECRET,
+        },
+        {
+          APP_URL: APP_ORIGIN,
+          OIDC_ISSUER: ISSUER,
+          OIDC_CLIENT_ID: "client-id",
+          OIDC_CLIENT_SECRET: CLIENT_SECRET,
+          OIDC_SESSION_SECRET: "s".repeat(4_097),
+        },
+        {
+          APP_URL: "http://app.example.test",
+          OIDC_ISSUER: ISSUER,
+          OIDC_CLIENT_ID: "client-id",
+          OIDC_CLIENT_SECRET: CLIENT_SECRET,
+          OIDC_SESSION_SECRET: SESSION_SECRET,
+        },
+      ]
+    ) {
+      const response = await createRuntimeWith(values).handleAuthRoute(
+        new Request(`${APP_ORIGIN}/_veryfront/auth/login`),
+      );
+      assert(response);
+      assertEquals(response.status, 500);
+      await assertGenericFailure(response, [SESSION_SECRET, CLIENT_SECRET]);
+    }
+
+    const crossOrigin = await createRuntime().handleAuthRoute(
+      new Request(`https://attacker.example.test/_veryfront/auth/login`),
+    );
+    assert(crossOrigin);
+    assertEquals(crossOrigin.status, 500);
+    await assertGenericFailure(crossOrigin, ["attacker", CLIENT_SECRET]);
+
+    const noAppUrlRemote = await createRuntimeWith({
+      OIDC_ISSUER: ISSUER,
+      OIDC_CLIENT_ID: "client-id",
+      OIDC_CLIENT_SECRET: CLIENT_SECRET,
+      OIDC_SESSION_SECRET: SESSION_SECRET,
+    }).handleAuthRoute(new Request(`http://127.0.0.1:8787/_veryfront/auth/login`));
+    assert(noAppUrlRemote);
+    assertEquals(noAppUrlRemote.status, 500);
+
+    const loopbackIssuer = "http://127.0.0.1:8788";
+    const loopbackRuntime = createRuntimeWith({
+      OIDC_ISSUER: loopbackIssuer,
+      OIDC_CLIENT_ID: "client-id",
+      OIDC_CLIENT_SECRET: CLIENT_SECRET,
+      OIDC_SESSION_SECRET: SESSION_SECRET,
+    });
+    const loopbackLogin = await withMockFetch(
+      (input) => {
+        assertEquals(String(input), `${loopbackIssuer}/.well-known/openid-configuration`);
+        return Promise.resolve(
+          oidcMetadata({
+            issuer: loopbackIssuer,
+            authorization_endpoint: `${loopbackIssuer}/authorize`,
+            token_endpoint: `${loopbackIssuer}/token`,
+            jwks_uri: `${loopbackIssuer}/jwks`,
+          }),
+        );
+      },
+      () => loopbackRuntime.handleAuthRoute(loopbackRequest("/_veryfront/auth/login")),
+    );
+    assert(loopbackLogin);
+    assertEquals(loopbackLogin.status, 302);
+    const loopbackRedirect = new URL(loopbackLogin.headers.get("Location") ?? "");
+    assertEquals(
+      loopbackRedirect.searchParams.get("redirect_uri"),
+      "http://127.0.0.1:8787/_veryfront/auth/callback",
+    );
+
+    for (const returnTo of ["https://attacker.example.test/", "//attacker.example.test/"]) {
+      const unsafe = await createRuntime().handleAuthRoute(
+        new Request(`${APP_ORIGIN}/_veryfront/auth/login?returnTo=${encodeURIComponent(returnTo)}`),
+      );
+      assert(unsafe);
+      assertEquals(unsafe.status, 400);
+      await assertGenericFailure(unsafe, ["attacker"]);
+    }
+
+    const postLogin = await createRuntime().handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/login`, { method: "POST" }),
+    );
+    assert(postLogin);
+    assertEquals(postLogin.status, 405);
+    assertEquals(postLogin.headers.get("Allow"), "GET");
+    const postCallback = await createRuntime().handleAuthRoute(
+      new Request(`${APP_ORIGIN}/_veryfront/auth/callback`, { method: "POST" }),
+    );
+    assert(postCallback);
+    assertEquals(postCallback.status, 405);
+    assertEquals(postCallback.headers.get("Allow"), "GET");
+
+    const parallelRuntime = createRuntime();
+    const first = await startTransaction(parallelRuntime);
+    const second = await startTransaction(parallelRuntime);
+    assertEquals(first.state === second.state, false);
+    const firstToken = await createSignedIdToken(
+      {
+        iss: ISSUER,
+        sub: "first-subject",
+        aud: "client-id",
+        nonce: first.nonce,
+        iat: NOW,
+        exp: NOW + 300,
+      },
+      "first-key",
+    );
+    const secondToken = await createSignedIdToken(
+      {
+        iss: ISSUER,
+        sub: "second-subject",
+        aud: "client-id",
+        nonce: second.nonce,
+        iat: NOW,
+        exp: NOW + 300,
+      },
+      "second-key",
+    );
+    const tokenByCode = new Map([
+      ["first", firstToken],
+      ["second", secondToken],
+    ]);
+    async function finishParallel(
+      flow: typeof first,
+      code: "first" | "second",
+    ): Promise<Response> {
+      const response = await withMockFetch(
+        (input, init) => {
+          const url = String(input);
+          if (url.endsWith("/.well-known/openid-configuration")) {
+            return Promise.resolve(oidcMetadata());
+          }
+          if (url === `${ISSUER}/token`) {
+            assert(init?.body instanceof URLSearchParams);
+            const body = init.body;
+            const signed = tokenByCode.get(body.get("code") ?? "");
+            assert(signed);
+            return Promise.resolve(Response.json({ id_token: signed.token }));
+          }
+          if (url === `${ISSUER}/jwks`) {
+            return Promise.resolve(Response.json({ keys: [firstToken.jwk, secondToken.jwk] }));
+          }
+          return Promise.reject(new Error("unexpected parallel fetch"));
+        },
+        () =>
+          parallelRuntime.handleAuthRoute(
+            new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${flow.state}&code=${code}`, {
+              headers: { cookie: flow.cookie },
+            }),
+          ),
+      );
+      assert(response);
+      return response;
+    }
+    const secondCallback = await finishParallel(second, "second");
+    const firstCallback = await finishParallel(first, "first");
+    assertEquals(secondCallback.status, 303);
+    assertEquals(firstCallback.status, 303);
+    const secondAdmission = await parallelRuntime.admitRequest(
+      new Request(`${APP_ORIGIN}/dashboard`, {
+        headers: { cookie: sessionCookie(secondCallback) },
+      }),
+    );
+    const firstAdmission = await parallelRuntime.admitRequest(
+      new Request(`${APP_ORIGIN}/dashboard`, { headers: { cookie: sessionCookie(firstCallback) } }),
+    );
+    assert(!(secondAdmission instanceof Response));
+    assert(!(firstAdmission instanceof Response));
+    assertEquals(secondAdmission.subject, "second-subject");
+    assertEquals(firstAdmission.subject, "first-subject");
+  });
+
   it("completes login on another runtime instance and admits the session without sticky routing", async () => {
     const runtimeA = createRuntime();
     const runtimeB = createRuntime();
@@ -356,24 +1024,44 @@ describe("security/application-auth OIDC runtime", () => {
   it("requires POST and same-origin Origin for logout while clearing only the session cookie", async () => {
     const runtime = createRuntime();
 
-    const get = await runtime.handleAuthRoute(new Request(`${APP_ORIGIN}/_veryfront/auth/logout`));
-    assert(get);
-    assertEquals(get.status, 405);
-    assertEquals(get.headers.get("Allow"), "POST");
+    for (const method of ["GET", "HEAD", "PUT"]) {
+      const deniedMethod = await runtime.handleAuthRoute(
+        new Request(`${APP_ORIGIN}/_veryfront/auth/logout`, { method }),
+      );
+      assert(deniedMethod);
+      assertEquals(deniedMethod.status, 405);
+      assertEquals(deniedMethod.headers.get("Allow"), "POST");
+    }
 
-    for (const headers of [undefined, { origin: "https://attacker.example.test" }]) {
+    const combinedOrigin = new Headers();
+    combinedOrigin.append("Origin", APP_ORIGIN);
+    combinedOrigin.append("Origin", "https://attacker.example.test");
+
+    for (
+      const headers of [
+        undefined,
+        { origin: "not a url" },
+        { origin: "https://attacker.example.test" },
+        combinedOrigin,
+      ]
+    ) {
       const denied = await runtime.handleAuthRoute(
         new Request(`${APP_ORIGIN}/_veryfront/auth/logout`, { method: "POST", headers }),
       );
       assert(denied);
       assertEquals(denied.status, 403);
+      await assertGenericFailure(denied, ["attacker", CLIENT_SECRET]);
     }
 
-    const response = await runtime.handleAuthRoute(
-      new Request(`${APP_ORIGIN}/_veryfront/auth/logout`, {
-        method: "POST",
-        headers: { origin: APP_ORIGIN },
-      }),
+    const response = await withMockFetch(
+      () => Promise.reject(new Error("logout must not call the provider")),
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/logout`, {
+            method: "POST",
+            headers: { origin: APP_ORIGIN, cookie: "__Host-vf_session=old" },
+          }),
+        ),
     );
 
     assert(response);

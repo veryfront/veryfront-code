@@ -63,6 +63,7 @@ export async function fetchOidcMetadata(
     url: discoveryUrl,
     maxBytes: MAX_METADATA_BYTES,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    allowInternalEgress: issuer.allowHttpIssuerOrigin,
     authorizeUrl(url) {
       validateFetchUrl(url, issuer, trustedOrigins);
     },
@@ -321,6 +322,7 @@ export interface FetchJsonObjectOptions {
   readonly url: URL;
   readonly maxBytes: number;
   readonly timeoutMs: number;
+  readonly allowInternalEgress?: boolean;
   readonly authorizeUrl: (url: URL) => void;
   readonly kind: string;
 }
@@ -339,6 +341,7 @@ export async function fetchJsonObject(options: FetchJsonObjectOptions): Promise<
       },
       {
         authorizeUrl: options.authorizeUrl,
+        allowInternalEgress: options.allowInternalEgress === true,
       },
     );
     if (response.status >= 300 && response.status < 400) {
