@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     root: ".",
     dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
   });
-  let baselineErrors: string[];
+  let baselineErrors: readonly string[];
   try {
     baselineErrors = compareSemanticDispositionBaseline(
       TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
