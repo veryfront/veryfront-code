@@ -9,7 +9,7 @@ import { clearConfigCache } from "#veryfront/config";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
-    projectDir: "/tmp/test-project",
+    projectDir: "/<PROJECT_DIR>",
     adapter: createMockAdapter(),
     securityConfig: null,
     ...overrides,
