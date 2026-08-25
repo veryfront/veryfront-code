@@ -9,6 +9,11 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+
+/** Repeated across the config-load classification tests below. */
+const CONFIG_FILE_NAME = "veryfront.config.js";
+const DEPENDENCY_MISSING_SLUG = "dependency-missing";
+const CONFIG_PARSE_ERROR_SLUG = "config-parse-error";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __getHostedConfigFlightStateForTests,
@@ -741,216 +746,167 @@ export default config as const;
         }
       });
 
-      it("classifies an uninstalled config dependency as a missing dependency", async () => {
-        // Field report: after a branch switch changed dependencies, `veryfront
-        // dev` reported
-        //
-        //   ✗ [config-parse-error] Failed to parse configuration
-        //     Suggestion: Ensure your configuration file contains valid
-        //                 JavaScript or TypeScript
-        //
-        // for a config file whose syntax was fine. The fix was `npm install`.
-        // The classification, suggestion, and docs link all pointed at file
-        // validity, sending the reader to inspect a file that was never wrong.
+      // veryfront-issue-inbox#787. A config whose imports do not resolve was
+      // reported as `config-parse-error` with "Ensure your configuration file
+      // contains valid JavaScript or TypeScript", for a file whose syntax was
+      // fine -- the fix was `npm install`. The classification, suggestion, and
+      // docs link all pointed at file validity.
+      //
+      // What separates the two is the shape of the specifier the resolver
+      // names, not the error code: every runtime reports a missing relative
+      // *file* through the same phrasing and the same ERR_MODULE_NOT_FOUND.
+      // Each case below is one runtime's real wording, so a phrasing change in
+      // any of them fails here rather than silently reverting the reader to the
+      // syntax advice.
+      async function loadFailure(prefix: string, source: string): Promise<VeryfrontError> {
         const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
-          // an uninstalled first-party extension is resolved through the contract
-          // registry, which raises its own `missing-extension` error before the
-          // import is ever attempted. An ordinary third-party package is what
-          // reaches the module resolver, which is the path under test.
-          const source = 'import "some-uninstalled-telemetry-sdk";\n' +
-            "export default {};\n";
-
+        return await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
+          return await assertRejects(
             () => getConfig(projectDir, adapter),
             VeryfrontError,
           ) as VeryfrontError;
+        }, { prefix });
+      }
 
-          assertEquals(error.slug, "dependency-missing");
-          assert(
-            error.message.includes("some-uninstalled-telemetry-sdk"),
-            `error must name the unresolved package, got: ${error.message}`,
-          );
-          assert(
-            error.message.includes("veryfront.config.js"),
-            `error must still name the config file, got: ${error.message}`,
-          );
-          assert(
-            !/valid JavaScript or TypeScript/i.test(
-              `${error.message} ${error.suggestion ?? ""}`,
-            ),
-            "a missing dependency must not advise checking the file's syntax",
-          );
-        }, { prefix: "vf-config-missing-dep-" });
+      it("names the uninstalled package and drops the syntax advice", async () => {
+        // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
+        // an uninstalled first-party extension is resolved through the contract
+        // registry, which raises its own `missing-extension` error before the
+        // import is attempted. An ordinary third-party package is what reaches
+        // the module resolver, which is the path under test.
+        const error = await loadFailure(
+          "vf-config-missing-dep-",
+          'import "some-uninstalled-telemetry-sdk";\nexport default {};\n',
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.includes("some-uninstalled-telemetry-sdk"),
+          `error must name the unresolved package, got: ${error.message}`,
+        );
+        assert(
+          error.message.includes(CONFIG_FILE_NAME),
+          `error must still name the config file, got: ${error.message}`,
+        );
+        assert(
+          !/valid JavaScript or TypeScript/i.test(
+            `${error.message} ${error.suggestion ?? ""}`,
+          ),
+          "a missing dependency must not advise checking the file's syntax",
+        );
       });
 
-      it("classifies Deno's npm-referrer wording as a missing dependency", async () => {
-        // The runtimes disagree on wording for one failure. Node says "Cannot
-        // find package 'x' imported from y"; Deno says "Import \"x\" not a
-        // dependency", and "Could not find package 'x' from referrer 'y'" when
-        // the importer resolves out of the npm cache. All are the same problem
-        // with the same fix, so all must reach the same slug.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source =
-            `throw new Error("Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.");\n`;
+      it("reports the package rather than the subpath that failed to resolve", async () => {
+        // The remedy is installing `pkg`, not `pkg/deep/path`, and the subpath
+        // is the only part of a bare specifier carrying arbitrary author text,
+        // so it must not reach the message or the logged context.
+        const error = await loadFailure(
+          "vf-config-subpath-",
+          `throw new Error("Cannot find module 'pkg/token=SUPERSECRET123'");\n`,
+        );
 
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.includes('"pkg"') && !error.message.includes("SUPERSECRET123"),
+          `error must name the package without its subpath, got: ${error.message}`,
+        );
+      });
 
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
+      it("bounds an oversized specifier before it reaches the message", async () => {
+        const error = await loadFailure(
+          "vf-config-oversized-",
+          `throw new Error("Cannot find module '${"a".repeat(400)}'");\n`,
+        );
 
-          assertEquals(error.slug, "dependency-missing");
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.length < 320,
+          `error must bound the specifier, got ${error.message.length} characters`,
+        );
+      });
+
+      // One failure, four spellings. Node names the importer with "imported
+      // from", Bun with "from '<path>'" and sometimes a `ResolveMessage:`
+      // prefix, and Deno has two forms of its own.
+      const missingPackageWordings: ReadonlyArray<[string, string, string]> = [
+        [
+          "Deno's npm-referrer form",
+          "vf-config-referrer-",
+          `Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.`,
+        ],
+        [
+          "Bun's from-importer form",
+          "vf-config-bun-",
+          `Cannot find package 'left-pad' from '/app/veryfront.config.mjs'`,
+        ],
+        [
+          "Bun's ResolveMessage prefix",
+          "vf-config-bun-resolve-",
+          `ResolveMessage: Cannot find package 'left-pad' from '/app/veryfront.config.mjs'`,
+        ],
+        [
+          "Node's imported-from form",
+          "vf-config-node-",
+          `Cannot find package 'left-pad' imported from /app/veryfront.config.ts`,
+        ],
+      ];
+
+      for (const [label, prefix, message] of missingPackageWordings) {
+        it(`classifies ${label} as a missing dependency`, async () => {
+          const error = await loadFailure(
+            prefix,
+            `throw new Error(${JSON.stringify(message)});\n`,
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
           assert(
             error.message.includes("left-pad"),
             `error must name the unresolved package, got: ${error.message}`,
           );
-        }, { prefix: "vf-config-referrer-" });
-      });
+        });
+      }
 
-      it("classifies Bun's resolver wording as a missing dependency", async () => {
-        // A third phrasing for one failure: Bun says "Cannot find package 'x'
-        // from '<importer>'", where Node says "imported from <importer>". The
-        // importer suffix is what differs, so matching only Node's spelling
-        // left every Bun user on the syntax advice this issue is about.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source =
-            `throw new Error("Cannot find package 'left-pad' from '/app/veryfront.config.mjs'");\n`;
+      // Each of these reaches the classifier through a matched resolver
+      // phrasing and must still come out as a parse error, because installing
+      // a package would not help any of these readers.
+      const notInstallable: ReadonlyArray<[string, string, string]> = [
+        [
+          "a missing relative import",
+          "vf-config-missing-file-",
+          'import "./not-written-yet.js";\nexport default {};\n',
+        ],
+        [
+          "a missing relative file under Bun's from-importer form",
+          "vf-config-bun-relative-",
+          `throw new Error("Cannot find module './missing.js' from '/app/veryfront.config.mjs'");\n`,
+        ],
+        [
+          "a Windows UNC path",
+          "vf-config-windows-",
+          `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`,
+        ],
+        [
+          "the project-module alias",
+          "vf-config-alias-",
+          'import "@/lib/config";\nexport default {};\n',
+        ],
+        [
+          "an ordinary error that merely quotes a resolver phrase",
+          "vf-config-quoted-",
+          `throw new Error('Setup failed: Module not found "db"');\n`,
+        ],
+      ];
 
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
+      for (const [label, prefix, source] of notInstallable) {
+        it(`does not blame ${label} on an uninstalled package`, async () => {
+          const error = await loadFailure(prefix, source);
 
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "dependency-missing");
-          assert(
-            error.message.includes("left-pad"),
-            `error must name the unresolved package, got: ${error.message}`,
-          );
-        }, { prefix: "vf-config-bun-" });
-      });
-
-      it("does not blame a missing relative file on an uninstalled package under Bun", async () => {
-        // Bun uses the same `from '<importer>'` suffix for a missing relative
-        // file, so widening the pattern for packages must not widen it for
-        // files: the specifier shape is still what decides.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source =
-            `throw new Error("Cannot find module './missing.js' from '/app/veryfront.config.mjs'");\n`;
-
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "config-parse-error");
-        }, { prefix: "vf-config-bun-relative-" });
-      });
-
-      it("does not reclassify an ordinary error that merely quotes a resolver phrase", async () => {
-        // `Setup failed: Module not found "db"` is a config author's own error,
-        // not a resolver's. Only an anchored match separates the two, and the
-        // reader of a real setup failure must not be told to run `npm install`.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source = `throw new Error('Setup failed: Module not found "db"');\n`;
-
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "config-parse-error");
-        }, { prefix: "vf-config-quoted-" });
-      });
-
-      it("does not blame a missing Windows path on an uninstalled package", async () => {
-        // A leading backslash is a path on Windows exactly as a leading slash is
-        // one elsewhere, and a UNC path starts with two. Rejecting only "/"
-        // would hand Windows readers the wrong recovery advice.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source =
-            `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`;
-
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "config-parse-error");
-        }, { prefix: "vf-config-windows-" });
-      });
-
-      it("does not blame the project-module alias on an uninstalled package", async () => {
-        // Deno reports an unresolved `@/lib/config` through the same wording as
-        // a missing package, but `@/` is Veryfront's own project alias -- no
-        // package by that name exists to install.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source = 'import "@/lib/config";\nexport default {};\n';
-
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "config-parse-error");
-        }, { prefix: "vf-config-alias-" });
-      });
-
-      it("does not blame a missing relative import on an uninstalled package", async () => {
-        // Both runtimes raise ERR_MODULE_NOT_FOUND for a missing *file* as
-        // readily as for a missing package, so classifying on the code alone
-        // would tell this reader to run `npm install` for a file they simply
-        // have not written yet. Only a bare specifier is install-fixable.
-        const adapter = setup();
-        await withTempDir(async (projectDir) => {
-          const configPath = `${projectDir}/veryfront.config.js`;
-          const source = 'import "./not-written-yet.js";\nexport default {};\n';
-
-          await Deno.writeTextFile(configPath, source);
-          adapter.fs.files.set(configPath, source);
-
-          const error = await assertRejects(
-            () => getConfig(projectDir, adapter),
-            VeryfrontError,
-          ) as VeryfrontError;
-
-          assertEquals(error.slug, "config-parse-error");
-        }, { prefix: "vf-config-missing-file-" });
-      });
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        });
+      }
 
       it("carries a thrown config's own message through to the reader", async () => {
         const adapter = setup();

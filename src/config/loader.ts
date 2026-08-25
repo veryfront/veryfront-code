@@ -1631,7 +1631,7 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
 }
 
 /**
- * Decide whether a specifier names an installable package rather than a file.
+ * The installable package a resolution failure names, or `undefined`.
  *
  * Only a bare specifier is fixable by installing dependencies. Every runtime
  * reports a missing relative *file* through the same phrasing as a missing
@@ -1644,20 +1644,34 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  * - `./x`, `/x`, `\\x`, and UNC paths are files, on either path separator;
  * - `#x` is a package-internal subpath import;
  * - any URI scheme, which also covers `C:\\...` since a drive letter parses as
- *   one -- and keeps credentials out of the detail line without a redaction
- *   pass, since a bare specifier has no userinfo to leak;
+ *   one;
  * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
  *   already rejects: no package named `@/lib/config` exists to install.
+ *
+ * Returns the package name rather than the whole specifier. That is the part
+ * the reader installs -- `pkg` for `pkg/deep/path` -- and it drops the subpath,
+ * which is the only part of a bare specifier that can carry arbitrary
+ * author-written text. The result is bounded and stripped of control characters
+ * for the same reason `summarizeConfigLoadCause` does it: this string reaches
+ * `VeryfrontError.message` and its context, which callers log.
  */
-function isBarePackageSpecifier(specifier: string): boolean {
+function missingPackageName(specifier: string): string | undefined {
   const bare = specifier.startsWith("npm:") || specifier.startsWith("jsr:")
     ? specifier.slice(4)
     : specifier;
-  if (bare.length === 0) return false;
-  if (/^[./\\#]/.test(bare)) return false;
-  if (bare.includes("\\")) return false;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare)) return false;
-  return parseBarePackageSpecifier(bare) !== null;
+  if (bare.length === 0) return undefined;
+  if (/^[./\\#]/.test(bare)) return undefined;
+  if (bare.includes("\\")) return undefined;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(bare)) return undefined;
+
+  const packageName = parseBarePackageSpecifier(bare)?.packageName;
+  if (packageName === undefined) return undefined;
+
+  const clean = packageName.replace(CONTROL_CHARACTERS, " ").trim();
+  if (clean.length === 0) return undefined;
+  return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
+    ? `${clean.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
+    : clean;
 }
 
 /**
@@ -1687,7 +1701,8 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
   for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
     if (!(current instanceof Error)) return undefined;
     const specifier = reportedMissingSpecifier(current.message);
-    if (specifier !== undefined && isBarePackageSpecifier(specifier)) return specifier;
+    const packageName = specifier === undefined ? undefined : missingPackageName(specifier);
+    if (packageName !== undefined) return packageName;
     current = current.cause;
   }
   return undefined;
@@ -1748,7 +1763,7 @@ function configLoadFailure(configFile: string, error: unknown): VeryfrontError {
     return DEPENDENCY_MISSING.create({
       detail: `${configFile} imports "${dependency}", which is not installed`,
       cause: error,
-      context: { configFile, specifier: dependency },
+      context: { configFile, packageName: dependency },
     });
   }
   return CONFIG_PARSE_ERROR.create({
