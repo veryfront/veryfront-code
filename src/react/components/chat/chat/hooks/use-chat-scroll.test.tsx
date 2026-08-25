@@ -64,6 +64,7 @@ describe("useChatScroll (superset)", () => {
     const dom = new JSDOM(
       '<div id="viewport"><article data-message-id="plain"></article><article></article></div>',
     );
+    const restore = installComponentDom(dom);
     try {
       const s = capture();
       const viewport = dom.window.document.querySelector<HTMLDivElement>("#viewport")!;
@@ -86,6 +87,7 @@ describe("useChatScroll (superset)", () => {
       assertEquals(viewportScroll, { top: 380, behavior: "auto" });
       assertEquals(ancestorScrolls, 0);
     } finally {
+      restore();
       dom.window.close();
     }
   });
