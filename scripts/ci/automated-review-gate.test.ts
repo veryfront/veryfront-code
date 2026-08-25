@@ -13,6 +13,7 @@ import {
   parseReviewWakeupRun,
   publishAutomatedReviewStatus,
   publishMergeGroupReviewStatus,
+  publishReviewResolutionFailure,
   reconcileActiveMergeGroupReviewStatuses,
   requestAutomatedReview,
   reviewBaseBinding,
@@ -649,6 +650,7 @@ function githubFixture(options: {
   permission?: string;
   permissionError?: Error;
   pullAuthor?: string;
+  draft?: boolean;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -695,7 +697,7 @@ function githubFixture(options: {
           return Promise.resolve({
             data: associatedPull({
               head: { sha: head },
-              draft: false,
+              draft: options.draft ?? false,
               user: { login: options.pullAuthor ?? "pull-author" },
             }),
           });
@@ -997,7 +999,7 @@ describe("automated review publication", () => {
   });
 
   it("keeps drafts pending after confirming the captured head", async () => {
-    const fixture = githubFixture();
+    const fixture = githubFixture({ draft: true });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
       owner: "veryfront",
@@ -1005,7 +1007,6 @@ describe("automated review publication", () => {
       pullNumber: 1,
       headSha: HEAD,
       pullUrl: "https://example.test/pr/1",
-      isDraft: true,
     });
     assertEquals(result.state, "pending");
     assertEquals(fixture.published[0]?.state, "pending");
@@ -1023,7 +1024,7 @@ describe("automated review publication", () => {
       pullNumber: 1,
       headSha: HEAD,
       pullUrl: "https://example.test/pr/1",
-      forcePending: true,
+      reviewResetKey: "base-42",
     });
     assertEquals(result.state, "pending");
     assertEquals(result.review, undefined);
@@ -1032,6 +1033,37 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)}`,
     );
+  });
+
+  it("does not repeat a processed base-edit reset when its run is rerun", async () => {
+    const request = reviewRequestComment();
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: 101,
+      created_at: "2026-08-25T08:01:00Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[request, verdict]],
+        statuses: [[automatedReviewResetStatus()]],
+        timeline: [[
+          { event: "commented", id: request.id },
+          { event: "commented", id: 101 },
+        ]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "base-42",
+    });
+    assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "codex-comment");
+    assertEquals(fixture.published[0]?.state, "success");
   });
 
   it("keeps pre-retarget proof invalid after the request marker is deleted", async () => {
@@ -1109,9 +1141,51 @@ describe("merge queue review propagation", () => {
     ) assertEquals(parseMergeQueuePullNumber(ref), undefined);
   });
 
+  it("fails the source and active queue refs without a pull lookup", async () => {
+    const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
+    const fixture = githubFixture({
+      pages: {
+        refs: [[
+          {
+            ref: `refs/heads/gh-readonly-queue/main/pr-1-${HEAD}`,
+            object: { sha: OTHER_HEAD },
+          },
+          {
+            ref: `refs/heads/gh-readonly-queue/release/pr-1-${HEAD}`,
+            object: { sha: secondQueueHead },
+          },
+          {
+            ref: `refs/heads/gh-readonly-queue/main/pr-2-${HEAD}`,
+            object: { sha: secondQueueHead },
+          },
+        ]],
+      },
+      pullError: new Error("pull lookup unavailable"),
+    });
+    const result = await publishReviewResolutionFailure({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+    });
+    assertEquals(result.queueFailures, 2);
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [
+        [HEAD, "failure"],
+        [OTHER_HEAD, "failure"],
+        [secondQueueHead, "failure"],
+      ],
+    );
+  });
+
   it("reuses the current exact-head Codex gate on the synthetic queue SHA", async () => {
     const fixture = githubFixture({
-      pages: { statuses: [[automatedReviewStatus()]] },
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
       headResponses: [HEAD, HEAD],
     });
     const result = await publishMergeGroupReviewStatus({
@@ -1136,7 +1210,10 @@ describe("merge queue review propagation", () => {
 
   it("does not reuse a source review status from another pull request", async () => {
     const fixture = githubFixture({
-      pages: { statuses: [[automatedReviewStatus()]] },
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
       pullResponses: [
         associatedPull({ number: 2 }),
         associatedPull({ number: 2 }),
@@ -1157,6 +1234,7 @@ describe("merge queue review propagation", () => {
   it("selects the latest source status owned by the queued pull request", async () => {
     const fixture = githubFixture({
       pages: {
+        reviews: [[review({ state: "APPROVED" })]],
         statuses: [[
           automatedReviewStatus({
             state: "pending",
@@ -1212,7 +1290,10 @@ describe("merge queue review propagation", () => {
     ];
     for (const candidate of cases) {
       const fixture = githubFixture({
-        pages: { statuses: [[...candidate.statuses]] },
+        pages: {
+          reviews: [[review({ state: "APPROVED" })]],
+          statuses: [[...candidate.statuses]],
+        },
         headResponses: [HEAD, HEAD],
       });
       const result = await publishMergeGroupReviewStatus({
@@ -1229,7 +1310,10 @@ describe("merge queue review propagation", () => {
     }
 
     const drift = githubFixture({
-      pages: { statuses: [[automatedReviewStatus()]] },
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
       headResponses: [HEAD, OTHER_HEAD],
     });
     const result = await publishMergeGroupReviewStatus({
@@ -1243,7 +1327,10 @@ describe("merge queue review propagation", () => {
     assertEquals(result.state, "failure");
 
     const sourceDrift = githubFixture({
-      pages: { statuses: [[automatedReviewStatus()]] },
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
       headResponses: [OTHER_HEAD],
     });
     const sourceDriftResult = await publishMergeGroupReviewStatus({
@@ -1260,6 +1347,7 @@ describe("merge queue review propagation", () => {
   it("revokes a copied queue status when source review proof is revoked", async () => {
     const fixture = githubFixture({
       pages: {
+        reviews: [[review({ state: "APPROVED" })]],
         refs: [[{
           ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
           object: { sha: OTHER_HEAD },
@@ -1290,6 +1378,7 @@ describe("merge queue review propagation", () => {
           [[automatedReviewStatus({ state: "pending" })]],
         ],
       },
+      pages: { reviews: [[review({ state: "APPROVED" })]] },
       headResponses: [HEAD, HEAD],
     });
     const result = await publishMergeGroupReviewStatus({
@@ -1312,6 +1401,30 @@ describe("merge queue review propagation", () => {
     }]);
   });
 
+  it("does not reuse cached success after live review evidence is revoked", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({
+          state: "COMMENTED",
+          body: "P1: This exact-head review has an actionable finding.",
+        })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
   it("revalidates a human reviewer's trust before queue reuse", async () => {
     const description = `PR#1 base:${
       reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
@@ -1329,6 +1442,10 @@ describe("merge queue review propagation", () => {
     ) {
       const fixture = githubFixture({
         pages: {
+          reviews: [[review({
+            user: { login: "trusted-maintainer", id: 7, type: "User" },
+            state: "APPROVED",
+          })]],
           statuses: [[automatedReviewStatus({ description })]],
         },
         permission: candidate.permission,
@@ -1539,15 +1656,19 @@ describe("review proof invalidation", () => {
       HEAD,
       "invalidation must target the pull request head it just read",
     );
-    assertEquals(fixture.published, [{
-      owner: "veryfront",
-      repo: "veryfront-code",
-      sha: HEAD,
-      state: "failure",
-      context: "Automated review",
-      description: "PR#1 review status unavailable",
-      target_url: "https://example.test/pr/1",
-    }], "a lost revocation must leave a failing status, never an older success");
+    assertEquals(
+      fixture.published,
+      [{
+        owner: "veryfront",
+        repo: "veryfront-code",
+        sha: HEAD,
+        state: "failure",
+        context: "Automated review",
+        description: "PR#1 review status unavailable",
+        target_url: "https://example.test/pr/1",
+      }],
+      "a lost revocation must leave a failing status, never an older success",
+    );
   });
 
   it("keeps a merge group from reusing an invalidated source status", async () => {
@@ -1813,6 +1934,7 @@ describe("automated review workflow", () => {
     assertEquals(record(targetJob.permissions, "target permissions"), {
       contents: "read",
       "pull-requests": "read",
+      statuses: "write",
     });
     assertEquals(
       record(targetJob.outputs, "target outputs").key,
@@ -1838,16 +1960,19 @@ describe("automated review workflow", () => {
     );
     for (
       const required of [
-        "context.payload.sha",
         "context.payload.pull_request?.number",
         "context.payload.issue?.pull_request",
         "parseReviewWakeupRun",
         "parseMergeQueuePullNumber",
         "matchesReviewWakeupPullRequest",
+        "publishReviewResolutionFailure",
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
         'core.setOutput("pull-number"',
-        "github.rest.pulls.get",
+        "github.rest.git.getRef",
+        "fallbackResponse = await github.rest.pulls.get",
+        "context.payload.pull_request?.head?.sha",
+        "publishReviewResolutionFailure({",
         "Could not resolve a valid review target commit",
       ]
     ) assert(targetScript.includes(required));
@@ -1906,16 +2031,13 @@ describe("automated review workflow", () => {
       "${{ needs.target.outputs.pull_number }}",
     );
     assert(script.includes("publishAutomatedReviewStatus"));
+    assert(script.includes("publishReviewResolutionFailure"));
     assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
-    assert(script.includes("github.rest.pulls.get"));
+    assert(!script.includes("github.rest.pulls.get"));
     assert(script.includes("process.env.TARGET_SHA"));
     assert(script.includes("process.env.PULL_NUMBER"));
     assert(script.includes("Number.isSafeInteger"));
-    assert(script.includes("pullRequest.head.sha !== headSha"));
-    assert(
-      !script.includes("const headSha = pullRequest.head.sha"),
-      "the publisher must use the same immutable SHA as its concurrency key",
-    );
+    assert(script.includes("result.baseRef"));
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(!script.includes("allowPullRequestReviews"));
     assert(
@@ -1965,20 +2087,15 @@ describe("automated review workflow", () => {
     );
     assert(requestScript.includes("requestKey"));
     assert(requestScript.includes("context.runId"));
-    assertEquals(
-      record(request.env, "request environment").RUN_ATTEMPT,
-      "${{ github.run_attempt }}",
-      "a rerun must tell its reset epoch apart from the first attempt",
+    assert(
+      requestScript.includes("`base-${context.runId}`"),
+      "a base-edit rerun must reuse the original reset epoch",
     );
     assert(
-      requestScript.includes("`base-${context.runId}-${runAttempt}`"),
-      "a base-edit rerun must request a review for the reset it just wrote",
+      !("RUN_ATTEMPT" in record(request.env, "request environment")),
+      "a rerun must not create a second reset epoch",
     );
-    assert(
-      !requestScript.includes("`base-${context.runId}`"),
-      "a key stable across reruns leaves the reset head pending with no request",
-    );
-    assert(script.includes("forcePending"));
+    assert(script.includes("reviewResetKey"));
 
     const invalidateJob = record(jobs.invalidate, "invalidate job");
     assertEquals(

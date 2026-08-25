@@ -35,6 +35,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      statuses: write
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -59,11 +60,13 @@ jobs:
             let matchesReviewWakeupPullRequest;
             let parseMergeQueuePullNumber;
             let parseReviewWakeupRun;
+            let publishReviewResolutionFailure;
             try {
               ({
                 matchesReviewWakeupPullRequest,
                 parseMergeQueuePullNumber,
                 parseReviewWakeupRun,
+                publishReviewResolutionFailure,
               } = await import(gateUrl));
             } catch (error) {
               core.setFailed(`Could not load the review target resolver: ${error}`);
@@ -89,12 +92,6 @@ jobs:
               core.setOutput("pull-number", String(queueEntry.pullNumber));
               return queueEntry.sourceHeadSha;
             }
-            // pull_request_review workflows use a synthetic merge SHA. For a
-            // workflow_run wakeup, resolve the current source head from the
-            // pull request instead of treating that merge SHA as review proof.
-            let headSha = context.eventName === "workflow_run"
-              ? undefined
-              : context.payload.sha;
             const pullNumber = context.payload.pull_request?.number ??
               (context.payload.issue?.pull_request
                 ? context.payload.issue.number
@@ -103,34 +100,93 @@ jobs:
               core.setFailed("Could not resolve a valid pull request number");
               return `run-${context.runId}`;
             }
-            let pullRequest;
-            if (!headSha || wakeupSignal) {
-              const response = await github.rest.pulls.get({
+            let headSha;
+            try {
+              const response = await github.rest.git.getRef({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: pullNumber,
+                ref: `pull/${pullNumber}/head`,
               });
-              pullRequest = response.data;
-              headSha = pullRequest.head.sha;
-            }
-            if (
-              wakeupSignal &&
-              !matchesReviewWakeupPullRequest(
-                wakeupSignal,
-                pullRequest,
-                context.payload.repository,
-              )
-            ) {
-              core.setFailed(
-                "Review wakeup metadata does not match the pull request",
-              );
-              return `run-${context.runId}`;
+              headSha = response.data?.object?.sha;
+            } catch (error) {
+              let failureHeadSha;
+              try {
+                const fallbackResponse = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                failureHeadSha = fallbackResponse.data?.head?.sha;
+              } catch (fallbackError) {
+                const eventFailureHead =
+                  context.payload.pull_request?.number === pullNumber
+                    ? context.payload.pull_request?.head?.sha
+                    : undefined;
+                if (/^[0-9a-f]{40}$/i.test(eventFailureHead ?? "")) {
+                  failureHeadSha = eventFailureHead;
+                } else {
+                  core.error(
+                    `Could not resolve a failure target from the pull request: ${fallbackError}`,
+                  );
+                }
+              }
+              if (/^[0-9a-f]{40}$/i.test(failureHeadSha ?? "")) {
+                await publishReviewResolutionFailure({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  sourceHeadSha: failureHeadSha,
+                });
+              }
+              core.setFailed(`Could not resolve the pull request head ref: ${error}`);
+              return failureHeadSha ?? `run-${context.runId}`;
             }
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
               return `run-${context.runId}`;
             }
             core.setOutput("pull-number", String(pullNumber));
+            if (wakeupSignal) {
+              let pullRequest;
+              try {
+                const response = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                pullRequest = response.data;
+              } catch (error) {
+                await publishReviewResolutionFailure({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  sourceHeadSha: headSha,
+                });
+                core.setFailed(`Could not validate the review wakeup: ${error}`);
+                return headSha;
+              }
+              if (
+                !matchesReviewWakeupPullRequest(
+                  wakeupSignal,
+                  pullRequest,
+                  context.payload.repository,
+                )
+              ) {
+                await publishReviewResolutionFailure({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  sourceHeadSha: headSha,
+                });
+                core.setFailed(
+                  "Review wakeup metadata does not match the pull request",
+                );
+                return headSha;
+              }
+            }
             return headSha;
 
   review:
@@ -186,26 +242,18 @@ jobs:
               core.setFailed("The resolved pull request number is invalid");
               return "failure";
             }
-            const response = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pullNumber,
-            });
-            const pullRequest = response.data;
             const headSha = process.env.TARGET_SHA;
             if (!/^[0-9a-f]{40}$/i.test(headSha ?? "")) {
               core.setFailed("The resolved review target commit is invalid");
               return "failure";
             }
-            if (pullRequest.head.sha !== headSha) {
-              core.notice("Skipped automated review publication after the pull request head changed.");
-              return "stale";
-            }
             let publishAutomatedReviewStatus;
+            let publishReviewResolutionFailure;
             let reconcileActiveMergeGroupReviewStatuses;
             try {
               ({
                 publishAutomatedReviewStatus,
+                publishReviewResolutionFailure,
                 reconcileActiveMergeGroupReviewStatuses,
               } = await import(gateUrl));
             } catch (error) {
@@ -220,7 +268,7 @@ jobs:
                 context: "Automated review",
                 description:
                   "Review gate is unavailable on the default branch",
-                target_url: pullRequest.html_url,
+                target_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
               });
               core.setFailed(`Could not load the review gate: ${error}`);
               return;
@@ -229,26 +277,43 @@ jobs:
               github,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pullNumber: pullRequest.number,
+              pullNumber,
               headSha,
-              pullUrl: pullRequest.html_url,
-              isDraft: pullRequest.draft === true,
-              forcePending:
+              pullUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
+              reviewResetKey:
                 context.eventName === "pull_request_target" &&
                 context.payload.action === "edited" &&
-                context.payload.changes?.base !== undefined,
+                context.payload.changes?.base !== undefined
+                  ? `base-${context.runId}`
+                  : undefined,
             });
-            const queueResults = await reconcileActiveMergeGroupReviewStatuses({
-              github,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pullNumber: pullRequest.number,
-              sourceHeadSha: headSha,
-              baseRef: pullRequest.base.ref,
-            });
-            if (queueResults.length > 0) {
+            let queueResultCount;
+            if (
+              result.state === "failure" ||
+              typeof result.baseRef !== "string"
+            ) {
+              const { queueFailures } = await publishReviewResolutionFailure({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                sourceHeadSha: headSha,
+              });
+              queueResultCount = queueFailures;
+            } else {
+              const queueResults = await reconcileActiveMergeGroupReviewStatuses({
+                github,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pullNumber,
+                sourceHeadSha: headSha,
+                baseRef: result.baseRef,
+              });
+              queueResultCount = queueResults.length;
+            }
+            if (queueResultCount > 0) {
               core.notice(
-                `Reconciled ${queueResults.length} active merge queue review status.`,
+                `Reconciled ${queueResultCount} active merge queue review status.`,
               );
             }
             if (result.state === "pending") {
@@ -267,13 +332,11 @@ jobs:
       # pull request. Post the "@codex review" request only for synchronize.
       # The helper re-fetches the PR immediately before posting so a queued
       # stale event cannot bind its marker to a request for a newer head. A
-      # base edit gets a marker scoped to the run attempt, which invalidates
+      # base edit gets a marker scoped to the run, which invalidates
       # proof issued for an earlier base without coupling normal reviews to a
-      # moving base commit. The attempt matters: a rerun writes a fresh reset
-      # status that invalidates every earlier review, so it has to ask for a
-      # new review too. A run id alone is stable across reruns, so its marker
-      # would already exist, no request would be posted, and the unchanged
-      # head would stay pending with no outstanding request.
+      # moving base commit. A rerun keeps the same marker, so it re-evaluates
+      # evidence after the original reset instead of creating another epoch
+      # that would erase a successful review submitted in the meantime.
       - name: Request an automated review of the current commit
         if: >-
           github.event_name == 'pull_request_target' &&
@@ -284,7 +347,6 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET_SHA: ${{ needs.target.outputs.key }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
         with:
           retries: 3
           script: |
@@ -294,11 +356,6 @@ jobs:
             ).href;
             const { requestAutomatedReview } = await import(gateUrl);
             const pullRequest = context.payload.pull_request;
-            const runAttempt = Number(process.env.RUN_ATTEMPT);
-            if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
-              core.setFailed("The workflow run attempt is invalid");
-              return;
-            }
             const result = await requestAutomatedReview({
               github,
               owner: context.repo.owner,
@@ -306,7 +363,7 @@ jobs:
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
               requestKey: context.payload.action === "edited"
-                ? `base-${context.runId}-${runAttempt}`
+                ? `base-${context.runId}`
                 : undefined,
             });
             core.notice(
