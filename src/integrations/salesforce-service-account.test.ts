@@ -713,6 +713,32 @@ describe("Salesforce service-account integration source", () => {
     assertEquals(transport.captures, []);
   });
 
+  it("scans repeated negated policy predicates in one pass", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("unsafe SOQL must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+    const repeatedNegatedPredicate = "NOT(PublishStatus = 'Online') AND ".repeat(28_000);
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: `SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE ${repeatedNegatedPredicate}Title = 'No policy conjunct'`,
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    assertEquals(transport.captures, []);
+  });
+
   it("rejects unauthorized SOQL operators and side-effecting clauses", async () => {
     setCredentials({
       [CLIENT_ID_ENV]: "client-id",

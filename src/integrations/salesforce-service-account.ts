@@ -671,34 +671,41 @@ function hasSoqlConjunctBoundaryAfter(masked: string, end: number): boolean {
     !/[a-z0-9_]/i.test(masked[cursor + 3] ?? "");
 }
 
-/** Reject a predicate enclosed by any group introduced with unary NOT. */
-function isInsideNegatedSoqlGroup(masked: string, predicateStart: number): boolean {
-  const openGroups: number[] = [];
-  for (let index = 0; index < predicateStart; index++) {
-    if (masked[index] === "(") openGroups.push(index);
-    else if (masked[index] === ")") openGroups.pop();
-  }
-
-  for (const groupStart of openGroups) {
-    let cursor = groupStart - 1;
-    while (/\s/.test(masked[cursor] ?? "")) cursor--;
-    const tokenEnd = cursor + 1;
-    while (/[a-z0-9_]/i.test(masked[cursor] ?? "")) cursor--;
-    if (masked.slice(cursor + 1, tokenEnd).toLowerCase() === "not") return true;
-  }
-  return false;
+function isSoqlGroupIntroducedByNot(masked: string, groupStart: number): boolean {
+  let cursor = groupStart - 1;
+  while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  const tokenEnd = cursor + 1;
+  while (/[a-z0-9_]/i.test(masked[cursor] ?? "")) cursor--;
+  return masked.slice(cursor + 1, tokenEnd).toLowerCase() === "not";
 }
 
 function hasRequiredSoqlConjunct(value: string, requiredPredicate: string): boolean {
   const masked = maskSoqlStrings(value);
   if (!hasBalancedSoqlParentheses(masked)) return false;
+  const negatedGroups: boolean[] = [];
+  let negatedGroupDepth = 0;
+  let scannedUntil = 0;
+
+  const scanNegationStateTo = (end: number): boolean => {
+    for (; scannedUntil < end; scannedUntil++) {
+      if (masked[scannedUntil] === "(") {
+        const isNegated = isSoqlGroupIntroducedByNot(masked, scannedUntil);
+        negatedGroups.push(isNegated);
+        if (isNegated) negatedGroupDepth++;
+      } else if (masked[scannedUntil] === ")") {
+        if (negatedGroups.pop()) negatedGroupDepth--;
+      }
+    }
+    return negatedGroupDepth > 0;
+  };
+
   let searchStart = 0;
   while (searchStart <= value.length - requiredPredicate.length) {
     const predicateStart = value.indexOf(requiredPredicate, searchStart);
     if (predicateStart === -1) return false;
     const predicateEnd = predicateStart + requiredPredicate.length;
     if (
-      !isInsideNegatedSoqlGroup(masked, predicateStart) &&
+      !scanNegationStateTo(predicateStart) &&
       hasSoqlConjunctBoundaryBefore(masked, predicateStart) &&
       hasSoqlConjunctBoundaryAfter(masked, predicateEnd)
     ) {
