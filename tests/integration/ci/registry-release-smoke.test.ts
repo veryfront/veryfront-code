@@ -41,6 +41,17 @@ async function workspacePackageNames(): Promise<string[]> {
 }
 
 describe("exact-version registry smoke", () => {
+  it("runs the behavior journey against the scaffold shipped by the installed package", async () => {
+    const source = await Deno.readTextFile(installSmokePath);
+
+    assertStringIncludes(source, "template: 'ai-agent'");
+    assertStringIncludes(source, "await writeFile(target, file.content)");
+    assertEquals(
+      source.includes('cp -R "$ROOT_DIR/templates/files/ai-agent/."'),
+      false,
+    );
+  });
+
   it("dry-runs every co-published package at the requested exact version", async () => {
     const version = "1.2.3-rc.45";
     const output = await new Deno.Command("bash", {

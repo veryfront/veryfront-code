@@ -245,12 +245,14 @@ echo "== 6. scaffold resolves through the published exports map"
 # path. Without the entry it fails with ERR_PACKAGE_PATH_NOT_EXPORTED.
 node --input-type=module -e "
 const { materializeScaffold, listScaffoldTemplates } = await import('veryfront/scaffold');
+const { mkdir, writeFile } = await import('node:fs/promises');
+const { dirname, resolve, sep } = await import('node:path');
 const names = listScaffoldTemplates();
 for (const name of ['minimal', 'ai-agent', 'agentic-workflow']) {
   if (!names.includes(name)) throw new Error('scaffold cannot create ' + name);
 }
 const { files } = await materializeScaffold({
-  template: 'minimal',
+  template: 'ai-agent',
   projectName: 'smoke-app',
 });
 const paths = files.map((file) => file.path);
@@ -263,10 +265,18 @@ const pkg = JSON.parse(files.find((file) => file.path === 'package.json').conten
 if (pkg.name !== 'smoke-app') {
   throw new Error('materialized package.json has the wrong name: ' + pkg.name);
 }
+const projectRoot = resolve('.');
+for (const file of files) {
+  const target = resolve(projectRoot, file.path);
+  if (!target.startsWith(projectRoot + sep)) {
+    throw new Error('materialized project contains an invalid path: ' + file.path);
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, file.content);
+}
 " || fail "veryfront/scaffold did not resolve from an installed package"
 
-echo "== 7. packed ai-agent starter: page and API route render over HTTP"
-cp -R "$ROOT_DIR/templates/files/ai-agent/." "$WORKDIR/"
+echo "== 7. published ai-agent starter: page and API route render over HTTP"
 mkdir -p "$WORKDIR/app/api/npm-smoke"
 cat >"$WORKDIR/app/api/npm-smoke/route.ts" <<'EOF'
 export function GET(): Response {
