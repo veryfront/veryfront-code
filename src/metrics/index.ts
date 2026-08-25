@@ -22,6 +22,7 @@ import {
 } from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { encodeBase64 } from "#veryfront/utils";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
@@ -76,6 +77,18 @@ let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const DIRECT_FLUSH_DELAY_MS = 1_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
+// Capture the runtime transport before project code can replace the ambient fetch.
+// Host-authenticated telemetry must never cross a project-controlled function.
+const hostFetch = globalThis.fetch.bind(globalThis);
+const useAmbientFetchForTests = (() => {
+  const deno = getDenoRuntime();
+  if (!deno) return false;
+  try {
+    return deno.env.get("DENO_TESTING") === "1";
+  } catch {
+    return false;
+  }
+})();
 
 function getMeter() {
   return getGlobalMetricsAPI()?.getMeter("veryfront.project.metrics");
@@ -390,14 +403,17 @@ async function flushDirectMetrics(): Promise<void> {
 
   const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
   try {
-    const response = await fetch(target.url, {
-      method: "POST",
-      headers: {
-        ...target.headers,
-        "Content-Type": "application/json",
+    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
+      target.url,
+      {
+        method: "POST",
+        headers: {
+          ...target.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildDirectOtlpBody(batch)),
       },
-      body: JSON.stringify(buildDirectOtlpBody(batch)),
-    });
+    );
     if (!response.ok) {
       logDirectExportFailure(`HTTP ${response.status}`);
     }

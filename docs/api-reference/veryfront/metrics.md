@@ -26,20 +26,20 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name        | Description | Source                                                                                    |
 | ----------- | ----------- | ----------------------------------------------------------------------------------------- |
-| `counter`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L450) |
-| `gauge`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L478) |
-| `histogram` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L464) |
+| `counter`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L466) |
+| `gauge`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L494) |
+| `histogram` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L480) |
 
 ### Types
 
 | Name                      | Description | Source                                                                                   |
 | ------------------------- | ----------- | ---------------------------------------------------------------------------------------- |
-| `MetricAttributes`        |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L30) |
-| `MetricAttributeValue`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L29) |
-| `MetricInstrumentOptions` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L32) |
+| `MetricAttributes`        |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L31) |
+| `MetricAttributeValue`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L30) |
+| `MetricInstrumentOptions` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L33) |
 
 ### Constants
 
 | Name      | Description | Source                                                                                    |
 | --------- | ----------- | ----------------------------------------------------------------------------------------- |
-| `metrics` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L498) |
+| `metrics` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L514) |
