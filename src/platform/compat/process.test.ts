@@ -10,7 +10,6 @@ import {
   assertExists,
   assertRejects,
   assertStrictEquals,
-  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
@@ -658,24 +657,20 @@ describe("Process Compat", () => {
       assertEquals(result.stdout?.trim(), "hello");
     });
 
-    it("surfaces a missing executable instead of reporting success", async () => {
-      if (isDeno) {
-        await assertRejects(
-          () => runCommand("__nonexistent_command_12345__", { capture: true }),
-          Deno.errors.NotFound,
-          undefined,
-          "a missing executable must reject with NotFound, not report success",
-        );
-      } else {
-        const result = await runCommand("__nonexistent_command_12345__", { capture: true });
-        assertEquals(result.success, false, "a missing executable must report failure");
-        assertEquals(result.code !== 0, true, "a missing executable must not report exit code 0");
-        assertStringIncludes(
-          result.stderr ?? "",
-          "Spawn error",
-          "the spawn failure must reach the caller in stderr",
-        );
-      }
+    // Only the Deno half of the contract belongs here: this file reads `Deno.*`
+    // unguarded, so `isDenoDependentTestSource` drops it from the Node and Bun
+    // planners and a non-Deno branch written here could never run. The
+    // `node:child_process` shape -- a failure result carrying the spawn error
+    // in stderr -- is asserted in
+    // tests/integration/runtime/compat/spawn-missing-executable.test.ts, which
+    // the runtime planners do select.
+    it("rejects a missing executable instead of reporting success", async () => {
+      await assertRejects(
+        () => runCommand("__nonexistent_command_12345__", { capture: true }),
+        Deno.errors.NotFound,
+        undefined,
+        "a missing executable must reject with NotFound, not report success",
+      );
     });
 
     it("should capture stderr", async () => {

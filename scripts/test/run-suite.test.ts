@@ -111,18 +111,25 @@ describe("suite planning parity", () => {
     }
   });
 
-  it("runs the Deno KV polyfill integration in the Node and Bun suites", async () => {
-    // The polyfill only installs `globalThis.Deno.openKv` off Deno, so its
-    // interesting branch exists nowhere in the Deno lane. Selecting the file
-    // by name is what keeps that branch executed rather than merely present.
-    const polyfillFile = "tests/integration/runtime/compat/kv-polyfill.test.ts";
+  it("runs the non-Deno compat integrations in the Node and Bun suites", async () => {
+    // Both files assert behavior that only exists off Deno: the KV polyfill
+    // installs `globalThis.Deno.openKv` nowhere else, and `runCommand` only
+    // resolves a spawn-error result on the `node:child_process` lane. Naming
+    // them here is what keeps those branches executed rather than merely
+    // present.
+    const nonDenoFiles = [
+      "tests/integration/runtime/compat/kv-polyfill.test.ts",
+      "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
+    ];
 
     for (const suite of ["runtime:node", "runtime:bun"] as const) {
       const plan = await planSuiteFiles({ suite });
-      assert(
-        plan.files.includes(polyfillFile),
-        `${suite} must select the Deno KV polyfill coverage`,
-      );
+      for (const file of nonDenoFiles) {
+        assert(
+          plan.files.includes(file),
+          `${suite} must select ${file} so its non-Deno branch executes`,
+        );
+      }
     }
   });
 
@@ -539,6 +546,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
+      "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
     ]
     : [
@@ -547,6 +555,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
+      "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
     ];
   const incompatible = runtime === "node"
