@@ -406,14 +406,12 @@ function reconcileApprovalDecision(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
-    buildPatch: (run) => {
+    buildPatch: () => {
       const runPatch: WorkflowRunUpdate = {
         context: {
-          ...run.context,
           [operation.nodeId]: decisionContext,
         },
         nodeStates: {
-          ...run.nodeStates,
           [operation.nodeId]: {
             nodeId: operation.nodeId,
             status: "completed",
@@ -462,13 +460,11 @@ function reconcileEventDelivery(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,
-    buildPatch: (run) => ({
+    buildPatch: () => ({
       context: {
-        ...run.context,
         [operation.nodeId]: { ...outcome, receivedAt: deliveredAt.toISOString() },
       },
       nodeStates: {
-        ...run.nodeStates,
         [operation.nodeId]: {
           nodeId: operation.nodeId,
           status: "completed",

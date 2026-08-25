@@ -9,12 +9,13 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import { getConfiguredTimedWaitKind } from "../timed-wait-state.ts";
+import { getConfiguredTimedWaitKind, INTERNAL_DELAY_EVENT_NAME } from "../timed-wait-state.ts";
+import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
 import {
   reconcileWorkflowRunControl,
   type WorkflowRunControlReconcileOutcome,
 } from "./workflow-run-control.ts";
-import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 
 const logger = baseLogger.component("event-wait-manager");
@@ -218,6 +219,12 @@ export class EventWaitManager {
     if (!hasEventWaitSupport(backend)) {
       throw ORCHESTRATION_ERROR.create({
         detail: "The configured workflow backend does not support durable event delivery",
+      });
+    }
+
+    if (!isCanonicalNonEmptyString(eventName) || eventName === INTERNAL_DELAY_EVENT_NAME) {
+      throw INVALID_ARGUMENT.create({
+        detail: "publishEvent eventName must be a canonical non-empty public event name",
       });
     }
 
@@ -576,8 +583,16 @@ export class EventWaitManager {
         runStatuses.set(runId, status);
       }
       if (status !== null && !ACTIVE_WAIT_STATUSES.includes(status)) {
-        await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
-        this.clearExpiry(wait.id);
+        try {
+          await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+          this.clearExpiry(wait.id);
+        } catch (error) {
+          logger.error(
+            "Failed to clean up a terminal run's event wait during the sweep",
+            { runId, waitId: wait.id },
+            error,
+          );
+        }
         continue;
       }
 

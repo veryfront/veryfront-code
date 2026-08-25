@@ -2,6 +2,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowRunUpdate } from "../backends/types.ts";
 import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -413,6 +414,33 @@ class ReconcileDeleteOnHydrateBackend extends MemoryBackend {
   ): Promise<boolean> {
     if (patch.context?.env) await this.deleteRun(runId);
     return false;
+  }
+}
+
+class ConcurrentNodeOutcomeBackend extends MemoryBackend {
+  private pendingOutcomeUpdates = 0;
+  private releaseOutcomeUpdates!: () => void;
+  private readonly outcomeUpdatesReady = new Promise<void>((resolve) => {
+    this.releaseOutcomeUpdates = resolve;
+  });
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean> {
+    if (patch.nodeStates?.first || patch.nodeStates?.second) {
+      this.pendingOutcomeUpdates++;
+      if (this.pendingOutcomeUpdates === 2) this.releaseOutcomeUpdates();
+      await this.outcomeUpdatesReady;
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
   }
 }
 
@@ -1091,6 +1119,53 @@ describe("workflow/runtime/workflow-run-control claim", () => {
 });
 
 describe("workflow/runtime/workflow-run-control reconcile", () => {
+  it("merges concurrent node outcomes without reverting a sibling", async () => {
+    const backend = new ConcurrentNodeOutcomeBackend();
+    const run: WorkflowRun = {
+      ...createRun("reconcile-concurrent-outcomes"),
+      status: "waiting",
+      workerId: "run-execution:owner",
+      nodeStates: {
+        first: { nodeId: "first", status: "running", attempt: 1 },
+        second: { nodeId: "second", status: "running", attempt: 1 },
+      },
+    };
+    await backend.createRun(run);
+
+    await Promise.all([
+      reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "event-delivery",
+          runId: run.id,
+          waitId: "wait-first",
+          nodeId: "first",
+          eventName: "first.completed",
+          waitKind: "event",
+          payload: { value: 1 },
+        },
+      }),
+      reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "event-delivery",
+          runId: run.id,
+          waitId: "wait-second",
+          nodeId: "second",
+          eventName: "second.completed",
+          waitKind: "event",
+          payload: { value: 2 },
+        },
+      }),
+    ]);
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.nodeStates.first?.status, "completed");
+    assertEquals(persisted?.nodeStates.second?.status, "completed");
+    assertEquals((persisted?.context.first as { payload?: unknown })?.payload, { value: 1 });
+    assertEquals((persisted?.context.second as { payload?: unknown })?.payload, { value: 2 });
+  });
+
   it("omits an absent approval comment while preserving structured data", async () => {
     const backend = new MemoryBackend();
     const run = {

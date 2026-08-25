@@ -12,14 +12,12 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Run state that may change after the immutable run snapshot is created. */
-export type WorkflowRunUpdate = Partial<
+type WorkflowRunScalarUpdate = Partial<
   Pick<
     WorkflowRun,
     | "status"
     | "output"
-    | "nodeStates"
     | "currentNodes"
-    | "context"
     | "error"
     | "startedAt"
     | "heartbeatAt"
@@ -28,6 +26,15 @@ export type WorkflowRunUpdate = Partial<
     | "_traceContext"
   >
 >;
+
+/**
+ * Mutable run fields. Context and node-state entries merge by key atomically,
+ * so concurrent node outcomes cannot replace a sibling's persisted entry.
+ */
+export type WorkflowRunUpdate = WorkflowRunScalarUpdate & {
+  nodeStates?: WorkflowRun["nodeStates"];
+  context?: Partial<WorkflowRun["context"]>;
+};
 
 const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "status",
@@ -132,6 +139,7 @@ export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
   /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;
+  /** Apply a run patch. Context and node-state maps merge by key. */
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
   /** Apply a run patch only when its current status matches one of the expected statuses. */
   updateRunIfStatus?(

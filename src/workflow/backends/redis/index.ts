@@ -25,7 +25,11 @@ import {
   type WorkflowRunUpdate,
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
-import { prepareWorkflowJson, serializeWorkflowContext } from "../../context-serialization.ts";
+import {
+  prepareWorkflowJson,
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+} from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import {
   INITIALIZATION_ERROR,
@@ -140,6 +144,16 @@ return 1`;
  */
 const UPDATE_RUN_SCRIPT = `-- observable-run-update
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
+local function applyPatchField(field, value)
+  if field == 'nodeStates' or field == 'context' then
+    local current = cjson.decode(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = cjson.decode(value)
+    for key, changed in pairs(patch) do current[key] = changed end
+    redis.call('hset', KEYS[1], field, cjson.encode(current))
+  else
+    redis.call('hset', KEYS[1], field, value)
+  end
+end
 local old = redis.call('hget', KEYS[1], 'status')
 local nextStatus = ARGV[2]
 if nextStatus ~= '' and old ~= nextStatus then
@@ -147,7 +161,7 @@ if nextStatus ~= '' and old ~= nextStatus then
   if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
   redis.call('sadd', ARGV[3] .. nextStatus, ARGV[1])
 end
-for i = 6, #ARGV, 2 do redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1]) end
+for i = 6, #ARGV, 2 do applyPatchField(ARGV[i], ARGV[i + 1]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -174,6 +188,16 @@ return revision`;
 /** Atomically verify the current status, update fields, and move the status index. */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
+local function applyPatchField(field, value)
+  if field == 'nodeStates' or field == 'context' then
+    local current = cjson.decode(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = cjson.decode(value)
+    for key, changed in pairs(patch) do current[key] = changed end
+    redis.call('hset', KEYS[1], field, cjson.encode(current))
+  else
+    redis.call('hset', KEYS[1], field, value)
+  end
+end
 local expectedCount = tonumber(ARGV[1])
 local allowed = false
 for i = 2, expectedCount + 1 do
@@ -198,7 +222,7 @@ end
 local streamKey = ARGV[expectedCount + 6]
 local maxLength = ARGV[expectedCount + 7]
 for i = expectedCount + 8, #ARGV, 2 do
-  redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+  applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
@@ -842,7 +866,7 @@ export class RedisBackend implements WorkflowBackend {
     // Patches are where warnings actually fire, because creation usually writes
     // only `input` while patches write the accumulated node outputs.
     const context = patch.context !== undefined
-      ? serializeWorkflowContext(patch.context, runId)
+      ? serializeWorkflowJson(patch.context, "context", runId)
       : undefined;
     const fields: Record<string, string> = {};
     if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";

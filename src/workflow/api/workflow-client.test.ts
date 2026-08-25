@@ -12,6 +12,7 @@ import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type {
   PersistedPendingApproval,
+  PersistedPendingEventWait,
   RunEventEnvelope,
   WorkflowRunUpdate,
 } from "../backends/types.ts";
@@ -2008,6 +2009,19 @@ class ResolveBeforeClaimBackend extends MemoryBackend {
   }
 }
 
+class FailingTerminalWaitCleanupBackend extends MemoryBackend {
+  override resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    if (runId === "run_terminal_cleanup_failure" && status === "cancelled") {
+      return Promise.reject(new Error(`terminal wait cleanup refused for ${waitId}`));
+    }
+    return super.resolvePendingEventWait(runId, waitId, status);
+  }
+}
+
 describe("WorkflowClient durable event waits", () => {
   let client: WorkflowClient;
   let backend: MemoryBackend;
@@ -2024,6 +2038,90 @@ describe("WorkflowClient durable event waits", () => {
   beforeEach(() => {
     backend = new MemoryBackend();
     client = createWorkflowClient({ backend });
+  });
+
+  it("rejects event names that no public wait can consume", async () => {
+    for (const eventName of ["", " payment.confirmed ", "__delay__"]) {
+      await assertRejects(
+        () => client.publishEvent("run_invalid_event_name", eventName, {}),
+        Error,
+        "eventName",
+      );
+      assertEquals(
+        await backend.takeRunEvent("run_invalid_event_name", eventName),
+        null,
+        `invalid event ${JSON.stringify(eventName)} must not consume mailbox capacity`,
+      );
+    }
+  });
+
+  it("continues the expiry sweep after one terminal wait cleanup fails", async () => {
+    const flakyBackend = new FailingTerminalWaitCleanupBackend();
+    const sweepingClient = createWorkflowClient({
+      backend: flakyBackend,
+      eventWait: { expirationCheckInterval: 3_600_000 },
+    });
+    const pendingWait = (
+      runId: string,
+      nodeId: string,
+      expiresAt?: Date,
+    ): PersistedPendingEventWait => ({
+      id: `wait_${nodeId}`,
+      runId,
+      nodeId,
+      eventName: `${nodeId}.completed`,
+      waitKind: "event",
+      requestedAt: new Date(0),
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+      status: "pending",
+    });
+
+    try {
+      const terminalRun: WorkflowRun = {
+        id: "run_terminal_cleanup_failure",
+        workflowId: "terminal-cleanup",
+        status: "completed",
+        input: {},
+        nodeStates: {},
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(0),
+        completedAt: new Date(1),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      };
+      const expiringRun: WorkflowRun = {
+        ...terminalRun,
+        id: "run_expiry_after_cleanup_failure",
+        workflowId: "expiry-after-cleanup",
+        status: "waiting",
+        completedAt: undefined,
+        nodeStates: {
+          later: { nodeId: "later", status: "running", attempt: 1 },
+        },
+      };
+      await flakyBackend.createRun(terminalRun);
+      await flakyBackend.savePendingEventWait(
+        terminalRun.id,
+        pendingWait(terminalRun.id, "terminal"),
+      );
+      await flakyBackend.createRun(expiringRun);
+      await flakyBackend.savePendingEventWait(
+        expiringRun.id,
+        pendingWait(expiringRun.id, "later", new Date(1)),
+      );
+
+      await sweepingClient.getEventWaitManager().checkExpiredEventWaits();
+
+      assertEquals(
+        (await flakyBackend.getRun(expiringRun.id))?.status,
+        "failed",
+        "a terminal cleanup failure must not block a later expired wait",
+      );
+    } finally {
+      await sweepingClient.destroy();
+    }
   });
 
   afterEach(async () => {
@@ -2526,13 +2624,11 @@ describe("WorkflowClient durable event waits", () => {
     assertExists(wait, "a delay must park a durable wait");
     assertEquals(wait.waitKind, "delay");
 
-    const outcome = await client.publishEvent(handle.runId, wait.eventName, { forced: true });
-
-    assertEquals(
-      outcome,
-      "buffered",
-      "a delay is released by its own deadline only, so publishing its reserved event " +
-        "name must not release it early",
+    await assertRejects(
+      () => client.publishEvent(handle.runId, wait.eventName, { forced: true }),
+      Error,
+      "eventName",
+      "the reserved delay transport name is not a publishable public event",
     );
     assertEquals(
       (await client.getPendingEventWaits(handle.runId)).length,

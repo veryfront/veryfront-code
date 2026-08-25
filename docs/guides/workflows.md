@@ -351,7 +351,23 @@ workflow client. The run resumes as soon as an event with the matching name
 reaches its mailbox:
 
 ```ts
+import { tool } from "veryfront/tool";
 import { createWorkflowClient, step, waitForEvent, workflow } from "veryfront/workflow";
+
+const fulfillment = tool<
+  { orderId: string },
+  { orderId: string; status: "fulfilled" }
+>({
+  id: "fulfillment",
+  description: "Fulfill a paid order",
+  inputSchema: {
+    type: "object",
+    properties: { orderId: { type: "string" } },
+    required: ["orderId"],
+    additionalProperties: false,
+  },
+  execute: async ({ orderId }) => ({ orderId, status: "fulfilled" }),
+});
 
 const workflows = createWorkflowClient();
 
@@ -362,7 +378,7 @@ workflows.register(workflow({
       eventName: "payment.completed",
       timeout: "1h",
     }),
-    step("fulfill", { tool: "fulfillment" }),
+    step("fulfill", { tool: fulfillment, input: { orderId: "ord_1" } }),
   ],
 }));
 

@@ -51,6 +51,20 @@ class MockRedisAdapter implements RedisAdapter {
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
 
+  private applyRunPatchField(hash: Map<string, string>, field: string, value: string): void {
+    if (field === "nodeStates" || field === "context") {
+      hash.set(
+        field,
+        JSON.stringify({
+          ...JSON.parse(hash.get(field) ?? "{}"),
+          ...JSON.parse(value),
+        }),
+      );
+      return;
+    }
+    hash.set(field, value);
+  }
+
   hset(key: string, fields: Record<string, string>): Promise<number> {
     let map = this.hashes.get(key);
     if (!map) {
@@ -205,7 +219,9 @@ class MockRedisAdapter implements RedisAdapter {
         }
         nextSet.add(runId);
       }
-      for (let i = 5; i < args.length; i += 2) hash.set(args[i]!, args[i + 1]!);
+      for (let i = 5; i < args.length; i += 2) {
+        this.applyRunPatchField(hash, args[i]!, args[i + 1]!);
+      }
       this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
     }
@@ -405,7 +421,7 @@ class MockRedisAdapter implements RedisAdapter {
       const streamKey = args[expectedCount + 5]!;
       const maxLength = Number(args[expectedCount + 6]);
       for (let i = expectedCount + 7; i < args.length; i += 2) {
-        hash.set(args[i]!, args[i + 1]!);
+        this.applyRunPatchField(hash, args[i]!, args[i + 1]!);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
@@ -1835,12 +1851,16 @@ describe("RedisBackend", () => {
     it("should update output and context", async () => {
       await backend.createRun(createTestRun("run-u2"));
       await backend.updateRun("run-u2", {
+        context: { input: { topic: "test" }, first: "keep" },
+      });
+      await backend.updateRun("run-u2", {
         output: { value: 42 },
         context: { input: {}, step1: "done" },
       });
 
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
+      assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
     });
 
     it("reports an invalid duplicated output through the workflow serializer", async () => {
