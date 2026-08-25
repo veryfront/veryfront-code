@@ -166,7 +166,7 @@ export type RuntimeProjectInstructionsOptions = {
 };
 
 function sortSkillsById(skills: Iterable<RuntimeSkillDefinition>): RuntimeSkillDefinition[] {
-  return [...skills].sort((a, b) => a.id.localeCompare(b.id));
+  return [...skills].sort((a, b) => compareStrings(a.id, b.id));
 }
 
 function requireBuiltinSkills(
@@ -677,11 +677,11 @@ export async function getRuntimeProjectSkillCatalog(
     }
   }
   if (!hasAvailableListing) {
-    return [...builtinSkills];
+    return sortSkillsById(builtinSkills);
   }
   const allFiles = Object.freeze([...filesByPath.values()]);
   if (allFiles.length === 0) {
-    return [...builtinSkills];
+    return sortSkillsById(builtinSkills);
   }
 
   const projectSkillsById = new Map<string, RuntimeSkillDefinition>();
@@ -783,7 +783,7 @@ export async function getRuntimeProjectSkillCatalog(
       ): candidate is { identity: ColocatedSkillIdentity; path: string } =>
         candidate.identity !== null && agentIds.has(candidate.identity.ownerAgentId),
     )
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .sort((left, right) => compareStrings(left.path, right.path))
     .filter((candidate) => {
       const admission = skillIdAdmission.claim({
         id: candidate.identity.id,

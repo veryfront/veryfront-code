@@ -271,7 +271,7 @@ export function filterHostedChatRuntimeLocalTools(input: {
     allowedToolNames ? allowedToolNames.has(toolName) : true
   );
 
-  return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
+  return Object.fromEntries(entries.sort(([left], [right]) => compareStrings(left, right)));
 }
 
 function shouldIncludeHostedWebFetchFallback(input: {
@@ -353,7 +353,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     }
   }
   const sortedLocalTools = Object.fromEntries(
-    sortedLocalToolEntries.sort(([left], [right]) => left.localeCompare(right)),
+    sortedLocalToolEntries.sort(([left], [right]) => compareStrings(left, right)),
   );
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)

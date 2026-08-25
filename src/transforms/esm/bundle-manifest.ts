@@ -92,7 +92,7 @@ export async function createBundleManifest(bundles: BundleEntry[]): Promise<Bund
     if (!byHash.has(bundle.hash)) byHash.set(bundle.hash, bundle);
   }
   const orderedBundles = [...byHash.values()].sort((left, right) =>
-    left.hash.localeCompare(right.hash)
+    compareStrings(left.hash, right.hash)
   );
   const hashes = orderedBundles.map((bundle) => bundle.hash);
   const manifestId = await computeManifestId(hashes);

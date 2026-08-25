@@ -662,6 +662,36 @@ Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project fil
   assertEquals(await catalog(), builtinSkills);
 });
 
+Deno.test("getRuntimeProjectSkillCatalog orders fallback builtin skills by code unit", async () => {
+  const { catalog } = createSkillCatalog({
+    paths: null,
+    builtinSkills: [
+      {
+        id: "alpha",
+        name: "alpha",
+        description: "Alpha",
+        instructions: "# Alpha",
+        allowedTools: [],
+      },
+      {
+        id: "Alpha",
+        name: "Alpha",
+        description: "Upper alpha",
+        instructions: "# Upper alpha",
+        allowedTools: [],
+      },
+    ],
+  });
+
+  const skills = await catalog();
+
+  assertEquals(
+    skills.map((skill) => skill.id),
+    ["Alpha", "alpha"],
+    "skill admission order must use code-unit ordering for skill ids",
+  );
+});
+
 Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and references", async () => {
   const { catalog, filesCalls, fileCalls } = createSkillCatalog({
     paths: [

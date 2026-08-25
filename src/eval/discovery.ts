@@ -181,7 +181,7 @@ export async function discoverEvals(
     }
 
     const files = await collectEvalFiles(baseDir, adapter);
-    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
+    for (const file of [...files].sort((left, right) => compareStrings(left.path, right.path))) {
       try {
         const evalItem = await loadEvalFromFile(
           file.path,
@@ -223,10 +223,10 @@ export async function discoverEvals(
   }
 
   uniqueEvals.sort((left, right) =>
-    left.id.localeCompare(right.id) || left.filePath.localeCompare(right.filePath)
+    compareStrings(left.id, right.id) || compareStrings(left.filePath, right.filePath)
   );
   errors.sort((left, right) =>
-    left.filePath.localeCompare(right.filePath) || left.error.localeCompare(right.error)
+    compareStrings(left.filePath, right.filePath) || compareStrings(left.error, right.error)
   );
   return { evals: uniqueEvals, errors };
 }
