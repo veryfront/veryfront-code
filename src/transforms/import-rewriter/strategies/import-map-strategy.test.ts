@@ -319,6 +319,24 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("keeps a package-root trailing separator against a URL mapping", () => {
+      const map: ImportMapConfig = { imports: { lodash: "https://cdn.example/lodash" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/lodash@4/", map),
+        "https://cdn.example/lodash/",
+        "a package root written as a directory stays a directory once mapped",
+      );
+    });
+
+    it("keeps a scoped package-root trailing separator against a URL mapping", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/", map),
+        "https://cdn.example/pkg/",
+        "the scoped shape must behave like the unscoped one, which is the point of this fix",
+      );
+    });
+
     it("keeps a trailing separator on a v-number package subpath", () => {
       const map: ImportMapConfig = { imports: { v8: "https://cdn.example/v8" } };
       assertEquals(

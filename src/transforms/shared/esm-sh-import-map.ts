@@ -10,7 +10,7 @@
  * @module transforms/shared/esm-sh-import-map
  */
 
-import { isEsmShUrl, parseEsmShUrl } from "./esm-sh-specifier.ts";
+import { isEsmShUrl, parseEsmShUrl } from "#veryfront/transforms/shared/esm-sh-specifier.ts";
 
 /**
  * esm.sh also serves legacy build-prefixed URLs such as
@@ -103,8 +103,10 @@ export function parseEsmShSpecifier(url: string): { packageName: string; subpath
   return {
     packageName,
     // The separator was removed only so the parse would accept the package-root
-    // form; on a non-empty subpath it is part of the subpath.
-    subpath: hadTrailingSeparator && subpath !== "" ? `${subpath}/` : subpath,
+    // form. It belongs to the subpath either way: `pkg@1/sub/` addresses a
+    // directory below `sub`, and `pkg@1/` addresses the package root as a
+    // directory, which a URL mapping renders as a trailing separator.
+    subpath: hadTrailingSeparator ? `${subpath}/` : subpath,
   };
 }
 
