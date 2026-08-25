@@ -278,15 +278,13 @@ describe("rendering/rsc/component-analyzer", () => {
       assertEquals(scanned, false);
     });
 
-    it("scans a contained app directory on a virtual adapter without realPath", async () => {
+    it("does not scan with an adapter that lacks containment authority", async () => {
       const filePath = "/project/app/Button.tsx";
       const fs = createMockFs(
         new Map([
           [filePath, `'use client';\nexport default function Button() {}`],
         ]),
       );
-      // Virtual/remote adapters may omit both markers and realPath entirely;
-      // lexical containment must then be sufficient.
       delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
       fs.readDir = (path) =>
         (async function* () {
@@ -297,6 +295,29 @@ describe("rendering/rsc/component-analyzer", () => {
 
       const manifest = await buildClientManifest("/project", "app", fs);
 
+      assertEquals(manifest.size, 0);
+    });
+
+    it("keeps relative paths for a symlink-free virtual adapter", async () => {
+      const filePath = "app/Button.tsx";
+      const fs = createMockFs(
+        new Map([
+          [filePath, `'use client';\nexport default function Button() {}`],
+        ]),
+      );
+      const scannedPaths: string[] = [];
+      fs.readDir = (path) =>
+        (async function* () {
+          scannedPaths.push(path);
+          if (path === "app") {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest(".", "app", fs);
+
+      assertEquals(scannedPaths, ["app"]);
+      assertEquals(manifest.get("Button")?.sourcePath, filePath);
       assertEquals(manifest.get("Button")?.rel, "app/Button.tsx");
     });
 

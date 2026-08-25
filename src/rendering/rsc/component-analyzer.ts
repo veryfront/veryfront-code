@@ -62,14 +62,15 @@ export async function buildClientManifest(
   const manifest = new Map<string, ClientComponentMeta>();
   const projectRoot = resolve(projectDir);
   const normalizedAppDir = appDir.replace(/^\/+|\/+$/g, "") || "app";
-  const appPath = resolve(projectRoot, normalizedAppDir);
-  if (!isWithinDirectory(projectRoot, appPath)) return manifest;
+  const appPath = join(projectDir, normalizedAppDir);
+  const absoluteAppPath = resolve(projectRoot, normalizedAppDir);
+  if (!isWithinDirectory(projectRoot, absoluteAppPath)) return manifest;
 
   const fsAdapter = fs ?? (await getFsAdapter());
   if (!fsAdapter) return manifest;
 
   try {
-    if (!await isCanonicallyContainedAppRoot(projectRoot, appPath, fsAdapter)) {
+    if (!await isCanonicallyContainedAppRoot(projectDir, appPath, fsAdapter)) {
       return manifest;
     }
 
@@ -81,7 +82,7 @@ export async function buildClientManifest(
         const analysis = await analyzeComponent(filePath, fsAdapter);
         if (analysis.type !== "client") return;
 
-        const relativePath = relative(projectRoot, filePath);
+        const relativePath = relative(projectDir, filePath);
         const normalizedRelativePath = relativePath.replaceAll("\\", "/");
         const existing = manifest.get(analysis.id);
         if (existing && existing.rel !== normalizedRelativePath) {
@@ -113,10 +114,8 @@ export async function buildClientManifest(
 
 /**
  * Confirm the lexically contained app root stays inside the project once
- * symlinks are resolved. Adapters that declare `symlinkSemantics: "none"` or
- * omit `realPath` are virtual/symlink-free by the FileSystemAdapter contract
- * (native/local adapters must provide `realPath`), so lexical containment —
- * already verified by the caller — is sufficient for them.
+ * symlinks are resolved. An adapter must either declare
+ * `symlinkSemantics: "none"` or provide canonical paths.
  */
 async function isCanonicallyContainedAppRoot(
   projectRoot: string,
@@ -127,7 +126,7 @@ async function isCanonicallyContainedAppRoot(
   if (semantics && "value" in semantics && semantics.value === "none") return true;
 
   const realPath = fsAdapter.realPath?.bind(fsAdapter);
-  if (!realPath) return true;
+  if (!realPath) return false;
 
   try {
     const [canonicalProjectRoot, canonicalAppPath] = await Promise.all([

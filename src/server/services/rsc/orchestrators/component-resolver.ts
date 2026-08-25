@@ -41,9 +41,9 @@ async function findFirstExistingPath(
 ): Promise<string | null> {
   const projectRoot = pathHelper.resolve(projectDir);
   for (const pattern of patterns) {
-    const fullPath = pathHelper.resolve(projectDir, pattern);
-    if (!isWithinDirectory(projectRoot, fullPath)) continue;
-    if (!await isCanonicalCandidateContained(projectRoot, fullPath, fsAdapter)) continue;
+    const fullPath = pathHelper.join(projectDir, pattern);
+    if (!isWithinDirectory(projectRoot, pathHelper.resolve(fullPath))) continue;
+    if (!await isCanonicalCandidateContained(projectDir, fullPath, fsAdapter)) continue;
     if (await fileExists(fullPath, fsAdapter)) return fullPath;
   }
   return null;
@@ -51,10 +51,8 @@ async function findFirstExistingPath(
 
 /**
  * Confirm a lexically contained candidate stays inside the project once
- * symlinks are resolved. Adapters that declare `symlinkSemantics: "none"` or
- * omit `realPath` are virtual/symlink-free by the FileSystemAdapter contract
- * (native/local adapters must provide `realPath`), so the caller's lexical
- * containment check is sufficient for them.
+ * symlinks are resolved. An adapter must either declare
+ * `symlinkSemantics: "none"` or provide canonical paths.
  */
 async function isCanonicalCandidateContained(
   projectRoot: string,
@@ -67,7 +65,7 @@ async function isCanonicalCandidateContained(
   if (semantics && "value" in semantics && semantics.value === "none") return true;
 
   const canonicalize = fsAdapter ? fsAdapter.realPath?.bind(fsAdapter) : realPath;
-  if (!canonicalize) return true;
+  if (!canonicalize) return false;
   try {
     const [canonicalRoot, canonicalCandidate] = await Promise.all([
       canonicalize(projectRoot),

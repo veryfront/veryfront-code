@@ -110,15 +110,21 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       assertEquals(result, null);
     });
 
-    it("resolves contained routes on a virtual adapter without realPath", async () => {
+    it("does not resolve with an adapter that lacks containment authority", async () => {
       const fs = createMockFs(new Set(["/project/app/page.tsx"]));
-      // Virtual/remote adapters may omit both markers and realPath entirely;
-      // lexical containment must then be sufficient.
       delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
 
       const result = await resolveComponentPath("/", "/project", fs);
 
-      assertEquals(result, "/project/app/page.tsx");
+      assertEquals(result, null);
+    });
+
+    it("keeps relative paths for a symlink-free virtual adapter", async () => {
+      const fs = createMockFs(new Set(["app/page.tsx"]));
+
+      const result = await resolveComponentPath("/", ".", fs);
+
+      assertEquals(result, "app/page.tsx");
     });
 
     it("does not resolve a lexical route whose canonical target escapes the project", async () => {
