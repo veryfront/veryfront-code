@@ -2,7 +2,7 @@ import { isAbsolute, join, normalize } from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { rendererLogger } from "#veryfront/utils";
-import { CONFIG_INVALID } from "#veryfront/errors";
+import { CONFIG_INVALID, UNKNOWN_ERROR } from "#veryfront/errors";
 import { isPathContainedBy } from "#veryfront/platform/adapters/path-containment.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 
@@ -32,10 +32,16 @@ async function assertCanonicalContainment(
       realPath.call(adapter.fs, path),
     ]);
   } catch (error) {
-    if (!isCanonicalNotFoundError(error)) throw error;
-    throw CONFIG_INVALID.create({
-      detail:
-        `Configured app component does not exist: "${displayPath}". Check your veryfront.config.ts 'app' setting.`,
+    if (isCanonicalNotFoundError(error)) {
+      throw CONFIG_INVALID.create({
+        detail:
+          `Configured app component does not exist: "${displayPath}". Check your veryfront.config.ts 'app' setting.`,
+      });
+    }
+    throw UNKNOWN_ERROR.create({
+      detail: "Failed to canonicalize app component path",
+      cause: error,
+      context: { operation: "canonicalizeAppComponent" },
     });
   }
 

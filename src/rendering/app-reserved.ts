@@ -130,19 +130,29 @@ export async function loadReservedWithPath(
         });
       }
 
-      const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
-        projectId: projectId ?? projectDir,
-        dev: modes.compileMode === "development",
-        mode: modes.environment,
-        contentSourceId,
-        reactVersion,
-        serverExternalPackages,
-        moduleServerOrigin,
-        dependencyPinningCacheKey,
-        dependencyPinningDependencies,
-        dependencyPinningSource,
-        signal,
-      });
+      let Cmp: Awaited<ReturnType<typeof loadComponentFromSource>>;
+      try {
+        Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
+          projectId: projectId ?? projectDir,
+          dev: modes.compileMode === "development",
+          mode: modes.environment,
+          contentSourceId,
+          reactVersion,
+          serverExternalPackages,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          dependencyPinningSource,
+          signal,
+        });
+      } catch (error) {
+        throwIfAborted(signal);
+        throw UNKNOWN_ERROR.create({
+          detail: "Failed to load reserved component",
+          cause: error,
+          context: { operation: "loadReservedComponent", component: which },
+        });
+      }
       if (typeof Cmp === "function") {
         return { component: Cmp as ReservedComponent, filePath: file };
       }

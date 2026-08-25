@@ -50,8 +50,9 @@ describe("rendering/app-reserved", () => {
     assertEquals(result, null);
   });
 
-  it("propagates reserved component compilation failures", async () => {
-    const failure = new Error("reserved component compilation failed");
+  it("sanitizes reserved component compilation failures", async () => {
+    const privatePath = "/Users/alice/private-project/app/loading.tsx";
+    const failure = new Error(`No component exported from ${privatePath}`);
     const adapter = {
       fs: {
         readFile: (path: string) =>
@@ -86,7 +87,11 @@ describe("rendering/app-reserved", () => {
       )
     );
 
-    assertEquals(error, failure);
+    if (!(error instanceof Error)) throw error;
+    assertEquals(error.message, "Failed to load reserved component");
+    assertEquals(error.message.includes(privatePath), false);
+    assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
+    assertEquals(error.cause, failure);
   });
 
   it("sanitizes reserved component read failures", async () => {

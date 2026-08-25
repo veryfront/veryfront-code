@@ -119,6 +119,28 @@ describe("rendering/layouts/utils/app-resolver", () => {
       );
     });
 
+    it("sanitizes app component canonicalization failures", async () => {
+      const privatePath = "/Users/alice/private-project/src/app.tsx";
+      const failure = Object.assign(
+        new Error(`EACCES: permission denied, realpath '${privatePath}'`),
+        { code: "EACCES" },
+      );
+      const adapter = createMockAdapter(new Set([privatePath]));
+      adapter.fs.realPath = (path: string) =>
+        path === privatePath ? Promise.reject(failure) : Promise.resolve(path);
+      const config = { app: privatePath } as unknown as VeryfrontConfig;
+
+      const error = await assertRejects(() =>
+        resolveAppComponentPath("/Users/alice/private-project", adapter, config)
+      );
+
+      if (!(error instanceof Error)) throw error;
+      assertEquals(error.message, "Failed to canonicalize app component path");
+      assertEquals(error.message.includes(privatePath), false);
+      assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
+      assertEquals(error.cause, failure);
+    });
+
     it("should throw when config.app path does not exist", async () => {
       const adapter = createMockAdapter();
       const config = { app: "nonexistent/app.tsx" } as unknown as VeryfrontConfig;
