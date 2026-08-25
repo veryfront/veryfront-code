@@ -1164,6 +1164,264 @@ async function requireActiveMergeQueueBinding({
   }
 }
 
+async function readMergeGroupSourceEvidence({
+  github,
+  common,
+  pullNumber,
+  sourceHeadSha,
+}) {
+  const [reviews, comments, events, statuses, timeline] = await Promise.all([
+    collectAll(
+      github,
+      github.rest.pulls.listReviews,
+      { ...common, pull_number: pullNumber },
+      "source reviews",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listComments,
+      { ...common, issue_number: pullNumber },
+      "source comments",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { ...common, issue_number: pullNumber },
+      "source pull request events",
+    ),
+    collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { ...common, ref: sourceHeadSha },
+      "source review statuses",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEventsForTimeline,
+      { ...common, issue_number: pullNumber },
+      "source review timeline",
+    ),
+  ]);
+  return { reviews, comments, events, statuses, timeline };
+}
+
+async function requireCurrentAutomatedReview({
+  github,
+  common,
+  evidence,
+  sourceHeadSha,
+  pull,
+  pullNumber,
+  baseBinding,
+}) {
+  const liveReview = await findAutomatedReview(
+    evidence,
+    sourceHeadSha,
+    (ref) => resolveCommitRef(github, common, ref),
+    (login) =>
+      isCurrentlyTrustedHuman(github, {
+        ...common,
+        login,
+        pullAuthor: pull?.data?.user?.login,
+      }),
+    latestReviewResetTime(evidence.statuses, pullNumber, baseBinding),
+  );
+  if (!liveReview) {
+    throw new Error("Pull request does not have current review evidence");
+  }
+}
+
+function requireTrustedReviewGate(statuses, pullNumber, baseBinding) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  if (!trustedReviewGateReviewer(status, pullNumber, baseBinding)) {
+    throw new Error(
+      "Pull request head does not have a current trusted review gate",
+    );
+  }
+}
+
+async function requireUnchangedSourcePull({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseBinding,
+}) {
+  const current = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  if (
+    current?.data?.state !== "open" ||
+    current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+  ) {
+    throw new Error(
+      "Pull request head changed while propagating review evidence",
+    );
+  }
+  if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+    throw new Error(
+      "Pull request base changed while propagating review evidence",
+    );
+  }
+  return current;
+}
+
+async function latestTrustedReviewGateStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseBinding,
+  current,
+}) {
+  const latestStatuses = await collectAll(
+    github,
+    github.rest.repos.listCommitStatusesForRef,
+    { owner, repo, ref: sourceHeadSha },
+    "latest source review statuses",
+  );
+  const status = latestReviewGateStatusForPull(latestStatuses, pullNumber);
+  const reviewer = trustedReviewGateReviewer(status, pullNumber, baseBinding);
+  if (!reviewer) {
+    throw new Error(
+      "Pull request review gate changed while propagating review evidence",
+    );
+  }
+  if (
+    reviewer !== CODEX_LOGIN &&
+    !await isCurrentlyTrustedHuman(github, {
+      owner,
+      repo,
+      login: reviewer,
+      pullAuthor: current?.data?.user?.login,
+    })
+  ) {
+    throw new Error(
+      "Human reviewer is no longer trusted for merge queue reuse",
+    );
+  }
+  return status;
+}
+
+async function publishSuccessfulMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  mergeGroupSha,
+  currentReviewStatus,
+  pullUrl,
+}) {
+  const description = `Reused exact-head review for PR #${pullNumber}`;
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: mergeGroupSha,
+    state: "success",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: typeof currentReviewStatus.target_url === "string"
+      ? currentReviewStatus.target_url
+      : pullUrl,
+  });
+  return {
+    state: "success",
+    description,
+    failure: undefined,
+    published: true,
+  };
+}
+
+async function publishVerifiedMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+  pullUrlRef,
+}) {
+  const pull = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  if (
+    pull?.data?.state !== "open" ||
+    pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+  ) {
+    throw new Error("Merge queue pull request changed from its queued head");
+  }
+  const baseBinding = pullRequestBaseBinding(pull?.data);
+  pullUrlRef.value = pull.data.html_url ?? pullUrlRef.value;
+  const common = { owner, repo };
+  const evidence = await readMergeGroupSourceEvidence({
+    github,
+    common,
+    pullNumber,
+    sourceHeadSha,
+  });
+  await requireCurrentAutomatedReview({
+    github,
+    common,
+    evidence,
+    sourceHeadSha,
+    pull,
+    pullNumber,
+    baseBinding,
+  });
+  requireTrustedReviewGate(evidence.statuses, pullNumber, baseBinding);
+  const current = await requireUnchangedSourcePull({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseBinding,
+  });
+  const currentReviewStatus = await latestTrustedReviewGateStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseBinding,
+    current,
+  });
+  try {
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+    });
+  } catch (error) {
+    return {
+      state: "failure",
+      description: undefined,
+      failure: error instanceof Error ? error : new Error(String(error)),
+      published: false,
+    };
+  }
+  return publishSuccessfulMergeGroupReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    mergeGroupSha,
+    currentReviewStatus,
+    pullUrl: pullUrlRef.value,
+  });
+}
+
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
 export async function publishMergeGroupReviewStatus({
   github,
@@ -1176,7 +1434,9 @@ export async function publishMergeGroupReviewStatus({
 }) {
   let failure;
   let bindingVerified = false;
-  let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  const pullUrlRef = {
+    value: `https://github.com/${owner}/${repo}/pull/${pullNumber}`,
+  };
   try {
     assertMergeGroupInputs({
       pullNumber,
@@ -1194,170 +1454,16 @@ export async function publishMergeGroupReviewStatus({
       mergeGroupSha,
     });
     bindingVerified = true;
-    const pull = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pullNumber,
-    });
-    if (
-      pull?.data?.state !== "open" ||
-      pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
-    ) {
-      throw new Error("Merge queue pull request changed from its queued head");
-    }
-    const baseBinding = pullRequestBaseBinding(pull?.data);
-    pullUrl = pull.data.html_url ?? pullUrl;
-    const common = { owner, repo };
-    const [reviews, comments, events, statuses, timeline] = await Promise.all([
-      collectAll(
-        github,
-        github.rest.pulls.listReviews,
-        { ...common, pull_number: pullNumber },
-        "source reviews",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listComments,
-        { ...common, issue_number: pullNumber },
-        "source comments",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listEvents,
-        { ...common, issue_number: pullNumber },
-        "source pull request events",
-      ),
-      collectAll(
-        github,
-        github.rest.repos.listCommitStatusesForRef,
-        { ...common, ref: sourceHeadSha },
-        "source review statuses",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listEventsForTimeline,
-        { ...common, issue_number: pullNumber },
-        "source review timeline",
-      ),
-    ]);
-    const liveReview = await findAutomatedReview(
-      { reviews, comments, events, timeline },
-      sourceHeadSha,
-      (ref) => resolveCommitRef(github, common, ref),
-      (login) =>
-        isCurrentlyTrustedHuman(github, {
-          ...common,
-          login,
-          pullAuthor: pull?.data?.user?.login,
-        }),
-      latestReviewResetTime(statuses, pullNumber, baseBinding),
-    );
-    if (!liveReview) {
-      throw new Error("Pull request does not have current review evidence");
-    }
-    let currentReviewStatus = latestReviewGateStatusForPull(
-      statuses,
-      pullNumber,
-    );
-    if (
-      !trustedReviewGateReviewer(
-        currentReviewStatus,
-        pullNumber,
-        baseBinding,
-      )
-    ) {
-      throw new Error(
-        "Pull request head does not have a current trusted review gate",
-      );
-    }
-    const current = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pullNumber,
-    });
-    if (
-      current?.data?.state !== "open" ||
-      current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
-    ) {
-      throw new Error(
-        "Pull request head changed while propagating review evidence",
-      );
-    }
-    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
-      throw new Error(
-        "Pull request base changed while propagating review evidence",
-      );
-    }
-    const latestStatuses = await collectAll(
+    return await publishVerifiedMergeGroupReviewStatus({
       github,
-      github.rest.repos.listCommitStatusesForRef,
-      { owner, repo, ref: sourceHeadSha },
-      "latest source review statuses",
-    );
-    const latestReviewStatus = latestReviewGateStatusForPull(
-      latestStatuses,
-      pullNumber,
-    );
-    const latestReviewer = trustedReviewGateReviewer(
-      latestReviewStatus,
-      pullNumber,
-      baseBinding,
-    );
-    if (!latestReviewer) {
-      throw new Error(
-        "Pull request review gate changed while propagating review evidence",
-      );
-    }
-    if (
-      latestReviewer !== CODEX_LOGIN &&
-      !await isCurrentlyTrustedHuman(github, {
-        owner,
-        repo,
-        login: latestReviewer,
-        pullAuthor: current?.data?.user?.login,
-      })
-    ) {
-      throw new Error(
-        "Human reviewer is no longer trusted for merge queue reuse",
-      );
-    }
-    try {
-      await requireActiveMergeQueueBinding({
-        github,
-        owner,
-        repo,
-        pullNumber,
-        sourceHeadSha,
-        baseHeadSha,
-        mergeGroupSha,
-      });
-    } catch (error) {
-      return {
-        state: "failure",
-        description: undefined,
-        failure: error instanceof Error ? error : new Error(String(error)),
-        published: false,
-      };
-    }
-    currentReviewStatus = latestReviewStatus;
-    const description = `Reused exact-head review for PR #${pullNumber}`;
-    await github.rest.repos.createCommitStatus({
       owner,
       repo,
-      sha: mergeGroupSha,
-      state: "success",
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description,
-      target_url: typeof currentReviewStatus.target_url === "string"
-        ? currentReviewStatus.target_url
-        : pullUrl,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+      pullUrlRef,
     });
-    return {
-      state: "success",
-      description,
-      failure: undefined,
-      published: true,
-    };
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }
@@ -1369,7 +1475,7 @@ export async function publishMergeGroupReviewStatus({
       state: "failure",
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
       description: "Could not reuse an exact-head review",
-      target_url: pullUrl,
+      target_url: pullUrlRef.value,
     });
   }
   return {
