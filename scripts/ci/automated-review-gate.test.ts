@@ -1027,9 +1027,6 @@ describe("automated review workflow", () => {
         "github.event.context == 'CodeRabbit'",
         "github.event.state == 'success'",
         "github.event.description == 'Review completed'",
-        "github.event.sender.login == 'coderabbitai[bot]'",
-        "github.event.sender.id == 136622811",
-        "github.event.sender.type == 'Bot'",
       ]
     ) {
       assert(
@@ -1180,14 +1177,12 @@ describe("automated review workflow", () => {
         "github.event.context == 'CodeRabbit'",
         "github.event.state == 'success'",
         "github.event.description == 'Review completed'",
-        "github.event.sender.login == 'coderabbitai[bot]'",
-        "github.event.sender.id == 136622811",
-        "github.event.sender.type == 'Bot'",
       ]
     ) assert(statusIf.includes(condition));
     assert(
-      !statusIf.includes("github.event.creator"),
-      "the status payload has no creator field, so that condition never matches",
+      !statusIf.includes("github.event.sender") &&
+        !statusIf.includes("github.event.creator"),
+      "the webhook is only a wakeup; creator trust comes from REST status history",
     );
     assertEquals(record(statusJob.concurrency, "status concurrency"), {
       ...publisherConcurrency,
