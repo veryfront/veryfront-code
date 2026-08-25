@@ -322,13 +322,15 @@ describe("automated review evidence", () => {
   });
 
   it("treats a same-second verdict after an edited finding as ambiguous", async () => {
+    const findingId = 100;
+    const verdictId = 101;
     const finding = codexFindingComment(HEAD.slice(0, 10), {
-      id: 100,
+      id: findingId,
       created_at: "2026-08-25T08:00:00Z",
       updated_at: "2026-08-25T08:00:02Z",
     });
     const verdict = codexComment(HEAD.slice(0, 10), {
-      id: 101,
+      id: verdictId,
       created_at: "2026-08-25T08:00:02Z",
       updated_at: "2026-08-25T08:00:02Z",
     });
@@ -338,8 +340,8 @@ describe("automated review evidence", () => {
           reviews: [],
           comments: [finding, verdict],
           timeline: [
-            { event: "commented", id: finding.id },
-            { event: "commented", id: verdict.id },
+            { event: "commented", id: findingId },
+            { event: "commented", id: verdictId },
           ],
         },
         HEAD,
