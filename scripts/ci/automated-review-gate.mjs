@@ -23,6 +23,10 @@ export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 
 const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
 
+function isPositiveStatusId(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
 /** Produce a compact, non-ambiguous binding for a pull request base. */
 export function reviewBaseBinding(baseRepositoryId, baseRef) {
   if (!Number.isSafeInteger(baseRepositoryId) || baseRepositoryId < 1) {
@@ -222,16 +226,13 @@ function evidenceFreshness(
   timelineEvent,
   boundary,
   timeline,
+  timeMode = "created",
 ) {
   if (boundary === undefined) return "newer";
-  const evidenceTime = Date.parse(
-    timelineEvent === "reviewed"
-      ? evidence?.submitted_at ?? ""
-      : evidence?.created_at ?? "",
-  );
-  if (!Number.isFinite(evidenceTime)) return "ambiguous";
-  if (evidenceTime < boundary.time) return "older";
-  if (evidenceTime > boundary.time) return "newer";
+  const time = evidenceTime(evidence, timelineEvent, timeMode);
+  if (!Number.isFinite(time)) return "ambiguous";
+  if (time < boundary.time) return "older";
+  if (time > boundary.time) return "newer";
   if (boundary.timelineEvent === undefined) return "ambiguous";
   const boundaryPosition = timelinePosition(
     timeline,
@@ -247,6 +248,64 @@ function evidenceFreshness(
     return "ambiguous";
   }
   return evidencePosition > boundaryPosition ? "newer" : "older";
+}
+
+function evidenceTime(evidence, timelineEvent, timeMode = "created") {
+  if (timelineEvent === "reviewed") {
+    return Date.parse(evidence?.submitted_at ?? "");
+  }
+  const createdAt = Date.parse(evidence?.created_at ?? "");
+  if (timeMode !== "finding") return createdAt;
+  const updatedAt = Date.parse(evidence?.updated_at ?? "");
+  if (Number.isFinite(createdAt) && Number.isFinite(updatedAt)) {
+    return Math.max(createdAt, updatedAt);
+  }
+  return Number.isFinite(updatedAt) ? updatedAt : createdAt;
+}
+
+function isProvablyUneditedComment(comment) {
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  return Number.isFinite(createdAt) && Number.isFinite(updatedAt) &&
+    updatedAt === createdAt;
+}
+
+function isEditedComment(comment) {
+  const createdAt = Date.parse(comment?.created_at ?? "");
+  const updatedAt = Date.parse(comment?.updated_at ?? "");
+  return Number.isFinite(createdAt) && Number.isFinite(updatedAt) &&
+    updatedAt !== createdAt;
+}
+
+function isEvidenceProvablyLater(candidate, current, timeline) {
+  const candidateTime = candidate.time ?? evidenceTime(
+    candidate.evidence,
+    candidate.timelineEvent,
+  );
+  const currentTime = current.time ??
+    evidenceTime(current.evidence, current.timelineEvent);
+  if (!Number.isFinite(candidateTime) || !Number.isFinite(currentTime)) {
+    return false;
+  }
+  if (candidateTime !== currentTime) return candidateTime > currentTime;
+  // The timeline records a comment's creation position, not its later edit.
+  // It therefore cannot order a same-second success against an edited finding.
+  if (
+    current.timelineEvent === "commented" &&
+    isEditedComment(current.evidence)
+  ) return false;
+  const candidatePosition = timelinePosition(
+    timeline,
+    candidate.timelineEvent,
+    candidate.evidence?.id,
+  );
+  const currentPosition = timelinePosition(
+    timeline,
+    current.timelineEvent,
+    current.evidence?.id,
+  );
+  return candidatePosition !== undefined && currentPosition !== undefined &&
+    candidatePosition > currentPosition;
 }
 
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
@@ -315,8 +374,8 @@ export async function findAutomatedReview(
     validReviewNotBefore,
     latestBaseRefChange(events),
   );
-  let codexApproval;
-  let codexReviewFinding = false;
+  const codexSuccesses = [];
+  const codexFindings = [];
   {
     const latestHumanReviews = new Map();
     for (const [index, review] of reviews.entries()) {
@@ -336,21 +395,29 @@ export async function findAutomatedReview(
         freshness === "newer" && state === "APPROVED" &&
         isPinnedBot(review?.user, CODEX_LOGIN)
       ) {
-        codexApproval = {
-          reviewer: CODEX_LOGIN,
-          source: "pull-request-review",
-          state,
-          url: typeof review.html_url === "string"
-            ? review.html_url
-            : undefined,
-        };
+        codexSuccesses.push({
+          evidence: review,
+          timelineEvent: "reviewed",
+          proof: {
+            reviewer: CODEX_LOGIN,
+            source: "pull-request-review",
+            state,
+            url: typeof review.html_url === "string"
+              ? review.html_url
+              : undefined,
+          },
+        });
         continue;
       }
       if (
         freshness !== "older" && isPinnedBot(review?.user, CODEX_LOGIN) &&
         (state === "COMMENTED" || state === "CHANGES_REQUESTED")
       ) {
-        codexReviewFinding = true;
+        codexFindings.push({
+          evidence: review,
+          freshness,
+          timelineEvent: "reviewed",
+        });
         continue;
       }
       if (
@@ -381,20 +448,11 @@ export async function findAutomatedReview(
     }
   }
 
-  let codexNoFindings;
-  let codexFinding = false;
   for (const comment of comments) {
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string"
     ) continue;
-    const freshness = evidenceFreshness(
-      comment,
-      "commented",
-      boundary,
-      timeline,
-    );
-    if (freshness === "older") continue;
     const reviewedCommits = [...comment.body.matchAll(
       new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
     )];
@@ -410,25 +468,49 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
+      const cleanVerdict = comment.body.startsWith(CODEX_NO_FINDINGS);
+      const freshness = evidenceFreshness(
+        comment,
+        "commented",
+        boundary,
+        timeline,
+        cleanVerdict ? "created" : "finding",
+      );
+      if (freshness === "older") continue;
       if (
-        freshness === "newer" && comment.body.startsWith(CODEX_NO_FINDINGS)
+        freshness === "newer" && cleanVerdict &&
+        isProvablyUneditedComment(comment)
       ) {
-        codexNoFindings = {
-          reviewer: CODEX_LOGIN,
-          source: "codex-comment",
-          state: "COMMENTED",
-          url: typeof comment.html_url === "string"
-            ? comment.html_url
-            : undefined,
-        };
-      } else {
-        codexFinding = true;
+        codexSuccesses.push({
+          evidence: comment,
+          time: evidenceTime(comment, "commented", "created"),
+          timelineEvent: "commented",
+          proof: {
+            reviewer: CODEX_LOGIN,
+            source: "codex-comment",
+            state: "COMMENTED",
+            url: typeof comment.html_url === "string"
+              ? comment.html_url
+              : undefined,
+          },
+        });
+      } else if (!cleanVerdict) {
+        codexFindings.push({
+          evidence: comment,
+          freshness,
+          time: evidenceTime(comment, "commented", "finding"),
+          timelineEvent: "commented",
+        });
       }
     }
   }
-  return codexReviewFinding || codexFinding
-    ? undefined
-    : codexApproval ?? codexNoFindings;
+  if (codexFindings.length === 0) return codexSuccesses[0]?.proof;
+  return codexSuccesses.find((success) =>
+    codexFindings.every((finding) =>
+      finding.freshness === "newer" &&
+      isEvidenceProvablyLater(success, finding, timeline)
+    )
+  )?.proof;
 }
 
 async function collectAll(github, endpoint, parameters, source) {
@@ -453,13 +535,127 @@ async function collectAll(github, endpoint, parameters, source) {
 async function resolveCommitRef(github, common, ref) {
   try {
     const response = await github.rest.repos.getCommit({ ...common, ref });
-    return response?.data?.sha;
+    const sha = response?.data?.sha;
+    if (!FULL_SHA.test(sha ?? "")) {
+      throw new Error("Commit ref response has a malformed commit");
+    }
+    return sha;
   } catch (error) {
     if (
       typeof error === "object" && error !== null && error.status === 404
     ) return undefined;
     throw error;
   }
+}
+
+async function resolveQueueRefTarget(github, common, ref) {
+  let response;
+  try {
+    response = await github.rest.git.getRef({ ...common, ref });
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null && error.status === 404
+    ) return undefined;
+    throw error;
+  }
+  const sha = response?.data?.object?.sha;
+  if (!FULL_SHA.test(sha ?? "")) {
+    throw new Error("Merge queue ref response has a malformed commit");
+  }
+  return sha;
+}
+
+function mergeQueueTarget(queueRef, pullNumber) {
+  const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+  if (parsed?.pullNumber !== pullNumber) return undefined;
+  const mergeGroupSha = queueRef?.object?.sha;
+  if (!FULL_SHA.test(mergeGroupSha ?? "")) {
+    throw new Error("Merge queue ref has a malformed commit");
+  }
+  return {
+    baseHeadSha: parsed.baseHeadSha,
+    mergeGroupSha,
+    key: mergeGroupSha.toLowerCase(),
+    ref: queueRef.ref.startsWith("refs/")
+      ? queueRef.ref.slice("refs/".length)
+      : queueRef.ref,
+  };
+}
+
+async function queueTargetIsActive({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  target,
+}) {
+  try {
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha: target.baseHeadSha,
+      mergeGroupSha: target.mergeGroupSha,
+    });
+    return true;
+  } catch {
+    const liveTarget = await resolveQueueRefTarget(
+      github,
+      { owner, repo },
+      target.ref,
+    );
+    return liveTarget?.toLowerCase() === target.key;
+  }
+}
+
+async function publishQueueReviewResolutionFailure({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  pullUrl,
+  queueRef,
+  seen,
+}) {
+  const target = mergeQueueTarget(queueRef, pullNumber);
+  if (!target || seen.has(target.key)) return;
+  const common = { owner, repo };
+  const currentHeadSha = await resolveCommitRef(
+    github,
+    common,
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (currentHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) return;
+  if (
+    !await queueTargetIsActive({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      target,
+    })
+  ) return;
+  const finalSourceHeadSha = await resolveCommitRef(
+    github,
+    common,
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (finalSourceHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) return;
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: target.mergeGroupSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description: `Could not revalidate review for PR #${pullNumber}`,
+    target_url: pullUrl,
+  });
+  seen.add(target.key);
 }
 
 /** Fail one source head and every active queue commit derived from it. */
@@ -476,6 +672,14 @@ export async function publishReviewResolutionFailure({
   }
   if (!FULL_SHA.test(sourceHeadSha)) {
     throw new Error("Pull request source commit is malformed");
+  }
+  const currentHeadSha = await resolveCommitRef(
+    github,
+    { owner, repo },
+    `refs/pull/${pullNumber}/head`,
+  );
+  if (currentHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
+    return { queueFailures: 0, skipped: true };
   }
   await github.rest.repos.createCommitStatus({
     owner,
@@ -494,28 +698,18 @@ export async function publishReviewResolutionFailure({
   );
   const seen = new Set();
   for (const queueRef of refs) {
-    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
-    const mergeGroupSha = queueRef?.object?.sha;
-    if (
-      parsed?.pullNumber !== pullNumber ||
-      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
-    ) continue;
-    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
-      throw new Error("Merge queue ref has a malformed commit");
-    }
-    if (seen.has(mergeGroupSha.toLowerCase())) continue;
-    seen.add(mergeGroupSha.toLowerCase());
-    await github.rest.repos.createCommitStatus({
+    await publishQueueReviewResolutionFailure({
+      github,
       owner,
       repo,
-      sha: mergeGroupSha,
-      state: "failure",
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: `Could not revalidate review for PR #${pullNumber}`,
-      target_url: pullUrl,
+      pullNumber,
+      sourceHeadSha,
+      pullUrl,
+      queueRef,
+      seen,
     });
   }
-  return { queueFailures: seen.size };
+  return { queueFailures: seen.size, skipped: false };
 }
 
 async function isCurrentlyTrustedHuman(
@@ -697,7 +891,7 @@ export async function publishAutomatedReviewStatus({
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
   }
-  await github.rest.repos.createCommitStatus({
+  const statusResponse = await github.rest.repos.createCommitStatus({
     owner,
     repo,
     sha: headSha,
@@ -706,7 +900,30 @@ export async function publishAutomatedReviewStatus({
     description,
     target_url: review?.url ?? pullUrl,
   });
-  return { state, review, failure, description, baseRef };
+  let statusId = statusResponse?.data?.id;
+  if (state === "success" && !isPositiveStatusId(statusId)) {
+    failure = new Error("Published review status identity is malformed");
+    state = "failure";
+    review = undefined;
+    description = `PR#${pullNumber} review status unavailable`;
+    const failureResponse = await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: headSha,
+      state,
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description,
+      target_url: pullUrl,
+    });
+    statusId = failureResponse?.data?.id;
+    if (!isPositiveStatusId(statusId)) {
+      throw failure;
+    }
+  }
+  if (statusId !== undefined && !isPositiveStatusId(statusId)) {
+    throw new Error("Published review status identity is malformed");
+  }
+  return { state, review, failure, description, baseRef, statusId };
 }
 
 /**
@@ -798,24 +1015,63 @@ export async function invalidateReviewProof({
       ? response.data.html_url
       : undefined,
   });
-  return { headSha, description, ...result, skipped: false };
+  return { headSha, description, ...result };
 }
 
-/** Extract the pull request represented by a merge queue head ref. */
+/** Extract the pull request and base commit represented by a merge queue ref. */
 export function parseMergeQueuePullNumber(headRef) {
   if (typeof headRef !== "string") return undefined;
   const match =
-    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(
-      headRef,
-    );
+    /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i
+      .exec(
+        headRef,
+      );
   if (!match) return undefined;
   const pullNumber = Number(match[1]);
   return Number.isSafeInteger(pullNumber)
-    ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+    ? { pullNumber, baseHeadSha: match[2].toLowerCase() }
     : undefined;
 }
 
-function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
+/** Select the boundary captured by the publisher that actually failed. */
+export function selectMergeGroupFailureStatusBoundary({
+  targetResult,
+  targetStatusId,
+  publisherStatusId,
+}) {
+  const statusId = targetResult === "success" &&
+      publisherStatusId !== undefined
+    ? publisherStatusId
+    : targetStatusId;
+  return Number.isSafeInteger(statusId) && statusId >= 0
+    ? statusId
+    : undefined;
+}
+
+/** Preserve a trusted merge-group success written after one run's boundary. */
+export function shouldPreserveLaterMergeGroupSuccess({
+  latestStatus,
+  reconciliationStatusId,
+  pullNumber,
+}) {
+  return Number.isSafeInteger(reconciliationStatusId) &&
+    reconciliationStatusId >= 0 &&
+    Number.isSafeInteger(pullNumber) && pullNumber >= 1 &&
+    Number.isSafeInteger(latestStatus?.id) &&
+    latestStatus.id !== reconciliationStatusId &&
+    latestStatus?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    latestStatus?.state === "success" &&
+    isPinnedBot(latestStatus?.creator, GITHUB_ACTIONS_LOGIN) &&
+    latestStatus?.description ===
+      `Reused exact-head review for PR #${pullNumber}`;
+}
+
+function assertMergeGroupInputs({
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+}) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
     throw new Error("Merge queue pull request number is invalid");
   }
@@ -824,6 +1080,9 @@ function assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha }) {
   }
   if (!FULL_SHA.test(sourceHeadSha)) {
     throw new Error("Merge queue source commit is malformed");
+  }
+  if (!FULL_SHA.test(baseHeadSha)) {
+    throw new Error("Merge queue base commit is malformed");
   }
 }
 
@@ -852,6 +1111,330 @@ function latestReviewGateStatusForPull(statuses, pullNumber) {
   );
 }
 
+const ACTIVE_MERGE_QUEUE_BINDING_QUERY = `
+  query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $number) {
+        number
+        state
+        headRefOid
+        baseRefName
+        mergeQueueEntry {
+          baseCommit { oid }
+          headCommit { oid }
+        }
+      }
+    }
+  }
+`;
+
+async function requireActiveMergeQueueBinding({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+}) {
+  const response = await github.graphql(ACTIVE_MERGE_QUEUE_BINDING_QUERY, {
+    owner,
+    repo,
+    number: pullNumber,
+  });
+  const pull = response?.repository?.pullRequest;
+  const entry = pull?.mergeQueueEntry;
+  const liveBaseHeadSha = entry?.baseCommit?.oid;
+  const queueHeadSha = entry?.headCommit?.oid;
+  const baseRef = pull?.baseRefName;
+  const normalizedBaseHeadSha = baseHeadSha.toLowerCase();
+  if (
+    pull?.number !== pullNumber || pull?.state !== "OPEN" ||
+    pull?.headRefOid?.toLowerCase() !== sourceHeadSha.toLowerCase() ||
+    liveBaseHeadSha?.toLowerCase() !== normalizedBaseHeadSha ||
+    queueHeadSha?.toLowerCase() !== mergeGroupSha.toLowerCase() ||
+    typeof baseRef !== "string" || baseRef.length === 0 ||
+    baseRef.length > 1024 || baseRef.includes("\0")
+  ) {
+    throw new Error(
+      "Merge group is not bound to the current pull request head",
+    );
+  }
+  const ref =
+    `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${normalizedBaseHeadSha}`;
+  const parsed = parseMergeQueuePullNumber(`refs/${ref}`);
+  if (
+    parsed?.pullNumber !== pullNumber ||
+    parsed?.baseHeadSha !== normalizedBaseHeadSha
+  ) {
+    throw new Error("Merge queue ref identity is malformed");
+  }
+  const liveRef = await github.rest.git.getRef({ owner, repo, ref });
+  if (
+    liveRef?.data?.object?.sha?.toLowerCase() !== mergeGroupSha.toLowerCase()
+  ) {
+    throw new Error("Merge queue ref no longer targets this merge group");
+  }
+}
+
+async function readMergeGroupSourceEvidence({
+  github,
+  common,
+  pullNumber,
+  sourceHeadSha,
+}) {
+  const [reviews, comments, events, statuses, timeline] = await Promise.all([
+    collectAll(
+      github,
+      github.rest.pulls.listReviews,
+      { ...common, pull_number: pullNumber },
+      "source reviews",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listComments,
+      { ...common, issue_number: pullNumber },
+      "source comments",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { ...common, issue_number: pullNumber },
+      "source pull request events",
+    ),
+    collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { ...common, ref: sourceHeadSha },
+      "source review statuses",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEventsForTimeline,
+      { ...common, issue_number: pullNumber },
+      "source review timeline",
+    ),
+  ]);
+  return { reviews, comments, events, statuses, timeline };
+}
+
+async function requireCurrentAutomatedReview({
+  github,
+  common,
+  evidence,
+  sourceHeadSha,
+  pull,
+  pullNumber,
+  baseBinding,
+}) {
+  const liveReview = await findAutomatedReview(
+    evidence,
+    sourceHeadSha,
+    (ref) => resolveCommitRef(github, common, ref),
+    (login) =>
+      isCurrentlyTrustedHuman(github, {
+        ...common,
+        login,
+        pullAuthor: pull?.data?.user?.login,
+      }),
+    latestReviewResetTime(evidence.statuses, pullNumber, baseBinding),
+  );
+  if (!liveReview) {
+    throw new Error("Pull request does not have current review evidence");
+  }
+}
+
+function requireTrustedReviewGate(statuses, pullNumber, baseBinding) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  if (!trustedReviewGateReviewer(status, pullNumber, baseBinding)) {
+    throw new Error(
+      "Pull request head does not have a current trusted review gate",
+    );
+  }
+}
+
+async function requireUnchangedSourcePull({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseBinding,
+}) {
+  const current = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  if (
+    current?.data?.state !== "open" ||
+    current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+  ) {
+    throw new Error(
+      "Pull request head changed while propagating review evidence",
+    );
+  }
+  if (pullRequestBaseBinding(current?.data) !== baseBinding) {
+    throw new Error(
+      "Pull request base changed while propagating review evidence",
+    );
+  }
+  return current;
+}
+
+async function latestTrustedReviewGateStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseBinding,
+  current,
+}) {
+  const latestStatuses = await collectAll(
+    github,
+    github.rest.repos.listCommitStatusesForRef,
+    { owner, repo, ref: sourceHeadSha },
+    "latest source review statuses",
+  );
+  const status = latestReviewGateStatusForPull(latestStatuses, pullNumber);
+  const reviewer = trustedReviewGateReviewer(status, pullNumber, baseBinding);
+  if (!reviewer) {
+    throw new Error(
+      "Pull request review gate changed while propagating review evidence",
+    );
+  }
+  if (
+    reviewer !== CODEX_LOGIN &&
+    !await isCurrentlyTrustedHuman(github, {
+      owner,
+      repo,
+      login: reviewer,
+      pullAuthor: current?.data?.user?.login,
+    })
+  ) {
+    throw new Error(
+      "Human reviewer is no longer trusted for merge queue reuse",
+    );
+  }
+  return status;
+}
+
+async function publishSuccessfulMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  mergeGroupSha,
+  currentReviewStatus,
+  pullUrl,
+}) {
+  const description = `Reused exact-head review for PR #${pullNumber}`;
+  await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: mergeGroupSha,
+    state: "success",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: typeof currentReviewStatus.target_url === "string"
+      ? currentReviewStatus.target_url
+      : pullUrl,
+  });
+  return {
+    state: "success",
+    description,
+    failure: undefined,
+    published: true,
+  };
+}
+
+async function publishVerifiedMergeGroupReviewStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  baseHeadSha,
+  mergeGroupSha,
+  pullUrlRef,
+}) {
+  const pull = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  if (
+    pull?.data?.state !== "open" ||
+    pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
+  ) {
+    throw new Error("Merge queue pull request changed from its queued head");
+  }
+  const baseBinding = pullRequestBaseBinding(pull?.data);
+  pullUrlRef.value = pull.data.html_url ?? pullUrlRef.value;
+  const common = { owner, repo };
+  const evidence = await readMergeGroupSourceEvidence({
+    github,
+    common,
+    pullNumber,
+    sourceHeadSha,
+  });
+  await requireCurrentAutomatedReview({
+    github,
+    common,
+    evidence,
+    sourceHeadSha,
+    pull,
+    pullNumber,
+    baseBinding,
+  });
+  requireTrustedReviewGate(evidence.statuses, pullNumber, baseBinding);
+  const current = await requireUnchangedSourcePull({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseBinding,
+  });
+  const currentReviewStatus = await latestTrustedReviewGateStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseBinding,
+    current,
+  });
+  try {
+    await requireActiveMergeQueueBinding({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+    });
+  } catch (error) {
+    return {
+      state: "failure",
+      description: undefined,
+      failure: error instanceof Error ? error : new Error(String(error)),
+      published: false,
+    };
+  }
+  return publishSuccessfulMergeGroupReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    mergeGroupSha,
+    currentReviewStatus,
+    pullUrl: pullUrlRef.value,
+  });
+}
+
 /** Reuse a successful exact-head review for a synthetic merge queue commit. */
 export async function publishMergeGroupReviewStatus({
   github,
@@ -859,157 +1442,50 @@ export async function publishMergeGroupReviewStatus({
   repo,
   pullNumber,
   sourceHeadSha,
+  baseHeadSha,
   mergeGroupSha,
 }) {
-  let failure;
-  let pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  const pullUrlRef = {
+    value: `https://github.com/${owner}/${repo}/pull/${pullNumber}`,
+  };
   try {
-    assertMergeGroupInputs({ pullNumber, sourceHeadSha, mergeGroupSha });
-    const pull = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pullNumber,
-    });
-    if (
-      pull?.data?.state !== "open" ||
-      pull?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
-    ) {
-      throw new Error("Merge queue pull request changed from its queued head");
-    }
-    const baseBinding = pullRequestBaseBinding(pull?.data);
-    pullUrl = pull.data.html_url ?? pullUrl;
-    const common = { owner, repo };
-    const [reviews, comments, events, statuses, timeline] = await Promise.all([
-      collectAll(
-        github,
-        github.rest.pulls.listReviews,
-        { ...common, pull_number: pullNumber },
-        "source reviews",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listComments,
-        { ...common, issue_number: pullNumber },
-        "source comments",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listEvents,
-        { ...common, issue_number: pullNumber },
-        "source pull request events",
-      ),
-      collectAll(
-        github,
-        github.rest.repos.listCommitStatusesForRef,
-        { ...common, ref: sourceHeadSha },
-        "source review statuses",
-      ),
-      collectAll(
-        github,
-        github.rest.issues.listEventsForTimeline,
-        { ...common, issue_number: pullNumber },
-        "source review timeline",
-      ),
-    ]);
-    const liveReview = await findAutomatedReview(
-      { reviews, comments, events, timeline },
+    assertMergeGroupInputs({
+      pullNumber,
       sourceHeadSha,
-      (ref) => resolveCommitRef(github, common, ref),
-      (login) =>
-        isCurrentlyTrustedHuman(github, {
-          ...common,
-          login,
-          pullAuthor: pull?.data?.user?.login,
-        }),
-      latestReviewResetTime(statuses, pullNumber, baseBinding),
-    );
-    if (!liveReview) {
-      throw new Error("Pull request does not have current review evidence");
-    }
-    let currentReviewStatus = latestReviewGateStatusForPull(
-      statuses,
-      pullNumber,
-    );
-    if (
-      !trustedReviewGateReviewer(
-        currentReviewStatus,
-        pullNumber,
-        baseBinding,
-      )
-    ) {
-      throw new Error(
-        "Pull request head does not have a current trusted review gate",
-      );
-    }
-    const current = await github.rest.pulls.get({
-      owner,
-      repo,
-      pull_number: pullNumber,
+      baseHeadSha,
+      mergeGroupSha,
     });
-    if (
-      current?.data?.state !== "open" ||
-      current?.data?.head?.sha?.toLowerCase() !== sourceHeadSha.toLowerCase()
-    ) {
-      throw new Error(
-        "Pull request head changed while propagating review evidence",
-      );
-    }
-    if (pullRequestBaseBinding(current?.data) !== baseBinding) {
-      throw new Error(
-        "Pull request base changed while propagating review evidence",
-      );
-    }
-    const latestStatuses = await collectAll(
+    await requireActiveMergeQueueBinding({
       github,
-      github.rest.repos.listCommitStatusesForRef,
-      { owner, repo, ref: sourceHeadSha },
-      "latest source review statuses",
-    );
-    const latestReviewStatus = latestReviewGateStatusForPull(
-      latestStatuses,
-      pullNumber,
-    );
-    const latestReviewer = trustedReviewGateReviewer(
-      latestReviewStatus,
-      pullNumber,
-      baseBinding,
-    );
-    if (!latestReviewer) {
-      throw new Error(
-        "Pull request review gate changed while propagating review evidence",
-      );
-    }
-    if (
-      latestReviewer !== CODEX_LOGIN &&
-      !await isCurrentlyTrustedHuman(github, {
-        owner,
-        repo,
-        login: latestReviewer,
-        pullAuthor: current?.data?.user?.login,
-      })
-    ) {
-      throw new Error(
-        "Human reviewer is no longer trusted for merge queue reuse",
-      );
-    }
-    currentReviewStatus = latestReviewStatus;
-    const description = `Reused exact-head review for PR #${pullNumber}`;
-    await github.rest.repos.createCommitStatus({
       owner,
       repo,
-      sha: mergeGroupSha,
-      state: "success",
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description,
-      target_url: typeof currentReviewStatus.target_url === "string"
-        ? currentReviewStatus.target_url
-        : pullUrl,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
     });
-    return { state: "success", description, failure: undefined };
   } catch (error) {
-    failure = error instanceof Error ? error : new Error(String(error));
+    return {
+      state: "failure",
+      description: undefined,
+      failure: error instanceof Error ? error : new Error(String(error)),
+      published: false,
+    };
   }
-  if (FULL_SHA.test(mergeGroupSha)) {
+
+  try {
+    return await publishVerifiedMergeGroupReviewStatus({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      baseHeadSha,
+      mergeGroupSha,
+      pullUrlRef,
+    });
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -1017,10 +1493,52 @@ export async function publishMergeGroupReviewStatus({
       state: "failure",
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
       description: "Could not reuse an exact-head review",
-      target_url: pullUrl,
+      target_url: pullUrlRef.value,
     });
+    return {
+      state: "failure",
+      description: undefined,
+      failure,
+      published: true,
+    };
   }
-  return { state: "failure", description: undefined, failure };
+}
+
+async function reconcileMergeQueueTarget({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  sourceHeadSha,
+  target,
+}) {
+  const result = await publishMergeGroupReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha,
+    baseHeadSha: target.baseHeadSha,
+    mergeGroupSha: target.mergeGroupSha,
+  });
+  if (result.state !== "failure" || result.published === true) {
+    return { result };
+  }
+  // No replacement status reached this synthetic commit, so any prior
+  // success it carries would keep satisfying the queue's required check.
+  // Skip only when the exact queue ref demonstrably no longer targets the
+  // commit (a confirmed identity change); an operational lookup failure must
+  // fail reconciliation so its independent invalidation path takes over.
+  const liveTarget = await resolveQueueRefTarget(
+    github,
+    { owner, repo },
+    target.ref,
+  );
+  if (liveTarget?.toLowerCase() !== target.key) return {};
+  return {
+    unpublished: result.failure ??
+      new Error("Merge queue review status was not replaced"),
+  };
 }
 
 /** Reconcile copied review proof on every active queue ref for one source. */
@@ -1050,34 +1568,34 @@ export async function reconcileActiveMergeGroupReviewStatuses({
     {
       owner,
       repo,
-      ref:
-        `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${sourceHeadSha}`,
+      ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-`,
     },
     "merge queue refs",
   );
   const results = [];
   const seen = new Set();
+  const unpublished = [];
   for (const queueRef of refs) {
-    const parsed = parseMergeQueuePullNumber(queueRef?.ref);
-    const mergeGroupSha = queueRef?.object?.sha;
-    if (
-      parsed?.pullNumber !== pullNumber ||
-      parsed?.sourceHeadSha !== sourceHeadSha.toLowerCase()
-    ) continue;
-    if (!FULL_SHA.test(mergeGroupSha ?? "")) {
-      throw new Error("Merge queue ref has a malformed commit");
-    }
-    if (seen.has(mergeGroupSha.toLowerCase())) continue;
-    seen.add(mergeGroupSha.toLowerCase());
-    results.push(
-      await publishMergeGroupReviewStatus({
-        github,
-        owner,
-        repo,
-        pullNumber,
-        sourceHeadSha,
-        mergeGroupSha,
-      }),
+    const target = mergeQueueTarget(queueRef, pullNumber);
+    if (!target || seen.has(target.key)) continue;
+    seen.add(target.key);
+    const outcome = await reconcileMergeQueueTarget({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha,
+      target,
+    });
+    if (outcome.unpublished) unpublished.push(outcome.unpublished);
+    if (outcome.result) results.push(outcome.result);
+  }
+  if (unpublished.length > 0) {
+    throw new Error(
+      `Review proof was not replaced on ${unpublished.length} active merge ` +
+        `queue commit(s): ${
+          unpublished.map((error) => error.message).join("; ")
+        }`,
     );
   }
   return results;
