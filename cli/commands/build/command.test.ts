@@ -151,6 +151,17 @@ describe("commands/build/command", () => {
       );
     });
 
+    it("still rejects a project-root build.outDir when --output overrides it", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", "dist", {
+            build: { outDir: "." },
+          }),
+        Error,
+        "inside the project",
+      );
+    });
+
     it("falls back to dist when no output is configured", () => {
       assertEquals(
         resolveBuildOutputDir("/workspace/project", undefined, {}),

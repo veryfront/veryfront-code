@@ -113,7 +113,7 @@ function resolveConfiguredOutputDir(
   const relativeOutput = relative(resolvedProject, resolvedOutput).replace(/\\/g, "/");
   if (
     requireProjectContained &&
-    (relativeOutput === "" || relativeOutput === ".." ||
+    (relativeOutput === "" || relativeOutput === "." || relativeOutput === ".." ||
       relativeOutput.startsWith("../") || isAbsolute(relativeOutput))
   ) {
     throw CONFIG_INVALID.create({
