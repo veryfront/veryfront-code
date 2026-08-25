@@ -47939,6 +47939,8 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
             "required": true,
+            "pattern":
+              "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\\.s4hana\\.cloud\\.sap$",
           },
           "$filter": { "type": "string", "in": "query", "description": "OData filter expression" },
           "$top": {
@@ -47976,6 +47978,8 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
             "required": true,
+            "pattern":
+              "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\\.s4hana\\.cloud\\.sap$",
           },
           "supplierInvoice": {
             "type": "string",
@@ -48011,6 +48015,8 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
             "required": true,
+            "pattern":
+              "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\\.s4hana\\.cloud\\.sap$",
           },
           "SupplierInvoice": {
             "type": "string",
@@ -49298,6 +49304,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49335,6 +49342,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49365,6 +49373,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
         },
         "body": {
@@ -49398,6 +49407,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49433,6 +49443,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49470,6 +49481,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49501,6 +49513,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
         },
         "body": {
@@ -49536,6 +49549,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49568,6 +49582,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49605,6 +49620,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49636,6 +49652,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "catalogItemSysId": {
             "type": "string",
@@ -49672,6 +49689,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49709,6 +49727,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysId": {
             "type": "string",
@@ -49740,6 +49759,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
         },
         "body": {
@@ -49781,6 +49801,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49817,6 +49838,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "sysparm_query": {
             "type": "string",
@@ -49854,6 +49876,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "tableName": {
             "type": "string",
@@ -49899,6 +49922,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "tableName": {
             "type": "string",
@@ -49932,6 +49956,7 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
             "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
           },
           "tableName": {
             "type": "string",

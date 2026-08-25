@@ -1372,6 +1372,33 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("restricts credentialed tenant hosts to their provider domains", () => {
+    const cases = [
+      {
+        connector: "sap",
+        tool: "list_supplier_invoices",
+        param: "sapHost",
+        allowed: "mytenant-api.s4hana.cloud.sap",
+      },
+      {
+        connector: "servicenow",
+        tool: "list_incidents",
+        param: "instanceHost",
+        allowed: "example.service-now.com",
+      },
+    ];
+
+    for (const { connector, tool, param, allowed } of cases) {
+      const pattern = getTool(connector, tool).endpoint?.params?.[param]?.pattern;
+      assertExists(pattern, `${connector}:${tool} must constrain ${param}`);
+
+      const hostPattern = new RegExp(pattern);
+      assertEquals(hostPattern.test(allowed), true);
+      assertEquals(hostPattern.test("attacker.example"), false);
+      assertEquals(hostPattern.test(`${allowed}@attacker.example`), false);
+    }
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);

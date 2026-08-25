@@ -306,6 +306,9 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Restricts string inputs before endpoint interpolation. Authority path
+    // params must use this to prevent credentials from reaching untrusted hosts.
+    pattern: v.string().optional(),
     // Opts this execution default into the model-facing tool input schema.
     // Use only when the value is safe and useful as model guidance.
     exposeDefault: v.boolean().optional(),
