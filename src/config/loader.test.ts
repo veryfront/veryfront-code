@@ -8,7 +8,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __getHostedConfigFlightStateForTests,
@@ -753,19 +753,16 @@ export default config as const;
         // The classification, suggestion, and docs link all pointed at file
         // validity, sending the reader to inspect a file that was never wrong.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
-          prefix: "vf-config-missing-dep-",
-        });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
-        // an uninstalled first-party extension is resolved through the contract
-        // registry, which raises its own `missing-extension` error before the
-        // import is ever attempted. An ordinary third-party package is what
-        // reaches the module resolver, which is the path under test.
-        const source = 'import "some-uninstalled-telemetry-sdk";\n' +
-          "export default {};\n";
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
+          // an uninstalled first-party extension is resolved through the contract
+          // registry, which raises its own `missing-extension` error before the
+          // import is ever attempted. An ordinary third-party package is what
+          // reaches the module resolver, which is the path under test.
+          const source = 'import "some-uninstalled-telemetry-sdk";\n' +
+            "export default {};\n";
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -789,9 +786,7 @@ export default config as const;
             ),
             "a missing dependency must not advise checking the file's syntax",
           );
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-missing-dep-" });
       });
 
       it("classifies Deno's npm-referrer wording as a missing dependency", async () => {
@@ -801,12 +796,11 @@ export default config as const;
         // the importer resolves out of the npm cache. All are the same problem
         // with the same fix, so all must reach the same slug.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-referrer-" });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        const source =
-          `throw new Error("Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.");\n`;
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source =
+            `throw new Error("Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.");\n`;
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -820,9 +814,7 @@ export default config as const;
             error.message.includes("left-pad"),
             `error must name the unresolved package, got: ${error.message}`,
           );
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-referrer-" });
       });
 
       it("does not reclassify an ordinary error that merely quotes a resolver phrase", async () => {
@@ -830,11 +822,10 @@ export default config as const;
         // not a resolver's. Only an anchored match separates the two, and the
         // reader of a real setup failure must not be told to run `npm install`.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-quoted-" });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        const source = `throw new Error('Setup failed: Module not found "db"');\n`;
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source = `throw new Error('Setup failed: Module not found "db"');\n`;
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -844,9 +835,7 @@ export default config as const;
           ) as VeryfrontError;
 
           assertEquals(error.slug, "config-parse-error");
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-quoted-" });
       });
 
       it("does not blame a missing Windows path on an uninstalled package", async () => {
@@ -854,12 +843,11 @@ export default config as const;
         // one elsewhere, and a UNC path starts with two. Rejecting only "/"
         // would hand Windows readers the wrong recovery advice.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-windows-" });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        const source =
-          `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`;
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source =
+            `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`;
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -869,9 +857,7 @@ export default config as const;
           ) as VeryfrontError;
 
           assertEquals(error.slug, "config-parse-error");
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-windows-" });
       });
 
       it("does not blame the project-module alias on an uninstalled package", async () => {
@@ -879,11 +865,10 @@ export default config as const;
         // a missing package, but `@/` is Veryfront's own project alias -- no
         // package by that name exists to install.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({ prefix: "vf-config-alias-" });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        const source = 'import "@/lib/config";\nexport default {};\n';
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source = 'import "@/lib/config";\nexport default {};\n';
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -893,9 +878,7 @@ export default config as const;
           ) as VeryfrontError;
 
           assertEquals(error.slug, "config-parse-error");
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-alias-" });
       });
 
       it("does not blame a missing relative import on an uninstalled package", async () => {
@@ -904,13 +887,10 @@ export default config as const;
         // would tell this reader to run `npm install` for a file they simply
         // have not written yet. Only a bare specifier is install-fixable.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
-          prefix: "vf-config-missing-file-",
-        });
-        const configPath = `${projectDir}/veryfront.config.js`;
-        const source = 'import "./not-written-yet.js";\nexport default {};\n';
+        await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/veryfront.config.js`;
+          const source = 'import "./not-written-yet.js";\nexport default {};\n';
 
-        try {
           await Deno.writeTextFile(configPath, source);
           adapter.fs.files.set(configPath, source);
 
@@ -920,9 +900,7 @@ export default config as const;
           ) as VeryfrontError;
 
           assertEquals(error.slug, "config-parse-error");
-        } finally {
-          await Deno.remove(projectDir, { recursive: true });
-        }
+        }, { prefix: "vf-config-missing-file-" });
       });
 
       it("carries a thrown config's own message through to the reader", async () => {
