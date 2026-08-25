@@ -287,4 +287,67 @@ describe("platform/compat/dns loopback names", () => {
     assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
     __resetHostAddressCacheForTests();
   });
+
+  it("surfaces a missing net permission instead of reporting an unresolvable host", async () => {
+    // `Deno.resolveDns` checks permission against the nameserver, so under a
+    // narrowed --allow-net every external lookup fails with NotCapable. The
+    // bare catch used to swallow it into the empty-array fallback, making a
+    // permission problem indistinguishable from a DNS problem downstream
+    // ("unable to resolve host") — veryfront-issue-inbox#744.
+    const originalResolveDns = Deno.resolveDns;
+    __resetHostAddressCacheForTests();
+    try {
+      Object.defineProperty(Deno, "resolveDns", {
+        value: () => {
+          throw new Deno.errors.NotCapable('Requires net access to "8.8.8.8"');
+        },
+        configurable: true,
+        writable: true,
+      });
+      const error = await assertRejects(
+        () => resolveHostAddresses("permission-probe.invalid", { recordTypes: ["A"] }),
+        Error,
+        "net access to the DNS resolver is not permitted",
+      );
+      assertEquals(
+        (error as Error & { cause?: unknown }).cause instanceof Deno.errors.NotCapable,
+        true,
+        "the original NotCapable must be preserved as the cause",
+      );
+    } finally {
+      Object.defineProperty(Deno, "resolveDns", {
+        value: originalResolveDns,
+        configurable: true,
+        writable: true,
+      });
+      __resetHostAddressCacheForTests();
+    }
+  });
+
+  it("keeps the empty-array fallback for a genuine resolution failure", async () => {
+    // The guard's fail-closed behaviour is unchanged: only a permission error
+    // is surfaced; NotFound (single address family, NXDOMAIN) still yields [].
+    const originalResolveDns = Deno.resolveDns;
+    __resetHostAddressCacheForTests();
+    try {
+      Object.defineProperty(Deno, "resolveDns", {
+        value: () => {
+          throw new Deno.errors.NotFound("no record found");
+        },
+        configurable: true,
+        writable: true,
+      });
+      const addresses = await resolveHostAddresses("missing-probe.invalid", {
+        recordTypes: ["A"],
+      });
+      assertEquals(addresses, []);
+    } finally {
+      Object.defineProperty(Deno, "resolveDns", {
+        value: originalResolveDns,
+        configurable: true,
+        writable: true,
+      });
+      __resetHostAddressCacheForTests();
+    }
+  });
 });
