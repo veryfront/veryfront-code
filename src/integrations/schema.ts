@@ -306,6 +306,9 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // Restrict caller-controlled values when a parameter affects a security
+    // boundary, such as the authority of a credentialed endpoint URL.
+    enum: v.array(v.string()).min(1).optional(),
     // Opts this execution default into the model-facing tool input schema.
     // Use only when the value is safe and useful as model guidance.
     exposeDefault: v.boolean().optional(),

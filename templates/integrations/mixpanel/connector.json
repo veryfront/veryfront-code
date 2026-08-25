@@ -72,7 +72,8 @@
             "type": "string",
             "in": "path",
             "description": "Mixpanel raw export host: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India)",
-            "default": "data.mixpanel.com"
+            "default": "data.mixpanel.com",
+            "enum": ["data.mixpanel.com", "data-eu.mixpanel.com", "data-in.mixpanel.com"]
           },
           "project_id": {
             "type": "string",
@@ -124,7 +125,8 @@
             "type": "string",
             "in": "path",
             "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
+            "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]
           },
           "project_id": {
             "type": "string",
@@ -171,7 +173,8 @@
             "type": "string",
             "in": "path",
             "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
+            "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]
           },
           "project_id": {
             "type": "string",
@@ -195,7 +198,8 @@
             "type": "string",
             "in": "path",
             "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
+            "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]
           },
           "project_id": {
             "type": "string",
@@ -251,7 +255,8 @@
             "type": "string",
             "in": "path",
             "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
+            "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]
           },
           "project_id": {
             "type": "string",

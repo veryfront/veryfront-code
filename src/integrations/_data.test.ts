@@ -1372,6 +1372,31 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("restricts credentialed analytics endpoint hosts to provider origins", () => {
+    const expectedHosts = new Map([
+      ["posthog", ["us.posthog.com", "eu.posthog.com", "app.posthog.com"]],
+      ["mixpanel", ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]],
+    ]);
+
+    for (const [connectorName, hosts] of expectedHosts) {
+      const connector = getConnector(connectorName);
+      for (const tool of connector.tools) {
+        const host = tool.endpoint?.params?.host;
+        if (!host) continue;
+        assertEquals(
+          host.enum,
+          hosts,
+          `${connectorName}:${tool.id ?? tool.name} must restrict its credentialed endpoint host`,
+        );
+      }
+    }
+
+    assertEquals(
+      getTool("mixpanel", "query_events").endpoint?.params?.exportHost?.enum,
+      ["data.mixpanel.com", "data-eu.mixpanel.com", "data-in.mixpanel.com"],
+    );
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);

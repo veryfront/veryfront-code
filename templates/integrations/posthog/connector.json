@@ -46,7 +46,8 @@
             "type": "string",
             "in": "path",
             "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
+            "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"]
           },
           "projectId": {
             "type": "string",
@@ -81,7 +82,8 @@
             "type": "string",
             "in": "path",
             "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
+            "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"]
           },
           "projectId": {
             "type": "string",
@@ -132,7 +134,8 @@
             "type": "string",
             "in": "path",
             "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
+            "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"]
           },
           "projectId": {
             "type": "string",
