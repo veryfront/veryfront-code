@@ -22,6 +22,12 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://www.metabase.com/docs/latest/people-and-groups/api-keys"
+    },
+    {
+      "name": "METABASE_HOST",
+      "description": "Metabase hostname without scheme, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain.",
+      "required": true,
+      "sensitive": true
     }
   ],
   "tools": [
@@ -32,15 +38,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/database",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com or metabase.internal.example.com. Metabase is self-hosted or cloud-tenant, so there is no default.",
-            "required": true
-          }
-        },
+        "url": "https://{{env.METABASE_HOST}}/api/database",
         "response": {
           "historicalSummary": {
             "collectionKeys": [
@@ -81,14 +79,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/card",
+        "url": "https://{{env.METABASE_HOST}}/api/card",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
-            "required": true
-          },
           "f": {
             "type": "string",
             "in": "query",
@@ -104,14 +96,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/api/card/{cardId}/query",
+        "url": "https://{{env.METABASE_HOST}}/api/card/{cardId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
-            "required": true
-          },
           "cardId": {
             "type": "string",
             "in": "path",
@@ -134,14 +120,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/search",
+        "url": "https://{{env.METABASE_HOST}}/api/search",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
-            "required": true
-          },
           "q": {
             "type": "string",
             "in": "query",
@@ -163,14 +143,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/dashboard/{dashboardId}",
+        "url": "https://{{env.METABASE_HOST}}/api/dashboard/{dashboardId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
-            "required": true
-          },
           "dashboardId": {
             "type": "string",
             "in": "path",
@@ -187,15 +161,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/collection",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Your Metabase hostname without protocol, e.g. acme.metabaseapp.com",
-            "required": true
-          }
-        }
+        "url": "https://{{env.METABASE_HOST}}/api/collection"
       }
     }
   ],
@@ -226,7 +192,7 @@
       {
         "step": 1,
         "title": "Locate your Metabase instance",
-        "description": "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain. Every tool takes it as the required 'host' parameter. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'."
+        "description": "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain, and set it as METABASE_HOST in your .env. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'."
       },
       {
         "step": 2,
@@ -241,12 +207,12 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run List Databases with your hostname as the host parameter."
+        "description": "With METABASE_HOST configured, run List Databases."
       }
     ],
     "notes": [
       "Metabase authenticates with an 'x-api-key' header",
-      "Metabase is self-hosted or tenant-hosted, so tools require a 'host' parameter (hostname only, HTTPS is assumed) on every call",
+      "Metabase is self-hosted or tenant-hosted, so every call goes to the METABASE_HOST environment variable (hostname only, HTTPS is assumed)",
       "The API key inherits the permissions of the group it is assigned to"
     ],
     "documentation": "https://www.metabase.com/docs/latest/api"

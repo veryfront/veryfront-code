@@ -36,6 +36,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://docs.datadoghq.com/account_management/api-app-keys/"
+    },
+    {
+      "name": "DD_SITE",
+      "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, or us3.datadoghq.com — API requests go to api.<site>.",
+      "required": false,
+      "sensitive": false,
+      "default": "datadoghq.com"
     }
   ],
   "tools": [
@@ -46,15 +53,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.{site}/api/v1/validate",
-        "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
-            "default": "datadoghq.com"
-          }
-        }
+        "url": "https://api.{{env.DD_SITE}}/api/v1/validate"
       }
     },
     {
@@ -64,14 +63,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.{site}/api/v1/monitor",
+        "url": "https://api.{{env.DD_SITE}}/api/v1/monitor",
         "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
-            "default": "datadoghq.com"
-          },
           "name": {
             "type": "string",
             "in": "query",
@@ -97,14 +90,27 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["monitors"],
+            "collectionKeys": [
+              "monitors"
+            ],
             "collectionName": "monitors",
             "itemFields": [
-              { "name": "id" },
-              { "name": "name" },
-              { "name": "type" },
-              { "name": "overall_state" },
-              { "name": "tags", "kind": "string-array" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "type"
+              },
+              {
+                "name": "overall_state"
+              },
+              {
+                "name": "tags",
+                "kind": "string-array"
+              }
             ],
             "omitted": "monitor query definitions and provider-specific payload fields"
           }
@@ -118,14 +124,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.{site}/api/v1/monitor/{monitorId}",
+        "url": "https://api.{{env.DD_SITE}}/api/v1/monitor/{monitorId}",
         "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain",
-            "default": "datadoghq.com"
-          },
           "monitorId": {
             "type": "string",
             "in": "path",
@@ -142,14 +142,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://api.{site}/api/v1/monitor/{monitorId}/mute",
+        "url": "https://api.{{env.DD_SITE}}/api/v1/monitor/{monitorId}/mute",
         "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain",
-            "default": "datadoghq.com"
-          },
           "monitorId": {
             "type": "string",
             "in": "path",
@@ -171,26 +165,30 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.{site}/api/v1/dashboard",
-        "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain",
-            "default": "datadoghq.com"
-          }
-        },
+        "url": "https://api.{{env.DD_SITE}}/api/v1/dashboard",
         "response": {
           "transform": "dashboards",
           "historicalSummary": {
-            "collectionKeys": ["dashboards"],
+            "collectionKeys": [
+              "dashboards"
+            ],
             "collectionName": "dashboards",
             "itemFields": [
-              { "name": "id" },
-              { "name": "title" },
-              { "name": "url" },
-              { "name": "layout_type" },
-              { "name": "modified_at" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "layout_type"
+              },
+              {
+                "name": "modified_at"
+              }
             ],
             "omitted": "dashboard widget definitions and provider-specific payload fields"
           }
@@ -204,14 +202,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.{site}/api/v1/query",
+        "url": "https://api.{{env.DD_SITE}}/api/v1/query",
         "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain",
-            "default": "datadoghq.com"
-          },
           "from": {
             "type": "number",
             "in": "query",
@@ -240,15 +232,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://api.{site}/api/v2/logs/events/search",
-        "params": {
-          "site": {
-            "type": "string",
-            "in": "path",
-            "description": "Datadog site domain",
-            "default": "datadoghq.com"
-          }
-        },
+        "url": "https://api.{{env.DD_SITE}}/api/v2/logs/events/search",
         "body": {
           "filter": {
             "type": "object",
@@ -286,14 +270,18 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["sentry", "slack", "github"],
+  "suggestedWith": [
+    "sentry",
+    "slack",
+    "github"
+  ],
   "SETUP_GUIDE": {
     "title": "Datadog API Setup",
     "steps": [
       {
         "step": 1,
         "title": "Find your Datadog site",
-        "description": "Check the URL you use to access Datadog (e.g. app.datadoghq.com → site datadoghq.com, app.datadoghq.eu → datadoghq.eu). Tools take a 'site' parameter that defaults to datadoghq.com."
+        "description": "Check the URL you use to access Datadog (e.g. app.datadoghq.com → site datadoghq.com, app.datadoghq.eu → datadoghq.eu). Requests go to api.<site> using the DD_SITE environment variable, which defaults to datadoghq.com."
       },
       {
         "step": 2,
@@ -313,7 +301,7 @@
     ],
     "notes": [
       "Datadog authenticates with two headers: DD-API-KEY and DD-APPLICATION-KEY — both env vars are required",
-      "If your org is not on datadoghq.com, pass your site (e.g. datadoghq.eu) as the 'site' parameter on each tool call"
+      "If your org is not on datadoghq.com, set your site (e.g. datadoghq.eu) as the DD_SITE environment variable"
     ],
     "documentation": "https://docs.datadoghq.com/api/latest/"
   }

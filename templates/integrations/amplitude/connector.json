@@ -29,6 +29,20 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://amplitude.com/docs/apis/authentication"
+    },
+    {
+      "name": "AMPLITUDE_HOST",
+      "description": "Amplitude analytics host without scheme: amplitude.com (US) or analytics.eu.amplitude.com (EU residency).",
+      "required": false,
+      "sensitive": false,
+      "default": "amplitude.com"
+    },
+    {
+      "name": "AMPLITUDE_INGEST_HOST",
+      "description": "Amplitude ingestion host without scheme: api2.amplitude.com (US) or api.eu.amplitude.com (EU).",
+      "required": false,
+      "sensitive": false,
+      "default": "api2.amplitude.com"
     }
   ],
   "tools": [
@@ -39,26 +53,31 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/2/events/list",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU residency)",
-            "default": "amplitude.com"
-          }
-        },
+        "url": "https://{{env.AMPLITUDE_HOST}}/api/2/events/list",
         "response": {
           "transform": "data",
           "historicalSummary": {
-            "collectionKeys": ["data", "events"],
+            "collectionKeys": [
+              "data",
+              "events"
+            ],
             "collectionName": "events",
             "itemFields": [
-              { "name": "id" },
-              { "name": "value" },
-              { "name": "display" },
-              { "name": "totals" },
-              { "name": "non_active" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "value"
+              },
+              {
+                "name": "display"
+              },
+              {
+                "name": "totals"
+              },
+              {
+                "name": "non_active"
+              }
             ],
             "omitted": "event property details and provider-specific payload fields"
           }
@@ -72,14 +91,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/2/events/segmentation",
+        "url": "https://{{env.AMPLITUDE_HOST}}/api/2/events/segmentation",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
-            "default": "amplitude.com"
-          },
           "e": {
             "type": "string",
             "in": "query",
@@ -128,14 +141,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/2/users",
+        "url": "https://{{env.AMPLITUDE_HOST}}/api/2/users",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
-            "default": "amplitude.com"
-          },
           "start": {
             "type": "string",
             "in": "query",
@@ -178,14 +185,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/3/chart/{chartId}/query",
+        "url": "https://{{env.AMPLITUDE_HOST}}/api/3/chart/{chartId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Amplitude analytics host: amplitude.com (US) or analytics.eu.amplitude.com (EU)",
-            "default": "amplitude.com"
-          },
           "chartId": {
             "type": "string",
             "in": "path",
@@ -202,15 +203,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{ingestHost}/2/httpapi",
-        "params": {
-          "ingestHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Amplitude ingestion host: api2.amplitude.com (US) or api.eu.amplitude.com (EU)",
-            "default": "api2.amplitude.com"
-          }
-        },
+        "url": "https://{{env.AMPLITUDE_INGEST_HOST}}/2/httpapi",
         "body": {
           "api_key": {
             "type": "string",
@@ -242,7 +235,11 @@
       "icon": "chart"
     }
   ],
-  "suggestedWith": ["mixpanel", "posthog", "slack"],
+  "suggestedWith": [
+    "mixpanel",
+    "posthog",
+    "slack"
+  ],
   "SETUP_GUIDE": {
     "title": "Amplitude API Setup",
     "steps": [
@@ -259,7 +256,7 @@
       {
         "step": 3,
         "title": "Check your data residency",
-        "description": "If your org uses EU data residency, pass host=analytics.eu.amplitude.com on query tools and ingestHost=api.eu.amplitude.com on Track Event. US orgs can keep the defaults."
+        "description": "If your org uses EU data residency, set AMPLITUDE_HOST=analytics.eu.amplitude.com and AMPLITUDE_INGEST_HOST=api.eu.amplitude.com in your .env. US orgs can keep the defaults."
       },
       {
         "step": 4,

@@ -47,14 +47,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/orders",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/orders",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "status": {
             "type": "string",
             "in": "query",
@@ -93,14 +87,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/orders/{orderId}",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/orders/{orderId}",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "orderId": {
             "type": "number",
             "in": "path",
@@ -117,14 +105,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
-        "url": "https://{storeDomain}/wp-json/wc/v3/orders/{orderId}",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/orders/{orderId}",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "orderId": {
             "type": "number",
             "in": "path",
@@ -152,14 +134,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/products",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/products",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "search": {
             "type": "string",
             "in": "query",
@@ -198,15 +174,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{storeDomain}/wp-json/wc/v3/products",
-        "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          }
-        },
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/products",
         "body": {
           "name": {
             "type": "string",
@@ -255,14 +223,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/products/{productId}",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/products/{productId}",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "productId": {
             "type": "number",
             "in": "path",
@@ -279,14 +241,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
-        "url": "https://{storeDomain}/wp-json/wc/v3/products/{productId}",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/products/{productId}",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "productId": {
             "type": "number",
             "in": "path",
@@ -337,14 +293,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/reports/sales",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/reports/sales",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "period": {
             "type": "string",
             "in": "query",
@@ -370,14 +320,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{storeDomain}/wp-json/wc/v3/customers",
+        "url": "https://{{env.WOOCOMMERCE_STORE_DOMAIN}}/wp-json/wc/v3/customers",
         "params": {
-          "storeDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "WooCommerce store domain, e.g. shop.example.com",
-            "required": true
-          },
           "email": {
             "type": "string",
             "in": "query",
@@ -430,7 +374,11 @@
       "category": "analytics"
     }
   ],
-  "suggestedWith": ["stripe", "slack", "email"],
+  "suggestedWith": [
+    "stripe",
+    "slack",
+    "email"
+  ],
   "SETUP_GUIDE": {
     "title": "WooCommerce setup",
     "steps": [
@@ -456,7 +404,7 @@
       }
     ],
     "notes": [
-      "The REST API is served from your own store domain at https://<store-domain>/wp-json/wc/v3; every tool takes the store domain as the storeDomain parameter.",
+      "The REST API is served from your own store domain at https://<store-domain>/wp-json/wc/v3; every tool reads it from the WOOCOMMERCE_STORE_DOMAIN environment variable.",
       "Keys generated with Read permission will receive 401 errors on write tools like update_order_status and create_product.",
       "Credentials are sent via HTTP Basic auth, so the store must be served over HTTPS.",
       "If your site uses non-pretty permalinks, the wp-json route may be unavailable; enable pretty permalinks under Settings > Permalinks."

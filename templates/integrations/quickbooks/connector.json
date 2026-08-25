@@ -8,7 +8,9 @@
     "provider": "quickbooks",
     "authorizationUrl": "https://appcenter.intuit.com/connect/oauth2",
     "tokenUrl": "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-    "scopes": ["com.intuit.quickbooks.accounting"],
+    "scopes": [
+      "com.intuit.quickbooks.accounting"
+    ],
     "callbackPath": "/api/auth/quickbooks/callback",
     "tokenAuthMethod": "basic",
     "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0",
@@ -33,6 +35,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+    },
+    {
+      "name": "QUICKBOOKS_API_HOST",
+      "description": "QuickBooks API host without scheme: quickbooks.api.intuit.com for production or sandbox-quickbooks.api.intuit.com for sandbox companies.",
+      "required": false,
+      "sensitive": false,
+      "default": "quickbooks.api.intuit.com"
     }
   ],
   "tools": [
@@ -43,14 +52,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -74,23 +77,49 @@
         "response": {
           "transform": "QueryResponse",
           "historicalSummary": {
-            "collectionKeys": ["Invoice", "QueryResponse"],
+            "collectionKeys": [
+              "Invoice",
+              "QueryResponse"
+            ],
             "collectionName": "invoices",
             "itemFields": [
-              { "name": "Id" },
-              { "name": "DocNumber" },
-              { "name": "TxnDate" },
-              { "name": "DueDate" },
-              { "name": "TotalAmt" },
-              { "name": "Balance" },
-              { "name": "EmailStatus" },
-              { "name": "CustomerRef", "kind": "object" }
+              {
+                "name": "Id"
+              },
+              {
+                "name": "DocNumber"
+              },
+              {
+                "name": "TxnDate"
+              },
+              {
+                "name": "DueDate"
+              },
+              {
+                "name": "TotalAmt"
+              },
+              {
+                "name": "Balance"
+              },
+              {
+                "name": "EmailStatus"
+              },
+              {
+                "name": "CustomerRef",
+                "kind": "object"
+              }
             ],
             "omitted": "invoice line items, tax details, and provider-specific payload fields",
             "outputFields": [
-              { "name": "startPosition" },
-              { "name": "maxResults" },
-              { "name": "totalCount" }
+              {
+                "name": "startPosition"
+              },
+              {
+                "name": "maxResults"
+              },
+              {
+                "name": "totalCount"
+              }
             ]
           }
         }
@@ -103,14 +132,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -143,14 +166,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -183,14 +200,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/invoice/{invoiceId}",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/invoice/{invoiceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -223,14 +234,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/v3/company/{realmId}/invoice",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/invoice",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -265,14 +270,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -296,22 +295,46 @@
         "response": {
           "transform": "QueryResponse",
           "historicalSummary": {
-            "collectionKeys": ["Bill", "QueryResponse"],
+            "collectionKeys": [
+              "Bill",
+              "QueryResponse"
+            ],
             "collectionName": "bills",
             "itemFields": [
-              { "name": "Id" },
-              { "name": "DocNumber" },
-              { "name": "TxnDate" },
-              { "name": "DueDate" },
-              { "name": "TotalAmt" },
-              { "name": "Balance" },
-              { "name": "VendorRef", "kind": "object" }
+              {
+                "name": "Id"
+              },
+              {
+                "name": "DocNumber"
+              },
+              {
+                "name": "TxnDate"
+              },
+              {
+                "name": "DueDate"
+              },
+              {
+                "name": "TotalAmt"
+              },
+              {
+                "name": "Balance"
+              },
+              {
+                "name": "VendorRef",
+                "kind": "object"
+              }
             ],
             "omitted": "bill line items, tax details, and provider-specific payload fields",
             "outputFields": [
-              { "name": "startPosition" },
-              { "name": "maxResults" },
-              { "name": "totalCount" }
+              {
+                "name": "startPosition"
+              },
+              {
+                "name": "maxResults"
+              },
+              {
+                "name": "totalCount"
+              }
             ]
           }
         }
@@ -324,14 +347,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/bill/{billId}",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/bill/{billId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -364,14 +381,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/v3/company/{realmId}/bill",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/bill",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -406,14 +417,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/v3/company/{realmId}/purchase",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/purchase",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -448,15 +453,9 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/v3/company/{realmId}/upload",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/upload",
         "contentType": "multipart/form-data",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -500,14 +499,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -540,14 +533,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -571,20 +558,39 @@
         "response": {
           "transform": "QueryResponse",
           "historicalSummary": {
-            "collectionKeys": ["Vendor", "QueryResponse"],
+            "collectionKeys": [
+              "Vendor",
+              "QueryResponse"
+            ],
             "collectionName": "vendors",
             "itemFields": [
-              { "name": "Id" },
-              { "name": "DisplayName" },
-              { "name": "CompanyName" },
-              { "name": "Balance" },
-              { "name": "Active" }
+              {
+                "name": "Id"
+              },
+              {
+                "name": "DisplayName"
+              },
+              {
+                "name": "CompanyName"
+              },
+              {
+                "name": "Balance"
+              },
+              {
+                "name": "Active"
+              }
             ],
             "omitted": "addresses, contact details, and provider-specific payload fields",
             "outputFields": [
-              { "name": "startPosition" },
-              { "name": "maxResults" },
-              { "name": "totalCount" }
+              {
+                "name": "startPosition"
+              },
+              {
+                "name": "maxResults"
+              },
+              {
+                "name": "totalCount"
+              }
             ]
           }
         }
@@ -597,14 +603,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/v3/company/{realmId}/query",
+        "url": "https://{{env.QUICKBOOKS_API_HOST}}/v3/company/{realmId}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
-          },
           "realmId": {
             "type": "string",
             "in": "path",
@@ -628,21 +628,44 @@
         "response": {
           "transform": "QueryResponse",
           "historicalSummary": {
-            "collectionKeys": ["Purchase", "QueryResponse"],
+            "collectionKeys": [
+              "Purchase",
+              "QueryResponse"
+            ],
             "collectionName": "purchases",
             "itemFields": [
-              { "name": "Id" },
-              { "name": "TxnDate" },
-              { "name": "PaymentType" },
-              { "name": "TotalAmt" },
-              { "name": "AccountRef", "kind": "object" },
-              { "name": "EntityRef", "kind": "object" }
+              {
+                "name": "Id"
+              },
+              {
+                "name": "TxnDate"
+              },
+              {
+                "name": "PaymentType"
+              },
+              {
+                "name": "TotalAmt"
+              },
+              {
+                "name": "AccountRef",
+                "kind": "object"
+              },
+              {
+                "name": "EntityRef",
+                "kind": "object"
+              }
             ],
             "omitted": "purchase line items and provider-specific payload fields",
             "outputFields": [
-              { "name": "startPosition" },
-              { "name": "maxResults" },
-              { "name": "totalCount" }
+              {
+                "name": "startPosition"
+              },
+              {
+                "name": "maxResults"
+              },
+              {
+                "name": "totalCount"
+              }
             ]
           }
         }
@@ -665,7 +688,11 @@
       "icon": "plus"
     }
   ],
-  "suggestedWith": ["stripe", "gmail", "hubspot"],
+  "suggestedWith": [
+    "stripe",
+    "gmail",
+    "hubspot"
+  ],
   "SETUP_GUIDE": {
     "title": "QuickBooks Online OAuth Setup",
     "steps": [
@@ -692,7 +719,7 @@
       {
         "step": 5,
         "title": "Verify access",
-        "description": "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company)."
+        "description": "Run the List Invoices tool with your realmId (set QUICKBOOKS_API_HOST=sandbox-quickbooks.api.intuit.com in your .env for a sandbox company)."
       }
     ],
     "notes": [

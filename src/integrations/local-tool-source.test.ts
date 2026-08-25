@@ -296,7 +296,6 @@ describe("createLocalIntegrationToolSource", () => {
       { tool: "aws__list-s3-buckets", detail: "endpoint" },
       { tool: "github__list_issues", detail: "GraphQL" },
       { tool: "gmail__list_emails", detail: "enrichment" },
-      { tool: "algolia__list_indices", detail: "fixed HTTPS URL" },
       { tool: "alphavantage__quote", detail: "query" },
       { tool: "slack__list_channels", detail: "authorization-code" },
     ] as const;
@@ -536,6 +535,191 @@ describe("createLocalIntegrationToolSource", () => {
       "https://api.vercel.com/v10/projects?limit=20",
       "https://panel.sendcloud.sc/api/v3/shipments?page_size=40",
     ]);
+  });
+
+  it("executes environment-host tools against the configured host only", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      assertEquals(request.url.origin, "https://unit-cluster.example.cloud:6333");
+      assertEquals(headerValue(request.init, "api-key"), TEST_CREDENTIAL);
+      return Promise.resolve(Response.json({ result: { collections: [{ name: "docs" }] } }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: (name) =>
+          name === "QDRANT_CLUSTER_HOST" ? "unit-cluster.example.cloud" : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    assertEquals(await source.executeTool("qdrant__list_collections", {}), [
+      { name: "docs" },
+    ]);
+    assertEquals(requests, ["https://unit-cluster.example.cloud:6333/collections"]);
+  });
+
+  it("falls back to the catalog default host when the variable is unset", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({ data: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["langfuse__list_traces"],
+        credentialProvider: (name) => name === "LANGFUSE_HOST" ? undefined : "langfuse-key",
+      },
+      transport,
+    );
+
+    await source.executeTool("langfuse__list_traces", {});
+    assertEquals(requests, ["https://cloud.langfuse.com/api/public/traces?page=1&limit=25"]);
+  });
+
+  it("reports the missing host variable by name before any transport call", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: (name) => name === "QDRANT_CLUSTER_HOST" ? undefined : TEST_CREDENTIAL,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({}));
+      },
+    );
+
+    for (
+      const attempt of [
+        () => source.listTools(),
+        () => source.executeTool("qdrant__list_collections", {}),
+      ]
+    ) {
+      const error = await assertRejects(attempt, VeryfrontError);
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-credentials-missing");
+      assert(error.message.includes("QDRANT_CLUSTER_HOST"), error.message);
+    }
+    assertEquals(transportCalls, 0);
+  });
+
+  it("rejects configured host values that could escape the URL authority", async () => {
+    for (
+      const hostile of [
+        "attacker.example/path",
+        "attacker.example?query",
+        "attacker.example#fragment",
+        "user@attacker.example",
+        "attacker.example:443:6333",
+        "attacker.example:notaport",
+        " attacker.example",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["qdrant__list_collections"],
+          credentialProvider: (name) => name === "QDRANT_CLUSTER_HOST" ? hostile : TEST_CREDENTIAL,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("qdrant__list_collections", {}),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+      assert(error.message.includes("QDRANT_CLUSTER_HOST"), error.message);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
+  it("routes tenant-host tools to the argument-selected subdomain of the pinned domain", async () => {
+    const origins: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      origins.push(request.url.origin);
+      assertEquals(request.url.origin, request.allowedOrigin);
+      assertEquals(request.url.pathname, "/query");
+      assertEquals(headerValue(request.init, "api-key"), TEST_CREDENTIAL);
+      return Promise.resolve(Response.json({ matches: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["pinecone__query_vectors"],
+        credentialProvider: testCredentialProvider,
+      },
+      transport,
+    );
+
+    assertEquals(
+      await source.executeTool("pinecone__query_vectors", {
+        indexHostPrefix: "docs-abc1234.svc.aped-4627-b74a",
+        vector: [0.1, 0.2],
+      }),
+      { matches: [] },
+    );
+    assertEquals(
+      await source.executeTool("pinecone__query_vectors", {
+        indexHostPrefix: "sales-def5678.svc.unit-env",
+        vector: [0.3, 0.4],
+      }),
+      { matches: [] },
+    );
+    assertEquals(origins, [
+      "https://docs-abc1234.svc.aped-4627-b74a.pinecone.io",
+      "https://sales-def5678.svc.unit-env.pinecone.io",
+    ]);
+  });
+
+  it("rejects tenant host arguments that could leave the pinned registrable domain", async () => {
+    for (
+      const hostile of [
+        "evil.example/query",
+        "evil.example?query",
+        "evil.example#fragment",
+        "user@evil.example",
+        "evil.example:443",
+        " evil.example",
+        "evil_example",
+        "%65vil.example",
+        "a..b",
+        ".evil.example",
+        "evil.example.",
+        "",
+        ".",
+        "..",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["pinecone__query_vectors"],
+          credentialProvider: testCredentialProvider,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () =>
+          source.executeTool("pinecone__query_vectors", {
+            indexHostPrefix: hostile,
+            vector: [0.1],
+          }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-request-invalid");
+      assertEquals(transportCalls, 0);
+    }
   });
 
   it("mints client credentials before executing a fixed-origin provider tool", async () => {

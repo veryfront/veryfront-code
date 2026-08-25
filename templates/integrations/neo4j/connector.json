@@ -33,9 +33,9 @@
     },
     {
       "name": "NEO4J_HOST",
-      "description": "Neo4j host serving the Query API, e.g. xxxxxxxx.databases.neo4j.io for Aura or your-server:7474 for self-hosted — pass it as the host parameter of each tool",
-      "required": false,
-      "sensitive": false,
+      "description": "Neo4j host serving the Query API over HTTPS, e.g. xxxxxxxx.databases.neo4j.io for Aura, or your self-hosted host including the port when it is not 443 (e.g. my-server:7473)",
+      "required": true,
+      "sensitive": true,
       "placeholder": "xxxxxxxx.databases.neo4j.io",
       "docsUrl": "https://neo4j.com/docs/query-api/current/"
     }
@@ -48,14 +48,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/db/{databaseName}/query/v2",
+        "url": "https://{{env.NEO4J_HOST}}/db/{databaseName}/query/v2",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Neo4j host, e.g. xxxxxxxx.databases.neo4j.io for Aura (HTTPS on port 443) or your self-hosted server host",
-            "required": true
-          },
           "databaseName": {
             "type": "string",
             "in": "path",
@@ -74,7 +68,9 @@
             "description": "Values for $placeholders in the statement, e.g. { \"name\": \"Alice\" }"
           }
         },
-        "response": { "transform": "data" }
+        "response": {
+          "transform": "data"
+        }
       }
     },
     {
@@ -84,14 +80,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/db/{databaseName}/query/v2",
+        "url": "https://{{env.NEO4J_HOST}}/db/{databaseName}/query/v2",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Neo4j host, e.g. xxxxxxxx.databases.neo4j.io for Aura (HTTPS on port 443) or your self-hosted server host",
-            "required": true
-          },
           "databaseName": {
             "type": "string",
             "in": "path",
@@ -133,7 +123,11 @@
       "icon": "sparkles"
     }
   ],
-  "suggestedWith": ["openai", "anthropic", "voyage-ai"],
+  "suggestedWith": [
+    "openai",
+    "anthropic",
+    "voyage-ai"
+  ],
   "SETUP_GUIDE": {
     "title": "Neo4j Query API Setup",
     "steps": [
@@ -145,7 +139,7 @@
       {
         "step": 2,
         "title": "Find your host",
-        "description": "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). The host part (xxxxxxxx.databases.neo4j.io) is what tools take as the host parameter; store it in NEO4J_HOST for reference."
+        "description": "From the Aura console, copy the instance's connection URI (neo4j+s://xxxxxxxx.databases.neo4j.io). Store the host part (xxxxxxxx.databases.neo4j.io) as NEO4J_HOST in your .env — every tool sends its requests to this host."
       },
       {
         "step": 3,
@@ -160,7 +154,7 @@
     ],
     "notes": [
       "The Query API requires Neo4j 5.19+ (all Aura instances qualify); on self-managed instances below 5.25 it is disabled by default and must be enabled in the server configuration. Aura serves it over HTTPS on port 443",
-      "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https:// — include the port in the host parameter, e.g. my-server:7473",
+      "Self-hosted instances must expose HTTPS (port 7473 by default) for these tools, since tool URLs use https:// — include the port in NEO4J_HOST, e.g. my-server:7473",
       "Always pass Cypher values via the parameters object ($placeholders) rather than string-concatenating them into the statement — this enables plan caching and prevents Cypher injection",
       "Both tools run implicit (auto-commit) transactions; explicit multi-request transactions are not exposed",
       "The Query API has no server-side read-only mode: Run Cypher Query is read-only by convention only, and write statements sent through it would execute. Connect with a read-only database user if you need a hard guarantee"

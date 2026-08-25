@@ -397,7 +397,7 @@ describe("integration endpoint specs", () => {
     assertEquals(servicenowQuery.requiresWrite, false);
     assertEquals(
       servicenowQuery.endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/{tableName}",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
     );
     assertEquals(
       getTool("servicenow", "create_table_record").endpoint?.bodyMode,
@@ -703,7 +703,7 @@ describe("integration endpoint specs", () => {
     assertEquals(tool.endpoint?.method, "POST");
     assertEquals(
       tool.endpoint?.url,
-      "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+      "https://{{env.SAP_HOST}}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
     );
     assertEquals(tool.endpoint?.params?.SupplierInvoice?.in, "query");
     assertEquals(tool.endpoint?.params?.SupplierInvoice?.required, true);
@@ -1372,6 +1372,95 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("does not accept credentialed integration hosts as tool input", () => {
+    // Catalog-wide credential-forwarding invariant: an endpoint URL authority
+    // must be fixed, derived from configured environment variables via
+    // {{env.VAR}} placeholders, or pinned to a provider-validated OAuth origin
+    // ({{oauth.raw.*}}). Tool input may at most select tenant subdomains ahead
+    // of a fixed registrable domain; a placeholder that controls the
+    // registrable domain would let a caller forward the connector's
+    // credentials to an arbitrary host.
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const endpoint = tool.endpoint;
+        if (!endpoint) continue;
+        const label = `${connector.name}:${tool.id ?? tool.name}`;
+        const url = endpoint.url;
+        if (/^{{oauth\.raw\.[A-Za-z0-9_.-]+}}\//.test(url)) continue;
+        assert(
+          url.startsWith("https://"),
+          `${label} must use an HTTPS endpoint URL`,
+        );
+        const authority = url.slice("https://".length).split("/")[0]!;
+        assert(
+          !authority.includes("@"),
+          `${label} must not embed credentials in its URL authority`,
+        );
+        const withoutEnvTemplates = authority.replace(
+          /{{env\.([A-Za-z0-9_]+)}}/g,
+          (_match, envVarName: string) => {
+            assertExists(
+              connector.envVars?.find((envVar) => envVar.name === envVarName),
+              `${label} must declare the ${envVarName} environment variable its URL authority uses`,
+            );
+            return "env-derived-host";
+          },
+        );
+        assert(
+          !withoutEnvTemplates.includes("{{"),
+          `${label} uses an unsupported template in its URL authority`,
+        );
+        const host = withoutEnvTemplates.replace(/:\d+$/, "");
+        if (!host.includes("{")) continue;
+        // Tool input may only pick tenant subdomains: placeholders must be
+        // whole leading labels, and the final two labels (the registrable
+        // domain) must be literal.
+        const hostLabels = host.split(".");
+        assert(
+          hostLabels.length >= 3,
+          `${label} must not put tool input in control of its registrable domain (${authority})`,
+        );
+        for (const domainLabel of hostLabels.slice(-2)) {
+          assert(
+            /^[A-Za-z0-9-]+$/.test(domainLabel),
+            `${label} must not put tool input in control of its registrable domain (${authority})`,
+          );
+        }
+        for (const subdomainLabel of hostLabels.slice(0, -2)) {
+          assert(
+            /^(?:{[A-Za-z0-9_]+}|[A-Za-z0-9-]+)$/.test(subdomainLabel),
+            `${label} must keep tool-input placeholders confined to whole subdomain labels (${authority})`,
+          );
+        }
+      }
+    }
+  });
+
+  it("routes Pinecone data-plane tools through per-call hosts pinned to pinecone.io", () => {
+    for (
+      const [toolId, path] of [
+        ["query_vectors", "/query"],
+        ["upsert_vectors", "/vectors/upsert"],
+      ] as const
+    ) {
+      const tool = getTool("pinecone", toolId);
+      assertEquals(
+        tool.endpoint?.url,
+        `https://{indexHostPrefix}.pinecone.io${path}`,
+      );
+      assertEquals(tool.endpoint?.params?.indexHostPrefix?.in, "path");
+      assertEquals(tool.endpoint?.params?.indexHostPrefix?.required, true);
+    }
+
+    // Per-index routing works per call; the interim single-index environment
+    // variable is gone.
+    const pinecone = getConnector("pinecone");
+    assertEquals(
+      pinecone.envVars?.some((envVar) => envVar.name === "PINECONE_INDEX_HOST"),
+      false,
+    );
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);
@@ -2035,18 +2124,18 @@ describe("integration endpoint specs", () => {
     assertEquals(getTool("servicenow", "update_incident").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_interactions").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/interaction",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
     );
     assertEquals(getTool("servicenow", "create_interaction").requiresWrite, true);
     assertEquals(getTool("servicenow", "update_interaction").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_requests").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_request",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request",
     );
     assertEquals(getTool("servicenow", "create_request").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_request_items").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_req_item",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
     );
     assertEquals(getTool("servicenow", "create_request_item").requiresWrite, true);
   });

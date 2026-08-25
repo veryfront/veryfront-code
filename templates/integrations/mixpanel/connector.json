@@ -50,6 +50,20 @@
       "required": true,
       "sensitive": false,
       "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects"
+    },
+    {
+      "name": "MIXPANEL_HOST",
+      "description": "Mixpanel API host without scheme: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India).",
+      "required": false,
+      "sensitive": false,
+      "default": "mixpanel.com"
+    },
+    {
+      "name": "MIXPANEL_EXPORT_HOST",
+      "description": "Mixpanel raw export host without scheme: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India).",
+      "required": false,
+      "sensitive": false,
+      "default": "data.mixpanel.com"
     }
   ],
   "tools": [
@@ -66,14 +80,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{exportHost}/api/2.0/export",
+        "url": "https://{{env.MIXPANEL_EXPORT_HOST}}/api/2.0/export",
         "params": {
-          "exportHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Mixpanel raw export host: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India)",
-            "default": "data.mixpanel.com"
-          },
           "project_id": {
             "type": "string",
             "in": "query",
@@ -118,14 +126,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/query/funnels",
+        "url": "https://{{env.MIXPANEL_HOST}}/api/query/funnels",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
-          },
           "project_id": {
             "type": "string",
             "in": "query",
@@ -165,14 +167,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/query/funnels/list",
+        "url": "https://{{env.MIXPANEL_HOST}}/api/query/funnels/list",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
-          },
           "project_id": {
             "type": "string",
             "in": "query",
@@ -189,14 +185,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/query/retention",
+        "url": "https://{{env.MIXPANEL_HOST}}/api/query/retention",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
-          },
           "project_id": {
             "type": "string",
             "in": "query",
@@ -245,14 +235,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/api/query/cohorts/list",
+        "url": "https://{{env.MIXPANEL_HOST}}/api/query/cohorts/list",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
-            "default": "mixpanel.com"
-          },
           "project_id": {
             "type": "string",
             "in": "query",
@@ -262,14 +246,26 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["cohorts"],
+            "collectionKeys": [
+              "cohorts"
+            ],
             "collectionName": "cohorts",
             "itemFields": [
-              { "name": "id" },
-              { "name": "name" },
-              { "name": "count" },
-              { "name": "created" },
-              { "name": "is_visible" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "count"
+              },
+              {
+                "name": "created"
+              },
+              {
+                "name": "is_visible"
+              }
             ],
             "omitted": "cohort descriptions and provider-specific payload fields"
           }
@@ -300,6 +296,10 @@
       "icon": "users"
     }
   ],
-  "suggestedWith": ["slack", "analytics", "monitoring"],
-  "SETUP_GUIDE": "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, pass the matching host parameter (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)"
+  "suggestedWith": [
+    "slack",
+    "analytics",
+    "monitoring"
+  ],
+  "SETUP_GUIDE": "# Mixpanel Integration Setup\n\n## Step 1: Create a Service Account\n1. Log in to Mixpanel and open Organization Settings > Service Accounts (https://mixpanel.com/settings/org#serviceaccounts)\n2. Create a service account with access to your project (Analyst role or higher is sufficient for queries)\n3. Copy the service account **username** and **secret** shown at creation time\n4. Add them to your .env file as `MIXPANEL_SERVICE_ACCOUNT_USERNAME` and `MIXPANEL_SERVICE_ACCOUNT_SECRET`\n\n## Step 2: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file — query tools require it as the project_id parameter\n\n## Step 3: (Optional) Get Your Project Token\n1. Under Project Settings, find your **Project Token**\n2. Add it as `MIXPANEL_PROJECT_TOKEN` — it is only needed for local event-tracking (ingestion), not for queries\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_SERVICE_ACCOUNT_USERNAME=your_service_account_username\nMIXPANEL_SERVICE_ACCOUNT_SECRET=your_service_account_secret\nMIXPANEL_PROJECT_ID=your_project_id_here\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\n```\n\n## Step 5: Test the Integration\nRun the List Cohorts or List Funnels tool with your project_id to verify the service account works.\n\n## Important Notes\n- Service accounts authenticate via HTTP Basic auth (username + secret) and are Mixpanel's recommended method for the Query and Export APIs\n- Every query tool requires the `project_id` parameter when authenticating with a service account\n- If your project stores data in the EU or India, set MIXPANEL_HOST and MIXPANEL_EXPORT_HOST to the matching hosts (eu.mixpanel.com / data-eu.mixpanel.com, or in.mixpanel.com / data-in.mixpanel.com)\n- **Project Token** is used only for tracking events (ingestion)\n- Keep credentials secure and never commit them to version control\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Service Accounts](https://developer.mixpanel.com/reference/service-accounts)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)"
 }

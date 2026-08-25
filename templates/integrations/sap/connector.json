@@ -37,14 +37,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
+        "url": "https://{{env.SAP_HOST}}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
         "params": {
-          "sapHost": {
-            "type": "string",
-            "in": "path",
-            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
-            "required": true
-          },
           "$filter": {
             "type": "string",
             "in": "query",
@@ -78,14 +72,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')",
+        "url": "https://{{env.SAP_HOST}}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')",
         "params": {
-          "sapHost": {
-            "type": "string",
-            "in": "path",
-            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
-            "required": true
-          },
           "supplierInvoice": {
             "type": "string",
             "in": "path",
@@ -114,14 +102,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+        "url": "https://{{env.SAP_HOST}}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
         "params": {
-          "sapHost": {
-            "type": "string",
-            "in": "path",
-            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
-            "required": true
-          },
           "SupplierInvoice": {
             "type": "string",
             "in": "query",
@@ -157,5 +139,9 @@
       "category": "finance"
     }
   ],
-  "suggestedWith": ["sharepoint", "gmail", "slack"]
+  "suggestedWith": [
+    "sharepoint",
+    "gmail",
+    "slack"
+  ]
 }

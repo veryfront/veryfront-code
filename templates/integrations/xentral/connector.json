@@ -24,6 +24,12 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.xentral.com/reference/authentication"
+    },
+    {
+      "name": "XENTRAL_INSTANCE_HOST",
+      "description": "Xentral instance host without scheme, e.g. mycompany.xentral.biz (custom domains are also supported).",
+      "required": true,
+      "sensitive": true
     }
   ],
   "tools": [
@@ -34,14 +40,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v1/salesOrders",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v1/salesOrders",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "page[number]": {
             "type": "number",
             "in": "query",
@@ -82,14 +82,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v1/salesOrders/{salesOrderId}",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v1/salesOrders/{salesOrderId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "salesOrderId": {
             "type": "string",
             "in": "path",
@@ -109,14 +103,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v2/products",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v2/products",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "page[number]": {
             "type": "number",
             "in": "query",
@@ -157,14 +145,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v2/customers",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v2/customers",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "page[number]": {
             "type": "number",
             "in": "query",
@@ -205,15 +187,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/v1/salesOrders/actions/import",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          }
-        },
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v1/salesOrders/actions/import",
         "body": {
           "date": {
             "type": "string",
@@ -267,14 +241,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v2/products/{productId}",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v2/products/{productId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "productId": {
             "type": "string",
             "in": "path",
@@ -294,14 +262,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/v2/customers/{customerId}",
+        "url": "https://{{env.XENTRAL_INSTANCE_HOST}}/api/v2/customers/{customerId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Xentral instance host, for example mycompany.xentral.biz",
-            "required": true
-          },
           "customerId": {
             "type": "string",
             "in": "path",
@@ -338,7 +300,11 @@
       "icon": "plus"
     }
   ],
-  "suggestedWith": ["shopify", "sendcloud", "billbee"],
+  "suggestedWith": [
+    "shopify",
+    "sendcloud",
+    "billbee"
+  ],
   "SETUP_GUIDE": {
     "title": "Xentral API setup",
     "steps": [
@@ -360,11 +326,11 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the List Sales Orders tool with your instance host (e.g. mycompany.xentral.biz) as instanceHost."
+        "description": "Set XENTRAL_INSTANCE_HOST to your instance host (e.g. mycompany.xentral.biz), then run the List Sales Orders tool."
       }
     ],
     "notes": [
-      "Every tool takes an instanceHost parameter — your instance subdomain such as mycompany.xentral.biz (custom domains are also supported)",
+      "Every tool sends its requests to the XENTRAL_INSTANCE_HOST environment variable — your instance subdomain such as mycompany.xentral.biz (custom domains are also supported)",
       "PAT scopes are granted per resource group (CRM, products, accounting, ...) with separate read/create/update/delete permissions",
       "Sales orders use the v1 API; products and customers use the newer v2 API endpoints",
       "List responses wrap results in a data array with pagination info in extra"
