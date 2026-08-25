@@ -3,6 +3,7 @@ import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
+import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
 
 function createCtx(captured: { options?: Record<string, unknown> }): HandlerContext {
   return {
@@ -220,8 +221,78 @@ describe("ApiHandlerWrapper", () => {
     const result = await handler.handle(new Request("http://localhost/review"), ctx);
 
     assertEquals(result, { continue: true });
-    assertEquals(events.slice(0, 2), ["source-fresh", "resolve-page"]);
-    assertEquals(events.includes("full-refresh"), false);
+    assertEquals(events.slice(0, 2), ["full-refresh", "resolve-page"]);
+    assertEquals(events.includes("source-fresh"), false);
+  });
+
+  it("does not refresh a document route that SSR will shed for memory pressure", async () => {
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    let refreshes = 0;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/review"),
+        ctx,
+      );
+      assertEquals(result, { continue: true });
+      assertEquals(refreshes, 0);
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("still refreshes a markdown preview document under critical memory pressure", async () => {
+    // SSR never renders or sheds GET /file.md: MarkdownPreviewHandler serves
+    // it even during overload, so the SSR shedding shortcut must not leave it
+    // without a current source snapshot.
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    let refreshes = 0;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/notes.md"),
+        ctx,
+      );
+      assertEquals(
+        refreshes,
+        1,
+        "a markdown document is served regardless of pressure, so it must be refreshed",
+      );
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
   });
 
   it("preserves fresh API discovery when no page owns a non-API path", async () => {

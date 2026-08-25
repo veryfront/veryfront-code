@@ -49,7 +49,8 @@ import {
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
-import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
+import { ensurePreviewDocumentSourceSnapshot } from "../source-snapshot-freshness.ts";
+import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -83,14 +84,10 @@ export class SSRHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    if (pathname.startsWith("/_veryfront/")) {
-      return Promise.resolve(this.continue());
-    }
-
-    const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(pathname) &&
-      !pathname.includes("/.veryfront/") &&
-      !pathname.startsWith("/.veryfront");
-    if (hasFileExtension) {
+    // The chain's route pattern already excludes /_ paths; the shared
+    // predicate keeps direct calls and the API/page classifier's
+    // pressure-deferral decision aligned with what this handler renders.
+    if (!ssrOwnsDocumentPathname(pathname)) {
       return Promise.resolve(this.continue());
     }
 
@@ -224,23 +221,78 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        const memoryStatus = this.ssrService.checkMemoryPressure();
+        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        if (memoryStatus.shouldReject) {
+          // The shed response still carries the snapshot key that its dependent
+          // requests must use, but it must not spend memory refreshing source
+          // that it will not render.
+          const resolution = await resolveSnapshotForRequest(
+            dependencySource,
+            readSnapshotHeader(req.headers),
+            { unpinnedRequest: "adopt" },
+          );
+          if (resolution.kind === "conflict") {
+            endRequest(requestId);
+            return this.handleDependencySnapshotConflict(req, ctx);
+          }
+          this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
+          // The abandoned request must release its timing state: leaving it
+          // current keeps later timers attached to it for as long as the
+          // overload lasts.
+          endRequest(requestId);
+          const result = this.ssrService.createMemoryPressureResult(slug);
+          return this.buildResponse(
+            req,
+            ctx,
+            { ...result, dependencyPinningCacheKey: resolution.snapshot.cacheKey },
+            generateNonce(),
+          );
+        }
+
         // Establish one current draft generation before route resolution and
         // rendering. If freshness cannot be established, fail the request
         // rather than serving an older SSR snapshot that hydration replaces.
+        // maxAgeMs: 0 is what narrows the stale window: a draft edit does not
+        // change the snapshot identity, so any reusable lease here would render
+        // the pre-edit source. Joining an already in-flight refresh still leaves
+        // one source round trip of exposure, but not the whole 30s lease.
+        // Sub-resource requests within this page load keep the default lease,
+        // so the strict listing happens once per document.
         try {
-          await ensurePreviewSourceSnapshotFresh(
-            ctx,
-            {
-              ensure: "preview-ssr-render",
-              refreshFallback: "preview-ssr-render",
-            },
-          );
+          await ensurePreviewDocumentSourceSnapshot(ctx);
         } catch (error) {
           endRequest(requestId);
           throw error;
         }
 
-        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        const postRefreshMemoryStatus = this.ssrService.checkMemoryPressure();
+        if (postRefreshMemoryStatus.shouldReject) {
+          const refreshedResolution = await resolveSnapshotForRequest(
+            dependencySource,
+            readSnapshotHeader(req.headers),
+            { unpinnedRequest: "adopt" },
+          );
+          if (refreshedResolution.kind === "conflict") {
+            endRequest(requestId);
+            return this.handleDependencySnapshotConflict(req, ctx);
+          }
+          this.logDebug("Rejecting after source refresh due to memory pressure", { slug }, ctx);
+          // As above: the shed request is finished, so close out its timing
+          // state before returning the 503.
+          endRequest(requestId);
+          const result = this.ssrService.createMemoryPressureResult(slug);
+          return this.buildResponse(
+            req,
+            ctx,
+            {
+              ...result,
+              dependencyPinningCacheKey: refreshedResolution.snapshot.cacheKey,
+            },
+            generateNonce(),
+          );
+        }
+
         // The document request is where the client learns the current snapshot
         // key, so an unpinned request adopts it instead of conflicting.
         const resolution = await resolveSnapshotForRequest(
@@ -263,18 +315,6 @@ export class SSRHandler extends BaseHandler {
           headers: applicationHeaders,
           signal: req.signal,
         });
-
-        const memoryStatus = this.ssrService.checkMemoryPressure();
-        if (memoryStatus.shouldReject) {
-          this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
-          const result = this.ssrService.createMemoryPressureResult(slug);
-          return this.buildResponse(
-            req,
-            ctx,
-            { ...result, dependencyPinningCacheKey: dependencySnapshot.cacheKey },
-            generateNonce(),
-          );
-        }
 
         const nonce = generateNonce();
         const studioEmbed = applicationUrl.searchParams.get("studio_embed") === "true";

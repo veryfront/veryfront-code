@@ -3,7 +3,10 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type {
+  RuntimeAdapter,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
@@ -604,7 +607,10 @@ export async function deriveProjectCspOrigins(args: {
         ) => Promise<Array<{ path: string; content?: string }>>;
         getContentContext?: () => ResolvedContentContext | null;
         getSourceSnapshotVersion?: () => number | Promise<number | undefined>;
-        ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
+        ensureSourceSnapshotFresh?: (
+          reason?: string,
+          options?: SourceSnapshotFreshnessOptions,
+        ) => Promise<void>;
       }
       : undefined;
     if (!underlying || typeof underlying.getAllSourceFiles !== "function") {

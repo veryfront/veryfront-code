@@ -1,7 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
-import type { FileInfo, ResolveFileOptions } from "../../base.ts";
+import type {
+  FileInfo,
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
@@ -29,6 +33,7 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly symlinkSemantics = "none" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
@@ -255,12 +260,15 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  async ensureSourceSnapshotFresh(reason?: string): Promise<void> {
+  async ensureSourceSnapshotFresh(
+    reason?: string,
+    options?: SourceSnapshotFreshnessOptions,
+  ): Promise<void> {
     const adapter = await this.getAdapter();
     if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
 
     const previousVersion = await adapter.getSourceSnapshotVersion?.();
-    await adapter.ensureSourceSnapshotFresh(reason);
+    await adapter.ensureSourceSnapshotFresh(reason, options);
     const currentVersion = await adapter.getSourceSnapshotVersion?.();
     const sourceMayHaveChanged = previousVersion === undefined ||
       currentVersion === undefined ||
@@ -282,6 +290,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const adapter = await this.getAdapter();
     return typeof adapter.getSourceSnapshotVersion === "function"
       ? await adapter.getSourceSnapshotVersion()
+      : undefined;
+  }
+
+  async getSourceSnapshotIdentity(): Promise<string | undefined> {
+    const adapter = await this.getAdapter();
+    return typeof adapter.getSourceSnapshotIdentity === "function"
+      ? await adapter.getSourceSnapshotIdentity()
       : undefined;
   }
 

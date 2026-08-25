@@ -11,7 +11,11 @@ import type {
   StyleCallbacks,
   StylePregenerationFile,
 } from "./types.ts";
-import type { FileInfo, ResolveFileOptions } from "../../base.ts";
+import type {
+  FileInfo,
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -115,6 +119,7 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
   readonly projectContextSemantics: "fixed" | undefined;
@@ -1164,13 +1169,27 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
+  async ensureSourceSnapshotFresh(
+    reason = "freshness-check",
+    options?: SourceSnapshotFreshnessOptions,
+  ): Promise<void> {
     await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
 
+    // The snapshot identity only names the branch, so an edit to a draft file
+    // never changes it. The lease age is therefore the only thing that can
+    // detect a content change, and a caller that cannot tolerate a stale render
+    // asks for maxAgeMs: 0 to bypass it.
+    const maxAgeMs = options?.maxAgeMs ?? BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS;
+
+    // A non-positive budget bypasses the lease unconditionally. Comparing the
+    // age against it would not: a backward wall-clock step makes the age
+    // negative, and a negative age is below every budget, so the caller that
+    // asked to accept no lease at all would silently be handed one.
     if (
+      maxAgeMs > 0 &&
       this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
-      Date.now() - this.sourceSnapshotCheckedAt < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS
+      Date.now() - this.sourceSnapshotCheckedAt < maxAgeMs
     ) {
       return;
     }
@@ -1180,6 +1199,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getSourceSnapshotVersion(): number {
     return this.sourceSnapshotVersion;
+  }
+
+  /**
+   * Names the branch/environment/release the snapshot currently targets, so a
+   * caller that established freshness earlier in a request can detect a
+   * context change (for example `setRequestBranch` on this reused adapter)
+   * before trusting that establishment.
+   */
+  getSourceSnapshotIdentity(): string | undefined {
+    return this.getCurrentSourceSnapshotIdentity();
   }
 
   getPokeMetrics(): {

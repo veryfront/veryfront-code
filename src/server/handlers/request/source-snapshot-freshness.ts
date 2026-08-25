@@ -15,12 +15,55 @@ function hasMutablePreviewSource(ctx: HandlerContext): boolean {
 interface SourceSnapshotFreshnessReasons {
   readonly ensure: string;
   readonly refreshFallback: string;
+  /**
+   * Oldest freshness check this caller accepts, in milliseconds. Omit to take
+   * the adapter's default lease, which is what sub-resource requests inside one
+   * page load want. A document render passes 0, because the snapshot it serves
+   * is the one hydration compares against.
+   */
+  readonly maxAgeMs?: number;
 }
 
 const DEFAULT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze({
   ensure: "preview-request-routing",
   refreshFallback: "preview-api-route-discovery",
 });
+
+const DOCUMENT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze({
+  ensure: "preview-document-routing",
+  refreshFallback: "preview-document-routing",
+  maxAgeMs: 0,
+});
+
+const documentFreshContexts = new WeakMap<HandlerContext, string>();
+
+/** Establish strict freshness before API/page ownership is classified. */
+export async function preparePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
+  await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
+  // The classifier runs before SSR enters its render context, and SSR may
+  // still change a reused contextual adapter's context (setRequestBranch)
+  // before it reads. Record which snapshot identity this preparation applied
+  // to; reuse is sound only while the render context resolves the same one.
+  // An adapter that cannot name its context records nothing, so the render
+  // re-establishes freshness instead of trusting a possibly different context.
+  const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
+  if (identity !== undefined) documentFreshContexts.set(ctx, identity);
+}
+
+/** Reuse a strict snapshot prepared by the API/page classifier, or establish it directly. */
+export async function ensurePreviewDocumentSourceSnapshot(ctx: HandlerContext): Promise<void> {
+  const preparedIdentity = documentFreshContexts.get(ctx);
+  if (preparedIdentity !== undefined) {
+    documentFreshContexts.delete(ctx);
+    // Freshness established by the classifier only carries over when this
+    // render context still targets the identity the preparation refreshed. A
+    // branch switch on a reused contextual adapter between the two points
+    // must re-establish, or the render serves the previous branch's snapshot.
+    const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
+    if (identity === preparedIdentity) return;
+  }
+  await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
+}
 
 /**
  * Establish the current mutable source snapshot before request routing or
@@ -36,8 +79,33 @@ export async function ensurePreviewSourceSnapshotFresh(
 ): Promise<void> {
   if (!hasMutablePreviewSource(ctx)) return;
   const fs = ctx.adapter.fs;
+  if (reasons.maxAgeMs !== undefined && reasons.maxAgeMs <= 0) {
+    // Legacy custom adapters implemented the original one-argument method and
+    // silently ignore freshness options. A document render cannot reuse that
+    // lease, so prefer the unconditional refresh when it is available.
+    if (fs.refreshSourceSnapshot) {
+      await refreshPreviewSourceSnapshot(ctx, reasons.refreshFallback);
+      return;
+    }
+    // An ensure-only adapter must explicitly advertise the options contract.
+    // Function arity is not a capability signal: optional/default parameters
+    // and wrappers make it ambiguous, and guessing here can render stale HTML.
+    if (
+      fs.ensureSourceSnapshotFresh &&
+      fs.sourceSnapshotFreshnessOptionsVersion !== 1
+    ) {
+      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+        detail:
+          `The filesystem adapter serving "${ctx.projectSlug}" implements ensureSourceSnapshotFresh() but does not advertise sourceSnapshotFreshnessOptionsVersion: 1, so this document render cannot prove zero-age source freshness.`,
+      });
+    }
+  }
+
   if (fs.ensureSourceSnapshotFresh) {
-    await fs.ensureSourceSnapshotFresh(reasons.ensure);
+    await fs.ensureSourceSnapshotFresh(
+      reasons.ensure,
+      reasons.maxAgeMs === undefined ? undefined : { maxAgeMs: reasons.maxAgeMs },
+    );
     return;
   }
 
