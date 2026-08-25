@@ -307,10 +307,9 @@ async function publishRejectedEnvelopeAndDrain(
     if (originalVerifyDescriptor) {
       Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
     } else {
-      Object.defineProperty(crypto.subtle, "verify", {
-        configurable: true,
-        value: originalVerify,
-      });
+      // `verify` is inherited from `SubtleCrypto.prototype`: delete the override
+      // instead of redefining it, so later tests can still stub `verify`.
+      Reflect.deleteProperty(crypto.subtle, "verify");
     }
   }
 }
@@ -372,10 +371,9 @@ function answerEventWithRejectedAcknowledgement(
       if (originalVerifyDescriptor) {
         Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
       } else {
-        Object.defineProperty(crypto.subtle, "verify", {
-          configurable: true,
-          value: originalVerify,
-        });
+        // `verify` is inherited from `SubtleCrypto.prototype`: delete the override
+        // instead of redefining it, so later tests can still stub `verify`.
+        Reflect.deleteProperty(crypto.subtle, "verify");
       }
     },
   };
@@ -617,10 +615,9 @@ describe("proxy routing invalidation Redis bus", () => {
       if (originalVerifyDescriptor) {
         Object.defineProperty(crypto.subtle, "verify", originalVerifyDescriptor);
       } else {
-        Object.defineProperty(crypto.subtle, "verify", {
-          configurable: true,
-          value: originalVerify,
-        });
+        // `verify` is inherited from `SubtleCrypto.prototype`: delete the override
+        // instead of redefining it, so later tests can still stub `verify`.
+        Reflect.deleteProperty(crypto.subtle, "verify");
       }
       await busA?.close();
       await busB?.close();
