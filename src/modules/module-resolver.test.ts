@@ -200,6 +200,26 @@ describe("modules/module-resolver", () => {
       );
     });
 
+    it("should normalize native Windows canonical paths before returning them", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "C:/project";
+      const componentPath = `${projectDir}/components/Button.tsx`;
+      adapter.fs.files.set(componentPath, "export default function Button() {}");
+      Reflect.deleteProperty(adapter.fs, "symlinkSemantics");
+      adapter.fs.realPath = (path: string) => {
+        if (path === projectDir) return Promise.resolve("C:\\project");
+        if (path === componentPath) {
+          return Promise.resolve("C:\\project\\components\\Button.tsx");
+        }
+        return Promise.resolve(path);
+      };
+      const resolver = new ModuleResolver({ projectDir, adapter });
+
+      const result = await resolver.resolve("./components/Button.tsx", `${projectDir}/index.ts`);
+
+      assertEquals(result?.path, componentPath);
+    });
+
     it("should propagate canonicalization failures", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/project/components/Button.tsx", "export default function Button() {}");

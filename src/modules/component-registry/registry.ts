@@ -42,6 +42,7 @@ export class ComponentRegistry {
   private componentDirs: string[];
   private initializedPromise: Promise<void> | null = null;
   private discoveryInFlight: Promise<void> | null = null;
+  private discoveryMutations: Set<string> | null = null;
   // Bumped by clear() so async work started before it discards its result.
   private lifecycleGeneration = 0;
   private adapter: RuntimeAdapter;
@@ -60,6 +61,8 @@ export class ComponentRegistry {
     if (this.discoveryInFlight) return this.discoveryInFlight;
 
     const generation = this.lifecycleGeneration;
+    const mutations = new Set<string>();
+    this.discoveryMutations = mutations;
     const discovery = withSpan(
       "modules.componentRegistry.discover",
       async () => {
@@ -72,7 +75,7 @@ export class ComponentRegistry {
           if (component) nextComponents.set(name, component);
         }
         for (const [name, component] of discovered) {
-          if (this.manualComponents.has(name)) continue;
+          if (this.manualComponents.has(name) || mutations.has(name)) continue;
           nextComponents.set(name, component);
         }
 
@@ -81,7 +84,10 @@ export class ComponentRegistry {
       { "registry.projectDir": this.options.projectDir },
     );
     const trackedDiscovery = discovery.finally(() => {
-      if (this.discoveryInFlight === trackedDiscovery) this.discoveryInFlight = null;
+      if (this.discoveryInFlight === trackedDiscovery) {
+        this.discoveryInFlight = null;
+        if (this.discoveryMutations === mutations) this.discoveryMutations = null;
+      }
     });
     this.discoveryInFlight = trackedDiscovery;
     this.initializedPromise = trackedDiscovery;
@@ -238,6 +244,7 @@ export class ComponentRegistry {
   }
 
   add(name: string, info: Partial<ComponentInfo>): void {
+    this.discoveryMutations?.add(name);
     this.manualComponents.add(name);
     this.components.set(
       name,
@@ -252,6 +259,7 @@ export class ComponentRegistry {
   }
 
   remove(name: string): void {
+    this.discoveryMutations?.add(name);
     this.manualComponents.delete(name);
     this.components.delete(name);
   }
@@ -262,6 +270,7 @@ export class ComponentRegistry {
     this.manualComponents.clear();
     this.initializedPromise = null;
     this.discoveryInFlight = null;
+    this.discoveryMutations = null;
   }
 
   getComponentNames(): string[] {

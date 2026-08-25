@@ -83,8 +83,8 @@ export class ModuleResolver {
     if (projectResult.status !== "fulfilled" || candidateResult.status !== "fulfilled") {
       return null;
     }
-    const canonicalProjectDir = projectResult.value;
-    const canonicalCandidate = candidateResult.value;
+    const canonicalProjectDir = normalize(projectResult.value);
+    const canonicalCandidate = normalize(candidateResult.value);
     if (!isPathContainedBy(canonicalCandidate, canonicalProjectDir)) {
       logger.warn(`Canonical path escape blocked: ${specifier}`);
       return null;

@@ -691,6 +691,45 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       );
     });
 
+    it("should preserve a removal made after discovery collected the component", async () => {
+      const adapter = createMockAdapter();
+      const projectDir = "/test/remove-during-discover";
+      const componentsDir = `${projectDir}/components`;
+      adapter.fs.files.set(`${componentsDir}/Button.tsx`, "button");
+
+      let releaseReadDir = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseReadDir = resolve;
+      });
+      let componentCollected = () => {};
+      const collected = new Promise<void>((resolve) => {
+        componentCollected = resolve;
+      });
+      const originalReadDir = adapter.fs.readDir.bind(adapter.fs);
+      adapter.fs.readDir = async function* (path: string) {
+        for await (const entry of originalReadDir(path)) {
+          yield entry;
+          if (path === componentsDir && entry.name === "Button.tsx") {
+            componentCollected();
+            await gate;
+          }
+        }
+      };
+
+      const registry = new ComponentRegistry({ projectDir, adapter });
+      const discovery = registry.discover();
+      await collected;
+      registry.remove("Button");
+      releaseReadDir();
+      await discovery;
+
+      assertEquals(
+        registry.has("Button"),
+        false,
+        "discovery must not resurrect a component removed after it was collected",
+      );
+    });
+
     it("should not overwrite an entry replaced while its source was being read", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/replace-during-load";
