@@ -1,0 +1,160 @@
+import type { AuthCookiePayload } from "./crypto.ts";
+import { openAuthCookieEnvelope, sealAuthCookieEnvelope } from "./crypto.ts";
+
+export const SESSION_COOKIE_NAME = "__Host-vf_session";
+
+const TRANSACTION_COOKIE_PREFIX = "__Host-vf_oidc_tx_";
+const STATE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MAX_COOKIE_HEADER_CHARS = 8_192;
+const COOKIE_ATTRIBUTES = "Path=/; HttpOnly; Secure; SameSite=Lax";
+
+interface CreateAuthCookieOptions {
+  readonly secret: string;
+  readonly payload: AuthCookiePayload;
+  readonly maxAgeSeconds: number;
+  readonly now: number;
+  readonly requestUrl?: string;
+  readonly randomBytes?: (length: number) => Uint8Array;
+}
+
+interface CreateTransactionCookieOptions extends CreateAuthCookieOptions {
+  readonly state: string;
+}
+
+interface ReadSessionCookieOptions {
+  readonly secret: string;
+  readonly cookieHeader: string | null | undefined;
+  readonly now: number;
+  readonly maxLifetimeSeconds: number;
+}
+
+interface ReadTransactionCookieOptions extends ReadSessionCookieOptions {
+  readonly state: string;
+}
+
+export async function createSessionCookie(options: CreateAuthCookieOptions): Promise<string> {
+  return await createCookie({
+    ...options,
+    purpose: "session",
+    cookieName: SESSION_COOKIE_NAME,
+  });
+}
+
+export async function createTransactionCookie(
+  options: CreateTransactionCookieOptions,
+): Promise<string> {
+  return await createCookie({
+    ...options,
+    purpose: "transaction",
+    cookieName: getTransactionCookieName(options.state),
+  });
+}
+
+export async function readSessionCookie(
+  options: ReadSessionCookieOptions,
+): Promise<AuthCookiePayload | null> {
+  return await readCookie({
+    ...options,
+    purpose: "session",
+    cookieName: SESSION_COOKIE_NAME,
+  });
+}
+
+export async function readTransactionCookie(
+  options: ReadTransactionCookieOptions,
+): Promise<AuthCookiePayload | null> {
+  return await readCookie({
+    ...options,
+    purpose: "transaction",
+    cookieName: getTransactionCookieName(options.state),
+  });
+}
+
+export function clearSessionCookie(): string {
+  return clearCookie(SESSION_COOKIE_NAME);
+}
+
+export function clearTransactionCookie(state: string): string {
+  return clearCookie(getTransactionCookieName(state));
+}
+
+export function getTransactionCookieName(state: string): string {
+  if (!STATE_PATTERN.test(state)) {
+    throw new TypeError("OIDC transaction state must be exactly 43 unpadded base64url characters");
+  }
+  return `${TRANSACTION_COOKIE_PREFIX}${state}`;
+}
+
+async function createCookie(
+  options: CreateAuthCookieOptions & {
+    readonly purpose: "session" | "transaction";
+    readonly cookieName: string;
+  },
+): Promise<string> {
+  validateMaxAge(options.maxAgeSeconds);
+  const value = await sealAuthCookieEnvelope({
+    secret: options.secret,
+    purpose: options.purpose,
+    cookieName: options.cookieName,
+    payload: options.payload,
+    issuedAt: options.now,
+    expiresAt: options.now + options.maxAgeSeconds,
+    randomBytes: options.randomBytes,
+  });
+  const setCookie =
+    `${options.cookieName}=${value}; ${COOKIE_ATTRIBUTES}; Max-Age=${options.maxAgeSeconds}`;
+  if (setCookie.length > MAX_COOKIE_HEADER_CHARS) {
+    throw new TypeError("Auth cookie Set-Cookie header exceeds the size limit");
+  }
+  return setCookie;
+}
+
+async function readCookie(
+  options: ReadSessionCookieOptions & {
+    readonly purpose: "session" | "transaction";
+    readonly cookieName: string;
+  },
+): Promise<AuthCookiePayload | null> {
+  const value = getCookieValue(options.cookieHeader, options.cookieName);
+  if (value === null) return null;
+  try {
+    const opened = await openAuthCookieEnvelope({
+      secret: options.secret,
+      purpose: options.purpose,
+      cookieName: options.cookieName,
+      value,
+      now: options.now,
+      maxLifetimeSeconds: options.maxLifetimeSeconds,
+    });
+    return opened.payload;
+  } catch {
+    return null;
+  }
+}
+
+function getCookieValue(
+  cookieHeader: string | null | undefined,
+  cookieName: string,
+): string | null {
+  if (typeof cookieHeader !== "string" || cookieHeader.length > MAX_COOKIE_HEADER_CHARS) {
+    return null;
+  }
+  const prefix = `${cookieName}=`;
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return null;
+}
+
+function clearCookie(cookieName: string): string {
+  return `${cookieName}=; ${COOKIE_ATTRIBUTES}; Max-Age=0`;
+}
+
+function validateMaxAge(value: number): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError("Auth cookie Max-Age must be a positive integer");
+  }
+}
