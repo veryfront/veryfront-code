@@ -36,7 +36,11 @@ import {
 import { delay, scaleMs } from "#veryfront/testing";
 import { VeryfrontError } from "#veryfront/errors";
 import { getTransformSemaphore } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
-import { getMaxConcurrentTransforms } from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
+import {
+  getMaxConcurrentTransforms,
+  resetCachedTransformLimits,
+} from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
+import { withModuleTransformPermit } from "./transform-permit.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
 import { CYCLE_MANIFEST_SIDECAR_SUFFIX, inspectCycleManifestCache } from "./cycle-manifest.ts";
 import {
@@ -1729,6 +1733,104 @@ describe("module-loader/transformModuleWithDeps", () => {
         },
       );
     } finally {
+      releaseReserved();
+    }
+  });
+
+  it("applies the per-project transform limit to dependency transforms", async () => {
+    const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+    Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+    resetCachedTransformLimits();
+
+    const dependencyCount = 6;
+    const files: Record<string, string> = {
+      "app/page.json": Array.from(
+        { length: dependencyCount },
+        (_, index) => `import "../lib/dep-${index}.json";`,
+      ).join("\n"),
+    };
+    for (let index = 0; index < dependencyCount; index++) {
+      files[`lib/dep-${index}.json`] = `export const value = ${index};`;
+    }
+
+    let maxActiveTransforms = 0;
+    __setModuleTransformActivityObserverForTests((activeCount) => {
+      maxActiveTransforms = Math.max(maxActiveTransforms, activeCount);
+      return delay(100);
+    });
+    try {
+      await withModuleLoaderFixture(
+        files,
+        async ({ projectDir, tmpDir, config }) => {
+          config.mode = "production";
+          config.projectId = "bounded-dependency-project";
+          await transformModuleWithDeps(
+            join(projectDir, "app/page.json"),
+            tmpDir,
+            config.adapter,
+            config,
+          );
+        },
+      );
+      assertEquals(
+        maxActiveTransforms,
+        1,
+        "one project must not exceed its configured transform capacity",
+      );
+    } finally {
+      __setModuleTransformActivityObserverForTests(undefined);
+      if (previousLimit === undefined) {
+        Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+      }
+      resetCachedTransformLimits();
+    }
+  });
+
+  it("keeps a permit waiter alive while a holder reports transform progress", async () => {
+    const configuredLimit = getMaxConcurrentTransforms();
+    assert(configuredLimit > 0, "test expects SSR_MAX_CONCURRENT_TRANSFORMS to be enabled");
+    const releaseReserved = await reserveTransformPermits(configuredLimit - 1);
+    const stallWindowMs = scaleMs(400);
+    __setModuleTransformStallTimeoutForTests(stallWindowMs);
+
+    let holderStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      holderStarted = resolve;
+    });
+    try {
+      const holder = withModuleTransformPermit(
+        {
+          projectId: "progress-holder-project",
+          dev: true,
+        },
+        async (reportProgress) => {
+          holderStarted?.();
+          for (let index = 0; index < 3; index++) {
+            await delay(stallWindowMs / 2);
+            reportProgress();
+          }
+        },
+      );
+      await started;
+
+      let waiterRan = false;
+      const waiter = withModuleTransformPermit(
+        {
+          projectId: "progress-waiter-project",
+          dev: true,
+        },
+        () => {
+          waiterRan = true;
+          return Promise.resolve();
+        },
+      );
+
+      await Promise.all([holder, waiter]);
+      assertEquals(waiterRan, true);
+    } finally {
+      __setModuleTransformStallTimeoutForTests(undefined);
       releaseReserved();
     }
   });

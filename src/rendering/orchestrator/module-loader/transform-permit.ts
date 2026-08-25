@@ -10,8 +10,15 @@
  */
 
 import { TIMEOUT_ERROR } from "#veryfront/errors";
-import { getTransformSemaphore } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
-import { getMaxConcurrentTransforms } from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
+import {
+  getTransformSemaphore,
+  releaseTransformSlot,
+  tryAcquireTransformSlot,
+} from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
+import {
+  getMaxConcurrentTransforms,
+  getTransformAcquireTimeoutMs,
+} from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
 
 /**
  * How long a transform may wait for a permit while the pool shows no activity
@@ -58,6 +65,17 @@ export function __setModuleTransformStallTimeoutForTests(
   stallTimeoutOverrideForTestsMs = timeoutMs;
 }
 
+interface ModuleTransformPermitOptions {
+  /** Stable tenant identity used by the shared per-project capacity guard. */
+  projectId: string;
+  /** Development is single-tenant and bypasses only the per-project guard. */
+  dev: boolean;
+  /** Cancellation for the transform flight or its owner. */
+  signal?: AbortSignal;
+  /** Owner deadline that already bounds the complete module-loading stage. */
+  ownerDeadlineSignal?: AbortSignal;
+}
+
 /**
  * Run `work` while holding a permit from the shared transform semaphore.
  *
@@ -66,57 +84,83 @@ export function __setModuleTransformStallTimeoutForTests(
  * so neither followers of an in-flight transform nor coordinating ancestors
  * consume capacity while another transform computes on their behalf.
  *
- * Waiting is liveness-based rather than deadline-based: each stall window that
- * observes any permit activity re-arms, so a saturated-but-moving pool never
- * times out a healthy waiter, while a genuinely stuck pool still fails after
- * one full window. `signal` aborts the wait immediately, tying a waiter's
- * lifetime to its request rather than to a clock.
+ * A module-loading owner already supplies its idle and hard deadline, so that
+ * signal remains the only clock for the wait. Standalone callers without an
+ * owner deadline use a liveness window: concrete transform progress or permit
+ * turnover re-arms it, while a genuinely stuck pool still fails. The transform
+ * flight signal always aborts a queued wait when no caller remains.
  */
 export async function withModuleTransformPermit<T>(
-  signal: AbortSignal | undefined,
-  work: () => Promise<T>,
+  options: ModuleTransformPermitOptions,
+  work: (reportProgress: () => void) => Promise<T>,
 ): Promise<T> {
-  // Operators disable the transform cap by configuring it to 0; mirror the SSR
-  // loader and run unbounded rather than inventing a parallel limit.
-  if (getMaxConcurrentTransforms() <= 0) {
-    activeModuleTransformCount++;
-    try {
-      await moduleTransformActivityObserverForTests?.(activeModuleTransformCount);
-      return await work();
-    } finally {
-      activeModuleTransformCount--;
-    }
+  const bypassProjectLimit = options.dev;
+  const cancellationSignal = options.signal ?? options.ownerDeadlineSignal;
+  const projectAcquired = await tryAcquireTransformSlot(
+    options.projectId,
+    getTransformAcquireTimeoutMs(options.dev),
+    bypassProjectLimit,
+    cancellationSignal,
+  );
+  if (!projectAcquired) {
+    throw TIMEOUT_ERROR.create({
+      detail: "Project module transform capacity was not available before the deadline",
+    });
   }
 
-  // Resolve the singleton once so the release below always returns the permit
-  // to the exact semaphore it was drawn from, even if a test-side cache clear
-  // swaps the singleton mid-flight.
-  const semaphore = getTransformSemaphore();
-  const stallTimeoutMs = stallTimeoutOverrideForTestsMs ?? MODULE_TRANSFORM_STALL_TIMEOUT_MS;
+  const useSemaphore = getMaxConcurrentTransforms() > 0;
+  // Resolve the singleton once so release always returns the permit to the
+  // exact semaphore it was drawn from, even if a test resets shared state.
+  const semaphore = useSemaphore ? getTransformSemaphore() : undefined;
+  let semaphoreAcquired = false;
+  let activeCounted = false;
 
-  for (;;) {
-    const generationBefore = permitActivityGeneration;
-    const acquired = await semaphore.tryAcquire(stallTimeoutMs, { signal });
-    if (acquired) break;
-    if (permitActivityGeneration === generationBefore) {
-      throw TIMEOUT_ERROR.create({
-        detail: `Timed out waiting for a module transform permit: no transform ` +
-          `completed for ${stallTimeoutMs}ms ` +
-          `(available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
-      });
-    }
-    // The pool moved while this waiter was queued, so the queue is healthy and
-    // merely long. Re-arm the window and keep waiting.
-  }
-
-  permitActivityGeneration++;
-  activeModuleTransformCount++;
   try {
+    if (semaphore) {
+      if (options.ownerDeadlineSignal) {
+        // The owner already enforces the module-loading idle and hard
+        // deadlines. Do not add a shorter permit deadline. The flight signal
+        // still cancels this wait when every caller detaches.
+        semaphoreAcquired = await semaphore.tryAcquire(Infinity, { signal: cancellationSignal });
+      } else {
+        const stallTimeoutMs = stallTimeoutOverrideForTestsMs ?? MODULE_TRANSFORM_STALL_TIMEOUT_MS;
+        for (;;) {
+          const generationBefore = permitActivityGeneration;
+          semaphoreAcquired = await semaphore.tryAcquire(stallTimeoutMs, {
+            signal: cancellationSignal,
+          });
+          if (semaphoreAcquired) break;
+          if (permitActivityGeneration === generationBefore) {
+            throw TIMEOUT_ERROR.create({
+              detail: `Timed out waiting for a module transform permit: no transform ` +
+                `progress for ${stallTimeoutMs}ms ` +
+                `(available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
+            });
+          }
+          // A holder either reported transform progress or the pool cycled, so
+          // this is a long but live queue. Re-arm the liveness window.
+        }
+      }
+      if (!semaphoreAcquired) {
+        throw TIMEOUT_ERROR.create({
+          detail: "Module transform capacity was not available before the deadline",
+        });
+      }
+      permitActivityGeneration++;
+    }
+
+    activeModuleTransformCount++;
+    activeCounted = true;
     await moduleTransformActivityObserverForTests?.(activeModuleTransformCount);
-    return await work();
+    return await work(() => {
+      permitActivityGeneration++;
+    });
   } finally {
-    activeModuleTransformCount--;
-    permitActivityGeneration++;
-    semaphore.release();
+    if (activeCounted) activeModuleTransformCount--;
+    if (semaphore && semaphoreAcquired) {
+      permitActivityGeneration++;
+      semaphore.release();
+    }
+    releaseTransformSlot(options.projectId, bypassProjectLimit);
   }
 }
