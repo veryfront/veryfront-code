@@ -438,11 +438,14 @@ export function loadMDXLayout(
       });
 
       throwIfAborted(signal);
-      const map = preloadedImportMap ?? (await preloadImportMap(projectDir, adapter, projectId, {
-        projectDir,
-        contentSourceId,
-        config,
-      }));
+      const map = preloadedImportMap ?? (await awaitAbortable(
+        preloadImportMap(projectDir, adapter, projectId, {
+          projectDir,
+          contentSourceId,
+          config,
+        }),
+        signal,
+      ));
       if (preloadedImportMap) {
         loadMdxLayoutLog.debug("Using preloaded import map", { projectSlug });
       }

@@ -911,6 +911,63 @@ describe("rendering/layouts/utils/component-loader", () => {
     }
   });
 
+  it("settles direct import-map loading when the request is canceled", async () => {
+    clearImportMapCache();
+    const controller = new AbortController();
+    const cancellation = new Error("render canceled during direct import-map loading");
+    let releaseRead: ((source: string) => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const adapter = {
+      fs: {
+        readFile: () =>
+          new Promise<string>((resolve) => {
+            releaseRead = resolve;
+            markReadStarted?.();
+          }),
+      },
+      env: { get: () => undefined },
+    } as unknown as RuntimeAdapter;
+    const loading = loadMDXLayout({
+      bundle: {
+        compiledCode: "export default function Layout() { return null; }",
+      } as MdxBundle,
+      projectDir: "/direct-import-map-cancel-project",
+      adapter,
+      projectId: "direct-import-map-cancel-project-id",
+      projectSlug: "direct-import-map-cancel-project",
+      contentSourceId: "release-1",
+      modes: PRODUCTION_MODES,
+      reactVersion: "19.1.1",
+      signal: controller.signal,
+    });
+
+    await readStarted;
+    controller.abort(cancellation);
+    const timeout = Symbol("import-map cancellation timed out");
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        loading.catch((error) => error),
+        new Promise<symbol>((resolve) => {
+          timeoutId = setTimeout(() => resolve(timeout), 25);
+        }),
+      ]);
+      assertStrictEquals(
+        result,
+        cancellation,
+        "request cancellation must settle without waiting for import-map I/O",
+      );
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      releaseRead?.("{}");
+      await loading.catch(() => undefined);
+      clearImportMapCache("direct-import-map-cancel-project-id");
+    }
+  });
+
   it("uses the request snapshot in the TSX layout cache key", async () => {
     function CachedLayout() {
       return null;

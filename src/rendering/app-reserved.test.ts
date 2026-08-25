@@ -89,6 +89,34 @@ describe("rendering/app-reserved", () => {
     assertEquals(error, failure);
   });
 
+  it("sanitizes reserved component read failures", async () => {
+    const privatePath = "/Users/alice/private-project/app/loading.tsx";
+    const failure = Object.assign(new Error(`EACCES: permission denied, open '${privatePath}'`), {
+      code: "EACCES",
+    });
+    const adapter = {
+      fs: {
+        readFile: () => Promise.reject(failure),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const error = await assertRejects(() =>
+      loadReservedWithPath(
+        ["/Users/alice/private-project/app"],
+        "loading",
+        "/Users/alice/private-project",
+        { compileMode: "production", environment: "production" },
+        adapter,
+      )
+    );
+
+    if (!(error instanceof Error)) throw error;
+    assertEquals(error.message, "Failed to read reserved component");
+    assertEquals(error.message.includes(privatePath), false);
+    assertEquals((error as Error & { slug?: string }).slug, "unknown-error");
+    assertEquals(error.cause, failure);
+  });
+
   it("does not search reserved component paths after request cancellation", async () => {
     let reads = 0;
     const adapter = {

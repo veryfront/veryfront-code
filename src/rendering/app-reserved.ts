@@ -6,6 +6,7 @@ import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/pac
 import type { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+import { UNKNOWN_ERROR } from "#veryfront/errors";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -122,7 +123,11 @@ export async function loadReservedWithPath(
       } catch (error) {
         throwIfAborted(signal);
         if (isCanonicalNotFoundError(error)) continue;
-        throw error;
+        throw UNKNOWN_ERROR.create({
+          detail: "Failed to read reserved component",
+          cause: error,
+          context: { operation: "readReservedComponent", component: which },
+        });
       }
 
       const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {

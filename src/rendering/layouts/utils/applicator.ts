@@ -224,11 +224,12 @@ export async function applyLayoutsFunctionBody(
   isLocalProject?: boolean,
 ): Promise<BundledReact.ReactElement> {
   assertESMLayoutBundle(layoutBundle?.compiledCode, "named layout");
-  for (const item of nestedLayouts) {
+  for (let index = 0; index < nestedLayouts.length; index++) {
+    const item = nestedLayouts[index]!;
     if (item.kind !== "mdx") continue;
     assertESMLayoutBundle(
       item.bundle?.compiledCode,
-      `nested layout ${item.componentPath || item.path || "<unknown>"}`,
+      `nested layout ${index + 1}`,
     );
   }
 

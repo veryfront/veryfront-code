@@ -613,6 +613,36 @@ describe(
           "a top-level-return bundle must fail with migration guidance, not an opaque ESM syntax error",
         );
       });
+
+      it("redacts nested layout paths from legacy-bundle migration errors", async () => {
+        const privatePath = "/Users/alice/private-project/app/blog/layout.mdx";
+        const error = await assertRejects(() =>
+          applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            undefined,
+            [{
+              kind: "mdx",
+              path: privatePath,
+              bundle: {
+                compiledCode: "return { default: function Layout() { return null; } };",
+              } as MdxBundle,
+            } as LayoutItem],
+            {},
+            createLayoutComponentCache(),
+            "/Users/alice/private-project",
+            createMockAdapter(),
+            undefined,
+            "project-fb-private-layout",
+            "project-slug",
+            "content-source-id",
+            PRODUCTION_MODES,
+          )
+        );
+
+        if (!(error instanceof Error)) throw error;
+        assertEquals(error.message.includes("nested layout 1"), true);
+        assertEquals(error.message.includes(privatePath), false);
+      });
     });
 
     describe("request cancellation", () => {
