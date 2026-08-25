@@ -15,8 +15,22 @@ import { isEsmShUrl, parseEsmShUrl } from "../url-builder.ts";
  */
 const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)v\d+\//;
 
+/**
+ * Removes a trailing separator from the path component.
+ *
+ * `parseEsmShUrl` rejects an empty final path segment, so `@scope/pkg@1/` would
+ * otherwise stop resolving through the import map entirely.
+ */
+function stripTrailingSlash(url: string): string {
+  const boundary = url.search(/[?#]/);
+  const path = boundary === -1 ? url : url.slice(0, boundary);
+  if (!path.endsWith("/")) return url;
+
+  return path.slice(0, -1) + (boundary === -1 ? "" : url.slice(boundary));
+}
+
 function parseEsmShSpecifier(url: string) {
-  return parseEsmShUrl(url.replace(ESM_SH_BUILD_PREFIX, "$1"));
+  return parseEsmShUrl(stripTrailingSlash(url.replace(ESM_SH_BUILD_PREFIX, "$1")));
 }
 
 function extractEsmShPackage(url: string): string | null {
@@ -61,8 +75,9 @@ const MODULE_FILE_SUFFIX = /\.(?:[mc]?[jt]sx?|json)$/;
  * path below a file, as in `https://cdn.example/pkg.js/sub`.
  */
 function isSingleModuleMapping(mapping: string): boolean {
+  // npm: and jsr: name a package, not a module, so both take a subpath.
   const isRemote = mapping.startsWith("http://") || mapping.startsWith("https://");
-  if (!isRemote) return !mapping.startsWith("npm:");
+  if (!isRemote) return !mapping.startsWith("npm:") && !mapping.startsWith("jsr:");
 
   const boundary = mapping.search(/[?#]/);
   return MODULE_FILE_SUFFIX.test(boundary === -1 ? mapping : mapping.slice(0, boundary));

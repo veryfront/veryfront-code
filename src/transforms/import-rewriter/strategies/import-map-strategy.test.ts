@@ -274,6 +274,24 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("resolves an esm.sh URL that carries a trailing slash", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "/local/pkg.js" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/", map),
+        "/local/pkg.js",
+        "a trailing separator must not make an otherwise resolvable specifier unresolvable",
+      );
+    });
+
+    it("appends a subpath to a jsr package mapping", () => {
+      const map: ImportMapConfig = { imports: { "@scope/pkg": "jsr:@std/path@1.1.4" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/@scope/pkg@1/posix", map),
+        "jsr:@std/path@1.1.4/posix",
+        "jsr: names a package just as npm: does, so it takes a subpath",
+      );
+    });
+
     it("resolves a legacy build-prefixed esm.sh URL", () => {
       const map: ImportMapConfig = { imports: { react: "/local/react.js" } };
       assertEquals(
