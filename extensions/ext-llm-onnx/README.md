@@ -38,12 +38,12 @@ export default defineConfig({
 Use a local model from an agent:
 
 ```ts
-import { defineAgent } from "veryfront/agent";
+import { agent } from "veryfront/agent";
 
-export default defineAgent({
-  name: "local-assistant",
+export default agent({
+  id: "local-assistant",
   model: "local/qwen3.5-0.8b",
-  instructions: "Answer concisely.",
+  system: "Answer concisely.",
 });
 ```
 

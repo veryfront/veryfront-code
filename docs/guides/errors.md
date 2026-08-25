@@ -74,6 +74,13 @@ Configuration validation failed.
 - **HTTP status:** 400
 - **What to do:** Check configuration values against requirements
 
+### embedding-provider-unavailable
+
+No default embedding provider is available.
+
+- **HTTP status:** 400
+- **What to do:** Configure Veryfront Cloud, set OPENAI_API_KEY or GOOGLE_API_KEY, select an explicit embedding model, or enable the ONNX extension
+
 ### local-integration-config-invalid
 
 Invalid local integration configuration.

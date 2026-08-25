@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -7,6 +7,7 @@ import {
   normalizeEmbeddingModelConfig,
   resolveConfiguredEmbeddingModel,
 } from "./model-resolution.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -132,7 +133,9 @@ describe("embedding/model-resolution", () => {
     });
 
     it("does not silently select the optional local extension", () => {
-      const error = assertThrows(() => resolveConfiguredEmbeddingModel()) as Error;
+      const error = assertThrows(() => resolveConfiguredEmbeddingModel());
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "embedding-provider-unavailable");
       assertEquals(error.message, "No default embedding provider is available");
     });
   });
@@ -182,7 +185,9 @@ describe("embedding/model-resolution", () => {
     it("fails when no compiled-compatible provider is available", () => {
       const error = assertThrows(() =>
         resolveConfiguredEmbeddingModel(undefined, { compiled: true })
-      ) as Error;
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "embedding-provider-unavailable");
       assertEquals(error.message, "No default embedding provider is available");
     });
   });

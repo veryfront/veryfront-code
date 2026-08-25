@@ -67,6 +67,15 @@ export const CONFIG_VALIDATION_FAILED = defineError({
   suggestion: "Check configuration values against requirements",
 });
 
+export const EMBEDDING_PROVIDER_UNAVAILABLE = defineError({
+  slug: "embedding-provider-unavailable",
+  category: "CONFIG",
+  status: 400,
+  title: "No default embedding provider is available",
+  suggestion:
+    "Configure Veryfront Cloud, set OPENAI_API_KEY or GOOGLE_API_KEY, select an explicit embedding model, or enable the ONNX extension",
+});
+
 export const LOCAL_INTEGRATION_CONFIG_INVALID = defineError({
   slug: "local-integration-config-invalid",
   category: "CONFIG",
@@ -136,6 +145,7 @@ export const CONFIG_REGISTRY = {
   "import-map-invalid": IMPORT_MAP_INVALID,
   "cors-config-invalid": CORS_CONFIG_INVALID,
   "config-validation-failed": CONFIG_VALIDATION_FAILED,
+  "embedding-provider-unavailable": EMBEDDING_PROVIDER_UNAVAILABLE,
   "local-integration-config-invalid": LOCAL_INTEGRATION_CONFIG_INVALID,
   "local-integration-credentials-missing": LOCAL_INTEGRATION_CREDENTIALS_MISSING,
   "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,

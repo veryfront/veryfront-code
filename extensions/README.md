@@ -147,7 +147,7 @@ subset used by ordinary apps and local development.
 | `@veryfront/ext-llm-openai`                  | `LLMProvider:openai`          | Direct service/source built-in            |
 | `@veryfront/ext-llm-anthropic`               | `LLMProvider:anthropic`       | Direct service/source built-in            |
 | `@veryfront/ext-llm-google`                  | `LLMProvider:google`          | Direct service/source built-in            |
-| `@veryfront/ext-llm-onnx`                    | `LLMProvider:local`           | Direct service/source built-in            |
+| `@veryfront/ext-llm-onnx`                    | `LLMProvider:local`           | Explicit; install for local ONNX inference |
 
 ## Explicit opt-in extensions
 
@@ -162,6 +162,7 @@ select a specialized isolation implementation.
 | `@veryfront/ext-css-lightning`, `@veryfront/ext-css-purgecss` | Build-output policy and native/parser cost            |
 | `@veryfront/ext-image-sharp`                                  | Native image processing and output policy             |
 | `@veryfront/ext-react-ssr`                                    | Isolated-worker renderer selected by hosting topology |
+| `@veryfront/ext-llm-onnx`                                     | Native ONNX runtime, model files, and process memory   |
 
 ## Service-conditional extensions
 

@@ -4,7 +4,9 @@
  */
 
 import { resolveModel } from "veryfront/provider";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { generate } from "./local-engine.ts";
+import { OnnxProvider } from "./onnx-provider.ts";
 
 // Suppress provider adapter warnings for cleaner output.
 Object.defineProperty(globalThis, "AI_SDK_LOG_WARNINGS", {
@@ -15,6 +17,10 @@ Object.defineProperty(globalThis, "AI_SDK_LOG_WARNINGS", {
 
 const localModelId = Deno.env.get("VERYFRONT_LOCAL_AI_MODEL") || "qwen3.5-0.8b";
 const modelName = `local/${localModelId}`;
+
+// The smoke test runs without project configuration, so register the explicit
+// extension provider in the same registry used by resolveModel().
+ensureBuiltinLLMProviders().register(new OnnxProvider());
 
 console.log(`1. Resolving "${modelName}"...`);
 const model = resolveModel(modelName);

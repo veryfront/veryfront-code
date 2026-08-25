@@ -5,6 +5,7 @@ import {
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { EMBEDDING_PROVIDER_UNAVAILABLE } from "#veryfront/errors";
 
 export const AUTO_EMBEDDING_MODEL = "auto";
 
@@ -61,5 +62,7 @@ export function resolveConfiguredEmbeddingModel(
   const cloud = resolveCloudEmbeddingFallback();
   if (cloud) return cloud;
 
-  throw new Error("No default embedding provider is available");
+  throw EMBEDDING_PROVIDER_UNAVAILABLE.create({
+    detail: "No default embedding provider is available",
+  });
 }
