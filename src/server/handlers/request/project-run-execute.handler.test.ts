@@ -1124,20 +1124,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const createRunRequest = createRequest?.body?.request as Record<string, unknown>;
     const agentInput = createRunRequest.input as Record<string, unknown>;
     assertEquals(agentInput.agent_id, "researcher");
-    const [message] = agentInput.messages as Array<Record<string, unknown>>;
-    assertExists(message);
-    assertEquals(typeof message.id, "string");
-    assertEquals({ ...message, id: "<MESSAGE_ID>" }, {
-      id: "<MESSAGE_ID>",
-      role: "user",
-      parts: [{ type: "text", text: "France capital?" }],
-    });
+    assertEquals(agentInput.messages, []);
     assertEquals(agentInput.source_target_kind, "project");
     assertEquals(agentInput.runtime_target_kind, "main_branch");
-    assertEquals(agentInput.source_target_environment_id, undefined);
-    assertEquals(agentInput.runtime_target_environment_id, undefined);
-    assertEquals(agentInput.source_target_branch_id, undefined);
-    assertEquals(agentInput.runtime_target_branch_id, undefined);
+    assertEquals(agentInput.target_environment_id, undefined);
+    assertEquals(agentInput.target_branch_id, undefined);
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
       runtimeOverrides: {
@@ -1246,20 +1237,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
     const agentInput = createRunRequest.input as Record<string, unknown>;
     assertEquals(agentInput.agent_id, "researcher");
-    const [message] = agentInput.messages as Array<Record<string, unknown>>;
-    assertExists(message);
-    assertEquals(typeof message.id, "string");
-    assertEquals({ ...message, id: "<MESSAGE_ID>" }, {
-      id: "<MESSAGE_ID>",
-      role: "user",
-      parts: [{ type: "text", text: "France capital?" }],
-    });
     assertEquals(agentInput.source_target_kind, "environment");
     assertEquals(agentInput.runtime_target_kind, "environment");
-    assertEquals(agentInput.source_target_environment_id, environmentId);
-    assertEquals(agentInput.runtime_target_environment_id, environmentId);
-    assertEquals(agentInput.source_target_branch_id, undefined);
-    assertEquals(agentInput.runtime_target_branch_id, undefined);
+    assertEquals(agentInput.target_environment_id, environmentId);
+    assertEquals(agentInput.target_branch_id, undefined);
     assertEquals(agentInput.forwarded_props, {
       prompt: "France capital?",
       model: "model-override-1",
