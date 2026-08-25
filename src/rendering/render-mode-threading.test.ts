@@ -5,7 +5,7 @@ import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
-import type { LayoutItem } from "#veryfront/types";
+import type { EntityInfo, LayoutItem } from "#veryfront/types";
 import type { LayoutComponentCache } from "#veryfront/rendering/layouts/utils/component-loader.ts";
 import { LayoutApplicator } from "#veryfront/rendering/layouts/layout-applicator.ts";
 import { LayoutOrchestrator } from "#veryfront/rendering/orchestrator/layout.ts";
@@ -18,7 +18,6 @@ import { VirtualModuleSystem } from "./virtual-module-system.ts";
 import type { ComponentRegistry } from "#veryfront/rendering/ssr/component-registry.ts";
 import type { PageRenderer } from "./page-renderer.ts";
 import type { RenderContext, RenderModes } from "#veryfront/rendering/context/render-context.ts";
-import { HTMLGenerator } from "#veryfront/rendering/orchestrator/html.ts";
 import { RendererLifecycle } from "#veryfront/rendering/orchestrator/lifecycle.ts";
 import { ConfigurationManager } from "#veryfront/rendering/orchestrator/config.ts";
 import { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
@@ -72,6 +71,15 @@ function sourceAdapter(): RuntimeAdapter {
     fs: { readFile: () => Promise.resolve(LAYOUT_SOURCE) },
   } as unknown as RuntimeAdapter;
 }
+
+/**
+ * A hidden page path: `applyLayouts` skips both the App Router reserved
+ * wrappers and the Pages `_app` wrapper for dot paths, so the case observes the
+ * layout loader alone.
+ */
+const DOT_PATH_PAGE_INFO = {
+  entity: { path: "/project/.hidden/index.tsx", slug: ".hidden" },
+} as EntityInfo;
 
 function markersOf(key: string): { dev: boolean; preview: boolean } {
   return { dev: key.includes(":dev"), preview: key.includes(":preview") };
@@ -219,24 +227,56 @@ describe("render mode threading", () => {
       assertEquals(markersOf(keys[0]!), { dev: false, preview: true });
     });
 
-    it("hands the request environment to the layout applicator it builds", () => {
+    it("hands the request environment to the layout applicator it builds", async () => {
+      const { cache, keys } = recordingCache();
       const orchestrator = new LayoutOrchestrator({
         projectDir: "/project",
         projectId: "project",
         projectSlug: "project",
         contentSourceId: "release-1",
         adapter: sourceAdapter(),
-        config: validateVeryfrontConfig({}),
-        mode: HOSTED_PREVIEW.compileMode,
-        environment: HOSTED_PREVIEW.environment,
+        config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+        mode: HOSTED_PRODUCTION.compileMode,
+        environment: HOSTED_PRODUCTION.environment,
         layoutCollector: {} as LayoutCollector,
         layoutCompiler: {} as LayoutCompiler,
-        layoutCache: recordingCache().cache,
+        layoutCache: cache,
         componentRegistry: {},
       });
 
-      const modes = (orchestrator as unknown as { renderModes: RenderModes }).renderModes;
-      assertEquals(modes, HOSTED_PREVIEW);
+      try {
+        await orchestrator.applyLayoutsAndWrappers(
+          React.createElement("div") as React.ReactElement,
+          DOT_PATH_PAGE_INFO,
+          undefined,
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "preview",
+        );
+      } finally {
+        // Wrapping the page in the framework providers compiles them through
+        // the bundler extension; release its service so the sanitizers stay on.
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+      }
+
+      assertEquals(keys.length > 0, true, "expected the apply phase to consult the cache");
+      assertEquals(
+        markersOf(keys[0]!),
+        { dev: false, preview: true },
+        "the applicator must be built with the per-request environment, not the orchestrator's configured one",
+      );
     });
   });
 
@@ -310,23 +350,6 @@ describe("render mode threading", () => {
 
       assertEquals(readRenderModes(registry), HOSTED_PRODUCTION);
       assertEquals(readEnvironment(pageRenderer), "production");
-    });
-  });
-
-  describe("orchestrator/html.ts", () => {
-    it("defaults the reserved error component to production when nothing resolves", () => {
-      const generator = new HTMLGenerator({
-        projectDir: "/project",
-        adapter: sourceAdapter(),
-        config: validateVeryfrontConfig({}),
-        mode: "production",
-        environment: "production",
-      });
-
-      assertEquals(
-        (generator as unknown as { config: { environment?: string } }).config.environment,
-        "production",
-      );
     });
   });
 

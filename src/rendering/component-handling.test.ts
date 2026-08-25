@@ -5,6 +5,7 @@ import { FakeTime } from "#std/testing/time";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
 import type { EntityInfo } from "#veryfront/types";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { bundleComponentForClient, handleComponentPage } from "./component-handling.ts";
@@ -493,5 +494,68 @@ describe("rendering/component-handling client hydration compile mode", () => {
     assertEquals(await bundle(true), "dev-bundle");
     assertEquals(await bundle(false), "production-bundle");
     assertEquals(transformed, [false, true]);
+  });
+
+  it("passes the request environment, not the compile mode, to the SSR loader", async () => {
+    // A hosted preview render is compile mode "production" with environment
+    // "preview": the Studio Navigator node positions must follow `environment`,
+    // so they cannot be derived from `mode`.
+    // Node-position injection is provided by the first-party parser extension.
+    await ensureDefaultParserContracts();
+
+    const source = "export default function Page() { return <div>hi</div>; }";
+    const renderPageRoot = async (environment: "preview" | "production") => {
+      const path = `/compile-mode-project/app/env-${environment}.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(path, source);
+
+      const result = await handleComponentPage(
+        {
+          entity: {
+            id: path,
+            path,
+            slug: "compile-mode",
+            type: "page",
+            content: source,
+            frontmatter: {},
+            kind: "tsx",
+          },
+        } as EntityInfo,
+        "compile-mode",
+        "/compile-mode-project",
+        undefined,
+        adapter as unknown as RuntimeAdapter,
+        {
+          projectId: "compile-mode-project",
+          contentSourceId: `release-env-${environment}`,
+          mode: "production",
+          environment,
+        },
+      );
+
+      const Page = result.pageElement.type as (
+        props: Record<string, unknown>,
+      ) => { props: Record<string, unknown> };
+      return Page({}).props;
+    };
+
+    const preview = await renderPageRoot("preview");
+    assertEquals(
+      preview["data-node-file"],
+      "app/env-preview.tsx",
+      "environment 'preview' must reach the SSR loader so Studio Navigator node positions are injected",
+    );
+    assertEquals(
+      preview["data-node-line"],
+      "1",
+      "the injected node position must name the source line",
+    );
+
+    const production = await renderPageRoot("production");
+    assertEquals(
+      production["data-node-file"],
+      undefined,
+      "environment 'production' must not inject Studio Navigator node positions",
+    );
   });
 });

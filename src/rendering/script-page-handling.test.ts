@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { flattenRouteParams } from "#veryfront/routing";
+import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -9,95 +9,22 @@ import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-bui
 import { FakeTime } from "#std/testing/time";
 import { PageRenderer } from "./page-renderer.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";
 const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
 const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
 
-type ScriptModuleOutput =
-  | string
-  | Response
-  | { html: string; frontmatter?: Record<string, unknown>; meta?: Record<string, unknown> }
-  | null;
-
-function extractHtmlAndMetadata(output: ScriptModuleOutput): {
-  htmlBody: string;
-  outputMetadata: Record<string, unknown>;
-} {
-  if (typeof output === "string") return { htmlBody: output, outputMetadata: {} };
-
-  if (output && typeof output === "object") {
-    if ("html" in output && typeof output.html === "string") {
-      return {
-        htmlBody: output.html,
-        outputMetadata: output.frontmatter ?? output.meta ?? {},
-      };
-    }
-
-    return {
-      htmlBody: `<pre>${JSON.stringify(output, null, 2)}</pre>`,
-      outputMetadata: {},
-    };
-  }
-
-  throw new Error("Unsupported script page return type");
-}
-
-interface PageContext {
-  params: Record<string, string>;
-  query: Record<string, string>;
-  slug: string;
-  path: string;
-  frontmatter: Record<string, unknown>;
-}
-
-function buildPageContext(
-  pageInfo: { entity: { path: string; frontmatter: Record<string, unknown> } },
-  slug: string,
-  params?: Record<string, string | string[]>,
-  url?: URL,
-): PageContext {
-  // Mirror production: reuse the shared helper so this test can't drift back
-  // to the old first-segment-only contract (issue #2742).
-  const flatParams = flattenRouteParams(params);
-
-  return {
-    params: flatParams,
-    query: url ? Object.fromEntries(url.searchParams) : {},
-    slug,
-    path: pageInfo.entity.path,
-    frontmatter: pageInfo.entity.frontmatter ?? {},
-  };
-}
-
-function normalizeModulePath(modulePath: string, projectDir: string): string {
-  if (modulePath.startsWith("/") || !projectDir) return modulePath;
-  return `${projectDir}/${modulePath}`;
-}
-
 function createFileUrl(path: string): string {
   const cacheBuster = "?v=12345";
   return path.startsWith("file://") ? `${path}${cacheBuster}` : `file://${path}${cacheBuster}`;
-}
-
-function rewriteNpmImports(code: string): string {
-  const rewrites: Array<{ pattern: RegExp; replacement: string }> = [
-    { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
-  ];
-
-  return rewrites.reduce(
-    (result, { pattern, replacement }) => result.replace(pattern, replacement),
-    code,
-  );
 }
 
 function getStringMeta(meta: Record<string, unknown>, key: string): string | undefined {
   const value = meta[key];
   return typeof value === "string" ? value : undefined;
 }
-
-const APP_COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
 
 function extractInlineJson(
   html: string,
@@ -114,9 +41,89 @@ function extractInlineJson(
 function createScriptAdapter(): RuntimeAdapter {
   return {
     fs: {
-      exists: async () => false,
+      exists: () => Promise.resolve(false),
     },
   } as unknown as RuntimeAdapter;
+}
+
+function createMissingFileAdapter(): RuntimeAdapter {
+  return {
+    fs: {
+      exists: () => Promise.resolve(false),
+      readFile: () => Promise.reject(new Error("missing")),
+    },
+  } as unknown as RuntimeAdapter;
+}
+
+function createProbeAdapter(probed: string[]): RuntimeAdapter {
+  return {
+    fs: {
+      exists: (path: string) => {
+        probed.push(path);
+        return Promise.resolve(false);
+      },
+    },
+  } as unknown as RuntimeAdapter;
+}
+
+/** Drive the real handleScriptPage over a throwaway project containing one page module. */
+async function renderScriptPage(
+  source: string,
+  options: {
+    url?: URL;
+    params?: Record<string, string | string[]>;
+    frontmatter?: Record<string, unknown>;
+    adapter?: RuntimeAdapter;
+  } = {},
+): Promise<Awaited<ReturnType<typeof handleScriptPage>>> {
+  const projectDir = await makeTempDir({ prefix: "vf-script-page-render-" });
+
+  try {
+    const pagePath = `${projectDir}/page.js`;
+    await Deno.writeTextFile(pagePath, source);
+
+    return await handleScriptPage(
+      {
+        entity: {
+          path: pagePath,
+          frontmatter: options.frontmatter ?? {},
+        },
+      } as never,
+      "script-page",
+      {
+        mode: "production",
+        config: {} as never,
+        projectDir,
+        adapter: options.adapter ?? createScriptAdapter(),
+        params: options.params,
+        url: options.url,
+      },
+    );
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+/** Render a page that cannot be read so the resolved module path surfaces in the error. */
+async function scriptPageLoadFailure(pagePath: string, projectDir: string): Promise<string> {
+  const error = await assertRejects(
+    () =>
+      handleScriptPage(
+        {
+          entity: { path: pagePath, frontmatter: {} },
+        } as never,
+        "script-page",
+        {
+          mode: "production",
+          config: {} as never,
+          projectDir,
+          adapter: createMissingFileAdapter(),
+        },
+      ),
+    Error,
+  );
+
+  return String(error);
 }
 
 async function renderWithPageRenderer(
@@ -161,126 +168,161 @@ async function renderWithPageRenderer(
 }
 
 describe("script-page-handling helpers", () => {
-  describe("extractHtmlAndMetadata", () => {
-    it("should handle plain string output", () => {
-      const result = extractHtmlAndMetadata("<h1>Hello</h1>");
-      assertEquals(result.htmlBody, "<h1>Hello</h1>");
-      assertEquals(result.outputMetadata, {});
+  describe("script page output handling", () => {
+    it("should handle plain string output", async () => {
+      const result = await renderScriptPage(`export default "<h1>Hello</h1>";`);
+      assertStringIncludes(
+        result.html,
+        "<h1>Hello</h1>",
+        "a string script-page return must become the document body",
+      );
     });
 
-    it("should handle object with html and frontmatter", () => {
-      const output = {
-        html: "<h1>Title</h1>",
-        frontmatter: { title: "My Page" },
-      };
-      const result = extractHtmlAndMetadata(output);
-      assertEquals(result.htmlBody, "<h1>Title</h1>");
-      assertEquals(result.outputMetadata, { title: "My Page" });
+    it("should handle object with html and frontmatter", async () => {
+      const result = await renderScriptPage(
+        `export default () => ({ html: "<h1>Title</h1>", frontmatter: { title: "My Page" } });`,
+      );
+      assertStringIncludes(
+        result.html,
+        "<h1>Title</h1>",
+        "the html field must become the document body",
+      );
+      assertEquals(
+        result.frontmatter.title,
+        "My Page",
+        "the frontmatter field must become the page metadata",
+      );
     });
 
-    it("should handle object with html and meta", () => {
-      const output = {
-        html: "<p>Content</p>",
-        meta: { description: "A page" },
-      };
-      const result = extractHtmlAndMetadata(output);
-      assertEquals(result.htmlBody, "<p>Content</p>");
-      assertEquals(result.outputMetadata, { description: "A page" });
+    it("should handle object with html and meta", async () => {
+      const result = await renderScriptPage(
+        `export default () => ({ html: "<p>Content</p>", meta: { description: "A page" } });`,
+      );
+      assertStringIncludes(
+        result.html,
+        "<p>Content</p>",
+        "the html field must become the document body",
+      );
+      assertEquals(
+        result.frontmatter.description,
+        "A page",
+        "the meta field must become the page metadata when frontmatter is absent",
+      );
     });
 
-    it("should prefer frontmatter over meta", () => {
-      const output = {
-        html: "<p>Content</p>",
-        frontmatter: { title: "From Frontmatter" },
-        meta: { title: "From Meta" },
-      };
-      const result = extractHtmlAndMetadata(output);
-      assertEquals(result.outputMetadata, { title: "From Frontmatter" });
+    it("should prefer frontmatter over meta", async () => {
+      const result = await renderScriptPage(
+        `export default () => ({ html: "<p>Content</p>", frontmatter: { title: "From Frontmatter" }, meta: { title: "From Meta" } });`,
+      );
+      assertEquals(
+        result.frontmatter.title,
+        "From Frontmatter",
+        "frontmatter must win over meta",
+      );
     });
 
-    it("should JSON-serialize unknown objects", () => {
-      const output = { foo: "bar", count: 42 } as unknown as ScriptModuleOutput;
-      const result = extractHtmlAndMetadata(output);
-      assertEquals(result.htmlBody.includes("<pre>"), true);
-      assertEquals(result.htmlBody.includes('"foo"'), true);
-      assertEquals(result.outputMetadata, {});
+    it("should HTML-escape JSON-serialized unknown objects", async () => {
+      const result = await renderScriptPage(
+        `export default () => ({ bio: "<script>alert(1)</script>" });`,
+      );
+      assertStringIncludes(
+        result.html,
+        "&lt;script&gt;alert(1)&lt;/script&gt;",
+        "object-serialized script-page output must be HTML-escaped",
+      );
+      assertEquals(
+        result.html.includes('<pre>{\n  "bio"'),
+        false,
+        "raw markup must never reach the <pre> serialization block",
+      );
     });
 
-    it("should throw for null output", () => {
-      assertThrows(() => extractHtmlAndMetadata(null), Error, "Unsupported");
+    it("should reject for null output", async () => {
+      const error = await assertRejects(
+        () => renderScriptPage(`export default () => null;`),
+        Error,
+      );
+      assertStringIncludes(
+        String(error),
+        "Unsupported script page return type",
+        "a script page returning null must surface a render error",
+      );
     });
   });
 
-  describe("buildPageContext", () => {
-    const mockPageInfo = {
-      entity: {
-        path: "/project/pages/about.tsx",
-        frontmatter: { title: "About" },
-      },
-    };
-
-    it("should build context with all fields", () => {
-      const ctx = buildPageContext(
-        mockPageInfo,
-        "about",
-        { id: "123" },
-        new URL("https://example.com/about?tab=details"),
+  describe("script page context", () => {
+    it("should build context with all fields", async () => {
+      const result = await renderScriptPage(
+        `export default (ctx) =>
+          "<main>" + ctx.slug + "|" + ctx.params.id + "|" + ctx.query.tab + "|" +
+          ctx.frontmatter.title + "|" + ctx.path.endsWith("/page.js") + "</main>";`,
+        {
+          params: { id: "123" },
+          frontmatter: { title: "About" },
+          url: new URL("https://example.com/about?tab=details"),
+        },
       );
-      assertEquals(ctx.slug, "about");
-      assertEquals(ctx.path, "/project/pages/about.tsx");
-      assertEquals(ctx.params, { id: "123" });
-      assertEquals(ctx.query, { tab: "details" });
-      assertEquals(ctx.frontmatter, { title: "About" });
-    });
-
-    it("should join catch-all array params instead of dropping segments", () => {
-      const ctx = buildPageContext(mockPageInfo, "blog", { tags: ["a", "b"] });
-      assertEquals(ctx.params, { tags: "a/b" });
-    });
-
-    it("should handle empty params", () => {
-      const ctx = buildPageContext(mockPageInfo, "home");
-      assertEquals(ctx.params, {});
-      assertEquals(ctx.query, {});
-    });
-
-    it("should handle undefined params", () => {
-      const ctx = buildPageContext(mockPageInfo, "home", undefined);
-      assertEquals(ctx.params, {});
-      assertEquals(ctx.query, {});
-    });
-
-    it("should use empty object when frontmatter is falsy", () => {
-      const info = { entity: { path: "/p.tsx", frontmatter: {} } };
-      const ctx = buildPageContext(info, "test");
-      assertEquals(ctx.frontmatter, {});
-    });
-
-    it("should capture query params from the request URL", () => {
-      const ctx = buildPageContext(
-        mockPageInfo,
-        "search",
-        undefined,
-        new URL("https://example.com/search?q=test&page=2"),
+      assertStringIncludes(
+        result.html,
+        "<main>script-page|123|details|About|true</main>",
+        "the page context must carry the slug, params, query, frontmatter and page path",
       );
-      assertEquals(ctx.query, { q: "test", page: "2" });
+    });
+
+    it("should join catch-all array params instead of dropping segments", async () => {
+      const result = await renderScriptPage(
+        `export default (ctx) => "<main>" + ctx.params.tags + "</main>";`,
+        { params: { tags: ["a", "b"] } },
+      );
+      assertStringIncludes(
+        result.html,
+        "<main>a/b</main>",
+        "catch-all params must be joined, not truncated to the first segment",
+      );
+    });
+
+    it("should capture query params from the request URL", async () => {
+      const result = await renderScriptPage(
+        `export default (ctx) => "<main>" + ctx.query.q + ctx.query.page + "</main>";`,
+        { url: new URL("https://example.com/search?q=test&page=2") },
+      );
+      assertStringIncludes(
+        result.html,
+        "<main>test2</main>",
+        "every query param on the request URL must reach the page context",
+      );
+    });
+
+    it("should default params and query to empty objects", async () => {
+      const result = await renderScriptPage(
+        `export default (ctx) =>
+          "<main>" + JSON.stringify(ctx.params) + JSON.stringify(ctx.query) + "</main>";`,
+      );
+      assertStringIncludes(
+        result.html,
+        "<main>{}{}</main>",
+        "a request without params or a URL must yield empty context collections",
+      );
     });
   });
 
-  describe("normalizeModulePath", () => {
-    it("should prepend projectDir for relative paths", () => {
-      const result = normalizeModulePath("pages/index.ts", "/project");
-      assertEquals(result, "/project/pages/index.ts");
+  describe("script module path resolution", () => {
+    it("should prepend projectDir for relative paths", async () => {
+      const message = await scriptPageLoadFailure("pages/index.ts", "/project");
+      assertStringIncludes(
+        message,
+        "(tried: /project/pages/index.ts)",
+        "a relative page path must be resolved against the project directory",
+      );
     });
 
-    it("should leave absolute paths unchanged", () => {
-      const result = normalizeModulePath("/abs/path/file.ts", "/project");
-      assertEquals(result, "/abs/path/file.ts");
-    });
-
-    it("should handle empty projectDir gracefully", () => {
-      const result = normalizeModulePath("file.ts", "");
-      assertEquals(result, "file.ts");
+    it("should leave absolute paths unchanged", async () => {
+      const message = await scriptPageLoadFailure("/abs/path/file.ts", "/project");
+      assertStringIncludes(
+        message,
+        "(tried: /abs/path/file.ts)",
+        "an absolute page path must be used as-is",
+      );
     });
   });
 
@@ -308,29 +350,13 @@ describe("script-page-handling helpers", () => {
     // over the source tree does not produce a false positive for this test file.
     const ZOD_SPECIFIER = "zod";
 
-    it("should rewrite bare 'zod' import", () => {
+    it("leaves transpiled script modules unrewritten while nothing is rewritable", () => {
       const code = `import { z } from "${ZOD_SPECIFIER}"`;
-      const result = rewriteNpmImports(code);
-      assertEquals(result, `import { z } from "npm:zod@latest"`);
-    });
-
-    it("should rewrite multiple imports", () => {
-      const code = `import { z } from "${ZOD_SPECIFIER}"\nimport { foo } from "other-package"`;
-      const result = rewriteNpmImports(code);
-      assertEquals(result.includes('from "npm:zod@latest"'), true);
-      assertEquals(result.includes('from "other-package"'), true);
-    });
-
-    it("should not modify other imports", () => {
-      const code = `import React from "react"`;
-      const result = rewriteNpmImports(code);
-      assertEquals(result, code);
-    });
-
-    it("should handle code without imports", () => {
-      const code = `const x = 42;`;
-      const result = rewriteNpmImports(code);
-      assertEquals(result, code);
+      assertEquals(
+        rewriteNpmImports(code, "/project"),
+        code,
+        "transpiled script modules are imported unrewritten while REWRITABLE_PACKAGES is empty",
+      );
     });
   });
 
@@ -350,24 +376,90 @@ describe("script-page-handling helpers", () => {
     });
   });
 
-  describe("APP_COMPONENT_EXTENSIONS", () => {
-    it("should include all expected extensions", () => {
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".tsx"), true);
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".jsx"), true);
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".ts"), true);
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".js"), true);
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".mdx"), true);
-      assertEquals(APP_COMPONENT_EXTENSIONS.includes(".md"), true);
-    });
+  describe("app component discovery", () => {
+    it("should probe every supported app component extension", async () => {
+      const probed: string[] = [];
+      await renderScriptPage(`export default "<main>App probe</main>";`, {
+        adapter: createProbeAdapter(probed),
+      });
 
-    it("should have exactly 6 extensions", () => {
-      assertEquals(APP_COMPONENT_EXTENSIONS.length, 6);
+      const appProbes = probed
+        .filter((path) => path.includes("/components/app"))
+        .map((path) => path.slice(path.indexOf("/components/app")));
+
+      assertEquals(
+        appProbes,
+        [
+          "/components/app.tsx",
+          "/components/app.jsx",
+          "/components/app.ts",
+          "/components/app.js",
+          "/components/app.mdx",
+          "/components/app.md",
+        ],
+        "app component discovery must probe every supported extension, including .mdx and .md",
+      );
     });
   });
 
   describe("handleScriptPage", () => {
+    it("swallows a plain generateMetadata failure and still renders the page", async () => {
+      const result = await renderScriptPage(
+        `export default "<main>Body</main>";
+export const generateMetadata = () => { throw new Error("soft"); };`,
+        { frontmatter: { title: "Page title" } },
+      );
+
+      assertEquals(
+        result.frontmatter.title,
+        "Page title",
+        "a plain generateMetadata failure must be swallowed and the page must still render",
+      );
+      assertStringIncludes(
+        result.html,
+        "<main>Body</main>",
+        "a plain generateMetadata failure must not stop the page body from rendering",
+      );
+    });
+
+    it("surfaces a ReferenceError thrown by generateMetadata", async () => {
+      const error = await assertRejects(
+        () =>
+          renderScriptPage(
+            `export default "<main>Body</main>";
+export const generateMetadata = () => { missingIdentifier; };`,
+          ),
+        Error,
+      );
+
+      assertStringIncludes(
+        String(error),
+        "Failed to render TS/JS page",
+        "a ReferenceError in generateMetadata must surface as a render error",
+      );
+    });
+
+    it("surfaces a cross-realm SyntaxError thrown by generateMetadata", async () => {
+      const error = await assertRejects(
+        () =>
+          renderScriptPage(
+            `export default "<main>Body</main>";
+export const generateMetadata = () => {
+  throw Object.assign(new Error("x"), { name: "SyntaxError" });
+};`,
+          ),
+        Error,
+      );
+
+      assertStringIncludes(
+        String(error),
+        "Failed to render TS/JS page",
+        "a cross-realm SyntaxError must be re-thrown via the name fallback, not swallowed",
+      );
+    });
+
     it("keeps wrapped script-page import maps and hydration on snapshot A after B", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-snapshot-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-snapshot-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -417,7 +509,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("injects snapshot A into non-client full-document RSC boot state", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-full-doc-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-full-doc-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -451,7 +543,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("keeps standalone production full documents on the RSC boot script", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-standalone-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-standalone-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -475,7 +567,7 @@ describe("script-page-handling helpers", () => {
 
     it("keeps wrapped script-page output byte-identical when pinning is off", async () => {
       using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-off-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-off-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;
@@ -516,7 +608,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("uses the hydration runtime baked into an aged release", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-release-" });
       const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
 
       try {
@@ -547,7 +639,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("uses the hydration runtime baked into an aged release for full documents", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-full-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-release-full-" });
       const agedRuntimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
 
       try {
@@ -581,7 +673,7 @@ describe("script-page-handling helpers", () => {
     });
 
     it("forwards the request nonce when enhancing full HTML script pages", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-" });
+      const projectDir = await makeTempDir({ prefix: "vf-script-page-" });
 
       try {
         const pagePath = `${projectDir}/page.js`;

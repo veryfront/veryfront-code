@@ -169,6 +169,58 @@ describe("rendering/app-reserved", () => {
     assertEquals(reads, 0);
   });
 
+  it("stops the reserved component search when the loader is cancelled", async () => {
+    let reads = 0;
+    const adapter = {
+      fs: {
+        readFile: () => {
+          reads++;
+          return Promise.resolve("source");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const controller = new AbortController();
+
+    try {
+      await loadReservedWithPath(
+        ["/project/app/blog", "/project/app"],
+        "loading",
+        "/project",
+        { compileMode: "development", environment: "preview" },
+        adapter,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+        {
+          loadComponentFromSource: () => {
+            controller.abort(new DOMException("render cancelled", "AbortError"));
+            throw new Error("load failed");
+          },
+        } as never,
+      );
+      throw new Error("Expected reserved component loading to reject after cancellation");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      assertEquals(
+        error.name,
+        "AbortError",
+        "a signal aborted inside the loader must propagate instead of being swallowed by the candidate catch",
+      );
+    }
+
+    assertEquals(
+      reads,
+      1,
+      "the reserved-component search must stop at the first candidate once the render is cancelled",
+    );
+  });
+
   it("normalizes a host signal that has no abort reason", async () => {
     const signal = {
       aborted: true,
@@ -291,19 +343,56 @@ describe("rendering/app-reserved", () => {
       function MockErrorComponent() {
         return null;
       }
-      const Boundary = createErrorBoundary(MockErrorComponent);
-      const state = (Boundary as any).getDerivedStateFromError(new Error("test"));
+      const Boundary = createErrorBoundary(MockErrorComponent) as
+        & ReturnType<
+          typeof createErrorBoundary
+        >
+        & {
+          getDerivedStateFromError(error: Error): { hasError: boolean; error?: Error };
+        };
+      const state = Boundary.getDerivedStateFromError(new Error("test"));
       assertEquals(state.hasError, true);
       assertEquals(state.error instanceof Error, true);
     });
 
-    it("should accept custom React library", () => {
+    it("should mint the fallback with the supplied React library", () => {
       function MockErrorComponent() {
         return null;
       }
-      const customReact = { createElement: React.createElement };
+      const calls: Array<[unknown, Record<string, unknown>]> = [];
+      const customReact = {
+        createElement: ((type: unknown, props: Record<string, unknown>) => {
+          calls.push([type, props]);
+          return React.createElement("div");
+        }) as unknown as typeof React.createElement,
+      };
       const Boundary = createErrorBoundary(MockErrorComponent, customReact);
-      assertEquals(typeof Boundary, "function");
+      const error = new Error("boom");
+      const instance = new Boundary({});
+      instance.state = { hasError: true, error };
+
+      instance.render();
+
+      assertEquals(
+        calls.length,
+        1,
+        "the boundary must mint the fallback with the supplied React instance",
+      );
+      assertStrictEquals(
+        calls[0]?.[0],
+        MockErrorComponent,
+        "the fallback element must be the reserved error component",
+      );
+      assertStrictEquals(
+        calls[0]?.[1].error,
+        error,
+        "the caught error must be forwarded to the fallback",
+      );
+      assertEquals(
+        typeof calls[0]?.[1].reset,
+        "function",
+        "the fallback must receive a callable reset",
+      );
     });
   });
 });

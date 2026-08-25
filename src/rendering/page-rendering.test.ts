@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -77,35 +83,19 @@ describe("rendering/page-rendering", () => {
     assertEquals(serverModuleCode.includes("/_veryfront/fs/"), false);
   });
 
-  it("refreshes preview caches and retries once when MDX ESM imports have stale exports", async () => {
+  it("does not refresh preview caches for a render failure that is not an ESM export mismatch", async () => {
     const pageInfo = createMDXPageInfo("# MDX Probe");
     const originalLoadModuleESM = mdxRenderer.loadModuleESM;
     let loadAttempts = 0;
     let sourceRefreshes = 0;
 
     const adapter = {
-      id: "deno",
-      name: "test",
-      capabilities: {
-        typescript: true,
-        jsx: true,
-        http2: false,
-        websocket: false,
-        workers: false,
-        fileWatching: false,
-        shell: false,
-        kvStore: false,
-        writableFs: true,
-      },
       fs: {
         refreshSourceSnapshot: () => {
           sourceRefreshes++;
           return Promise.resolve();
         },
       },
-      env: {},
-      server: {},
-      serve: () => Promise.reject(new Error("not used")),
     } as unknown as RuntimeAdapter;
 
     const mutableRenderer = mdxRenderer as unknown as {
@@ -114,35 +104,55 @@ describe("rendering/page-rendering", () => {
 
     mutableRenderer.loadModuleESM = () => {
       loadAttempts++;
-      if (loadAttempts === 1) {
-        throw new Error(
-          "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
-        );
-      }
-
-      return Promise.resolve({
-        default: () => null,
-      });
+      throw new Error("boom");
     };
 
     try {
-      await handleMDXPage(
-        pageInfo,
-        "probe",
-        "/project",
-        {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
-        adapter,
-        {
-          projectId: "project-1",
-          projectSlug: "project-slug",
-          contentSourceId: "preview-main",
-          studioEmbed: true,
-        },
+      const error = await assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectId: "project-1",
+              projectSlug: "project-slug",
+              contentSourceId: "preview-main",
+              studioEmbed: true,
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+      assertInstanceOf(
+        error,
+        Error,
+        "handleMDXPage must reject with an Error carrying the original render failure",
       );
 
-      assertEquals(loadAttempts, 2);
-      assertEquals(sourceRefreshes, 1);
+      assertEquals(
+        error.message.includes("after cache refresh"),
+        false,
+        "an unrelated render failure must not be reported as a post-recovery failure",
+      );
+      assertStringIncludes(
+        error.message,
+        "boom",
+        "the original render failure must be preserved",
+      );
+      assertEquals(
+        loadAttempts,
+        1,
+        "a render failure that is not an ESM export mismatch must not be retried",
+      );
+      assertEquals(
+        sourceRefreshes,
+        0,
+        "a render failure that is not an ESM export mismatch must not flush the preview source snapshot",
+      );
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
@@ -172,7 +182,7 @@ describe("rendering/page-rendering", () => {
         "probe",
         "/project",
         {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
         {
           fs: {},
         } as unknown as RuntimeAdapter,
@@ -215,7 +225,7 @@ describe("rendering/page-rendering", () => {
         prepareDependencySnapshot: () => Promise.resolve("off"),
         getAllAsComponents: () => ({}),
       } as never,
-      compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+      compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
       isLocalProject: true,
     });
 
@@ -265,7 +275,7 @@ describe("rendering/page-rendering", () => {
           prepareDependencySnapshot: () => Promise.resolve("off"),
           getAllAsComponents: () => ({}),
         } as never,
-        compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        compileMDX: () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
       });
 
       await renderer.preparePageBundles(
@@ -310,7 +320,7 @@ describe("rendering/page-rendering", () => {
         "probe",
         "/project",
         {},
-        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
         { fs: {} } as unknown as RuntimeAdapter,
         { projectId: "default-mode-project", contentSourceId: "release-1" },
       );

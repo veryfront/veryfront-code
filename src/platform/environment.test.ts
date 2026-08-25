@@ -46,6 +46,33 @@ describe("platform/environment", () => {
     assertEquals(getEnvironment(), "production");
   });
 
+  it("prefers VERYFRONT_ENV over an inherited NODE_ENV", () => {
+    setEnv("VERYFRONT_ENV", "production");
+    setEnv("NODE_ENV", "development");
+
+    assertEquals(
+      getEnvironment(),
+      "production",
+      "VERYFRONT_ENV must outrank an inherited NODE_ENV so a deployment cannot be forced into the development posture",
+    );
+    assertEquals(
+      isDevelopment(),
+      false,
+      "an inherited NODE_ENV=development must not relax the production posture",
+    );
+  });
+
+  it("prefers an explicit development VERYFRONT_ENV over NODE_ENV", () => {
+    setEnv("VERYFRONT_ENV", "development");
+    setEnv("NODE_ENV", "production");
+
+    assertEquals(
+      getEnvironment(),
+      "development",
+      "VERYFRONT_ENV must outrank NODE_ENV in both directions, not only when it is stricter",
+    );
+  });
+
   it("treats every explicit non-development deployment label as production", () => {
     for (const value of ["preview", "staging", "prod", "unexpected"]) {
       setEnv("VERYFRONT_ENV", value);

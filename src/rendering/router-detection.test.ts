@@ -330,4 +330,24 @@ describe("resolveRouterModeForPage", () => {
 
     assertEquals(result, "pages");
   });
+
+  it("honors an explicit pages router over an app/ location", () => {
+    const result = resolveRouterModeForPage(
+      "/project",
+      "/project/app/page.tsx",
+      { router: "pages" } as VeryfrontConfig,
+    );
+
+    assertEquals(result, "pages", "explicit router: pages wins over an app/ location");
+  });
+
+  it("honors an explicit app router over a pages/ location", () => {
+    const result = resolveRouterModeForPage(
+      "/project",
+      "/project/pages/index.tsx",
+      { router: "app" } as VeryfrontConfig,
+    );
+
+    assertEquals(result, "app", "explicit router: app wins over a pages/ location");
+  });
 });

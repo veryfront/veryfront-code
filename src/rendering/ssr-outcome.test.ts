@@ -175,10 +175,27 @@ describe("ssr-outcome.ts", () => {
       );
     });
 
-    it("returns null for a render-error carrying no redirect", () => {
+    it("returns null for a render-error with no redirect or a non-string destination", () => {
       assertEquals(
         resolveSSRControlOutcome(RENDER_ERROR.create({ detail: "boom" })),
         null,
+      );
+      assertEquals(
+        resolveSSRControlOutcome(
+          RENDER_ERROR.create({ detail: "x", context: { redirect: { permanent: true } } }),
+        ),
+        null,
+        "a redirect context without a destination must not become a redirect outcome",
+      );
+      assertEquals(
+        resolveSSRControlOutcome(
+          RENDER_ERROR.create({
+            detail: "x",
+            context: { redirect: { destination: 302, permanent: false } },
+          }),
+        ),
+        null,
+        "a non-string redirect destination must not become a redirect outcome",
       );
     });
   });
@@ -240,6 +257,41 @@ describe("ssr-outcome.ts", () => {
           details: { url: "/api/projects/p1/environments/production/files" },
         },
       });
+      const branchFileListError = API_CLIENT_ERROR.create({
+        detail: "missing files",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/branches/main/files" },
+        },
+      });
+      const fileMemberError = API_CLIENT_ERROR.create({
+        detail: "missing file",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/files/app/page.tsx" },
+        },
+      });
+      const fileListServerError = API_CLIENT_ERROR.create({
+        detail: "file list failed",
+        status: 500,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/files" },
+        },
+      });
+      const unscopedFileListError = API_CLIENT_ERROR.create({
+        detail: "missing files",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/files" },
+        },
+      });
+      const assetsListError = API_CLIENT_ERROR.create({
+        detail: "missing assets",
+        status: 404,
+        context: {
+          details: { url: "/api/projects/p1/environments/production/assets" },
+        },
+      });
       const redirectError = RENDER_ERROR.create({
         detail: "redirect",
         context: {
@@ -297,6 +349,52 @@ describe("ssr-outcome.ts", () => {
             kind: "server-error",
             exposure: "generic",
             error: genericProduction,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "undeployed branch file list",
+          error: branchFileListError,
+          context: { isLocalProject: false },
+          want: { kind: "undeployed", error: branchFileListError } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "file member 404 inside a live release",
+          error: fileMemberError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: fileMemberError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "file list server error",
+          error: fileListServerError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: fileListServerError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "unscoped file list 404",
+          error: unscopedFileListError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: unscopedFileListError,
+          } satisfies SSRFailureOutcome,
+        },
+        {
+          name: "release assets 404",
+          error: assetsListError,
+          context: { isLocalProject: false },
+          want: {
+            kind: "server-error",
+            exposure: "generic",
+            error: assetsListError,
           } satisfies SSRFailureOutcome,
         },
         {
