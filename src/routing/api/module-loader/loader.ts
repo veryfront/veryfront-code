@@ -10,7 +10,11 @@ import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
-import { validateHTTPImports, validateModuleSpecifierHosts } from "./http-validator.ts";
+import {
+  restrictedRuntimeModuleReason,
+  validateHTTPImports,
+  validateModuleSpecifierHosts,
+} from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
@@ -575,6 +579,18 @@ async function canDirectImportModuleGraph(args: {
     }
 
     const walkMappedTarget = (target: string): void => {
+      // An import map can rename a restricted runtime module (node:vm,
+      // node:module) behind an ordinary-looking alias; the target decides
+      // what the runtime loads.
+      const restrictedReason = restrictedRuntimeModuleReason(target);
+      if (restrictedReason !== null) {
+        throw toError(
+          createError({
+            type: "api",
+            message: `[API] handler build failed: ${restrictedReason}.`,
+          }),
+        );
+      }
       if (pathHelper.isAbsolute(target)) {
         pending.push(modulePathOfSpecifier(target));
         return;
@@ -726,15 +742,20 @@ export async function readDenoImportMap(
     // approve a direct load that Deno remaps to an unchecked remote module.
     if (config.extends !== undefined) return null;
 
-    const declared = config.importMap === undefined
+    // Deno reads a config that declares both an external `importMap` and
+    // inline `imports`/`scopes` by its own precedence rules. Modeling only
+    // one side could approve a direct load whose specifier the runtime
+    // resolves through the other, so such a config stays undecidable.
+    if (
+      config.importMap !== undefined &&
+      (config.imports !== undefined || config.scopes !== undefined)
+    ) {
+      return null;
+    }
+
+    return config.importMap === undefined
       ? readImportMap(config, projectDir)
       : await readSeparateImportMapFile(fs, projectDir, config.importMap);
-    if (declared === null) return null;
-    if (config.importMap === undefined || config.scopes === undefined) return declared;
-
-    const configScopes = readImportMapScopes(config.scopes, projectDir);
-    if (configScopes === null) return null;
-    return { imports: declared.imports, scopes: { ...declared.scopes, ...configScopes } };
   }
 
   return { imports: {}, scopes: {} };
@@ -1055,6 +1076,12 @@ function createImportMapPlugin(
         if (!resolvedPath) return undefined;
 
         if (/^(?:npm|jsr|node):/.test(resolvedPath)) {
+          // The bundled route resolves an externalized target at runtime, so
+          // a mapping onto a restricted runtime module must fail here.
+          const restrictedReason = restrictedRuntimeModuleReason(resolvedPath);
+          if (restrictedReason !== null) {
+            return { errors: [{ text: restrictedReason }] };
+          }
           return { path: resolvedPath, external: true };
         }
 

