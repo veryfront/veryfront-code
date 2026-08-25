@@ -82,6 +82,8 @@ type GraphState = {
   artifacts: Map<string, string>;
   /** Module materializations still running within this graph. */
   inFlight: Map<string, Promise<string>>;
+  /** Active in-graph waits between module materializations. */
+  waitsFor: Map<string, Map<string, number>>;
   /** Any rejected nested fetch makes the graph unsafe to publish as a cache hit. */
   hadFailure: boolean;
   /** Artifacts that depend on a failed subtree or provisional cycle member. */
@@ -108,6 +110,48 @@ function unresolvedGraphDependencies(
   return unresolved;
 }
 
+function addWaitDependency(graph: GraphState, waiter: string | undefined, dependency: string) {
+  if (waiter === undefined || waiter === dependency) return () => {};
+  let counts = graph.waitsFor.get(waiter);
+  if (!counts) {
+    counts = new Map();
+    graph.waitsFor.set(waiter, counts);
+  }
+  counts.set(dependency, (counts.get(dependency) ?? 0) + 1);
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const currentCounts = graph.waitsFor.get(waiter);
+    if (!currentCounts) return;
+    const count = currentCounts.get(dependency);
+    if (count === undefined) return;
+    if (count > 1) {
+      currentCounts.set(dependency, count - 1);
+      return;
+    }
+    currentCounts.delete(dependency);
+    if (currentCounts.size === 0) graph.waitsFor.delete(waiter);
+  };
+}
+
+function transitivelyWaitsFor(
+  url: string,
+  target: string,
+  graph: GraphState,
+  seen = new Set<string>(),
+): boolean {
+  if (seen.has(url)) return false;
+  seen.add(url);
+  for (const dependency of graph.waitsFor.get(url)?.keys() ?? []) {
+    if (dependency === target || transitivelyWaitsFor(dependency, target, graph, seen)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function fetchEsmModule(
   url: string,
   tmpDir: string,
@@ -119,6 +163,7 @@ export async function fetchEsmModule(
     provisional: new Set(),
     artifacts: new Map(),
     inFlight: new Map(),
+    waitsFor: new Map(),
     hadFailure: false,
     poisoned: new Set(),
   };
@@ -166,57 +211,82 @@ async function fetchEsmModuleWithin(
   esmCache: Map<string, string>,
   pending: ReadonlySet<string>,
   graph: GraphState,
+  waiter?: string,
 ): Promise<string> {
+  const releaseWait = addWaitDependency(graph, waiter, url);
   const cached = esmCache.get(url);
-  if (cached) return cached;
-  const graphCached = graph.artifacts.get(url);
-  if (graphCached) {
-    // A dependency still unwinding further up this call stack writes its own
-    // file only after this frame returns — its `Promise.allSettled` is waiting
-    // on us — so awaiting its materialization here would deadlock the render
-    // rather than fail it. Such a predicted path is validated once by
-    // `fetchEsmModule` after the root settles instead.
-    const settleable = (dependency: string) => !pending.has(dependency);
-    let unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
-    if (unwritten.length) {
-      const owners = [
-        ...new Set(unwritten.flatMap((dependency) => {
-          const owner = graph.inFlight.get(dependency);
-          return owner === undefined ? [] : [owner];
-        })),
-      ];
-      if (owners.length) {
-        await Promise.all(owners);
-        unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
-      }
-      if (unwritten.length) {
-        throw MODULE_NOT_FOUND.create({
-          detail: `Refusing incomplete graph-local artifact for ${url}`,
-        });
-      }
-    }
-    return graphCached;
-  }
-
-  const inFlight = graph.inFlight.get(url);
-  if (inFlight) {
-    await inFlight;
-    return await fetchEsmModuleWithin(url, tmpDir, localAdapter, esmCache, pending, graph);
-  }
-
-  const materialization = materializeEsmModuleWithin(
-    url,
-    tmpDir,
-    localAdapter,
-    esmCache,
-    pending,
-    graph,
-  );
-  graph.inFlight.set(url, materialization);
   try {
-    return await materialization;
+    if (cached) return cached;
+    const graphCached = graph.artifacts.get(url);
+    if (graphCached) {
+      // A dependency still unwinding further up this call stack writes its own
+      // file only after this frame returns — its `Promise.allSettled` is waiting
+      // on us — so awaiting its materialization here would deadlock the render
+      // rather than fail it. A concurrent sibling can create the same cycle
+      // without sharing the caller's `pending` stack, so active wait edges are
+      // also treated as not-yet-settleable. Such a predicted path is validated
+      // once by `fetchEsmModule` after the root settles instead.
+      const settleable = (dependency: string) =>
+        !pending.has(dependency) &&
+        (waiter === undefined || !transitivelyWaitsFor(dependency, waiter, graph));
+      let unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
+      if (unwritten.length) {
+        const ownerUrls = [
+          ...new Set(unwritten.filter((dependency) => graph.inFlight.has(dependency))),
+        ];
+        if (ownerUrls.length) {
+          const releaseOwnerWaits = ownerUrls.map((ownerUrl) =>
+            addWaitDependency(graph, waiter, ownerUrl)
+          );
+          const owners = ownerUrls
+            .map((ownerUrl) => graph.inFlight.get(ownerUrl))
+            .filter((owner): owner is Promise<string> => owner !== undefined);
+          try {
+            await Promise.all(owners);
+          } finally {
+            for (const release of releaseOwnerWaits) release();
+          }
+          unwritten = unresolvedGraphDependencies(url, graph, esmCache).filter(settleable);
+        }
+        if (unwritten.length) {
+          throw MODULE_NOT_FOUND.create({
+            detail: `Refusing incomplete graph-local artifact for ${url}`,
+          });
+        }
+      }
+      return graphCached;
+    }
+
+    const inFlight = graph.inFlight.get(url);
+    if (inFlight) {
+      await inFlight;
+      return await fetchEsmModuleWithin(
+        url,
+        tmpDir,
+        localAdapter,
+        esmCache,
+        pending,
+        graph,
+        waiter,
+      );
+    }
+
+    const materialization = materializeEsmModuleWithin(
+      url,
+      tmpDir,
+      localAdapter,
+      esmCache,
+      pending,
+      graph,
+    );
+    graph.inFlight.set(url, materialization);
+    try {
+      return await materialization;
+    } finally {
+      if (graph.inFlight.get(url) === materialization) graph.inFlight.delete(url);
+    }
   } finally {
-    if (graph.inFlight.get(url) === materialization) graph.inFlight.delete(url);
+    releaseWait();
   }
 }
 
@@ -271,7 +341,7 @@ async function materializeEsmModuleWithin(
       // cyclic edge can point at that path without being fetched again.
       nested.has(esmUrl)
         ? esmTempFilePath(esmUrl, tmpDir)
-        : fetchEsmModuleWithin(esmUrl, tmpDir, localAdapter, esmCache, nested, graph)
+        : fetchEsmModuleWithin(esmUrl, tmpDir, localAdapter, esmCache, nested, graph, url)
     ),
   );
 

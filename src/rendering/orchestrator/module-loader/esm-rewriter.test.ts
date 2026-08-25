@@ -703,6 +703,93 @@ describe("rendering/orchestrator/module-loader/esm-rewriter", () => {
       }
     });
 
+    it("does not await a cycle owner that transitively waits on the sibling reusing its descendant", async () => {
+      // `x` reuses `d` after `d` has written a file that points at `a`'s
+      // predicted path. `a` is not on `x`'s caller stack, but `a` is waiting on
+      // `y`, and `y` is waiting on the in-flight `x`. Waiting for `a` from `x`
+      // would deadlock even though the direct `pending` set does not show it.
+      const esmCache = new Map<string, string>();
+      const dWritten = Promise.withResolvers<void>();
+      const gatedAdapter = {
+        fs: {
+          writeFile(path: string, content: string) {
+            files.set(path, content);
+            if (content.includes("export const d = a")) dWritten.resolve();
+            return Promise.resolve();
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "https://esm.sh/root") {
+          return jsonResponse(
+            `import { a } from "https://esm.sh/a";\n` +
+              `import { x } from "https://esm.sh/x";\n` +
+              `export const root = a + x;`,
+          );
+        }
+        if (url === "https://esm.sh/a") {
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\n` +
+              `import { y } from "https://esm.sh/y";\n` +
+              `export const a = d + y;`,
+          );
+        }
+        if (url === "https://esm.sh/d") {
+          return jsonResponse(
+            `import { a } from "https://esm.sh/a";\nexport const d = a;`,
+          );
+        }
+        if (url === "https://esm.sh/y") {
+          return jsonResponse(
+            `import { x } from "https://esm.sh/x";\nexport const y = x;`,
+          );
+        }
+        if (url === "https://esm.sh/x") {
+          await dWritten.promise;
+          return jsonResponse(
+            `import { d } from "https://esm.sh/d";\nexport const x = d;`,
+          );
+        }
+        return new Response("not found", { status: 404 });
+      }) as typeof fetch;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadlocked = new Promise<"deadlocked">((resolve) => {
+        timer = setTimeout(() => resolve("deadlocked"), 2000);
+      });
+      try {
+        const outcome = await Promise.race([
+          fetchEsmModule("https://esm.sh/root", tmpDir, gatedAdapter, esmCache),
+          deadlocked,
+        ]);
+
+        assertEquals(
+          outcome === "deadlocked",
+          false,
+          "a sibling must not wait on a cycle owner that already waits on that sibling",
+        );
+        assertEquals(
+          files.has(outcome),
+          true,
+          "the root artifact must still be written once the transitive sibling wait closes",
+        );
+        assertEquals(
+          esmCache.has("https://esm.sh/x"),
+          true,
+          "the sibling that reused the cyclic descendant must still be published",
+        );
+        assertEquals(
+          esmCache.has("https://esm.sh/a"),
+          true,
+          "the cycle owner must be published once it writes its own predicted path",
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
     it("still throws when a nested URL is imported statically", async () => {
       // The emitted module's own import graph must be local before the runtime
       // loader is handed it. Leaving a static dependency remote would change
