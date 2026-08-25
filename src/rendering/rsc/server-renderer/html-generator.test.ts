@@ -94,7 +94,7 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
   });
 
   describe("treeToHTML", () => {
-    it("maps htmlFor on custom elements while preserving it on custom elements", async () => {
+    it("preserves htmlFor on custom elements while mapping label htmlFor to for", async () => {
       const html = await treeToHTML({
         type: "fragment",
         children: [
@@ -164,7 +164,18 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
     });
 
     it("maps htmlFor on reserved hyphenated SVG and MathML elements", async () => {
-      for (const component of ["annotation-xml", "font-face", "missing-glyph"]) {
+      for (
+        const component of [
+          "annotation-xml",
+          "color-profile",
+          "font-face",
+          "font-face-format",
+          "font-face-name",
+          "font-face-src",
+          "font-face-uri",
+          "missing-glyph",
+        ]
+      ) {
         const html = await treeToHTML({
           type: "server",
           component,
@@ -175,7 +186,11 @@ describe("rendering/rsc/server-renderer/html-generator", () => {
           true,
           `${component} uses the standard for attribute`,
         );
-        assertEquals(html.includes('htmlFor="target"'), false);
+        assertEquals(
+          html.includes('htmlFor="target"'),
+          false,
+          `${component} does not keep the React prop name`,
+        );
       }
     });
   });

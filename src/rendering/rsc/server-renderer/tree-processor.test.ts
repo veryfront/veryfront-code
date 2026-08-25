@@ -234,10 +234,14 @@ describe("rendering/rsc/server-renderer/tree-processor", () => {
         true,
         "custom-element attributes keep React prop spelling on the processor path",
       );
-      assertEquals(html.includes('<design-label for="field">'), false);
+      assertEquals(
+        html.includes('<design-label for="field">'),
+        false,
+        "custom elements do not receive the normalized for attribute",
+      );
     });
 
-    it("preserves htmlFor on customized built-ins with nested client boundaries", async () => {
+    it("maps htmlFor to for on customized built-ins with nested client boundaries", async () => {
       function ClientComp() {
         return React.createElement("input", { id: "field" });
       }
@@ -261,9 +265,24 @@ describe("rendering/rsc/server-renderer/tree-processor", () => {
       assertEquals(result.type, "html");
 
       const html = (result as { html: string }).html;
-      assertEquals(html.includes('is="design-label"'), true);
-      assertEquals(html.includes('htmlFor="field"'), true);
-      assertEquals(html.includes('for="field"'), false);
+      // React 19 keys custom-element serialization off the hyphenated tag name
+      // only, so <label is="design-label" htmlFor="field"> renders as
+      // `<label is="design-label" for="field">`.
+      assertEquals(
+        html.includes('is="design-label"'),
+        true,
+        "the is attribute survives the processor path",
+      );
+      assertEquals(
+        html.includes('for="field"'),
+        true,
+        "customized built-ins use React's normalized for attribute",
+      );
+      assertEquals(
+        html.includes("htmlFor"),
+        false,
+        "customized built-ins do not keep the React prop name",
+      );
     });
   });
 

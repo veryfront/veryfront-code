@@ -22,7 +22,7 @@ const RESERVED_HYPHENATED_ELEMENTS = new Set([
   "missing-glyph",
 ]);
 
-function isCustomElement(tagName: string | undefined, _props: Record<string, unknown>): boolean {
+function isCustomElement(tagName: string | undefined): boolean {
   return tagName?.includes("-") === true && !RESERVED_HYPHENATED_ELEMENTS.has(tagName);
 }
 
@@ -34,7 +34,7 @@ function renderAttributeName(key: string, customElement: boolean): string {
 
 export function renderAttributes(props: Record<string, unknown>, tagName?: string): string {
   const attrs: string[] = [];
-  const customElement = isCustomElement(tagName, props);
+  const customElement = isCustomElement(tagName);
 
   for (const [key, value] of Object.entries(props)) {
     if (value == null || SKIP_PROPS.has(key)) continue;
