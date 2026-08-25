@@ -62,7 +62,6 @@ resolve: {
       "Ensure the dependency is declared in your project manifest or import map",
       "Run 'veryfront doctor' to verify setup",
     ],
-    example: "deno add npm:example-package",
   }),
 
   "version-mismatch": createSimpleError(

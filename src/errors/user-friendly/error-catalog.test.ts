@@ -111,12 +111,14 @@ describe("ERROR_SOLUTIONS", () => {
   });
 
   describe("missing-deps", () => {
-    it("should include a shell-safe concrete install example", () => {
+    it("should keep recovery guidance package-manager neutral", () => {
       const sol = ERROR_SOLUTIONS["missing-deps"];
       assertExists(sol);
 
-      assertEquals(sol.example, "deno add npm:example-package");
+      assertEquals(sol.example, undefined);
+      assert(sol.steps?.some((step) => step.includes("project package manager")));
       assertEquals(JSON.stringify(sol).includes("<PACKAGE_SPECIFIER>"), false);
+      assertEquals(JSON.stringify(sol).includes("deno add"), false);
     });
   });
 
