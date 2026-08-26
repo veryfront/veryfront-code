@@ -1872,6 +1872,18 @@ describe("createWorkflowClient()", () => {
     assertExists(client);
     await client.destroy();
   });
+
+  it("rejects disabling execution locks for a durable event-wait backend", () => {
+    assertThrows(
+      () =>
+        createWorkflowClient({
+          backend: new MemoryBackend(),
+          executor: { enableLocking: false },
+        }),
+      VeryfrontError,
+      "locking cannot be disabled",
+    );
+  });
 });
 
 describe(
@@ -5572,6 +5584,29 @@ describe("WorkflowClient durable event waits", () => {
     const [restored] = await client.getPendingEventWaits(handle.runId);
     assertExists(restored);
     assertEquals(restored.eventName, "dynamic.ready");
+  });
+
+  it("keeps the persisted event identity when the registered definition changes", async () => {
+    const workflowId = "changed-event-wait-recovery";
+    client.register(workflow({
+      id: workflowId,
+      steps: [waitForEvent("gate", { eventName: "original.ready" })],
+    }));
+    const handle = await client.start(workflowId, {});
+    await handle.settled();
+    const [wait] = await client.getPendingEventWaits(handle.runId);
+    assertExists(wait);
+    await backend.resolvePendingEventWait(handle.runId, wait.id, "delivered");
+
+    client.register(workflow({
+      id: workflowId,
+      steps: [waitForEvent("gate", { eventName: "replacement.ready" })],
+    }));
+    await client.resume(handle.runId);
+
+    const [restored] = await client.getPendingEventWaits(handle.runId);
+    assertExists(restored);
+    assertEquals(restored.eventName, "original.ready");
   });
 
   it("preserves dynamic approval policy when reconstructing a missing wait", async () => {

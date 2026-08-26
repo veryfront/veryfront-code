@@ -44,6 +44,28 @@ export function removeWorkflowNodeNamespace(
   return rebaseWorkflowNodes(prefix, "", nodes);
 }
 
+/** Collect statically visible node IDs from a graph and its composite descendants. */
+export function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: WorkflowNode): void => {
+    ids.add(node.id);
+    switch (node.config.type) {
+      case "parallel":
+        node.config.nodes.forEach(visit);
+        break;
+      case "branch":
+        node.config.then.forEach(visit);
+        node.config.else?.forEach(visit);
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) node.config.steps.forEach(visit);
+        break;
+    }
+  };
+  nodes.forEach(visit);
+  return ids;
+}
+
 function rebaseWorkflowNodes(
   oldPrefix: string,
   newPrefix: string,

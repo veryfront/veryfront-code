@@ -10,7 +10,11 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
-import { namespaceWorkflowNodes, removeWorkflowNodeNamespace } from "../../dsl/validation.ts";
+import {
+  collectWorkflowNodeIds,
+  namespaceWorkflowNodes,
+  removeWorkflowNodeNamespace,
+} from "../../dsl/validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   applyContextPatch,
@@ -350,27 +354,6 @@ export async function executeLoopNodeStrategy(
     }),
     waiting: false,
   };
-}
-
-function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
-  const ids = new Set<string>();
-  const visit = (node: WorkflowNode): void => {
-    ids.add(node.id);
-    switch (node.config.type) {
-      case "parallel":
-        node.config.nodes.forEach(visit);
-        break;
-      case "branch":
-        node.config.then.forEach(visit);
-        node.config.else?.forEach(visit);
-        break;
-      case "loop":
-        if (Array.isArray(node.config.steps)) node.config.steps.forEach(visit);
-        break;
-    }
-  };
-  nodes.forEach(visit);
-  return ids;
 }
 
 /** Detect an old snapshot from a declared local child, not a generated descendant. */

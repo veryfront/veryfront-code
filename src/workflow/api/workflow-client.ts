@@ -16,7 +16,11 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasEventWaitSupport,
+  hasRunObservationSupport,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
@@ -38,6 +42,7 @@ import {
   getPendingApprovalResponseSchemaId,
   projectRunPendingApprovals,
 } from "../runtime/pending-approval-metadata.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-client");
 const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
@@ -95,6 +100,12 @@ export class WorkflowClient {
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
+    if (config.executor?.enableLocking === false && hasEventWaitSupport(this.backend)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "WorkflowClient executor locking cannot be disabled when the backend supports durable event waits",
+      });
+    }
 
     const userOnWaiting = config.executor?.onWaiting;
     const userOnWaitingBatchComplete = config.executor?.onWaitingBatchComplete;
@@ -124,9 +135,9 @@ export class WorkflowClient {
         }
 
         if (input.type === "event") {
-          // Prefer the exact runtime config, then the registered definition.
-          // The persisted event identity is the restart fallback for dynamic
-          // definitions that cannot be indexed before their input is known.
+          // The node input is the durable identity this execution already
+          // promised to wait on. Runtime and registered definitions are only
+          // fallbacks for older snapshots that did not persist an event name.
           const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
           const persistedEventConfig: WaitNodeConfig | undefined = input.eventName === undefined
             ? undefined
@@ -136,7 +147,7 @@ export class WorkflowClient {
               eventName: input.eventName,
               ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
             };
-          const eventConfig = [activeWaitConfig, registeredEventConfig, persistedEventConfig]
+          const eventConfig = [persistedEventConfig, activeWaitConfig, registeredEventConfig]
             .find((candidate) => candidate?.waitType === "event");
           if (eventConfig) {
             try {

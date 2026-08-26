@@ -11,7 +11,7 @@ import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
-import { rebaseCompositeDescendants } from "../../dsl/validation.ts";
+import { collectWorkflowNodeIds, rebaseCompositeDescendants } from "../../dsl/validation.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -100,10 +100,12 @@ export async function executeMapNodeStrategy(
   }
 
   const childNodes = createMapChildNodes(node, config, items);
-  const collidingChild = childNodes.find((child) => parentNodeIds.has(child.id));
-  if (collidingChild) {
+  const collidingChildId = [...collectWorkflowNodeIds(childNodes)].find((childId) =>
+    parentNodeIds.has(childId)
+  );
+  if (collidingChildId) {
     throw INVALID_ARGUMENT.create({
-      detail: `Map node "${node.id}" generated child id "${collidingChild.id}", ` +
+      detail: `Map node "${node.id}" generated child id "${collidingChildId}", ` +
         "which collides with a declared node in the parent graph",
     });
   }
