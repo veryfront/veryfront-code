@@ -737,7 +737,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const initialization = this.performInitialization();
+    const initialization = this.#performInitialization();
     const initializationGeneration = ++this.initializationGeneration;
     this.initializationPromise = initialization;
     try {
@@ -749,7 +749,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private async performInitialization(): Promise<void> {
+  async #performInitialization(): Promise<void> {
     const initStartTime = performanceNow();
     const projectSlug = this.client.getProjectSlug();
 

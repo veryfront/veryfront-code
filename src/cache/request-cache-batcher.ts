@@ -22,36 +22,81 @@ interface RequestCacheContext {
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RequestCacheContext>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicMap = Map;
+const IntrinsicClearTimeout = globalThis.clearTimeout;
+const IntrinsicSetTimeout = globalThis.setTimeout;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(asyncLocalStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
 
 const BATCH_DELAY_MS = 1;
 
+function getRequestCacheContextStore(): RequestCacheContext | undefined {
+  return IntrinsicReflectApply(AsyncLocalStorageGetStore, asyncLocalStorage, []) as
+    | RequestCacheContext
+    | undefined;
+}
+
+function runWithRequestCacheContext<T>(
+  context: RequestCacheContext,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, asyncLocalStorage, [
+    context,
+    fn,
+  ]) as Promise<T>;
+}
+
+function clearBatchTimer(timer: ReturnType<typeof setTimeout>): void {
+  IntrinsicReflectApply(IntrinsicClearTimeout, globalThis, [timer]);
+}
+
+function scheduleBatchFlush(callback: () => void): ReturnType<typeof setTimeout> {
+  return IntrinsicReflectApply(IntrinsicSetTimeout, globalThis, [
+    callback,
+    BATCH_DELAY_MS,
+  ]) as ReturnType<typeof setTimeout>;
+}
+
 export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   const context: RequestCacheContext = {
-    cache: new Map(),
-    pending: new Map(),
-    mutationVersions: new Map(),
+    cache: new IntrinsicMap(),
+    pending: new IntrinsicMap(),
+    mutationVersions: new IntrinsicMap(),
     batchQueue: [],
     batchTimer: null,
   };
 
-  return asyncLocalStorage.run(context, async () => {
+  return runWithRequestCacheContext(context, async () => {
     try {
       return await fn();
     } finally {
-      if (context.batchTimer) clearTimeout(context.batchTimer);
+      if (context.batchTimer) clearBatchTimer(context.batchTimer);
     }
   });
 }
 
 export function getRequestCacheContext(): RequestCacheContext | undefined {
-  return asyncLocalStorage.getStore();
+  return getRequestCacheContextStore();
 }
 
 export async function getCachedWithBatching(
   backend: CacheBackend,
   key: string,
 ): Promise<string | null> {
-  const ctx = asyncLocalStorage.getStore();
+  const ctx = getRequestCacheContextStore();
   if (!ctx) return backend.get(key);
 
   if (ctx.cache.has(key)) return ctx.cache.get(key) ?? null;
@@ -70,10 +115,10 @@ export async function getCachedWithBatching(
 
     if (ctx.batchTimer) return;
 
-    ctx.batchTimer = setTimeout(() => {
+    ctx.batchTimer = scheduleBatchFlush(() => {
       ctx.batchTimer = null;
       void flushBatch(ctx, backend);
-    }, BATCH_DELAY_MS);
+    });
   });
 
   // An explicit request-local set or delete supersedes a backend read that was
@@ -103,7 +148,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
   ctx.batchQueue = [];
 
   if (ctx.batchTimer) {
-    clearTimeout(ctx.batchTimer);
+    clearBatchTimer(ctx.batchTimer);
     ctx.batchTimer = null;
   }
 
@@ -142,14 +187,14 @@ async function getIndividually(
 }
 
 export function setInRequestCache(key: string, value: string | null): void {
-  const ctx = asyncLocalStorage.getStore();
+  const ctx = getRequestCacheContextStore();
   if (!ctx) return;
   ctx.mutationVersions.set(key, (ctx.mutationVersions.get(key) ?? 0) + 1);
   ctx.cache.set(key, value);
 }
 
 export function getRequestCacheStats(): { hits: number; stored: number } | null {
-  const ctx = asyncLocalStorage.getStore();
+  const ctx = getRequestCacheContextStore();
   if (!ctx) return null;
 
   return { hits: 0, stored: ctx.cache.size };

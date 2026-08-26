@@ -375,7 +375,7 @@ export class ProxyFSAdapterManager {
       });
 
       try {
-        this.assertContextMatches(diagnosticCacheKey, existing, existingContext, identity);
+        this.#assertContextMatches(diagnosticCacheKey, existing, existingContext, identity);
       } catch (error) {
         this.evictAdapterByCacheKey(cacheKey);
         throw error;
@@ -403,7 +403,7 @@ export class ProxyFSAdapterManager {
       }
 
       try {
-        this.assertContextMatches(
+        this.#assertContextMatches(
           diagnosticCacheKey,
           initialized,
           getAdapterContentContext(projectAdapter),
@@ -460,13 +460,13 @@ export class ProxyFSAdapterManager {
     return projectAdapter.adapter;
   }
 
-  private assertContextMatches(
+  #assertContextMatches(
     diagnosticCacheKey: string,
     cached: ProjectAdapter,
     currentContext: ResolvedContentContext | null | undefined,
     expected: ProxyAdapterIdentity,
   ): void {
-    const cachedIdentityMismatch = this.getIdentityMismatchReason(cached.identity, expected);
+    const cachedIdentityMismatch = this.#getIdentityMismatchReason(cached.identity, expected);
     if (cachedIdentityMismatch) {
       logger.error("Adapter identity mismatch detected", {
         cacheKey: diagnosticCacheKey,
@@ -489,7 +489,7 @@ export class ProxyFSAdapterManager {
       });
     }
 
-    const mismatchReason = this.getContextMismatchReason(currentContext, expected);
+    const mismatchReason = this.#getContextMismatchReason(currentContext, expected);
     if (!mismatchReason) return;
 
     logger.error("Context mismatch detected", {
@@ -509,7 +509,7 @@ export class ProxyFSAdapterManager {
     });
   }
 
-  private getIdentityMismatchReason(
+  #getIdentityMismatchReason(
     actual: ProxyAdapterIdentity,
     expected: ProxyAdapterIdentity,
   ): string | null {
@@ -528,7 +528,7 @@ export class ProxyFSAdapterManager {
     return null;
   }
 
-  private getContextMismatchReason(
+  #getContextMismatchReason(
     currentContext: ResolvedContentContext,
     expected: {
       productionMode: boolean;

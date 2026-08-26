@@ -1190,6 +1190,68 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("keeps cached invariant checks outside mutable prototype dispatch", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          (adapter as unknown as { initialized: boolean }).initialized = true;
+          return adapter;
+        },
+      });
+      const prototype = ProxyFSAdapterManager.prototype as unknown as Record<string, unknown>;
+      const keys = [
+        "assertContextMatches",
+        "getIdentityMismatchReason",
+        "getContextMismatchReason",
+      ];
+      const descriptors = new Map(
+        keys.map((key) => [key, Object.getOwnPropertyDescriptor(prototype, key)]),
+      );
+      let interceptedToken: string | undefined;
+      for (const key of keys) {
+        Object.defineProperty(prototype, key, {
+          configurable: true,
+          value: (...args: unknown[]) => {
+            const cached = args.find((arg) =>
+              typeof arg === "object" && arg !== null && "adapter" in arg
+            ) as { adapter?: { apiToken?: string } } | undefined;
+            interceptedToken = cached?.adapter?.apiToken;
+            throw new Error(`mutable ${key} dispatch was invoked`);
+          },
+        });
+      }
+
+      try {
+        const first = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const second = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertStrictEquals(second, first);
+        assertEquals(interceptedToken, undefined);
+      } finally {
+        for (const [key, descriptor] of descriptors) {
+          if (descriptor === undefined) Reflect.deleteProperty(prototype, key);
+          else Object.defineProperty(prototype, key, descriptor);
+        }
+        manager.dispose();
+      }
+    });
+
     it("uses captured concrete setup methods after project prototype mutation", async () => {
       const manager = createManager({
         adapterFactory: (config) => {

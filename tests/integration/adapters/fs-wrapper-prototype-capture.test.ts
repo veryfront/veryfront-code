@@ -33,6 +33,10 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import { ApiCacheBackend } from "#veryfront/cache/backends/api.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  getRequestCacheContext,
+  runWithCacheBatching,
+} from "#veryfront/cache/request-cache-batcher.ts";
 
 const baseConfig = {
   veryfront: {
@@ -136,6 +140,10 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
               tryGetCacheKeyContext,
             ),
             { projectId: "project-id", mode: "preview", versionId: "main" },
+          );
+          assertEquals(
+            await runWithCacheBatching(async () => getRequestCacheContext() !== undefined),
+            true,
           );
         },
       );

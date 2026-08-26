@@ -170,7 +170,7 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(observedToken, undefined);
     });
 
-    it("keeps initialization independent of a project-mutated performance clock", async () => {
+    it("keeps initialization independent of project-mutated internal capabilities", async () => {
       const adapter = createAdapter({
         veryfront: {
           apiBaseUrl: "https://api.example.com",
@@ -199,6 +199,11 @@ describe("VeryfrontFSAdapter", () => {
       internals.wsManager.connect = () => {};
 
       const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const originalPerformInitialization = Object.getOwnPropertyDescriptor(
+        prototype,
+        "performInitialization",
+      );
       let poisonedCalls = 0;
       Object.defineProperty(performance, "now", {
         configurable: true,
@@ -207,11 +212,27 @@ describe("VeryfrontFSAdapter", () => {
           throw new Error("project performance hook must not run");
         },
       });
+      Object.defineProperty(prototype, "performInitialization", {
+        configurable: true,
+        value: () => {
+          poisonedCalls += 1;
+          throw new Error("project initialization hook must not run");
+        },
+      });
       try {
         await adapter.initialize();
       } finally {
         if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
         else Object.defineProperty(performance, "now", originalNow);
+        if (originalPerformInitialization === undefined) {
+          Reflect.deleteProperty(prototype, "performInitialization");
+        } else {
+          Object.defineProperty(
+            prototype,
+            "performInitialization",
+            originalPerformInitialization,
+          );
+        }
         adapter.dispose();
       }
 
