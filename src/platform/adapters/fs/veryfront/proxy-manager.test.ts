@@ -19,7 +19,7 @@ import {
 } from "#veryfront/utils/logger/index.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
-import { getGetAdapterParamsSchema } from "./schemas/index.ts";
+import { getGetAdapterParamsSchema } from "#veryfront/platform/adapters/fs/veryfront/schemas/index.ts";
 
 const baseConfig = {
   veryfront: {
