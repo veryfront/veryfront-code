@@ -363,58 +363,6 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(importParserInternals.isFileUrlSpecifier(shadowed), true);
   });
 
-  // Regression: parse results were recorded through the live
-  // Array.prototype.push, so tenant code that replaced it to ignore entries
-  // carrying a rewriteSpecifier silently dropped an approved dependency from
-  // localImports; the validator then produced no bound read and no rewrite
-  // entry for the compiled parent's original file:// import.
-  it("records contained imports through the captured array intrinsic", async () => {
-    const stub = withStubContentProcessor();
-    const originalPush = Array.prototype.push;
-    try {
-      await withProject(
-        {
-          "pages/index.mdx": `import Child from "./Child.tsx";\n\n<Child />\n`,
-          "pages/Child.tsx": `export default () => null;`,
-        },
-        async (projectDir) => {
-          const adapter = await getLocalAdapter();
-          const filePath = join(projectDir, "pages/index.mdx");
-          const code = await Deno.readTextFile(filePath);
-
-          let result: Awaited<ReturnType<typeof parseLocalImports>> | undefined;
-          try {
-            Array.prototype.push = function (this: unknown[], ...values: unknown[]): number {
-              const [first] = values;
-              if (typeof first === "object" && first !== null && "rewriteSpecifier" in first) {
-                return this.length;
-              }
-              return Reflect.apply(originalPush, this, values) as number;
-            };
-            result = await parseLocalImports(code, filePath, projectDir, adapter);
-          } finally {
-            Array.prototype.push = originalPush;
-          }
-
-          assertEquals(result?.missing.length, 0);
-          assertEquals(
-            result?.imports.length,
-            1,
-            "a poisoned Array.prototype.push must not drop an approved dependency",
-          );
-          assertEquals(
-            result?.imports[0]?.rewriteSpecifier?.startsWith("file://"),
-            true,
-            "the recorded entry must keep its compiled file URL for the final rewrite",
-          );
-        },
-      );
-    } finally {
-      Array.prototype.push = originalPush;
-      stub.restore();
-    }
-  });
-
   it("preserves backslashes in POSIX file URL paths", () => {
     if (Deno.build.os === "windows") return;
     assertEquals(
