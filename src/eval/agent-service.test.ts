@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
 import { datasets, evalAgent, type EvalAgentAdapterResult, metrics, runEval } from "veryfront/eval";
@@ -23,6 +28,7 @@ import {
   runDurableRunCanaryCli,
   runLiveEvalCli,
 } from "veryfront/eval/agent-service";
+import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 
 function createSseResponse(
   events: Array<{ event: string; data: Record<string, unknown> }>,
@@ -241,7 +247,6 @@ describe("eval/agent-service", () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
       authToken: "token",
-      agentId: "veryfront",
       projectId: "project_123",
       projectSlug: "demo-project",
       contentSourceId: "preview-main",
@@ -352,7 +357,6 @@ describe("eval/agent-service", () => {
     );
     assertEquals(requests[0]?.body.forwardedProps, {
       veryfront: {
-        agentId: "veryfront",
         projectId: "project_123",
         branchId: "branch_123",
       },
@@ -413,6 +417,66 @@ describe("eval/agent-service", () => {
     });
     assertEquals(record.durationMs, 0);
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
+  });
+
+  it("rejects remote eval agent overrides that public AG-UI cannot honor", () => {
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "researcher",
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "veryfront",
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "researcher",
+          fetch: async () => new Response(null, { status: 500 }),
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+  });
+
+  it("allows agent targets when a trusted bound fetch performs agent selection", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      agentId: "researcher",
+      fetch: bindTrustedLocalEvalFetch(async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_bound" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      }, "researcher"),
+    });
+
+    const definition = evalAgent({
+      id: "eval:bound",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+      now: () => new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(requestBody?.forwardedProps, undefined);
   });
 
   it("marks a non-ok AG-UI response as an incomplete run", async () => {
