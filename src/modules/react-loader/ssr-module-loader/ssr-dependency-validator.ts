@@ -126,7 +126,11 @@ function allSettled<T>(
   >;
 }
 
-function ownDataValue(value: object, key: PropertyKey): unknown {
+function ownDataValue(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) return undefined;
   try {
     const descriptor = objectGetOwnPropertyDescriptor(value, key);
     return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
@@ -135,7 +139,7 @@ function ownDataValue(value: object, key: PropertyKey): unknown {
   }
 }
 
-function ownStringValue(value: object, key: PropertyKey): string | undefined {
+function ownStringValue(value: unknown, key: PropertyKey): string | undefined {
   const ownValue = ownDataValue(value, key);
   return typeof ownValue === "string" ? ownValue : undefined;
 }
