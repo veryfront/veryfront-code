@@ -245,6 +245,62 @@ describe("Deno HTTP server lifecycle", () => {
     assertEquals(fake.getServeCalls(), 0);
   });
 
+  it("names the address when the port is already bound", async () => {
+    // Deno.serve() throws synchronously when the address is taken. The raw
+    // `AddrInUse: Address already in use (os error 98)` reached Sentry with no
+    // hostname or port in it (veryfront-issue-inbox#806).
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    // The address is the whole point of the fix, so it is asserted directly
+    // rather than through the absence of the raw OS string.
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 4321 },
+        ),
+      Error,
+      "127.0.0.1:4321",
+    ) as Error & { slug?: string; cause?: unknown };
+
+    assertEquals(error.slug, "initialization-error");
+    // The original is preserved rather than swallowed: an operator still needs
+    // the OS-level signature to correlate with the platform's own logs.
+    assertStrictEquals(error.cause, addrInUse);
+  });
+
+  it("rethrows a non-bind serve failure untouched", async () => {
+    // The counterpart that keeps the catch honest. Relabelling every serve
+    // failure as an address collision would report an unrelated startup fault
+    // as the wrong thing, which is worse than the raw error it replaces.
+    const unrelated = new Error("permission denied reading TLS key");
+    unrelated.name = "PermissionDenied";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw unrelated;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 4321 },
+        ),
+      Error,
+      "permission denied reading TLS key",
+    ) as Error & { slug?: string };
+
+    assertStrictEquals(error, unrelated);
+    assertEquals(error.slug, undefined);
+  });
+
   it("stops the listener when onListen throws", async () => {
     const native = new FakeNativeServer();
     const fake = createRuntime(native);
