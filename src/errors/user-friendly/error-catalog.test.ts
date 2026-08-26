@@ -12,30 +12,84 @@ import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 // as TSX instead of approximating JavaScript lexical grammar: comment markers
 // inside regex literals, templates, and strings must remain ordinary syntax.
 
-// Match the directive syntax, not one exact spelling: single or double quotes,
-// with or without the trailing semicolon, are all forms Veryfront honours and
-// project templates use.
-const directive = /^['"]use client['"];?$/;
-const directiveLike = /['"]use client['"]/;
+interface ParsedStatementNode {
+  readonly type: string;
+  readonly start?: number | null;
+  readonly end?: number | null;
+  readonly value?: ParsedStatementNode | string;
+  readonly expression?: ParsedStatementNode;
+  readonly callee?: ParsedStatementNode;
+  readonly object?: ParsedStatementNode;
+  readonly extra?: { readonly parenthesized?: unknown };
+}
 
 // The statements of a file block, comments stripped and semicolons resolved
 // first: a trailing comment cannot disguise a directive, a commented-out
 // directive is not mistaken for a real one, and a directive sharing a line
 // with an earlier statement is still seen in its true position.
-function statementsOf(block: string): string[] {
+function parsedStatementsOf(block: string): ParsedStatementNode[] {
   const program = parse(block, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
   }).program;
-  return [...program.directives, ...program.body]
-    .toSorted((left, right) => (left.start ?? 0) - (right.start ?? 0))
-    .map((statement) => block.slice(statement.start ?? 0, statement.end ?? 0).trim());
+  return ([...program.directives, ...program.body] as ParsedStatementNode[])
+    .toSorted((left, right) => (left.start ?? 0) - (right.start ?? 0));
+}
+
+function statementsOf(block: string): string[] {
+  return parsedStatementsOf(block).map((statement) =>
+    block.slice(statement.start ?? 0, statement.end ?? 0).trim()
+  );
+}
+
+function isUseClientLiteral(node: ParsedStatementNode | string | undefined): boolean {
+  return typeof node === "object" &&
+    (node?.type === "StringLiteral" || node?.type === "DirectiveLiteral") &&
+    node.value === "use client";
+}
+
+function isUseClientStatement(statement: ParsedStatementNode): boolean {
+  if (statement.type === "Directive") return isUseClientLiteral(statement.value);
+  return statement.type === "ExpressionStatement" &&
+    isUseClientLiteral(statement.expression) &&
+    statement.expression?.extra?.parenthesized !== true;
+}
+
+function startsWithUseClientExpression(statement: ParsedStatementNode): boolean {
+  if (statement.type === "Directive") return isUseClientLiteral(statement.value);
+  if (statement.type !== "ExpressionStatement") return false;
+
+  let expression = statement.expression;
+  while (expression) {
+    if (isUseClientLiteral(expression)) return true;
+    if (
+      expression.type === "CallExpression" || expression.type === "OptionalCallExpression"
+    ) {
+      expression = expression.callee;
+      continue;
+    }
+    if (
+      expression.type === "MemberExpression" || expression.type === "OptionalMemberExpression"
+    ) {
+      expression = expression.object;
+      continue;
+    }
+    if (
+      expression.type === "ParenthesizedExpression" || expression.type === "TSAsExpression" ||
+      expression.type === "TSTypeAssertion" || expression.type === "TSNonNullExpression"
+    ) {
+      expression = expression.expression;
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 // Statement index of every 'use client' expression statement in a file block.
 function useClientIndexes(block: string): number[] {
-  return statementsOf(block)
-    .map((statement, index) => (directive.test(statement) ? index : -1))
+  return parsedStatementsOf(block)
+    .map((statement, index) => (isUseClientStatement(statement) ? index : -1))
     .filter((index) => index !== -1);
 }
 
@@ -44,8 +98,8 @@ const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*");?$/;
 function invalidUseClientIndexes(block: string): number[] {
   const statements = statementsOf(block);
   const indexes = useClientIndexes(block);
-  const directiveLikeIndexes = statements
-    .map((statement, index) => (directiveLike.test(statement) ? index : -1))
+  const directiveLikeIndexes = parsedStatementsOf(block)
+    .map((statement, index) => (startsWithUseClientExpression(statement) ? index : -1))
     .filter((index) => index !== -1);
   // Use the runtime classifier as the source of truth for whether a leading
   // string is actually a directive. In particular, a semicolonless string
@@ -336,6 +390,19 @@ describe("ERROR_SOLUTIONS", () => {
           invalidUseClientIndexes(block),
           [1],
           "a regex literal must not hide a later misplaced directive",
+        );
+      });
+
+      it("does not treat directive spelling inside another statement as a directive", () => {
+        const block = [
+          `throw new Error("'use client' is required");`,
+          "export default function Example() { return null; }",
+        ].join("\n");
+
+        assertEquals(
+          invalidUseClientIndexes(block),
+          [],
+          "an error message is not a directive expression",
         );
       });
     });
