@@ -692,15 +692,15 @@ import {
 
 | Name                                  | Description                                                                                                                                          | Source                                                                                                    |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `firstPartyExtensionSourceSpecifiers` |                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L44)  |
-| `importFirstPartyExtensionModule`     |                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L54)  |
-| `isMissingFirstPartyExtensionModule`  | Classify a dynamic-import failure as "the extension module itself is not installed" as opposed to a real load failure inside an installed extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L236) |
+| `firstPartyExtensionSourceSpecifiers` |                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L50)  |
+| `importFirstPartyExtensionModule`     |                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L60)  |
+| `isMissingFirstPartyExtensionModule`  | Classify a dynamic-import failure as "the extension module itself is not installed" as opposed to a real load failure inside an installed extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L242) |
 
 #### Types
 
 | Name                               | Description                                                       | Source                                                                                                   |
 | ---------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `FirstPartyExtensionImportOptions` | Optional non-root entry point for a first-party extension import. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L21) |
+| `FirstPartyExtensionImportOptions` | Optional non-root entry point for a first-party extension import. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/first-party-import.ts#L27) |
 
 ### `veryfront/extensions/image`
 

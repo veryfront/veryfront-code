@@ -1159,6 +1159,18 @@ export default config as const;
         assertStringIncludes(error.message, "@scope/_plugin");
       });
 
+      for (const packageName of ["@scope/-plugin", "@_scope/plugin"]) {
+        it(`classifies npm-valid punctuation in ${packageName}`, async () => {
+          const error = await loadFailure(
+            "vf-config-scoped-punctuation-package-",
+            `throw new Error("Cannot find package '${packageName}' imported from /app/veryfront.config.ts");\n`,
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+          assertStringIncludes(error.message, packageName);
+        });
+      }
+
       it("preserves the full accepted package name in diagnostics", async () => {
         const packageName = "a".repeat(214);
         const error = await loadFailure(
@@ -1168,7 +1180,10 @@ export default config as const;
 
         assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
         assertStringIncludes(error.message, packageName);
-        assertEquals(error.context?.packageName, packageName);
+        assertEquals(
+          Object.getOwnPropertyDescriptor(error.context ?? {}, "packageName")?.value,
+          packageName,
+        );
       });
 
       it("keeps a secret in a subpath out of any package claim", async () => {

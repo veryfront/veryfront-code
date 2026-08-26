@@ -128,6 +128,8 @@ const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions(
 const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
 const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
 
+type RuntimeReflectionRecord = Record<PropertyKey, unknown>;
+
 function freezeObject<T>(value: T): T {
   return ReflectApply(ObjectFreeze, Object, [value]) as T;
 }
@@ -153,7 +155,7 @@ function ownKeys(value: object): PropertyKey[] {
   return ReflectApply(ReflectOwnKeys, Reflect, [value]) as PropertyKey[];
 }
 
-function reflectGet(value: object, key: PropertyKey): unknown {
+function reflectGet(value: RuntimeReflectionRecord, key: PropertyKey): unknown {
   return ReflectApply(ReflectGet, Reflect, [value, key]) as unknown;
 }
 
@@ -1726,7 +1728,7 @@ function missingPackageName(specifier: string): string | undefined {
 }
 
 const LEGACY_NPM_PACKAGE_NAME_PATTERN =
-  /^(?:[A-Za-z0-9][A-Za-z0-9._-]*|@[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9_][A-Za-z0-9._-]*)$/;
+  /^(?:[A-Za-z0-9][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
 const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
 
 /** Accept existing npm names without broadening server-external configuration. */
@@ -1764,7 +1766,10 @@ function isIntrinsicError(value: unknown): value is Error {
   return false;
 }
 
-function readOwnDataString(value: object, key: PropertyKey): string | undefined {
+function readOwnDataString(
+  value: RuntimeReflectionRecord,
+  key: PropertyKey,
+): string | undefined {
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = getOwnPropertyDescriptor(value, key);
@@ -1781,7 +1786,10 @@ function readDataDescriptorString(
   return typeof descriptor.value === "string" ? descriptor.value : undefined;
 }
 
-function readAccessorString(value: object, key: PropertyKey): string | undefined {
+function readAccessorString(
+  value: RuntimeReflectionRecord,
+  key: PropertyKey,
+): string | undefined {
   let accessorValue: unknown;
   try {
     accessorValue = reflectGet(value, key);
@@ -1827,7 +1835,9 @@ function isBunResolveMessagePrototypeData(
   return options.value === undefined || descriptor.value === options.value;
 }
 
-function hasReducedBunResolveMessagePrototypeSurface(prototype: object): boolean {
+function hasReducedBunResolveMessagePrototypeSurface(
+  prototype: RuntimeReflectionRecord,
+): boolean {
   const keys = ownKeys(prototype);
   if (keys.length !== 3) return false;
 
@@ -1850,7 +1860,9 @@ function hasReducedBunResolveMessagePrototypeSurface(prototype: object): boolean
   return hasCode && hasMessage && hasName;
 }
 
-function hasNativeBunResolveMessagePrototypeSurface(prototype: object): boolean {
+function hasNativeBunResolveMessagePrototypeSurface(
+  prototype: RuntimeReflectionRecord,
+): boolean {
   const keys = ownKeys(prototype);
   if (keys.length !== 15) return false;
 
@@ -1997,21 +2009,22 @@ function hasNativeBunResolveMessagePrototypeSurface(prototype: object): boolean 
     );
 }
 
-function hasBunResolveMessagePrototypeSurface(prototype: object): boolean {
+function hasBunResolveMessagePrototypeSurface(prototype: RuntimeReflectionRecord): boolean {
   return hasReducedBunResolveMessagePrototypeSurface(prototype) ||
     hasNativeBunResolveMessagePrototypeSurface(prototype);
 }
 
-function isBunResolveMessageAccessorObject(value: object): boolean {
+function isBunResolveMessageAccessorObject(value: RuntimeReflectionRecord): boolean {
   try {
     if (ownKeys(value).length !== 0) return false;
     if (getOwnPropertyDescriptor(value, "code") !== undefined) return false;
     if (getOwnPropertyDescriptor(value, "message") !== undefined) return false;
 
-    const prototype = getPrototypeOf(value);
-    if (prototype === null || getPrototypeOf(prototype) !== IntrinsicObjectPrototype) {
+    const rawPrototype = getPrototypeOf(value);
+    if (rawPrototype === null || getPrototypeOf(rawPrototype) !== IntrinsicObjectPrototype) {
       return false;
     }
+    const prototype = rawPrototype as RuntimeReflectionRecord;
     if (!hasBunResolveMessagePrototypeSurface(prototype)) {
       return false;
     }
@@ -2041,7 +2054,9 @@ function isBunResolveMessageAccessorObject(value: object): boolean {
   }
 }
 
-function missingPackageNameFromBunResolveMessageObject(value: object): string | undefined {
+function missingPackageNameFromBunResolveMessageObject(
+  value: RuntimeReflectionRecord,
+): string | undefined {
   const ownCode = readOwnDataString(value, "code");
   const ownMessage = readOwnDataString(value, "message");
   const hasBunResolveMessageAccessors = ownCode === undefined || ownMessage === undefined
@@ -2082,7 +2097,9 @@ function unresolvedConfigDependency(error: unknown): string | undefined {
     if (weakSetHas(seen, current)) return undefined;
     weakSetAdd(seen, current);
     if (!isIntrinsicError(current)) {
-      return missingPackageNameFromBunResolveMessageObject(current);
+      return missingPackageNameFromBunResolveMessageObject(
+        current as RuntimeReflectionRecord,
+      );
     }
     let message: string | undefined;
     try {
