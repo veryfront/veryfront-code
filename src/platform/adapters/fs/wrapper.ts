@@ -18,6 +18,7 @@ import {
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
+type CapturedTextFileReader = (path: string) => Promise<string>;
 type CapturedContextRunner = <T>(
   projectSlug: string,
   token: string,
@@ -197,10 +198,24 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     | undefined
     | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
+  #textFileReader: CapturedTextFileReader;
   #contextRunner: CapturedContextRunner | undefined;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
+    const readTextFile = captureOptionalMethod(fsAdapter, "readTextFile");
+    const readFile = captureOptionalMethod(fsAdapter, "readFile");
+    if (readFile === undefined) throw new TypeError("FSAdapter readFile must be a function");
+    this.#textFileReader = async (path: string): Promise<string> => {
+      if (readTextFile !== undefined) {
+        return await IntrinsicReflectApply(readTextFile, fsAdapter, [path]) as string;
+      }
+      const result = await IntrinsicReflectApply(readFile, fsAdapter, [path]) as
+        | string
+        | Uint8Array;
+      return typeof result === "string" ? result : new TextDecoder().decode(result);
+    };
+    publishFrozen(this, "readFile", this.#textFileReader);
     const semantics = Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
     this.symlinkSemantics = semantics && "value" in semantics && semantics.value === "none"
       ? "none"
@@ -435,10 +450,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    if (this._fsAdapter.readTextFile) return this._fsAdapter.readTextFile(path);
-
-    const result = await this._fsAdapter.readFile(path);
-    return typeof result === "string" ? result : new TextDecoder().decode(result);
+    return await this.#textFileReader(path);
   }
 
   async readOptionalTextFile(path: string): Promise<string> {

@@ -972,7 +972,16 @@ describe("VeryfrontFSAdapter", () => {
         path: "pages/repeated.tsx",
       });
 
-      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+      let timerRan = false;
+      const timer = setTimeout(() => {
+        timerRan = true;
+      }, 0);
+      try {
+        assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+        assertEquals(timerRan, true, "large fingerprints must yield to the task queue");
+      } finally {
+        clearTimeout(timer);
+      }
     });
 
     it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {

@@ -60,13 +60,16 @@ const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 const SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS = 32 * 1_024;
-const ArrayPrototypeSort = Array.prototype.sort;
+const SOURCE_SNAPSHOT_YIELD_CODE_UNITS = 2 * 1_024 * 1_024;
+const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
+const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
 const IntrinsicReflectApply = Reflect.apply;
-const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicMap = Map;
 const IntrinsicUint8Array = Uint8Array;
+const IntrinsicPromise = Promise;
+const IntrinsicSetTimeout = globalThis.setTimeout;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
@@ -174,38 +177,47 @@ function captureSourceSnapshotRecord(file: SourceSnapshotFile): SourceSnapshotRe
   ];
 }
 
-function compareSourceSnapshotStrings(left: string, right: string): number {
-  const sharedLength = left.length < right.length ? left.length : right.length;
-  for (let index = 0; index < sharedLength; index++) {
-    const leftCodeUnit = IntrinsicReflectApply(StringPrototypeCharCodeAt, left, [index]) as number;
-    const rightCodeUnit = IntrinsicReflectApply(StringPrototypeCharCodeAt, right, [
-      index,
-    ]) as number;
-    if (leftCodeUnit !== rightCodeUnit) return leftCodeUnit < rightCodeUnit ? -1 : 1;
-  }
-  return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
+interface SourceSnapshotHashBudget {
+  codeUnits: number;
 }
 
-function compareSourceSnapshotValues(
-  left: string | number | null,
-  right: string | number | null,
-): number {
-  const leftType = left === null ? 0 : typeof left === "number" ? 1 : 2;
-  const rightType = right === null ? 0 : typeof right === "number" ? 1 : 2;
-  if (leftType !== rightType) return leftType < rightType ? -1 : 1;
-  if (left === null || right === null) return 0;
-  return compareSourceSnapshotStrings(`${left}`, `${right}`);
+function yieldSourceSnapshotTask(): Promise<void> {
+  return new IntrinsicPromise((resolve) => {
+    IntrinsicSetTimeout(resolve, 0);
+  });
 }
 
-function compareSourceSnapshotRecords(
-  left: SourceSnapshotRecord,
-  right: SourceSnapshotRecord,
-): number {
-  for (let index = 0; index < 7; index++) {
-    const comparison = compareSourceSnapshotValues(left[index]!, right[index]!);
-    if (comparison !== 0) return comparison;
+async function continueSourceSnapshotHashString(
+  hash: Hash,
+  value: string,
+  start: number,
+  budget: SourceSnapshotHashBudget,
+): Promise<void> {
+  await yieldSourceSnapshotTask();
+  budget.codeUnits = 0;
+  for (let chunkStart = start; chunkStart < value.length;) {
+    const remaining = value.length - chunkStart;
+    const codeUnitCount = SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS < remaining
+      ? SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS
+      : remaining;
+    const bytes = new IntrinsicUint8Array(codeUnitCount * 2);
+    for (let offset = 0; offset < codeUnitCount; offset++) {
+      const codeUnit = IntrinsicReflectApply(
+        StringPrototypeCharCodeAt,
+        value,
+        [chunkStart + offset],
+      ) as number;
+      bytes[offset * 2] = codeUnit >>> 8;
+      bytes[offset * 2 + 1] = codeUnit & 0xff;
+    }
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [bytes]);
+    chunkStart += codeUnitCount;
+    budget.codeUnits += codeUnitCount;
+    if (budget.codeUnits >= SOURCE_SNAPSHOT_YIELD_CODE_UNITS && chunkStart < value.length) {
+      await yieldSourceSnapshotTask();
+      budget.codeUnits = 0;
+    }
   }
-  return 0;
 }
 
 function updateSourceSnapshotHashString(hash: Hash, value: string): void {
@@ -228,41 +240,93 @@ function updateSourceSnapshotHashString(hash: Hash, value: string): void {
   }
 }
 
-function updateSourceSnapshotHashValue(
+function updateSourceSnapshotHashStringBounded(
   hash: Hash,
-  value: string | number | null,
-): void {
-  if (value === null) {
-    updateSourceSnapshotHashString(hash, "z");
-    return;
-  }
-  const serialized = `${value}`;
-  updateSourceSnapshotHashString(hash, typeof value === "number" ? "n" : "s");
-  updateSourceSnapshotHashString(hash, `${serialized.length}:`);
-  updateSourceSnapshotHashString(hash, serialized);
-}
-
-function computeSourceSnapshotFingerprint(files: SourceSnapshotFile[]): string {
-  const records: SourceSnapshotRecord[] = [];
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-    IntrinsicObjectDefineProperty(records, records.length, {
-      configurable: true,
-      enumerable: true,
-      value: captureSourceSnapshotRecord(files[fileIndex]!),
-      writable: true,
-    });
-  }
-  IntrinsicReflectApply(ArrayPrototypeSort, records, [compareSourceSnapshotRecords]);
-
-  const hash = createHash("sha256");
-  for (let recordIndex = 0; recordIndex < records.length; recordIndex++) {
-    updateSourceSnapshotHashString(hash, "r");
-    const record = records[recordIndex]!;
-    for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
-      updateSourceSnapshotHashValue(hash, record[valueIndex]!);
+  value: string,
+  budget: SourceSnapshotHashBudget,
+): Promise<void> | undefined {
+  for (let start = 0; start < value.length; start += SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS) {
+    const remaining = value.length - start;
+    const codeUnitCount = SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS < remaining
+      ? SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS
+      : remaining;
+    const bytes = new IntrinsicUint8Array(codeUnitCount * 2);
+    for (let offset = 0; offset < codeUnitCount; offset++) {
+      const codeUnit = IntrinsicReflectApply(
+        StringPrototypeCharCodeAt,
+        value,
+        [start + offset],
+      ) as number;
+      bytes[offset * 2] = codeUnit >>> 8;
+      bytes[offset * 2 + 1] = codeUnit & 0xff;
+    }
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [bytes]);
+    budget.codeUnits += codeUnitCount;
+    if (budget.codeUnits >= SOURCE_SNAPSHOT_YIELD_CODE_UNITS) {
+      return continueSourceSnapshotHashString(hash, value, start + codeUnitCount, budget);
     }
   }
-  return IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string;
+  return undefined;
+}
+
+function addSourceSnapshotDigest(
+  accumulator: Uint8Array,
+  digest: Uint8Array,
+): void {
+  let carry = 0;
+  for (let index = SOURCE_SNAPSHOT_DIGEST_BYTES - 1; index >= 0; index--) {
+    const sum = accumulator[index]! + digest[index]! + carry;
+    accumulator[index] = sum & 0xff;
+    carry = sum >>> 8;
+  }
+}
+
+async function computeSourceSnapshotFingerprint(files: SourceSnapshotFile[]): Promise<string> {
+  // A modular sum of cryptographic per-record digests is independent of list
+  // order and keeps working memory constant. The final hash also binds the
+  // record count, so duplicate files remain significant.
+  const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
+  const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const record = captureSourceSnapshotRecord(files[fileIndex]!);
+    const recordHash = createHash("sha256");
+    updateSourceSnapshotHashString(recordHash, "r");
+    for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
+      const value = record[valueIndex]!;
+      if (value === null) {
+        const pending = updateSourceSnapshotHashStringBounded(recordHash, "z", budget);
+        if (pending) await pending;
+        continue;
+      }
+      const serialized = `${value}`;
+      let pending = updateSourceSnapshotHashStringBounded(
+        recordHash,
+        typeof value === "number" ? "n" : "s",
+        budget,
+      );
+      if (pending) await pending;
+      pending = updateSourceSnapshotHashStringBounded(
+        recordHash,
+        `${serialized.length}:`,
+        budget,
+      );
+      if (pending) await pending;
+      pending = updateSourceSnapshotHashStringBounded(recordHash, serialized, budget);
+      if (pending) await pending;
+    }
+    const digest = IntrinsicReflectApply(HashPrototypeDigest, recordHash, []) as Uint8Array;
+    addSourceSnapshotDigest(accumulator, digest);
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+      budget.codeUnits = 0;
+    }
+  }
+  await yieldSourceSnapshotTask();
+  const fingerprintHash = createHash("sha256");
+  updateSourceSnapshotHashString(fingerprintHash, "veryfront-source-snapshot-multiset-v1");
+  updateSourceSnapshotHashString(fingerprintHash, `${files.length}:`);
+  IntrinsicReflectApply(HashPrototypeUpdate, fingerprintHash, [accumulator]);
+  return IntrinsicReflectApply(HashPrototypeDigest, fingerprintHash, ["hex"]) as string;
 }
 
 interface BranchSnapshotRecoveryOptions<T> {
@@ -1424,8 +1488,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const value = (async () => {
-      const fingerprint = computeSourceSnapshotFingerprint(files);
-      await Promise.resolve();
+      const fingerprint = await computeSourceSnapshotFingerprint(files);
       return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
         ? fingerprint
         : undefined;

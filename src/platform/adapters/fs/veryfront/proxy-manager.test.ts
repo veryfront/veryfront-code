@@ -1138,6 +1138,68 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("uses captured concrete setup methods after project prototype mutation", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          (adapter as unknown as { initialized: boolean }).initialized = true;
+          return adapter;
+        },
+      });
+      const originalSetContentContext = Object.getOwnPropertyDescriptor(
+        VeryfrontFSAdapter.prototype,
+        "setContentContext",
+      )!;
+      const originalInitialize = Object.getOwnPropertyDescriptor(
+        VeryfrontFSAdapter.prototype,
+        "initialize",
+      )!;
+      const observedTokens: string[] = [];
+      const observeToken = function (this: { apiToken?: string }) {
+        if (this.apiToken) observedTokens.push(this.apiToken);
+      };
+      Object.defineProperty(VeryfrontFSAdapter.prototype, "setContentContext", {
+        configurable: true,
+        value: function (this: { apiToken?: string }) {
+          observeToken.call(this);
+        },
+      });
+      Object.defineProperty(VeryfrontFSAdapter.prototype, "initialize", {
+        configurable: true,
+        value: function (this: { apiToken?: string }) {
+          observeToken.call(this);
+          return Promise.resolve();
+        },
+      });
+
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertExists(adapter);
+        assertEquals(observedTokens, []);
+      } finally {
+        Object.defineProperty(
+          VeryfrontFSAdapter.prototype,
+          "setContentContext",
+          originalSetContentContext,
+        );
+        Object.defineProperty(
+          VeryfrontFSAdapter.prototype,
+          "initialize",
+          originalInitialize,
+        );
+        manager.dispose();
+      }
+    });
+
     it("does not expose credential principals in logs or cache invariant errors", async () => {
       const token = "vf_test_diagnostic_credential";
       const credentialPrincipal =

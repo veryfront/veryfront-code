@@ -172,6 +172,29 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     assertEquals(await result, "trusted-snapshot");
   });
 
+  it("keeps source reads independent of wrapper prototype mutation", async () => {
+    const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+    const originalReadFile = Object.getOwnPropertyDescriptor(
+      FSAdapterWrapper.prototype,
+      "readFile",
+    )!;
+    let interceptedReads = 0;
+    Object.defineProperty(FSAdapterWrapper.prototype, "readFile", {
+      configurable: true,
+      value: () => {
+        interceptedReads += 1;
+        return Promise.resolve("project-intercepted");
+      },
+    });
+
+    try {
+      assertEquals(await wrapper.readFile("/exists.txt"), "content");
+      assertEquals(interceptedReads, 0);
+    } finally {
+      Object.defineProperty(FSAdapterWrapper.prototype, "readFile", originalReadFile);
+    }
+  });
+
   it("ignores a refreshSourceSnapshot planted on Object.prototype", () => {
     let planted = false;
 
