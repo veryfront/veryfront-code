@@ -597,7 +597,8 @@ function createLocalIntegrationToolSourceInternal(
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;
       if (tool.enumeratedHost) {
-        const host = validated.args[tool.enumeratedHost.parameterName];
+        const host = validated.args[tool.enumeratedHost.parameterName] ??
+          endpoint.params?.[tool.enumeratedHost.parameterName]?.default;
         if (typeof host !== "string") {
           configurationError(`Local integration tool "${toolName}" has no allowed host`);
         }

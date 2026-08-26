@@ -322,6 +322,13 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
     headerName: v.string().optional(),
+  }).superRefine((parameter, context) => {
+    if (parameter.enum !== undefined && parameter.type !== "string") {
+      context.addIssue({
+        code: "custom",
+        message: "Integration endpoint parameter enum is valid only for string parameters.",
+      });
+    }
   })
 );
 export const IntegrationEndpointParamSchema = lazySchema(getIntegrationEndpointParamSchema);

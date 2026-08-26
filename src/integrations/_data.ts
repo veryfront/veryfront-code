@@ -43439,7 +43439,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
             "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },
@@ -43476,7 +43476,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
             "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },
@@ -43524,7 +43524,7 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
             "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },

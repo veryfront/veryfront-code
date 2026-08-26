@@ -592,6 +592,16 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(credentialProviderCalls, 1);
     assertEquals(transportCalls, 1);
     assertEquals(requestedOrigins, ["https://eu.posthog.com"]);
+
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", {
+        projectId: "42",
+      }),
+      { results: [] },
+    );
+    assertEquals(credentialProviderCalls, 2);
+    assertEquals(transportCalls, 2);
+    assertEquals(requestedOrigins, ["https://eu.posthog.com", "https://us.posthog.com"]);
   });
 
   it("mints client credentials before executing a fixed-origin provider tool", async () => {

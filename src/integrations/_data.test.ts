@@ -1388,6 +1388,11 @@ describe("integration endpoint specs", () => {
           hosts,
           `${connectorName}:${tool.id ?? tool.name} must restrict its credentialed endpoint host`,
         );
+        if (connectorName === "posthog") {
+          for (const allowedHost of hosts) {
+            assertEquals(host.description.includes(allowedHost), true);
+          }
+        }
       }
     }
 
