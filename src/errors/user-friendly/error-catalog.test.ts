@@ -263,8 +263,15 @@ describe("ERROR_SOLUTIONS", () => {
 
       assert(sol.example.includes("use client"), "example shows the client directive");
       assert(sol.example.includes("await db.query"), "example shows the server-side data fetch");
+      const queryAssignment =
+        /const\s+(?:\{\s*([A-Za-z_$][\w$]*)\s*\}|([A-Za-z_$][\w$]*))\s*=\s*await db\.query/.exec(
+          sol.example,
+        );
+      assertExists(queryAssignment, "example assigns the server-side query result");
+      const fetchedValue = queryAssignment[1] ?? queryAssignment[2];
+      assertExists(fetchedValue);
       assert(
-        sol.example.includes("<ClientComponent data={data} />"),
+        new RegExp(`<[A-Z][\\w$]*\\s+[\\w$]+=\\{${fetchedValue}\\}\\s*/>`).test(sol.example),
         "example shows data passed across the boundary",
       );
     });
