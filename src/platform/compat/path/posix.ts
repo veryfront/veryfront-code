@@ -1,5 +1,3 @@
-/** Dependency-free POSIX path operations for every supported runtime. */
-
 import {
   primordialArrayJoin as arrayJoin,
   primordialArrayPop as arrayPop,
@@ -33,6 +31,7 @@ function startsWith(value: string, search: string): boolean {
   return apply(stringStartsWith, value, [search]) as boolean;
 }
 
+/** Dependency-free POSIX path operations for every supported runtime. */
 export interface PosixPath {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
