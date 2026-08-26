@@ -30,6 +30,7 @@ import {
 import { replaySSRDependencyResolutionObservations } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { withModuleTransformPermit } from "./transform-permit.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -260,16 +261,35 @@ export async function transformModuleCodeWithCache(
 
   const transformResult = await deps.getOrComputeTransform(
     cacheKey,
-    (reportProgress, abortSignal) => {
-      logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
-      return deps.transformToESM(
-        input.fileContent,
-        input.filePath,
-        input.projectDir,
-        input.adapter,
-        { ...transformOptions, abortSignal, onProgress: reportProgress },
-      );
-    },
+    // The concurrency permit is acquired inside the compute callback — after
+    // singleflight dedupe and the cache-hit check — so cache hits and followers
+    // of an in-flight compute never consume transform capacity while waiting.
+    // The flight's abort signal releases a queued waiter the moment its last
+    // caller detaches.
+    (reportProgress, abortSignal) =>
+      withModuleTransformPermit({
+        projectId: input.effectiveProjectId,
+        dev: input.mode === "development",
+        signal: abortSignal ?? input.signal,
+        ownerDeadlineSignal: input.signal,
+      }, (reportPermitProgress) => {
+        logger.debug("Transform cache miss, transforming", { filePath: input.filePath });
+        const forwardProgress = reportProgress ?? input.onProgress;
+        return deps.transformToESM(
+          input.fileContent,
+          input.filePath,
+          input.projectDir,
+          input.adapter,
+          {
+            ...transformOptions,
+            abortSignal: abortSignal ?? input.signal,
+            onProgress: (event) => {
+              reportPermitProgress();
+              forwardProgress?.(event);
+            },
+          },
+        );
+      }),
     ttlSeconds,
     input.onProgress,
     input.signal,
@@ -327,11 +347,31 @@ export async function transformModuleCodeWithCache(
       },
     );
 
-    const pipelineResult = await deps.runPipeline(
-      input.fileContent,
-      input.filePath,
-      input.projectDir,
-      { ...transformOptions, abortSignal: input.signal },
+    // This retry recomputes outside the singleflight, so it is transform work
+    // in its own right and must hold a permit like any other transform. The
+    // compute permit above was already released when the flight settled, so
+    // this never nests acquisitions.
+    const pipelineResult = await withModuleTransformPermit(
+      {
+        projectId: input.effectiveProjectId,
+        dev: input.mode === "development",
+        signal: input.signal,
+        ownerDeadlineSignal: input.signal,
+      },
+      (reportPermitProgress) =>
+        deps.runPipeline(
+          input.fileContent,
+          input.filePath,
+          input.projectDir,
+          {
+            ...transformOptions,
+            abortSignal: input.signal,
+            onProgress: (event) => {
+              reportPermitProgress();
+              input.onProgress?.(event);
+            },
+          },
+        ),
     );
     transformedCode = pipelineResult.code;
 
