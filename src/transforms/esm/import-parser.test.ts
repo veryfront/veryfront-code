@@ -539,6 +539,59 @@ describe("transforms/esm/import-parser", () => {
     }
   });
 
+  it("retains resolved filenames for compiled extensionless MDX imports", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          resolveFile: (path: string) =>
+            Promise.resolve(
+              path.endsWith("components/Post")
+                ? "components/Post.mdx"
+                : path.endsWith("components/Card")
+                ? "components/Card/index.tsx"
+                : null,
+            ),
+        },
+      } as unknown as RuntimeAdapter;
+
+      const result = await parseLocalImports(
+        [
+          `import Post from "./Post";`,
+          `import Card from "./Card";`,
+          `export default [Post, Card];`,
+        ].join("\n"),
+        "/workspace/project/components/Page.mdx",
+        "/workspace/project",
+        adapter,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(
+        result.imports.map(({ absolutePath, requestedPath, resolvedPath }) => ({
+          absolutePath,
+          requestedPath,
+          resolvedPath,
+        })),
+        [
+          {
+            absolutePath: "components/Post.mdx",
+            requestedPath: "/workspace/project/components/Post",
+            resolvedPath: "/workspace/project/components/Post.mdx",
+          },
+          {
+            absolutePath: "components/Card/index.tsx",
+            requestedPath: "/workspace/project/components/Card",
+            resolvedPath: "/workspace/project/components/Card/index.tsx",
+          },
+        ],
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
   it("uses hosted alias resolution to retain extension and directory-index identity", async () => {
     const adapter = {
       fs: {

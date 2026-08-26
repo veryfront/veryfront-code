@@ -22,6 +22,8 @@ export interface LocalImport {
   absolutePath: string;
   /** Lexical project path the author addressed, used for metadata and CSS identity. */
   requestedPath?: string;
+  /** Lexical filename selected by extension or directory-index resolution. */
+  resolvedPath?: string;
   /** True when canonical project containment approved absolutePath. */
   projectContained?: true;
 }
@@ -59,8 +61,13 @@ const PromiseAll = Promise.all;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const universalObjectPrototype = Object.prototype;
+const StringEndsWith = String.prototype.endsWith;
 const StringReplaceAll = String.prototype.replaceAll;
 const StringStartsWith = String.prototype.startsWith;
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringEndsWith, value, [search]) as boolean;
+}
 
 function stringReplaceAll(value: string, search: string, replacement: string): string {
   return ReflectApply(StringReplaceAll, value, [search, replacement]) as string;
@@ -123,7 +130,9 @@ export async function parseLocalImports(
   // runtime, which this parser discards, so the answer for a `.md` file is
   // always "no dependencies". Compiling one to learn that is pure cost on a
   // path that runs per render.
-  if (filePath.endsWith(".css") || filePath.endsWith(".json") || /\.md$/i.test(filePath)) {
+  if (
+    stringEndsWith(filePath, ".css") || stringEndsWith(filePath, ".json") || /\.md$/i.test(filePath)
+  ) {
     return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
 
@@ -180,12 +189,13 @@ export async function parseLocalImports(
           rewriteSpecifier: specifier,
           absolutePath: resolved.absolutePath,
           requestedPath: resolved.requestedPath,
+          resolvedPath: resolved.resolvedPath,
           projectContained: true as const,
         };
         // An in-project symlink may canonicalize to a target whose suffix
         // differs from the link's. The import keeps the type the author
         // addressed; the canonical path is only what gets read.
-        if (resolved.requestedPath.endsWith(".css")) cssImports.push(entry);
+        if (stringEndsWith(resolved.requestedPath, ".css")) cssImports.push(entry);
         else localImports.push(entry);
         continue;
       }
@@ -225,9 +235,10 @@ export async function parseLocalImports(
           specifier,
           absolutePath: resolved.absolutePath,
           requestedPath: resolved.requestedPath,
+          resolvedPath: resolved.resolvedPath,
           projectContained: true as const,
         };
-        if (resolved.requestedPath.endsWith(".css")) cssImports.push(entry);
+        if (stringEndsWith(resolved.requestedPath, ".css")) cssImports.push(entry);
         else localImports.push(entry);
         continue;
       }
@@ -358,6 +369,8 @@ interface ContainedImportPath {
   absolutePath: string;
   /** Lexically resolved path naming what the author addressed. */
   requestedPath: string;
+  /** Existing lexical filename after extension and directory-index probing. */
+  resolvedPath: string;
 }
 
 async function resolveContainedFilePath(
@@ -392,7 +405,11 @@ async function toContainedImportPath(
     if (!isPathWithinProject(resolve(containment.projectDir, resolved), containment.projectDir)) {
       return null;
     }
-    return { absolutePath: resolved, requestedPath };
+    return {
+      absolutePath: resolved,
+      requestedPath,
+      resolvedPath: resolve(containment.projectDir, resolved),
+    };
   }
   if (containment.canonicalize === null) return null;
 
@@ -409,7 +426,7 @@ async function toContainedImportPath(
   const canonicalProjectDir = canonicalPaths[0]!;
   const canonicalResolved = canonicalPaths[1]!;
   if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
-  return { absolutePath: canonicalResolved, requestedPath };
+  return { absolutePath: canonicalResolved, requestedPath, resolvedPath: resolved };
 }
 
 function isExpectedCanonicalizationRace(error: unknown): boolean {

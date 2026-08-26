@@ -36,6 +36,8 @@ const logger = rendererLogger.component("ssr-module-loader");
 const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
 
 const reflectApply = Reflect.apply;
+const promiseConstructor = Promise;
+const promiseAllSettled = Promise.allSettled;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const universalObjectPrototype = Object.prototype;
@@ -56,6 +58,14 @@ function sliceString(value: string, start: number, end?: number): string {
 
 function startsWithString(value: string, prefix: string): boolean {
   return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function allSettled<T>(
+  values: readonly (T | PromiseLike<T>)[],
+): Promise<PromiseSettledResult<Awaited<T>>[]> {
+  return reflectApply(promiseAllSettled, promiseConstructor, [values]) as Promise<
+    PromiseSettledResult<Awaited<T>>[]
+  >;
 }
 
 type AdapterLstat = NonNullable<RuntimeAdapter["fs"]["lstat"]>;
@@ -303,7 +313,7 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      const results = await Promise.allSettled(
+      const results = await allSettled(
         batch.map(async (crossImport) => {
           try {
             const tempPath = await this.transformCrossProjectImport(crossImport, signal);
@@ -347,13 +357,13 @@ export class SSRDependencyValidator {
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      const results = await Promise.allSettled(
+      const results = await allSettled(
         batch.map(async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp, localFs);
 
             const depEntry = await this.transformWithDependencies(
-              imp.requestedPath ?? imp.absolutePath,
+              imp.resolvedPath ?? imp.requestedPath ?? imp.absolutePath,
               depSource,
               depth + 1,
               dependencyHashCache,

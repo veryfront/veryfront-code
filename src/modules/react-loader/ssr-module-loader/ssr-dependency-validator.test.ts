@@ -484,6 +484,41 @@ describe("SSRDependencyValidator", () => {
     assertEquals(directReads, 0);
   });
 
+  it("transforms a contained import from its resolved lexical filename", async () => {
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        readFile: () => Promise.resolve("export default null;"),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/workspace/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "components/Post.mdx",
+        requestedPath: "/workspace/project/components/Post",
+        resolvedPath: "/workspace/project/components/Post.mdx",
+        projectContained: true,
+        specifier: "./Post",
+      }],
+      "/workspace/project/components/Page.mdx",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(transformedPaths, ["/workspace/project/components/Post.mdx"]);
+  });
+
   it("classifies shadowed legacy project paths through captured string intrinsics", async () => {
     let directReads = 0;
     let snapshotReads = 0;

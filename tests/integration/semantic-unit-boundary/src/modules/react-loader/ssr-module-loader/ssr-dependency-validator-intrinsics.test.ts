@@ -1,9 +1,15 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { afterAll, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 import { SSRDependencyValidator } from "#veryfront/modules/react-loader/ssr-module-loader/ssr-dependency-validator.ts";
+import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
+
+afterAll(async () => {
+  await stopEsbuild();
+});
 
 it("uses captured descriptor authority for symlink semantics", async () => {
   const directReads: string[] = [];
@@ -113,5 +119,87 @@ it("ignores filesystem methods inherited from Object.prototype", async () => {
     } else {
       Reflect.deleteProperty(Object.prototype, "realPath");
     }
+  }
+});
+
+it("classifies contained imports through captured String.endsWith", async () => {
+  const originalEndsWith = String.prototype.endsWith;
+  try {
+    String.prototype.endsWith = function (search: string, endPosition?: number): boolean {
+      if (String(this) === "/project/child.ts" && search === ".css") return true;
+      return Reflect.apply(originalEndsWith, this, [search, endPosition]);
+    };
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        resolveFile: () => Promise.resolve("/project/child.ts"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const result = await parseLocalImports(
+      `import Child from "file:///project/child.ts";\nexport default Child;`,
+      "/project/page.tsx",
+      "/project",
+      adapter,
+    );
+
+    assertEquals(result.imports.length, 1);
+    assertEquals(result.cssImports, []);
+  } finally {
+    String.prototype.endsWith = originalEndsWith;
+  }
+});
+
+it("awaits contained reads through captured Promise.allSettled", async () => {
+  const originalAllSettled = Promise.allSettled;
+  let releaseRead!: (value: Uint8Array) => void;
+  const read = new Promise<Uint8Array>((resolve) => {
+    releaseRead = resolve;
+  });
+  const transformedPaths: string[] = [];
+  const adapter = {
+    fs: {
+      symlinkSemantics: "native",
+      readFileSnapshotWithinLimit: () => read,
+    },
+  } as unknown as RuntimeAdapter;
+  const validator = new SSRDependencyValidator(
+    (path) => {
+      transformedPaths.push(path);
+      return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+    },
+    () => Promise.resolve(""),
+    adapter,
+    "/project",
+  );
+
+  try {
+    Promise.allSettled = (() => Promise.resolve([])) as typeof Promise.allSettled;
+    const processing = validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+    const status = await Promise.race([
+      processing.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 10)),
+    ]);
+
+    releaseRead(new TextEncoder().encode("export default null;"));
+    const paths = await processing;
+
+    assertEquals(status, "pending");
+    assertEquals(transformedPaths, ["/project/child.ts"]);
+    assertEquals(paths.get("./child.ts"), "/tmp/child.js");
+  } finally {
+    Promise.allSettled = originalAllSettled;
+    releaseRead(new Uint8Array());
   }
 });
