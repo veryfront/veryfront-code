@@ -366,7 +366,6 @@ describe("VeryfrontFSAdapter", () => {
 
       const internals = adapter as unknown as {
         getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
-        getCurrentSourceSnapshotIdentity(): string | undefined;
         initialized: boolean;
         sourceSnapshotCheckedAt: number;
         sourceSnapshotIdentity: string | undefined;
@@ -374,7 +373,7 @@ describe("VeryfrontFSAdapter", () => {
         sourceSnapshotRefreshPromise: Promise<void> | null;
       };
       internals.initialized = true;
-      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
       internals.sourceSnapshotCheckedAt = Date.now();
       internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
       internals.sourceSnapshotRefreshPromise = new Promise(() => {});
@@ -1110,7 +1109,6 @@ describe("VeryfrontFSAdapter", () => {
         branch: "main",
       });
       const internals = adapter as unknown as {
-        getCurrentSourceSnapshotIdentity(): string | undefined;
         sourceSnapshotCheckedAt: number;
         sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
         sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
@@ -1118,7 +1116,7 @@ describe("VeryfrontFSAdapter", () => {
         wsManager: { deps: { clearMemoryCaches: () => void } };
       };
       internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "old source" }];
-      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
       internals.sourceSnapshotCheckedAt = Date.now();
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
 

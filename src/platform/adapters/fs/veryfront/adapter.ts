@@ -471,7 +471,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
   }
 
-  private getCurrentSourceSnapshotIdentity(): string | undefined {
+  #getCurrentSourceSnapshotIdentity(): string | undefined {
     const context = this.contentContext;
     if (!context) return undefined;
 
@@ -846,7 +846,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     const cacheKey = buildFileListCacheKey(contentContext);
-    const initializationIdentity = this.getCurrentSourceSnapshotIdentity();
+    const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
@@ -857,7 +857,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
         const isSnapshotSuperseded = () =>
           this.contentContext !== contentContext ||
-          this.getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
+          this.#getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
           this.sourceSnapshotVersion !== initializationSnapshotVersion;
         if (isSnapshotSuperseded()) return false;
 
@@ -1230,7 +1230,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private markSourceSnapshotChanged(
     files: SourceSnapshotFile[],
-    identity = this.getCurrentSourceSnapshotIdentity(),
+    identity = this.#getCurrentSourceSnapshotIdentity(),
   ): void {
     this.sourceSnapshotFiles = files;
     this.sourceSnapshotIdentity = identity;
@@ -1345,14 +1345,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const cacheKey = buildFileListCacheKey(this.contentContext);
     const refreshContext = this.contentContext;
-    const refreshIdentity = this.getCurrentSourceSnapshotIdentity();
+    const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
     const files = await fetchFileListForContext(this.client, refreshContext);
     const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
-        this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
+        this.#getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
         this.sourceSnapshotVersion !== previousVersion;
       if (isSnapshotSuperseded()) {
         return { applied: false, sourceChanged: false };
@@ -1464,7 +1464,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
       }
 
-      const currentIdentity = this.getCurrentSourceSnapshotIdentity();
+      const currentIdentity = this.#getCurrentSourceSnapshotIdentity();
       if (
         currentIdentity === undefined ||
         this.sourceSnapshotIdentity === currentIdentity
@@ -1496,7 +1496,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // tree a second time.
     if (
       initializedNow &&
-      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
       this.sourceSnapshotCheckedAt > 0
     ) {
       return;
@@ -1508,7 +1508,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // asked to accept no lease at all would silently be handed one.
     if (
       maxAgeMs > 0 &&
-      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
       currentTime() - this.sourceSnapshotCheckedAt < maxAgeMs
     ) {
       return;
@@ -1551,7 +1551,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * before trusting that establishment.
    */
   getSourceSnapshotIdentity(): string | undefined {
-    return this.getCurrentSourceSnapshotIdentity();
+    return this.#getCurrentSourceSnapshotIdentity();
   }
 
   getPokeMetrics(): {
