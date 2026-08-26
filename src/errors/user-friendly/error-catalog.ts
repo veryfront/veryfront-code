@@ -62,9 +62,8 @@ export async function POST(request: Request) {
 'use client';
 import { db } from './database'; // A Client Component cannot reach the database
 
-export default async function DashboardPage() {
-  const { rows } = await db.query<{ id: number; name: string }>('SELECT id, name FROM users');
-  return <ul>{rows.map((user) => <li key={user.id}>{user.name}</li>)}</ul>;
+export default function DashboardPage() {
+  return <button onClick={() => db.query('SELECT id, name FROM users')}>Load users</button>;
 }
 
 // ✅ Correct: app/dashboard/page.tsx (Server Component, no directive)

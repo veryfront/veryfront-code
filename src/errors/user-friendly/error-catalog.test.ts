@@ -1,75 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parse } from "npm:@babel/parser@7.29.2";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 
 // The examples are TS/TSX source, so directive placement can only be judged on
 // statements, not raw lines: comments never end a statement, a directive may
 // carry one (`'use client'; // Client Component`), and one line may hold
-// several statements (`import './setup'; 'use client';`). This is a minimal
-// scanner, not a parser. It removes `//` and `/* */` comments and breaks at
-// code-level semicolons while staying string-aware (so `'https://x'` and a
-// quoted `;` survive) and preserving newlines, which is exactly enough to
-// recover the statements of the flat catalog examples.
-function toStatementSource(source: string): string {
-  let out = "";
-  let state: "code" | "line-comment" | "block-comment" | "string" = "code";
-  let quote = "";
-
-  for (let i = 0; i < source.length; i++) {
-    const char = source[i]!;
-    const next = source[i + 1];
-
-    if (state === "code") {
-      if (char === "/" && next === "/") {
-        state = "line-comment";
-        i++;
-      } else if (char === "/" && next === "*") {
-        state = "block-comment";
-        i++;
-      } else if (char === ";") {
-        // A code-level semicolon ends a statement just as a newline does, so
-        // several statements sharing one line still split. Semicolons inside
-        // strings take the branch below and survive.
-        out += "\n";
-      } else {
-        if (char === "'" || char === '"' || char === "`") {
-          state = "string";
-          quote = char;
-        }
-        out += char;
-      }
-    } else if (state === "line-comment") {
-      if (char === "\n") {
-        state = "code";
-        out += char;
-      }
-    } else if (state === "block-comment") {
-      if (char === "*" && next === "/") {
-        state = "code";
-        i++;
-      } else if (char === "\n") {
-        // Keep the line structure so later statements stay on their own lines.
-        out += char;
-      }
-    } else {
-      if (char === "\\") {
-        out += char + (next ?? "");
-        i++;
-        continue;
-      }
-      // A newline closes an unterminated ' or " string, so a stray quote in
-      // JSX prose cannot swallow the rest of the block.
-      if (char === quote || (char === "\n" && quote !== "`")) {
-        state = "code";
-      }
-      out += char;
-    }
-  }
-
-  return out;
-}
+// several statements (`import './setup'; 'use client';`). Parse the snippets
+// as TSX instead of approximating JavaScript lexical grammar: comment markers
+// inside regex literals, templates, and strings must remain ordinary syntax.
 
 // Match the directive syntax, not one exact spelling: single or double quotes,
 // with or without the trailing semicolon, are all forms Veryfront honours and
@@ -82,10 +23,13 @@ const directiveLike = /['"]use client['"]/;
 // directive is not mistaken for a real one, and a directive sharing a line
 // with an earlier statement is still seen in its true position.
 function statementsOf(block: string): string[] {
-  return toStatementSource(block)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
+  const program = parse(block, {
+    sourceType: "module",
+    plugins: ["typescript", "jsx"],
+  }).program;
+  return [...program.directives, ...program.body]
+    .toSorted((left, right) => (left.start ?? 0) - (right.start ?? 0))
+    .map((statement) => block.slice(statement.start ?? 0, statement.end ?? 0).trim());
 }
 
 // Statement index of every 'use client' expression statement in a file block.
@@ -95,7 +39,7 @@ function useClientIndexes(block: string): number[] {
     .filter((index) => index !== -1);
 }
 
-const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")$/;
+const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*");?$/;
 
 function invalidUseClientIndexes(block: string): number[] {
   const statements = statementsOf(block);
@@ -381,6 +325,19 @@ describe("ERROR_SOLUTIONS", () => {
           "a directive inside a comment is not a directive",
         );
       });
+
+      it("does not mistake comment markers inside a regex literal for comments", () => {
+        const block = [
+          "const marker = /[/*]/;",
+          "'use client';",
+        ].join("\n");
+
+        assertEquals(
+          invalidUseClientIndexes(block),
+          [1],
+          "a regex literal must not hide a later misplaced directive",
+        );
+      });
     });
 
     it("labels the corrected half of a wrong/right example", () => {
@@ -407,6 +364,12 @@ describe("ERROR_SOLUTIONS", () => {
       assert(
         !/key=\{user\.name\}/.test(example),
         "rows are keyed by a unique column, since names are not unique",
+      );
+      assert(
+        !/Wrong:[\s\S]*?export default async function DashboardPage\(\)/.test(
+          example.split("// ✅ Correct:", 1)[0]!,
+        ),
+        "the invalid Client Component should not add an unrelated async component error",
       );
     });
   });
