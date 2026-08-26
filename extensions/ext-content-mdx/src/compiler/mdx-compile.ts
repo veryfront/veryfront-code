@@ -18,6 +18,7 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     baseUrl,
     studioEmbed,
     outputFormat = "program",
+    providerImportSource,
     remarkPlugins: additionalRemarkPlugins = [],
     rehypePlugins: additionalRehypePlugins = [],
   } = options;
@@ -53,7 +54,7 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
     development: false,
     remarkPlugins,
     rehypePlugins,
-    providerImportSource: undefined,
+    providerImportSource,
     jsxImportSource: "react",
   });
 
