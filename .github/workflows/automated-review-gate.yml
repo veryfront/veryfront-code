@@ -35,10 +35,7 @@ jobs:
          github.event.comment.user.type == 'Bot')) &&
        (github.event_name != 'workflow_run' ||
         (github.event.workflow_run.event == 'pull_request_review' &&
-         (github.event.workflow_run.actor.type == 'User' ||
-          (github.event.workflow_run.actor.login == 'chatgpt-codex-connector[bot]' &&
-           github.event.workflow_run.actor.id == 199175422 &&
-           github.event.workflow_run.actor.type == 'Bot')))))
+         github.event.workflow_run.conclusion != 'skipped')))
     permissions:
       contents: read
       pull-requests: read

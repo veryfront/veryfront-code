@@ -3283,10 +3283,7 @@ describe("automated review workflow", () => {
         "github.event.comment.user.id == 199175422",
         "github.event.comment.user.type == 'Bot'",
         "github.event.workflow_run.event == 'pull_request_review'",
-        "github.event.workflow_run.actor.type == 'User'",
-        "github.event.workflow_run.actor.login == 'chatgpt-codex-connector[bot]'",
-        "github.event.workflow_run.actor.id == 199175422",
-        "github.event.workflow_run.actor.type == 'Bot'",
+        "github.event.workflow_run.conclusion != 'skipped'",
       ]
     ) {
       assert(
@@ -3297,6 +3294,10 @@ describe("automated review workflow", () => {
     assert(
       !targetIf.includes("github.event.workflow_run.conclusion == 'success'"),
       "failed or cancelled review wakeups must reach trusted invalidation",
+    );
+    assert(
+      !targetIf.includes("github.event.workflow_run.actor"),
+      "downstream reconciliation must trust the classified wakeup result, not the dismissal actor",
     );
     assertEquals(record(targetJob.permissions, "target permissions"), {
       contents: "read",
@@ -3435,8 +3436,7 @@ describe("automated review workflow", () => {
     );
     assertEquals(record(mergeGroupFailureJob.env, "merge group failure env"), {
       TARGET_RESULT: "${{ needs.target.result }}",
-      TARGET_STATUS_ID:
-        "${{ needs.target.outputs.merge_group_status_id }}",
+      TARGET_STATUS_ID: "${{ needs.target.outputs.merge_group_status_id }}",
       PUBLISHER_STATUS_ID: "${{ needs.merge_group.outputs.status_id }}",
     });
     assertEquals(
