@@ -42,11 +42,19 @@ type ProxyAdapterDiagnosticIdentity = Omit<ProxyAdapterIdentity, "credentialPrin
 const encodeText = TextEncoder.prototype.encode;
 const subtleDigest = crypto.subtle.digest.bind(crypto.subtle);
 const textEncoder = new TextEncoder();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicUint8Array = Uint8Array;
+const NumberPrototypeToString = Number.prototype.toString;
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
-  const bytes = encodeText.call(textEncoder, token);
-  const digest = new Uint8Array(await subtleDigest("SHA-256", bytes));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as Uint8Array<ArrayBuffer>;
+  const digest = new IntrinsicUint8Array(await subtleDigest("SHA-256", bytes));
+  let principal = "";
+  for (let index = 0; index < digest.length; index++) {
+    const hex = IntrinsicReflectApply(NumberPrototypeToString, digest[index], [16]) as string;
+    principal += hex.length === 1 ? `0${hex}` : hex;
+  }
+  return principal;
 }
 
 function buildDiagnosticCacheKey(identity: ProxyAdapterIdentity): string {

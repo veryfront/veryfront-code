@@ -94,6 +94,8 @@ import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-e
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -125,6 +127,12 @@ const defaultDeps: AgentStreamHandlerDeps = {
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
 const logger = serverLogger.component("agent-stream-handler");
+const IntrinsicReflectApply = Reflect.apply;
+const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const FSAdapterWrapperPrototype = FSAdapterWrapper.prototype;
+const FSAdapterWrapperGetUnderlyingAdapter = FSAdapterWrapperPrototype.getUnderlyingAdapter;
+const MultiProjectFSAdapterPrototype = MultiProjectFSAdapter.prototype;
+const MultiProjectFSAdapterRunWithContext = MultiProjectFSAdapterPrototype.runWithContext;
 
 /** VeryfrontError.cause is `unknown` and is often a plain string. */
 function describeErrorCause(cause: unknown): string | undefined {
@@ -667,6 +675,64 @@ type SourceContextFsWrapper = {
     | Promise<string | undefined>;
 };
 
+function isPrototypeInstance(
+  prototype: FSAdapterWrapper | MultiProjectFSAdapter,
+  value: unknown,
+): boolean {
+  return typeof value === "object" && value !== null &&
+    IntrinsicReflectApply(ObjectPrototypeIsPrototypeOf, prototype, [value]) as boolean;
+}
+
+function runWithCapturedSourceContext<T>(
+  fsWrapper: SourceContextFsWrapper,
+  projectSlug: string,
+  token: string,
+  fn: () => Promise<T>,
+  projectId: string | undefined,
+  options: ReturnType<typeof buildAgentSourceRunOptions>,
+): Promise<T> {
+  const args = [projectSlug, token, fn, projectId, options] as const;
+
+  if (isPrototypeInstance(FSAdapterWrapperPrototype, fsWrapper)) {
+    const underlying = IntrinsicReflectApply(
+      FSAdapterWrapperGetUnderlyingAdapter,
+      fsWrapper,
+      [],
+    ) as unknown;
+    if (isPrototypeInstance(MultiProjectFSAdapterPrototype, underlying)) {
+      return IntrinsicReflectApply(
+        MultiProjectFSAdapterRunWithContext,
+        underlying,
+        args,
+      ) as Promise<T>;
+    }
+    throw INVALID_ARGUMENT.create({
+      detail: "Alternate agent source requires a multi-project runtime context",
+    });
+  }
+
+  if (isPrototypeInstance(MultiProjectFSAdapterPrototype, fsWrapper)) {
+    return IntrinsicReflectApply(
+      MultiProjectFSAdapterRunWithContext,
+      fsWrapper,
+      args,
+    ) as Promise<T>;
+  }
+
+  const isMultiProjectMode = fsWrapper.isMultiProjectMode;
+  const runWithContext = fsWrapper.runWithContext;
+  if (
+    typeof isMultiProjectMode !== "function" ||
+    IntrinsicReflectApply(isMultiProjectMode, fsWrapper, []) !== true ||
+    typeof runWithContext !== "function"
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Alternate agent source requires a multi-project runtime context",
+    });
+  }
+  return IntrinsicReflectApply(runWithContext, fsWrapper, args) as Promise<T>;
+}
+
 async function requireAgentSourceSnapshotFingerprint(
   ctx: HandlerContext,
   reason: string,
@@ -812,14 +878,15 @@ export class AgentStreamHandler extends BaseHandler {
     fn: () => Promise<T>,
   ): Promise<T> {
     const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
-    if (!ctx.projectSlug || !fsWrapper.isMultiProjectMode?.() || !fsWrapper.runWithContext) {
+    if (!ctx.projectSlug) {
       throw INVALID_ARGUMENT.create({
         detail: "Alternate agent source requires a multi-project runtime context",
       });
     }
 
     const token = ctx.proxyToken || "";
-    return fsWrapper.runWithContext(
+    return runWithCapturedSourceContext(
+      fsWrapper,
       ctx.projectSlug,
       token,
       fn,

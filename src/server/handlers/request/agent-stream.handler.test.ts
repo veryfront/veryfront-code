@@ -52,12 +52,15 @@ import {
 } from "./agent-stream.handler.test-helpers.ts";
 import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../../shutdown-state.ts";
 import {
+  asyncLocalStorage,
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { EnvironmentVariableCache } from "../../project-env/cache.ts";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
 // depending on external DNS answers for production or reserved test hosts.
@@ -3148,6 +3151,95 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertEquals(observedCacheCredential, undefined);
     assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("uses captured source context switches after project prototype mutation", async () => {
+    const multiProjectAdapter = new MultiProjectFSAdapter({
+      veryfront: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "<TOKEN>",
+        projectSlug: "demo-project",
+        proxyMode: true,
+        cache: { enabled: false },
+      },
+    });
+    const wrapper = new FSAdapterWrapper(multiProjectAdapter);
+    const originalWrapperRun = Object.getOwnPropertyDescriptor(
+      FSAdapterWrapper.prototype,
+      "runWithContext",
+    );
+    const originalMultiProjectRun = Object.getOwnPropertyDescriptor(
+      MultiProjectFSAdapter.prototype,
+      "runWithContext",
+    );
+    const asyncLocalStoragePrototype = Object.getPrototypeOf(asyncLocalStorage) as object;
+    const originalAsyncLocalStorageRun = Object.getOwnPropertyDescriptor(
+      asyncLocalStoragePrototype,
+      "run",
+    );
+    const observedTokens: string[] = [];
+
+    Object.defineProperty(FSAdapterWrapper.prototype, "runWithContext", {
+      configurable: true,
+      value: function (...args: unknown[]) {
+        observedTokens.push(String(args[1]));
+        return Reflect.apply(originalWrapperRun!.value, this, args);
+      },
+    });
+    Object.defineProperty(MultiProjectFSAdapter.prototype, "runWithContext", {
+      configurable: true,
+      value: function (...args: unknown[]) {
+        observedTokens.push(String(args[1]));
+        return Reflect.apply(originalMultiProjectRun!.value, this, args);
+      },
+    });
+    Object.defineProperty(asyncLocalStoragePrototype, "run", {
+      configurable: true,
+      value: function (...args: unknown[]) {
+        const token = (args[0] as { token?: unknown })?.token;
+        if (token !== undefined) observedTokens.push(String(token));
+        return Reflect.apply(originalAsyncLocalStorageRun!.value, this, args);
+      },
+    });
+
+    try {
+      const ctx = createCtx();
+      ctx.proxyToken = "request-scoped-user-token";
+      ctx.adapter = { ...ctx.adapter, fs: wrapper };
+      const handler = new AgentStreamHandler() as unknown as {
+        withAgentSourceContext<T>(
+          context: HandlerContext,
+          source: { type: "branch"; branch: string },
+          fn: () => Promise<T>,
+        ): Promise<T>;
+      };
+
+      const contextToken = await handler.withAgentSourceContext(
+        ctx,
+        { type: "branch", branch: "main" },
+        () => Promise.resolve(getCurrentRequestContext()?.token),
+      );
+
+      assertEquals(contextToken, "request-scoped-user-token");
+      assertEquals(observedTokens, []);
+    } finally {
+      Object.defineProperty(
+        FSAdapterWrapper.prototype,
+        "runWithContext",
+        originalWrapperRun!,
+      );
+      Object.defineProperty(
+        MultiProjectFSAdapter.prototype,
+        "runWithContext",
+        originalMultiProjectRun!,
+      );
+      Object.defineProperty(
+        asyncLocalStoragePrototype,
+        "run",
+        originalAsyncLocalStorageRun!,
+      );
+      multiProjectAdapter.dispose();
+    }
   });
 
   it("rejects a branch run when the credential handoff changes the source snapshot", async () => {

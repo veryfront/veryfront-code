@@ -634,6 +634,57 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("keeps fingerprint lookup independent of a prototype getAdapter replacement", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalLookup = Object.getOwnPropertyDescriptor(
+          MultiProjectFSAdapter.prototype,
+          "getAdapter",
+        );
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+        let spoofedLookupCalls = 0;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(MultiProjectFSAdapter.prototype, "getAdapter", {
+          configurable: true,
+          value: () => {
+            spoofedLookupCalls++;
+            return Promise.resolve({
+              getSourceSnapshotFingerprint: () => "project-spoofed-fingerprint",
+            });
+          },
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(typeof fingerprint, "string");
+          assertNotEquals(fingerprint, "project-spoofed-fingerprint");
+          assertEquals(spoofedLookupCalls, 0);
+        } finally {
+          if (originalLookup) {
+            Object.defineProperty(MultiProjectFSAdapter.prototype, "getAdapter", originalLookup);
+          } else {
+            Reflect.deleteProperty(MultiProjectFSAdapter.prototype, "getAdapter");
+          }
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
     it("keeps concrete freshness independent of mutable prototype helpers", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;

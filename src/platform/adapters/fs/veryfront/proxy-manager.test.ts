@@ -967,6 +967,52 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("partitions credential principals after Array.from is replaced", async () => {
+      const originalArrayFrom = Array.from;
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        Array.from = ((source: unknown, ...args: unknown[]) => {
+          if (source instanceof Uint8Array) return [];
+          return Reflect.apply(originalArrayFrom, Array, [source, ...args]);
+        }) as typeof Array.from;
+
+        const first = await manager.getAdapter(
+          "tenant",
+          "credential-one",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const second = await manager.getAdapter(
+          "tenant",
+          "credential-two",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertNotStrictEquals(first, second);
+      } finally {
+        Array.from = originalArrayFrom;
+        manager.dispose();
+      }
+    });
+
     it("does not expose credential principals in logs or cache invariant errors", async () => {
       const token = "vf_test_diagnostic_credential";
       const credentialPrincipal =
