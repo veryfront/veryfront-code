@@ -73,9 +73,7 @@ function restoreContext(ctx: Context): Context {
 function restoreSpanOptions(options: SpanOptions): SpanOptions {
   if (!options.parent) return options;
   const spanParent = unwrapPublicSpan(options.parent as Span);
-  const parent = spanParent === options.parent
-    ? unwrapPublicContext(options.parent)
-    : spanParent;
+  const parent = spanParent === options.parent ? unwrapPublicContext(options.parent) : spanParent;
   return parent === options.parent ? options : { ...options, parent };
 }
 
