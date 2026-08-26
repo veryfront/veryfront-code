@@ -13,6 +13,7 @@ import type {
   StreamingToolCall,
   StreamingToolResult,
 } from "./chat-stream-handler.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export type StreamLifecycleShadowDivergence =
   | "text"
@@ -86,7 +87,7 @@ export function createStreamLifecycleShadow(options: {
       }
       const report: StreamLifecycleShadowReport = {
         count: categories.size,
-        categories: [...categories].sort(),
+        categories: [...categories].sort(compareStrings),
       };
       try {
         recordStreamLifecycleShadowReport({ report, mode: "shadow" });
@@ -191,8 +192,8 @@ function deepEqualUnknown(a: unknown, b: unknown): boolean {
   }
   const aRecord = a as Record<string, unknown>;
   const bRecord = b as Record<string, unknown>;
-  const aKeys = Object.keys(aRecord).sort();
-  const bKeys = Object.keys(bRecord).sort();
+  const aKeys = Object.keys(aRecord).sort(compareStrings);
+  const bKeys = Object.keys(bRecord).sort(compareStrings);
   if (!deepEqualUnknown(aKeys, bKeys)) return false;
   return aKeys.every((key) => deepEqualUnknown(aRecord[key], bRecord[key]));
 }

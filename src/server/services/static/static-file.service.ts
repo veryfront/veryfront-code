@@ -13,9 +13,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import type { CacheStrategy } from "#veryfront/security";
 import { createSecureFs } from "#veryfront/security";
+import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { relative, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { isAbsolute, relative, resolve } from "#veryfront/platform/compat/path/index.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import {
   getExtension,
@@ -32,6 +33,12 @@ import {
 } from "../../handlers/utils/content-types.ts";
 
 const logger = serverLogger.component("static-file-service");
+
+function isStrictDescendant(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate)).replace(/\\/g, "/");
+  return relativePath !== "" && relativePath !== "." && relativePath !== ".." &&
+    !relativePath.startsWith("../") && !isAbsolute(relativePath);
+}
 
 function isExpectedCandidateMiss(error: unknown): boolean {
   if (isNotFoundError(error)) return true;
@@ -135,7 +142,19 @@ export class StaticFileService {
   }
 
   private resolveBuildOutputRoot(options: StaticFileOptions): string {
-    return resolve(options.projectDir, options.buildOutDir || "dist");
+    const projectRoot = resolve(options.projectDir);
+    const configuredRoot = resolve(projectRoot, options.buildOutDir || "dist");
+
+    // Project configuration is not a trusted filesystem boundary. Fail loudly
+    // instead of serving a different directory from the one the build wrote.
+    if (
+      !isStrictDescendant(projectRoot, configuredRoot)
+    ) {
+      throw SECURITY_VIOLATION.create({
+        detail: "build.outDir must resolve to a directory inside the project",
+      });
+    }
+    return configuredRoot;
   }
 
   private getFileSystems(options: StaticFileOptions): StaticFileSystems {
@@ -160,25 +179,18 @@ export class StaticFileService {
       };
     };
 
-    // Keep public files under the project policy. A configured build output can
-    // live beside or outside the project, so give that trusted artifact root an
-    // independent boundary instead of expressing it as ../ paths from the project.
+    // Keep public files under the project policy. Resolve configured output
+    // through a project-root boundary as well, so a symlink at the configured
+    // output directory cannot become a trusted filesystem root of its own.
     const project = adaptSecureFs(projectSecureFs, projectRoot);
-    const buildOutputRoot = this.resolveBuildOutputRoot(options);
-    if (isWithinDirectory(buildOutputRoot, projectRoot)) {
-      // Refuse to widen static serving when a malformed output root contains
-      // the project. The project policy still permits only dist and public.
-      return { buildOutput: project, project };
-    }
-
     const buildOutputSecureFs = createSecureFs({
-      baseDir: buildOutputRoot,
+      baseDir: projectRoot,
       adapter: options.adapter,
       context: "internal",
-      validationOptions: { checkExists: true },
+      validationOptions: { checkExists: true, followSymlinks: false },
     });
     return {
-      buildOutput: adaptSecureFs(buildOutputSecureFs, buildOutputRoot),
+      buildOutput: adaptSecureFs(buildOutputSecureFs, projectRoot),
       project,
     };
   }
@@ -229,7 +241,6 @@ export class StaticFileService {
       if (manifestPath) addCandidate(manifestPath, "manifest");
     }
 
-    const buildOutputRoot = this.resolveBuildOutputRoot(options);
     const publicRoot = resolve(options.projectDir, "public");
     const dirs: ReadonlyArray<{
       root: string;
@@ -237,7 +248,7 @@ export class StaticFileService {
     }> = options.isLocalProject && !options.isPreviewMode
       ? [{ root: publicRoot, source: "public" }]
       : [
-        { root: buildOutputRoot, source: "dist" },
+        { root: this.resolveBuildOutputRoot(options), source: "dist" },
         { root: publicRoot, source: "public" },
       ];
 
@@ -329,7 +340,10 @@ export class StaticFileService {
     if (!index) return null;
 
     const normalized = normalizePath(requestPath.startsWith("/") ? requestPath : `/${requestPath}`);
-    return index.assets.get(normalized) ?? null;
+    const candidate = index.assets.get(normalized);
+    if (!candidate) return null;
+    const buildOutputRoot = this.resolveBuildOutputRoot(options);
+    return isStrictDescendant(buildOutputRoot, candidate) ? candidate : null;
   }
 
   private async loadManifestIndex(

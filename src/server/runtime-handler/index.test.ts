@@ -221,7 +221,7 @@ describe("server/runtime-handler/index", () => {
 
     const securityGuidance = lines.filter((line) =>
       line.includes("CSRF protection is not configured") ||
-      line.includes("Neither CORS nor CSRF protection is configured")
+      line.includes("security.csrf is set to false")
     );
     assertEquals(securityGuidance.length, 0);
   });
@@ -252,7 +252,7 @@ describe("server/runtime-handler/index", () => {
     }
 
     assertEquals(
-      lines.some((line) => line.includes("Neither CORS nor CSRF protection is configured")),
+      lines.some((line) => line.includes("security.csrf is set to false")),
       true,
     );
   });

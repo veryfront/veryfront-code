@@ -1,7 +1,5 @@
-import {
-  resolveVeryfrontCloudModelThinking,
-  runWithVeryfrontCloudContext,
-} from "#veryfront/provider";
+import { resolveVeryfrontCloudModelThinking } from "#veryfront/provider";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { resolveRuntimeModel } from "../runtime/model-resolution.ts";
 import type { HostedChatRuntimeCreationResult } from "./chat-runtime-contract.ts";
 import {

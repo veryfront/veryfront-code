@@ -13,6 +13,7 @@ import {
   MAX_TOTAL_DIRECTORY_ENTRY_NAME_CHARS,
   MAX_TOTAL_SCANNED_PATH_CHARS,
 } from "./limits.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Build artifacts under `.veryfront` that cannot contain authored pages. */
 const VERYFRONT_EXCLUDED_DIRS = new Set([
@@ -271,5 +272,5 @@ export async function discoverPageFiles(
     budget,
     discoveredPaths,
   );
-  return [...discoveredPaths].sort();
+  return [...discoveredPaths].sort(compareStrings);
 }

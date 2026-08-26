@@ -85,7 +85,7 @@ export function createInvokeAgentTool(input: CreateInvokeAgentToolInput = {}): T
         });
       }
 
-      return agentAsTool(target, toolInput.description, { publishChildStream: true }).execute({
+      return agentAsTool(target, toolInput.description).execute({
         input: buildInvokeAgentPrompt(toolInput.prompt, toolInput.context),
       }, context);
     },

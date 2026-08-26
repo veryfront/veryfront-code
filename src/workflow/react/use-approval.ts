@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
-import { workflowMutationHeaders } from "./mutation-headers.ts";
+import {
+  encodeWorkflowPathSegment,
+  normalizeWorkflowApiBase,
+  useStableWorkflowHeaders,
+  workflowJsonMutationHeaders,
+} from "./mutation-headers.ts";
 
 /** Options accepted by use approval. */
 export interface UseApprovalOptions {
   runId: string;
   approvalId: string;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   approver?: string;
   onDecision?: (decision: ApprovalDecision) => void;
   onError?: (error: Error) => void;
@@ -32,12 +41,35 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     runId,
     approvalId,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     approver = "unknown",
     onDecision,
     onError,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
+  const requestContext = useMemo(
+    () => ({ approvalId, credentials, normalizedApiBase, runId, stableHeaders }),
+    [approvalId, credentials, normalizedApiBase, runId, stableHeaders],
+  );
+  const currentRequestContext = useRef(requestContext);
+  currentRequestContext.current = requestContext;
+  const decisionRequestContext = useRef(requestContext);
+  const activeDecision = useRef<
+    {
+      id: object;
+      promise: Promise<void>;
+      requestContext: typeof requestContext;
+    } | null
+  >(null);
 
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [approvalState, setApprovalState] = useState<
+    {
+      approval: PendingApproval;
+      requestContext: typeof requestContext;
+    } | null
+  >(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -46,12 +78,28 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     return err instanceof Error ? err : new Error(String(err));
   }, []);
 
-  useEffect((): void => {
+  useEffect(() => {
+    if (decisionRequestContext.current === requestContext) return;
+    decisionRequestContext.current = requestContext;
+    setIsSubmitting(false);
+  }, [requestContext]);
+
+  useEffect((): (() => void) | void => {
     if (!runId || !approvalId) return;
+    const controller = new AbortController();
+    let current = true;
+    setApprovalState(null);
+    setError(null);
+    setIsLoading(true);
 
     async function fetchApproval(): Promise<void> {
       try {
-        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`);
+        const response = await fetch(
+          `${normalizedApiBase}/runs/${
+            encodeWorkflowPathSegment(runId, "Workflow run ID")
+          }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`,
+          { signal: controller.signal, headers: stableHeaders, credentials },
+        );
 
         if (!response.ok) {
           throw REQUEST_ERROR.create({
@@ -61,65 +109,134 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         }
 
         const data: PendingApproval = await response.json();
-        setApproval(data);
+        if (!current) return;
+        setApprovalState({ approval: data, requestContext });
         setError(null);
       } catch (err) {
+        if (!current || controller.signal.aborted) return;
         const fetchError = toError(err);
         setError(fetchError);
         onError?.(fetchError);
       } finally {
-        setIsLoading(false);
+        if (current) setIsLoading(false);
       }
     }
 
     fetchApproval();
-  }, [runId, approvalId, apiBase, onError, toError]);
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [
+    runId,
+    approvalId,
+    credentials,
+    normalizedApiBase,
+    onError,
+    requestContext,
+    stableHeaders,
+    toError,
+  ]);
 
   const submitDecision = useCallback(
-    async (decision: ApprovalDecision): Promise<void> => {
-      if (!runId || !approvalId) return;
+    (decision: ApprovalDecision): Promise<void> => {
+      if (!runId || !approvalId) return Promise.resolve();
+      if (activeDecision.current?.requestContext === requestContext) {
+        return activeDecision.current.promise;
+      }
+
+      decisionRequestContext.current = requestContext;
+      const submittedRequestContext = requestContext;
+      const isCurrentRequest = (): boolean =>
+        submittedRequestContext === currentRequestContext.current;
+      const decisionId = {};
 
       setIsSubmitting(true);
       setError(null);
 
-      try {
-        const requestUrl = `${apiBase}/runs/${runId}/approvals/${approvalId}`;
-        const response = await fetch(requestUrl, {
-          method: "POST",
-          headers: workflowMutationHeaders(requestUrl, { "Content-Type": "application/json" }),
-          body: JSON.stringify(decision),
-        });
-
-        if (!response.ok) {
-          throw REQUEST_ERROR.create({
-            detail: `Failed to submit decision: ${response.status}`,
-            status: response.status,
+      const promise = Promise.resolve().then(async (): Promise<void> => {
+        try {
+          const requestUrl = `${normalizedApiBase}/runs/${
+            encodeWorkflowPathSegment(runId, "Workflow run ID")
+          }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`;
+          const response = await fetch(requestUrl, {
+            method: "POST",
+            headers: workflowJsonMutationHeaders(requestUrl, stableHeaders),
+            credentials,
+            body: JSON.stringify(decision),
           });
-        }
 
-        setApproval((prev) => {
-          if (!prev) return null;
+          if (!response.ok) {
+            throw REQUEST_ERROR.create({
+              detail: `Failed to submit decision: ${response.status}`,
+              status: response.status,
+            });
+          }
 
-          return {
-            ...prev,
-            status: decision.approved ? "approved" : "rejected",
-            resolvedAt: new Date(),
-            resolvedBy: decision.approver,
-            comment: decision.comment,
+          const responseText = await response.text();
+          let responseBody: unknown;
+          if (responseText) {
+            try {
+              responseBody = JSON.parse(responseText) as unknown;
+            } catch {
+              // Successful legacy/proxied endpoints may return a non-JSON body.
+            }
+          }
+          const responseResolvedBy = responseBody !== null && typeof responseBody === "object" &&
+              "resolvedBy" in responseBody
+            ? responseBody.resolvedBy
+            : undefined;
+          const resolvedDecision: ApprovalDecision = {
+            ...decision,
+            approver: typeof responseResolvedBy === "string"
+              ? responseResolvedBy
+              : decision.approver,
           };
-        });
 
-        onDecision?.(decision);
-      } catch (err) {
-        const submitError = toError(err);
-        setError(submitError);
-        onError?.(submitError);
-        throw submitError;
-      } finally {
-        setIsSubmitting(false);
-      }
+          if (!isCurrentRequest()) return;
+
+          setApprovalState((prev) => {
+            if (!prev || prev.requestContext !== submittedRequestContext) return prev;
+
+            return {
+              requestContext: prev.requestContext,
+              approval: {
+                ...prev.approval,
+                status: decision.approved ? "approved" : "rejected",
+                resolvedAt: new Date(),
+                resolvedBy: resolvedDecision.approver,
+                comment: decision.comment,
+              },
+            };
+          });
+
+          onDecision?.(resolvedDecision);
+        } catch (err) {
+          const submitError = toError(err);
+          if (isCurrentRequest()) {
+            setError(submitError);
+            onError?.(submitError);
+          }
+          throw submitError;
+        } finally {
+          if (activeDecision.current?.id === decisionId) activeDecision.current = null;
+          if (isCurrentRequest()) setIsSubmitting(false);
+        }
+      });
+      activeDecision.current = { id: decisionId, promise, requestContext };
+      return promise;
     },
-    [runId, approvalId, apiBase, onDecision, onError, toError],
+    [
+      runId,
+      approvalId,
+      credentials,
+      normalizedApiBase,
+      onDecision,
+      onError,
+      requestContext,
+      stableHeaders,
+      toError,
+    ],
   );
 
   const approve = useCallback(
@@ -136,6 +253,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     [submitDecision, approver],
   );
 
+  const approval = approvalState?.requestContext === requestContext ? approvalState.approval : null;
   const isPending = approval?.status === "pending";
 
   return {

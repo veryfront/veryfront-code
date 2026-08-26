@@ -291,6 +291,91 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(defaultedBody.includes(secret), false);
   });
 
+  it("returns a JSON error body when the rewriter appended .js to a JSON module", async () => {
+    // The import rewriter appends `.js` to any specifier whose extension it
+    // does not recognise, so `@/lib/data.json` arrives as `lib/data.json.js`.
+    // The content type resolved that back to JSON while the error body did not,
+    // so the response carried a JavaScript `throw` under `application/json`.
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-error-json-rewritten";
+    const sourcePath = `${projectDir}/lib/data.json`;
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(sourcePath, `{ "value": 1 }`);
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      if (path === sourcePath) return Promise.reject(new Error("json transform failed"));
+      return originalReadFile(path, byteLimit);
+    };
+
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/lib/data.json.js"),
+      { projectId: "module-error-json-rewritten", projectDir, adapter, dev: true },
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assertEquals(
+      JSON.parse(await response.text()),
+      { error: "json transform failed" },
+      "the body must parse as the JSON its content type promises",
+    );
+  });
+
+  it("returns a CSS error body when a stylesheet lookup fails", async () => {
+    // A missing stylesheet is a 404, but a permission or transient storage
+    // error escapes findSourceFile and surfaces as a 500 that is typed
+    // text/css. The body must be CSS, and the rewriter-appended form must be
+    // classified the same way as the bare one.
+    const { serveModule } = await import("./module-server.ts");
+
+    for (const requestPath of ["styles/globals.css", "styles/globals.css.js"]) {
+      const projectDir = `/module-css-error-${requestPath.replace(/[^a-z]/gi, "")}`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(`${projectDir}/styles/globals.css`, "body { color: red; }");
+      adapter.fs.stat = () => Promise.reject(new Error("EACCES: denied */ escape"));
+      adapter.fs.readFileBytesWithinLimit = () =>
+        Promise.reject(new Error("EACCES: denied */ escape"));
+
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/${requestPath}`),
+        { projectId: "module-css-error", projectDir, adapter, dev: true },
+      );
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("content-type"), "text/css; charset=utf-8");
+      assertEquals(
+        body.startsWith("/*") && body.endsWith("*/"),
+        true,
+        `${requestPath} must answer with a CSS comment, not a JavaScript throw`,
+      );
+      assertEquals(
+        body.includes("denied *\\/ escape"),
+        true,
+        "a comment terminator inside the message must be escaped, not end the comment early",
+      );
+    }
+  });
+
+  it("answers a missing stylesheet module request with 404", async () => {
+    // An ordinary missing stylesheet stops at the 404 path. Exceptional lookup
+    // failures still reach the CSS-formatted 500 branch covered above, so this
+    // case distinguishes absence from a storage or permission failure.
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-css-unreachable";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(`${projectDir}/styles/globals.css`, "body { color: red; }");
+
+    for (const requestPath of ["styles/globals.css", "styles/globals.css.js"]) {
+      const response = await serveModule(
+        new Request(`http://localhost:3000/_vf_modules/${requestPath}`),
+        { projectId: "module-css-unreachable", projectDir, adapter, dev: true },
+      );
+
+      assertEquals(response.status, 404, `${requestPath} has no source file to serve`);
+    }
+  });
+
   it("returns a JSON error body when a JSON module fails to transform", async () => {
     const { serveModule } = await import("./module-server.ts");
     const projectDir = "/module-error-json";

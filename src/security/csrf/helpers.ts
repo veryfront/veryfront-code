@@ -10,11 +10,17 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import { getEffectiveRequestOrigin } from "#veryfront/server/utils/request-host.ts";
 import { MAX_CSRF_TTL_SECONDS } from "#veryfront/utils/constants/security.ts";
 import {
   type CsrfNameOptions,
+  csrfNamesCookieName,
   DEFAULT_CSRF_COOKIE_NAME,
+  DEFAULT_CSRF_HEADER_NAME,
+  effectiveCsrfCookieNameForOrigin,
+  encodeCsrfNamesAdvertisement,
   requireCsrfName,
+  requireNonReservedCsrfCookieName,
   resolveCsrfNames,
 } from "./names.ts";
 
@@ -61,9 +67,11 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
   token: string;
   setCookie: string;
 } {
-  const cookieName = requireCsrfName(
-    options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME,
-    "CSRF cookieName",
+  const cookieName = requireNonReservedCsrfCookieName(
+    requireCsrfName(
+      options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME,
+      "CSRF cookieName",
+    ),
   );
   const maxAge = requireCsrfTtl(options?.ttlSec ?? CSRF_DEFAULT_TTL_SEC);
   const httpOnly = options?.httpOnly === undefined
@@ -89,7 +97,6 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
 }
 
 const encoder = new TextEncoder();
-const ASSET_PATH_RE = /\.(?!html?$)[a-z0-9]+$/i;
 
 /** Constant-time string comparison to prevent timing attacks */
 function timingSafeEqual(a: string, b: string): boolean {
@@ -129,15 +136,16 @@ export function validateCsrf(
 /**
  * Resolve the token-issuing CSRF setting for a response-serving surface.
  *
- * Production defaults `security.csrf` on, so `applyCsrfCookie` issues the
- * double-submit token there. Local development leaves the setting unset and
- * stays permissive, which used to mean no token cookie existed locally at all:
- * every browser mutation — including the ones Veryfront's own hooks build with
- * `csrfMutationHeaders` — had nothing to echo, so correct client code still
- * sent no `x-csrf-token`. Issuing the same token cookie locally makes the
- * double-submit contract exercisable before deploy without enforcing it, so
- * the development warning is left to the mutations that genuinely omit the
- * header. Enforcement still keys off `security.csrf`, which this never sets.
+ * `deriveSecurityContext` defaults `security.csrf` on in every environment, so
+ * a derived context already asks for the token cookie. This covers the surfaces
+ * that serve a local response before any security context was derived: without
+ * it a local page would render with no `__Host-vf_csrf` cookie, leaving correct
+ * client code, including the hooks that build on `csrfMutationHeaders`, with
+ * nothing to echo into the header the gate then requires.
+ *
+ * It only ever issues a token. Enforcement keys off `security.csrf`, which this
+ * never sets, and an explicit `false` passes straight through so the documented
+ * opt-out suppresses the cookie as well as the check.
  */
 export function csrfCookieSetting(
   csrfConfig: boolean | CsrfConfig | undefined,
@@ -163,7 +171,6 @@ export function applyCsrfCookie(
   const { pathname } = new URL(req.url);
   if (pathname.startsWith("/_veryfront/")) return;
   if (pathname === "/_ws") return;
-  if (ASSET_PATH_RE.test(pathname)) return;
 
   const accept = (req.headers.get("accept") ?? "").toLowerCase();
   if (!accept || (!accept.includes("text/html") && !accept.includes("application/xhtml+xml"))) {
@@ -171,7 +178,29 @@ export function applyCsrfCookie(
   }
 
   const config = typeof csrfConfig === "boolean" ? {} : csrfConfig;
-  const cookieName = config.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
+  const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
+  const configuredCookieName = config.cookieName;
+  const effectiveCookieName = effectiveCsrfCookieNameForOrigin(
+    configuredCookieName,
+    browserOrigin,
+  );
+  // Validate here, not only in the schema: applyCsrfCookie is public API and a
+  // direct caller can pass names the schema never saw. An unvalidated name is
+  // interpolated straight into Set-Cookie.
+  const cookieName = requireNonReservedCsrfCookieName(
+    requireCsrfName(
+      effectiveCookieName,
+      "CSRF cookieName",
+    ),
+  );
+  const headerName = requireCsrfName(
+    config.headerName ?? DEFAULT_CSRF_HEADER_NAME,
+    "CSRF headerName",
+  );
+  // Validate before branching on an existing token: the existing-token path
+  // skips generateCsrfToken, and an unvalidated ttlSec would be interpolated
+  // straight into the advertisement cookie's Max-Age, expiring or corrupting it.
+  const ttlSec = requireCsrfTtl(config.ttlSec ?? CSRF_DEFAULT_TTL_SEC);
 
   // Skip if cookie already present in request
   let cookies: Record<string, string>;
@@ -181,23 +210,92 @@ export function applyCsrfCookie(
     /* expected: malformed cookie header — issue a fresh token */
     cookies = {};
   }
-  if (cookies[cookieName]) return;
+  const secureCookies = cookieName.startsWith("__Host-") ||
+    new URL(browserOrigin).protocol === "https:";
+  const advertisement = encodeCsrfNamesAdvertisement(
+    cookieName,
+    headerName,
+    browserOrigin,
+  );
+  const advertisementCookieName = csrfNamesCookieName(browserOrigin);
 
-  // Detect HTTPS from the request URL, or from x-forwarded-proto only when the
-  // deployment trusts the upstream proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1).
-  // The forwarded header is client-spoofable otherwise, so blindly trusting it
-  // could suppress the Secure flag on a genuinely-HTTPS deployment.
-  const trustProxyHeaders = isProxyTopologyTrusted();
-  const isSecure = cookieName.startsWith("__Host-") ||
-    req.url.startsWith("https://") ||
-    (trustProxyHeaders && req.headers.get("x-forwarded-proto") === "https");
+  // Refresh the advertisement independently of the token: a deployment that
+  // changes only headerName keeps the same token cookie, so an early return
+  // here would leave the browser reading a stale header name forever.
+  if (cookies[cookieName]) {
+    appendCsrfNamesCookie(
+      responseHeaders,
+      advertisementCookieName,
+      advertisement,
+      cookies,
+      ttlSec,
+      secureCookies,
+    );
+    return;
+  }
 
   const { setCookie } = generateCsrfToken({
     cookieName,
-    ttlSec: config.ttlSec,
+    ttlSec,
     httpOnly: false, // Client JS must read cookie for double-submit header
-    secure: isSecure,
+    secure: secureCookies,
   });
 
   responseHeaders.append("Set-Cookie", setCookie);
+  appendCsrfNamesCookie(
+    responseHeaders,
+    advertisementCookieName,
+    advertisement,
+    cookies,
+    ttlSec,
+    secureCookies,
+  );
+}
+
+/**
+ * The origin the browser actually used, which is what `document.location.origin`
+ * will report.
+ *
+ * Behind a TLS-terminating proxy the request URL stays an internal `http://`
+ * address, so advertising it would publish an origin the document can never
+ * match and discovery would silently fall back to the defaults. The forwarded
+ * headers are consulted only when the deployment opts in through
+ * VERYFRONT_TRUST_FORWARDED_HEADERS, exactly as the Secure flag decision does,
+ * because they are client-spoofable otherwise. The flag is passed in rather than
+ * read here so this stays a pure function the colocated unit test can drive
+ * without touching process env.
+ */
+export function browserFacingOrigin(req: Request, trustProxyHeaders: boolean): string {
+  const requestOrigin = new URL(req.url).origin;
+  return getEffectiveRequestOrigin(req, undefined, trustProxyHeaders) ?? requestOrigin;
+}
+
+/**
+ * Publish configured names so the browser helper can discover them without the
+ * caller hand-plumbing server configuration. Skipped when both names are the
+ * documented defaults, so default projects gain no new cookie, and skipped when
+ * the browser already holds the identical advertisement.
+ */
+function appendCsrfNamesCookie(
+  responseHeaders: Headers,
+  advertisementCookieName: string,
+  advertisement: string | null,
+  cookies: Record<string, string>,
+  ttlSec: number,
+  secure: boolean,
+): void {
+  if (advertisement === null && !cookies[advertisementCookieName]) return;
+  if (advertisement !== null && cookies[advertisementCookieName] === advertisement) return;
+
+  const parts = [
+    `${advertisementCookieName}=${advertisement === null ? "" : encodeURIComponent(advertisement)}`,
+    "Path=/",
+    `Max-Age=${advertisement === null ? 0 : ttlSec}`,
+    "SameSite=Lax",
+  ];
+  // Deliberately not HttpOnly: the browser helper must read it. It carries no
+  // secret, and a tampered value only makes the client send a header the server
+  // is not reading, which fails closed.
+  if (secure) parts.push("Secure");
+  responseHeaders.append("Set-Cookie", parts.join("; "));
 }

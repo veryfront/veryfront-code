@@ -74,6 +74,16 @@ describe("workflow()", () => {
       "steps",
     );
   });
+
+  it("rejects dot-only workflow IDs", () => {
+    for (const id of [".", ".."] as const) {
+      assertThrows(
+        () => workflow({ id, steps: [] }),
+        VeryfrontError,
+        "path segment",
+      );
+    }
+  });
 });
 
 describe("sequence()", () => {

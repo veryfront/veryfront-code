@@ -16,6 +16,7 @@ import type {
   EvalUsageSummary,
 } from "./types.ts";
 import { computeHash } from "#veryfront/utils";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Additive eval report contract version written by new reports and summary artifacts. */
 export const EVAL_REPORT_SCHEMA_VERSION = 2;
@@ -48,7 +49,7 @@ function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
   const sorted = Object.create(null) as Record<string, unknown>;
-  for (const key of Object.keys(value).sort()) {
+  for (const key of Object.keys(value).sort(compareStrings)) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }
   return sorted;
