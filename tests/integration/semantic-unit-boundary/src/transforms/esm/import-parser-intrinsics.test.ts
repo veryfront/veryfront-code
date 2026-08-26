@@ -176,6 +176,38 @@ it("keeps containment when String prototype methods are poisoned", async () => {
   }
 });
 
+it("keeps POSIX containment when Array.prototype.filter is poisoned", async () => {
+  const originalFilter = Array.prototype.filter;
+  const adapter = {
+    fs: {
+      resolveFile: () => Promise.resolve("/outside/secret.tsx"),
+      realPath: (path: string) => Promise.resolve(path),
+    },
+  } as unknown as RuntimeAdapter;
+  try {
+    Array.prototype.filter = function <T>(
+      this: T[],
+      predicate: (value: T, index: number, array: T[]) => unknown,
+      thisArg?: unknown,
+    ): T[] {
+      if (this[0] === "" && (this[1] === "project" || this[1] === "outside")) return [];
+      return Reflect.apply(originalFilter, this, [predicate, thisArg]) as T[];
+    };
+
+    const result = await parseLocalImports(
+      'import Secret from "@/secret.tsx";',
+      "/project/page.tsx",
+      "/project",
+      adapter,
+    );
+
+    assertEquals(result.imports, []);
+  } finally {
+    Array.prototype.filter = originalFilter;
+    await stopEsbuild();
+  }
+});
+
 it("classifies MDX through the captured regexp intrinsic", async () => {
   const stub = withStubContentProcessor();
   const originalTest = RegExp.prototype.test;

@@ -1,5 +1,38 @@
 /** Dependency-free POSIX path operations for every supported runtime. */
 
+import {
+  primordialArrayJoin as arrayJoin,
+  primordialArrayPop as arrayPop,
+  primordialArrayPush as arrayPush,
+} from "../primordials/array.ts";
+
+const apply = Reflect.apply;
+const stringEndsWith = String.prototype.endsWith;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const stringSlice = String.prototype.slice;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+
+function endsWith(value: string, search: string): boolean {
+  return apply(stringEndsWith, value, [search]) as boolean;
+}
+
+function lastIndexOf(value: string, search: string): number {
+  return apply(stringLastIndexOf, value, [search]) as number;
+}
+
+function slice(value: string, start: number, end?: number): string {
+  return apply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function split(value: string, separator: string): string[] {
+  return apply(stringSplit, value, [separator]) as string[];
+}
+
+function startsWith(value: string, search: string): boolean {
+  return apply(stringStartsWith, value, [search]) as boolean;
+}
+
 export interface PosixPath {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
@@ -21,23 +54,25 @@ function assertPath(value: unknown): asserts value is string {
 
 function normalizeSegments(path: string, allowAboveRoot: boolean): string {
   const segments: string[] = [];
+  const pathSegments = split(path, "/");
 
-  for (const segment of path.split("/")) {
+  for (let index = 0; index < pathSegments.length; index++) {
+    const segment = pathSegments[index]!;
     if (segment.length === 0 || segment === ".") continue;
     if (segment !== "..") {
-      segments.push(segment);
+      arrayPush(segments, segment);
       continue;
     }
 
-    const previous = segments.at(-1);
+    const previous = segments[segments.length - 1];
     if (previous !== undefined && previous !== "..") {
-      segments.pop();
+      arrayPop(segments);
     } else if (allowAboveRoot) {
-      segments.push("..");
+      arrayPush(segments, "..");
     }
   }
 
-  return segments.join("/");
+  return arrayJoin(segments, "/");
 }
 
 function runtimeWorkingDirectory(): string {
@@ -65,8 +100,8 @@ function normalize(path: string): string {
   assertPath(path);
   if (path.length === 0) return ".";
 
-  const absolute = path.startsWith("/");
-  const trailingSeparator = path.endsWith("/");
+  const absolute = startsWith(path, "/");
+  const trailingSeparator = endsWith(path, "/");
   let normalized = normalizeSegments(path, !absolute);
 
   if (normalized.length > 0 && trailingSeparator) normalized += "/";
@@ -77,7 +112,8 @@ function normalize(path: string): string {
 
 function join(...paths: string[]): string {
   let joined = "";
-  for (const path of paths) {
+  for (let index = 0; index < paths.length; index++) {
+    const path = paths[index]!;
     assertPath(path);
     if (path.length === 0) continue;
     joined = joined.length === 0 ? path : `${joined}/${path}`;
@@ -95,7 +131,7 @@ function resolve(...paths: string[]): string {
     if (path.length === 0) continue;
 
     resolved = `${path}/${resolved}`;
-    absolute = path.startsWith("/");
+    absolute = startsWith(path, "/");
   }
 
   const normalized = normalizeSegments(resolved, !absolute);
@@ -111,8 +147,18 @@ function relative(from: string, to: string): string {
   const resolvedTo = resolve(to);
   if (resolvedFrom === resolvedTo) return "";
 
-  const fromSegments = resolvedFrom.split("/").filter(Boolean);
-  const toSegments = resolvedTo.split("/").filter(Boolean);
+  const rawFromSegments = split(resolvedFrom, "/");
+  const rawToSegments = split(resolvedTo, "/");
+  const fromSegments: string[] = [];
+  const toSegments: string[] = [];
+  for (let index = 0; index < rawFromSegments.length; index++) {
+    const segment = rawFromSegments[index]!;
+    if (segment.length > 0) arrayPush(fromSegments, segment);
+  }
+  for (let index = 0; index < rawToSegments.length; index++) {
+    const segment = rawToSegments[index]!;
+    if (segment.length > 0) arrayPush(toSegments, segment);
+  }
   let common = 0;
   while (
     common < fromSegments.length &&
@@ -122,17 +168,21 @@ function relative(from: string, to: string): string {
     common++;
   }
 
-  return [
-    ...Array.from({ length: fromSegments.length - common }, () => ".."),
-    ...toSegments.slice(common),
-  ].join("/");
+  const result: string[] = [];
+  for (let index = common; index < fromSegments.length; index++) {
+    arrayPush(result, "..");
+  }
+  for (let index = common; index < toSegments.length; index++) {
+    arrayPush(result, toSegments[index]!);
+  }
+  return arrayJoin(result, "/");
 }
 
 function dirname(path: string): string {
   assertPath(path);
   if (path.length === 0) return ".";
 
-  const hasRoot = path.startsWith("/");
+  const hasRoot = startsWith(path, "/");
   let end = -1;
   let matchedSeparator = true;
   for (let index = path.length - 1; index >= 1; index--) {
@@ -148,7 +198,7 @@ function dirname(path: string): string {
 
   if (end === -1) return hasRoot ? "/" : ".";
   if (hasRoot && end === 1) return "//";
-  return path.slice(0, end);
+  return slice(path, 0, end);
 }
 
 function basename(path: string, suffix?: string): string {
@@ -191,7 +241,7 @@ function basename(path: string, suffix?: string): string {
 
     if (start === end) end = firstNonSeparatorEnd;
     else if (end === -1) end = path.length;
-    return path.slice(start, end);
+    return slice(path, start, end);
   }
 
   for (let index = path.length - 1; index >= 0; index--) {
@@ -206,19 +256,19 @@ function basename(path: string, suffix?: string): string {
     }
   }
 
-  return end === -1 ? "" : path.slice(start, end);
+  return end === -1 ? "" : slice(path, start, end);
 }
 
 function extname(path: string): string {
   const base = basename(path);
   if (base === "." || base === "..") return "";
-  const lastDot = base.lastIndexOf(".");
-  return lastDot <= 0 ? "" : base.slice(lastDot);
+  const lastDot = lastIndexOf(base, ".");
+  return lastDot <= 0 ? "" : slice(base, lastDot);
 }
 
 function isAbsolute(path: string): boolean {
   assertPath(path);
-  return path.startsWith("/");
+  return startsWith(path, "/");
 }
 
 export const posix: Readonly<PosixPath> = Object.freeze({
