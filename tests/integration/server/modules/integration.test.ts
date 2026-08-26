@@ -171,12 +171,15 @@ describe(
           const response = await apiServer.handleRequest("/_veryfront/data/error-page.json");
 
           assertExists(response, "Should return error response");
-          assertEquals(response!.status, 404);
+          assertEquals(response!.status, 500);
           assertEquals(response!.headers.get("content-type"), "application/json");
 
           const data = await response!.json();
-          assertExists(data.error, "Should include error message");
-          assertStringIncludes(data.error, "Render error");
+          assertEquals(
+            data.error,
+            "Failed to render page data",
+            "Should not leak the renderer's error message",
+          );
         });
 
         it("returns null for non-API routes", async () => {
@@ -205,13 +208,13 @@ describe(
         sanitizeOps: true,
       },
       () => {
-        it("propagates API errors to error overlay", async () => {
+        it("propagates sanitized API errors to error overlay", async () => {
           const apiServer = new APIServer({ renderer: createMockRenderer() });
 
           const response = await apiServer.handleRequest("/_veryfront/data/error-page.json");
 
           assertExists(response);
-          assertEquals(response!.status, 404);
+          assertEquals(response!.status, 500);
 
           const data = await response!.json();
           const error = new Error(data.error);
@@ -221,7 +224,7 @@ describe(
             error,
           });
 
-          assertStringIncludes(html, "Render error");
+          assertStringIncludes(html, "Failed to render page data");
           assertStringIncludes(html, "Runtime Error");
         });
 

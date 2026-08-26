@@ -7,6 +7,7 @@ import type { RendererProvider, SSRRenderOptions, SSRRenderResult } from "./ssr.
 import type { HandlerContext } from "../../handlers/types.ts";
 import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
 import {
@@ -86,6 +87,18 @@ function makeRenderOptions(overrides: Partial<SSRRenderOptions> = {}): SSRRender
     noHmr: false,
     useNoCache: false,
     ...overrides,
+  };
+}
+
+function createIdentity(): ApplicationIdentity {
+  return {
+    issuer: "https://issuer.example.test",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: ["engineering"],
+    roles: ["reader"],
+    groupsComplete: true,
+    claims: { sub: "user-123" },
   };
 }
 
@@ -443,6 +456,100 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
         assertEquals(result.cacheStrategy, "no-cache");
         assertEquals(result.etag, undefined);
+      });
+
+      it("forces no-cache and suppresses etags when a render sets custom headers", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+              headers: { "x-page-state": "request-derived" },
+            } as any),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: false }),
+        );
+
+        assertEquals(result.headers, { "x-page-state": "request-derived" });
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
+      });
+
+      for (const sensitiveHeader of ["cookie", "authorization", "x-api-key"] as const) {
+        it(
+          `forces no-cache and suppresses etags for requests with ${sensitiveHeader}`,
+          async () => {
+            const service = new SSRService({
+              rendererProvider: createMockRendererProvider(),
+            });
+            const request = new Request("http://localhost/test-page", {
+              headers: { [sensitiveHeader]: "sensitive-value" },
+            });
+
+            const result = await service.renderPage(
+              makeCtx(),
+              makeRenderOptions({ request, useNoCache: false }),
+            );
+
+            assertEquals(result.cacheStrategy, "no-cache");
+            assertEquals(result.etag, undefined);
+          },
+        );
+      }
+
+      it("forces streaming no-cache rendering for admitted application identity", async () => {
+        let delivery: unknown;
+        const adapter = createMockRendererAdapter({
+          renderPage: (_slug, options) => {
+            delivery = options?.delivery;
+            return Promise.resolve({
+              html: "<html>personalized</html>",
+              stream: undefined,
+              ssrHash: "personalized-hash",
+              frontmatter: {},
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({
+            applicationIdentity: createIdentity(),
+            useNoCache: false,
+          }),
+        );
+
+        assertEquals(delivery, "stream");
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
+      });
+
+      it("keeps the load-balancer cookie cache neutral", async () => {
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(),
+        });
+        const request = new Request("http://localhost/test-page", {
+          headers: { cookie: "lb=sticky-route" },
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ request, useNoCache: false }),
+        );
+
+        assertEquals(result.cacheStrategy, "short");
+        assertEquals(typeof result.etag, "string");
       });
 
       it("requests buffered delivery when the response is cacheable", async () => {

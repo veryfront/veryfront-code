@@ -15,8 +15,9 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
@@ -24,6 +25,32 @@ import { createControlPlaneSignature, createCtx } from "./internal-agent-run.tes
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 const encoder = new TextEncoder();
+
+describe("createKnowledgeEventLogger", () => {
+  it("caps the number of accumulated knowledge ingest events", () => {
+    const lines: string[] = [];
+    const logger = createKnowledgeEventLogger(lines);
+
+    for (let index = 0; index < 2_000; index += 1) {
+      logger.info("Knowledge source extraction progress", { slide_current: index + 1 });
+    }
+
+    assertEquals(lines.length, 1_001);
+    assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+
+  it("caps the accumulated knowledge ingest log size", () => {
+    const lines: string[] = [];
+    const logger = createKnowledgeEventLogger(lines);
+
+    for (let index = 0; index < 100; index += 1) {
+      logger.info("x".repeat(10_000));
+    }
+
+    assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
+    assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+});
 
 function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
@@ -187,8 +214,10 @@ function createDeps(
   };
 }
 
-function requestJsonBody(init: RequestInit | undefined): Record<string, unknown> | null {
-  const body = init?.body;
+function requestJsonBody(
+  init: Parameters<typeof globalThis.fetch>[1],
+): Record<string, unknown> | null {
+  const body = observeFetchRequestInit(init).body;
   return typeof body === "string" ? JSON.parse(body) as Record<string, unknown> : null;
 }
 
@@ -954,7 +983,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
   });
 
-  it("runs localized eval AG-UI requests through discovered source agents", async () => {
+  it("runs local eval AG-UI requests through discovered source agents", async () => {
     let capturedContext: Record<string, unknown> | undefined;
     agentRegistry.register(
       "researcher",
@@ -991,13 +1020,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       kind: "eval",
       target: "eval:deep-research",
       projectId: "proj-1",
-      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_source_agent/execute",
       body,
       { "x-token": "runtime-token" },
-      "https://veryfront.org",
+      "http://localhost:4311",
     );
 
     try {
@@ -1028,6 +1057,262 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     } finally {
       agentRegistry.delete("researcher");
     }
+  });
+
+  it("runs managed eval targets as durable child agent runs", async () => {
+    const requests: Array<
+      { method: string; pathname: string; body: Record<string, unknown> | null }
+    > = [];
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_durable_agent",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_durable_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+
+    const result = await withEnvValue(
+      "VERYFRONT_API_BASE_URL",
+      "https://api.example.test/",
+      () =>
+        withMockFetch(
+          async (input, init) => {
+            const url = new URL(String(input));
+            const method = observeFetchRequestInit(init).method ?? "GET";
+            const requestBody = requestJsonBody(init);
+            requests.push({ method, pathname: url.pathname, body: requestBody });
+
+            if (method === "POST" && url.pathname.endsWith("/runs")) {
+              const runId = String(requestBody?.public_id);
+              return Response.json({
+                accepted: true,
+                run: { run_id: runId },
+                conversation_id: conversationId,
+              }, { status: 202 });
+            }
+
+            if (method === "GET" && url.pathname.endsWith("/stream")) {
+              return new Response(
+                [
+                  `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
+                  `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
+                  `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                ].join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            }
+
+            return new Response("not found", { status: 404 });
+          },
+          () => handler.handle(request, createCtx(publicKeyPem)),
+        ),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+    assertEquals(payload.result.summary.failed, 0);
+    assertEquals(payload.result.records[0]?.output?.text, "Paris");
+
+    assertEquals(requests.length, 2);
+    const createRequest = requests[0];
+    assertEquals(createRequest?.method, "POST");
+    assertEquals(createRequest?.body?.kind, "agent");
+    assertEquals(createRequest?.body?.owner, { kind: "project", id: "proj-1" });
+    assertEquals(createRequest?.body?.parent_run_id, "run_eval_durable_agent");
+    assertEquals(createRequest?.body?.conversation_mode, "create_new");
+    assertStringIncludes(String(createRequest?.body?.public_id), "eval-run-");
+    const createRunRequest = createRequest?.body?.request as Record<string, unknown>;
+    const agentInput = createRunRequest.input as Record<string, unknown>;
+    assertEquals(agentInput.agent_id, "researcher");
+    assertEquals(agentInput.messages, []);
+    assertEquals(agentInput.source_target_kind, "project");
+    assertEquals(agentInput.runtime_target_kind, "main_branch");
+    assertEquals(agentInput.target_environment_id, undefined);
+    assertEquals(agentInput.target_branch_id, undefined);
+    assertEquals(agentInput.forwarded_props, {
+      prompt: "France capital?",
+      runtimeOverrides: {
+        allowedTools: [],
+      },
+      veryfront: {
+        agentId: "researcher",
+        projectId: "proj-1",
+        runtimeOverrides: {
+          allowedTools: [],
+        },
+      },
+    });
+    assertEquals(requests[0]?.pathname, "/runs");
+    assertEquals(requests[1]?.method, "GET");
+    assertStringIncludes(requests[1]?.pathname ?? "", `/conversations/${conversationId}/runs/`);
+    assertStringIncludes(requests[1]?.pathname ?? "", "/stream");
+  });
+
+  it("preserves environment and preview targets for durable eval runs", async () => {
+    const requests: Array<
+      { method: string; pathname: string; body: Record<string, unknown> | null }
+    > = [];
+    const conversationId = "22222222-2222-4222-8222-222222222222";
+    const environmentId = "33333333-3333-4333-8333-333333333333";
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const execute = async (body: Record<string, unknown>) => {
+      const runId = String(body.runId);
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        body,
+        { "x-token": "runtime-token" },
+        "https://veryfront.org",
+      );
+
+      return await withEnvValue(
+        "VERYFRONT_API_BASE_URL",
+        "https://api.example.test/",
+        () =>
+          withMockFetch(
+            async (input, init) => {
+              const url = new URL(String(input));
+              const method = observeFetchRequestInit(init).method ?? "GET";
+              const requestBody = requestJsonBody(init);
+              requests.push({ method, pathname: url.pathname, body: requestBody });
+
+              if (method === "POST" && url.pathname.endsWith("/runs")) {
+                const publicId = String(requestBody?.public_id);
+                return Response.json({
+                  accepted: true,
+                  run: { run_id: publicId },
+                  conversation_id: conversationId,
+                }, { status: 202 });
+              }
+
+              if (method === "GET" && url.pathname.endsWith("/stream")) {
+                return new Response(
+                  [
+                    `event: RunStarted\ndata: ${JSON.stringify({ runId: "eval-child-run" })}\n\n`,
+                    `event: TextMessageContent\ndata: ${JSON.stringify({ delta: "Paris" })}\n\n`,
+                    `event: RunFinished\ndata: ${JSON.stringify({})}\n\n`,
+                  ].join(""),
+                  { headers: { "content-type": "text/event-stream" } },
+                );
+              }
+
+              return new Response("not found", { status: 404 });
+            },
+            () => handler.handle(request, createCtx(publicKeyPem)),
+          ),
+      );
+    };
+    const body = {
+      runId: "run_eval_durable_env_agent",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      runtimeTargetKind: "environment",
+      runtimeTargetEnvironmentId: environmentId,
+      config: { model: "model-override-1", max_steps: 3 },
+    };
+    const result = await execute(body);
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true);
+
+    assertEquals(requests.length, 2);
+    const createRunRequest = requests[0]?.body?.request as Record<string, unknown>;
+    const agentInput = createRunRequest.input as Record<string, unknown>;
+    assertEquals(agentInput.agent_id, "researcher");
+    assertEquals(agentInput.messages, []);
+    assertEquals(agentInput.source_target_kind, "environment");
+    assertEquals(agentInput.runtime_target_kind, "environment");
+    assertEquals(agentInput.target_environment_id, environmentId);
+    assertEquals(agentInput.target_branch_id, undefined);
+    assertEquals(agentInput.forwarded_props, {
+      prompt: "France capital?",
+      model: "model-override-1",
+      runtimeOverrides: {
+        allowedTools: [],
+        maxSteps: 3,
+      },
+      veryfront: {
+        agentId: "researcher",
+        projectId: "proj-1",
+        model: "model-override-1",
+        runtimeOverrides: {
+          allowedTools: [],
+          maxSteps: 3,
+        },
+      },
+    });
+
+    requests.length = 0;
+    const branchId = "44444444-4444-4444-8444-444444444444";
+    const previewResult = await execute({
+      ...body,
+      runId: "run_eval_durable_preview_agent",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: undefined,
+      runtimeTargetBranchId: branchId,
+    });
+
+    assertExists(previewResult.response);
+    assertEquals(previewResult.response.status, 200);
+    const previewRequest = requests[0]?.body?.request as Record<string, unknown>;
+    const previewInput = previewRequest.input as Record<string, unknown>;
+    assertEquals(previewInput.source_target_kind, "preview_branch");
+    assertEquals(previewInput.runtime_target_kind, "preview_branch");
+    assertEquals(previewInput.target_environment_id, undefined);
+    assertEquals(previewInput.target_branch_id, branchId);
+    assertEquals(previewInput.messages, []);
+    assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {

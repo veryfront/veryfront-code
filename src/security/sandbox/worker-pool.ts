@@ -23,6 +23,7 @@ import { SECURITY_VIOLATION, SERVICE_OVERLOADED } from "#veryfront/errors";
 import { basename, dirname, resolve as resolvePath } from "#veryfront/compat/path";
 import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { isHostProjectExecutionOverrideConfigured } from "#veryfront/security/host-execution-policy.ts";
 import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import {
   IsolatedSsrRendererProviderName,
@@ -36,7 +37,6 @@ import {
 } from "./worker-egress-guard.ts";
 import { isWorkerGenerationInScope } from "./worker-generation.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
-import { isHostProjectExecutionOverrideEnabled } from "#veryfront/security/host-execution-policy.ts";
 import {
   isIsolatedApiPreparationSupported,
   ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
@@ -1255,11 +1255,10 @@ export interface IsolationSurfacePosture {
 /**
  * The resolved isolation configuration, as an operator would need to read it.
  *
- * `requested` and `effective` are separate fields because they diverge: API
- * isolation is requested and not effective when it is downgraded under an
- * explicit host-execution grant. `inForce` is the field that answers the
- * question the per-surface booleans cannot: whether the configuration as a
- * whole isolates anything at all.
+ * `requested` and `effective` are separate fields so posture remains explicit
+ * if a runtime capability changes. The deprecated host-execution override never
+ * makes requested API isolation ineffective: unsupported runtimes keep the gate
+ * enabled and fail closed. `inForce` answers whether any surface is isolated.
  */
 export interface IsolationPosture {
   /** WORKER_ISOLATION_ENABLED. On its own it enables no surface. */
@@ -1273,8 +1272,10 @@ export interface IsolationPosture {
    * `api.effective` true, API routes fail closed rather than execute.
    */
   apiPreparationSupported: boolean;
-  /** VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. */
-  hostExecutionGranted: boolean;
+  /** @deprecated Always false. The former override no longer grants execution. */
+  hostExecutionGranted: false;
+  /** Whether the deprecated VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION setting is present. */
+  hostExecutionOverrideConfigured: boolean;
   /** True when at least one surface actually resolved to isolated execution. */
   inForce: boolean;
 }
@@ -1282,13 +1283,8 @@ export interface IsolationPosture {
 /**
  * Resolve the host-owned isolation flags once per process.
  *
- * A build that cannot honour `WORKER_ISOLATION_API` has no configuration that
- * serves traffic: every API route dead-ends in `prepareHandlerModule`. The flag
- * is downgraded in exactly one case — the operator already granted host-realm
- * execution via VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION. The downgrade cannot
- * grant more than that, since every execution gate is a conjunction with
- * `allowHostProjectCodeExecution`. Without the grant the flag stands and API
- * ownership fails closed with a typed 503.
+ * A build that cannot honour `WORKER_ISOLATION_API` must fail closed. The
+ * deprecated host-execution override does not alter an API-specific posture.
  */
 function resolveFlags(): void {
   if (_flagsResolved) return;
@@ -1303,10 +1299,8 @@ function resolveFlags(): void {
   _ssrIsolation = master && ssrFlag;
 
   const preparationSupported = isIsolatedApiPreparationSupported();
-  const hostExecutionGranted = isHostProjectExecutionOverrideEnabled();
-  const downgraded = apiRequested && !preparationSupported && hostExecutionGranted;
-
-  _apiIsolation = apiRequested && !downgraded;
+  const hostExecutionOverrideConfigured = isHostProjectExecutionOverrideConfigured();
+  _apiIsolation = apiRequested;
   _flagsResolved = true;
 
   const effectiveSurfaces = [_apiIsolation, _dataIsolation, _ssrIsolation]
@@ -1317,7 +1311,8 @@ function resolveFlags(): void {
     data: { requested: _dataIsolation, effective: _dataIsolation },
     ssr: { requested: _ssrIsolation, effective: _ssrIsolation },
     apiPreparationSupported: preparationSupported,
-    hostExecutionGranted,
+    hostExecutionGranted: false,
+    hostExecutionOverrideConfigured,
     inForce: effectiveSurfaces > 0,
   };
 
@@ -1362,20 +1357,9 @@ function resolveFlags(): void {
     });
   }
 
-  if (downgraded) {
-    logger.warn(
-      "WORKER_ISOLATION_API downgraded to host-realm execution under an explicit operator grant",
-      {
-        flag: "WORKER_ISOLATION_API",
-        requested: true,
-        effective: false,
-        reason: ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
-        grantedBy: "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION",
-      },
-    );
-  } else if (apiRequested && !preparationSupported) {
+  if (apiRequested && !preparationSupported) {
     logger.error(
-      "WORKER_ISOLATION_API cannot be honoured by this runtime and host project execution is not granted; project API routes will fail closed",
+      "WORKER_ISOLATION_API cannot be honoured by this runtime; project API routes will fail closed",
       {
         flag: "WORKER_ISOLATION_API",
         requested: true,
@@ -1406,6 +1390,7 @@ export function getIsolationPosture(): IsolationPosture {
     ssr: { requested: false, effective: false },
     apiPreparationSupported: isIsolatedApiPreparationSupported(),
     hostExecutionGranted: false,
+    hostExecutionOverrideConfigured: false,
     inForce: false,
   };
 }

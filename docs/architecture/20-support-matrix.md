@@ -23,7 +23,7 @@ These are the runtime capability profiles modeled by the framework.
 | ------------------ | ---------- | ---------- | ----------------------------- | ------------------------------------------------------------------------------------- |
 | Deno               | Yes        | Yes        | Yes                           | Primary local/runtime target in this repo.                                            |
 | Node.js            | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
-| Bun                | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
+| Bun                | Yes        | Yes        | Yes                           | Full runtime profile. Shared tenant execution uses isolated runtimes.                 |
 | Cloudflare Workers | No         | No         | Limited                       | Streaming is recommended; the runtime uses conservative step, CPU, and memory limits. |
 | Unknown runtime    | No         | No         | Limited                       | Falls back to a constrained compatibility profile.                                    |
 
@@ -64,7 +64,7 @@ project.
 | `CSSProcessor`                | `@veryfront/ext-css-tailwind`                             | Built-in                              | Tailwind CSS processing                 | Filesystem read (pinned CSS) |
 | `ContentProcessor`            | `@veryfront/ext-content-mdx`                              | Built-in                              | MDX or Markdown content compilation     | None (unified ecosystem)     |
 | `CodeParser`                  | `@veryfront/ext-parser-babel`                             | Built-in                              | AST parsing or build-time code analysis | None (Babel)                 |
-| `DocumentExtractor`           | `@veryfront/ext-document-kreuzberg`                       | Built-in                              | Document text extraction                | FS (WASM/native extraction)  |
+| `DocumentExtractor`           | `@veryfront/ext-document-kreuzberg`                       | Built-in                              | Document text extraction                | FS, subprocess (native/WASM) |
 | `SqliteStore`                 | `@veryfront/ext-db-sqlite`                                | Built-in                              | SQLite-backed persistence               | FS (SQLite)                  |
 | `LLMProvider`                 | `@veryfront/ext-llm-openai`                               | Built-in                              | OpenAI provider selection               | Network (OpenAI API)         |
 | `LLMProvider`                 | `@veryfront/ext-llm-anthropic`                            | Built-in                              | Anthropic provider selection            | Network (Anthropic API)      |

@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { BUILD_FAILED, COMPILATION_ERROR, MDX_COMPILE_ERROR } from "./error-registry/build.ts";
+import {
+  BUILD_FAILED,
+  BUILD_REGISTRY,
+  COMPILATION_ERROR,
+  MDX_COMPILE_ERROR,
+} from "./error-registry/build.ts";
 import { isTenantSourceBuildError } from "./tenant-classification.ts";
 
 describe("errors/tenant-classification", () => {
@@ -20,6 +25,35 @@ describe("errors/tenant-classification", () => {
     } finally {
       Object.defineProperty(Set.prototype, "has", previous);
     }
+  });
+
+  it("classifies every BUILD registry slug and holds framework faults out", () => {
+    // Derived from the registry rather than a hand-picked sample: a slug added
+    // to either the registry or TENANT_BUILD_ERROR_SLUGS must be classified
+    // here deliberately instead of inheriting a default verdict.
+    const expectedTenantSlugs = [
+      "markdown-compile-error",
+      "mdx-compile-error",
+      "typescript-error",
+    ];
+    const classifiedTenantSlugs: string[] = [];
+
+    for (const [slug, definition] of Object.entries(BUILD_REGISTRY)) {
+      const expected = expectedTenantSlugs.includes(slug);
+      const actual = isTenantSourceBuildError(definition.create());
+      assertEquals(
+        actual,
+        expected,
+        `${slug} must classify as ${expected ? "tenant source" : "a framework fault"}`,
+      );
+      if (actual) classifiedTenantSlugs.push(slug);
+    }
+
+    assertEquals(
+      classifiedTenantSlugs.sort(),
+      expectedTenantSlugs,
+      "tenant-source classification covers exactly the tenant-authored compile failures",
+    );
   });
 
   it("requires an own data context marker without invoking accessors", () => {

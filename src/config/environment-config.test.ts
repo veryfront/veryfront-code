@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
@@ -20,6 +21,7 @@ import {
 import { __resetEnvLoaderForTests, markEnvLoaded } from "#veryfront/utils/env-loader.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 describe("EnvironmentConfig", () => {
@@ -258,6 +260,19 @@ describe("EnvironmentConfig", () => {
       const env = getEnvironmentConfig();
       expect(env.debug).toBe(true);
       expect(env.port).toBe(8888);
+      assertEquals(env.portSource, "environment");
+    });
+
+    it("leaves portSource alone when no port is overridden", () => {
+      _setEnvironmentConfigForTesting({ debug: true });
+
+      assertEquals(getEnvironmentConfig().portSource, "default");
+    });
+
+    it("prefers an explicit portSource over the port-presence derivation", () => {
+      _setEnvironmentConfigForTesting({ port: 8888, portSource: "default" });
+
+      assertEquals(getEnvironmentConfig().portSource, "default");
     });
 
     it("freezes the overridden env", () => {
@@ -454,6 +469,54 @@ describe("EnvironmentConfig", () => {
               veryfrontVersion: "1.2.3",
             } satisfies EnvironmentConfig,
           );
+        },
+      );
+    });
+
+    it("keeps host-only reads out of the project env scope", async () => {
+      await withEnv(
+        {
+          NODE_ENV: "production",
+          PROXY_MODE: "",
+          VERYFRONT_OTEL: "",
+          OTEL_EXPORTER_OTLP_ENDPOINT: "",
+        },
+        // deno-lint-ignore require-await
+        async () => {
+          deleteEnv("PROXY_MODE");
+          deleteEnv("VERYFRONT_OTEL");
+          deleteEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+
+          try {
+            const tenantEnv = runWithProjectEnv(
+              {
+                PROXY_MODE: "1",
+                VERYFRONT_OTEL: "1",
+                OTEL_EXPORTER_OTLP_ENDPOINT: "https://tenant.example",
+              },
+              () => {
+                _resetEnvironmentConfig();
+                return refreshEnvironmentConfig();
+              },
+            );
+
+            assertEquals(tenantEnv.proxyMode, false);
+            assertEquals(tenantEnv.otelEnabled, false);
+            assertEquals(tenantEnv.otelEndpoint, undefined);
+
+            setEnv("PROXY_MODE", "1");
+            setEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://host.example");
+
+            const hostEnv = runWithProjectEnv({}, () => {
+              _resetEnvironmentConfig();
+              return refreshEnvironmentConfig();
+            });
+
+            assertEquals(hostEnv.proxyMode, true);
+            assertEquals(hostEnv.otelEndpoint, "https://host.example");
+          } finally {
+            _resetEnvironmentConfig();
+          }
         },
       );
     });

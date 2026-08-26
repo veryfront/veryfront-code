@@ -4,7 +4,7 @@ description: "Run Veryfront agents as separately deployed services."
 order: 19
 ---
 
-An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or service-level telemetry. Use a normal in-app route for everything else.
+An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or deployment-owned service telemetry. Use a normal in-app route for everything else.
 
 Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
@@ -33,12 +33,27 @@ service runtime:
 
 ```ts
 // service.ts
-import { startAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+} from "veryfront/agent";
 
-await startAgentService();
+await loadAgentServiceEnvFiles();
+await startNodeVeryfrontCloudAgentService();
 ```
 
-The bootstrap discovers the same project primitives as the app runtime:
+`startNodeVeryfrontCloudAgentService()` starts the runtime from the environment
+that is already loaded. It does not load local `.env` files or initialize
+process-wide telemetry. Call `loadAgentServiceEnvFiles()` first when the
+standalone process uses Veryfront's `.env` conventions, as shown above.
+
+Initialize service-level OpenTelemetry in the trusted deployment wrapper before
+it loads `service.ts`. Do not let project code select process-wide exporters,
+trace hooks, or application-error reporters. The framework-owned
+`veryfront serve` runtime owns this setup on shared and managed dedicated
+servers.
+
+The service discovers the same project primitives as the app runtime:
 
 - `agents/`
 - `tools/`
@@ -116,7 +131,12 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+} from "veryfront/agent";
+
+await loadAgentServiceEnvFiles();
 
 const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
 const releaseId = process.env.DEPLOYED_RELEASE_ID;
@@ -124,7 +144,7 @@ if (!environmentName || !releaseId) {
   throw new Error("Missing immutable agent service deployment identity");
 }
 
-await startAgentService({
+await startNodeVeryfrontCloudAgentService({
   runtimeSource: {
     type: "environment",
     environmentName,
@@ -156,12 +176,14 @@ This service startup config uses `endpoint` and `headers`. Per-agent config in
 
 ```ts
 import {
-  startAgentService,
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "veryfront/agent";
 
-await startAgentService({
+await loadAgentServiceEnvFiles();
+await startNodeVeryfrontCloudAgentService({
   serviceName: "support-agent",
   mcpServers: [
     veryfrontApiMcpServer(),
@@ -196,8 +218,15 @@ exact allowed endpoints once at startup. Use the host transport only for those
 immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
+} from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
+
+await loadAgentServiceEnvFiles();
 
 function requiredUrl(name: string): string {
   const value = process.env[name];
@@ -214,8 +243,12 @@ const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
   requestFetch: hostFetch,
 });
 
-await startAgentService({
+await startNodeVeryfrontCloudAgentService({
   createRemoteToolSource,
+  mcpServers: [
+    veryfrontApiMcpServer(),
+    veryfrontStudioMcpServer(),
+  ],
 });
 ```
 
@@ -253,23 +286,24 @@ Services that use Veryfront Cloud project steering can reuse
 
 ## Use lower-level helpers
 
-Use `startAgentService()` for the standard service shape. Use lower-level
-helpers only when the service needs a custom server adapter, custom execution
-preparation, or custom infrastructure.
+Use `startNodeVeryfrontCloudAgentService()` for the standard service shape.
+Use lower-level helpers only when the service needs a custom server adapter,
+custom execution preparation, or custom infrastructure.
 
 | Helper                                             | Use                                                                                  |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `loadAgentServiceEnvFiles()`                       | Load standalone service `.env` files before resolving startup options.               |
 | `defineAgentService()`                             | Normalize one or more agents into a service registry contract.                       |
 | `startNodeAgentService()`                          | Start a Node service around a request-native runtime.                                |
-| `createNodeAgentServiceRuntimeInfrastructure()`    | Create Node config, logging, tracing, and telemetry infrastructure.                  |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
 | `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
 
 ## Migrate custom durable child event writers
 
 This migration applies to custom hosted runtimes that call the lower-level
-durable child helpers. Framework-managed `startAgentService()` runtimes create
-and scope writer capabilities internally.
+durable child helpers. Framework-managed
+`startNodeVeryfrontCloudAgentService()` runtimes create and scope writer
+capabilities internally.
 
 Raw `authToken`, `apiUrl`, and `runEventAppendToken` fields no longer grant
 durable child event-writer authority. The parsed hosted request also excludes

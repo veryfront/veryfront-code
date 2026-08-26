@@ -26,14 +26,27 @@ describe("errors/catalog/build-errors", () => {
     it("should have correct structure for each entry", () => {
       for (const [slug, solution] of Object.entries(BUILD_ERROR_CATALOG)) {
         assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
-        assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
-        assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
+        assertEquals(
+          solution.title.trim().length > 0,
+          true,
+          `title must be non-empty copy for ${slug}`,
+        );
+        assertEquals(
+          solution.message.trim().length > 0,
+          true,
+          `message must be non-empty copy for ${slug}`,
+        );
         assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
         assertEquals(
           (solution.steps?.length ?? 0) > 0,
           true,
           `steps should not be empty for ${slug}`,
+        );
+        assertEquals(
+          solution.steps?.every((step) => step.trim().length > 0) ?? false,
+          true,
+          `every step must be non-empty for ${slug}`,
         );
       }
     });

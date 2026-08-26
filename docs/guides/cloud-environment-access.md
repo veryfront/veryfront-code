@@ -8,6 +8,11 @@ Veryfront Cloud creates `preview`, `staging`, and `production` environments.
 Each environment is protected by default. Use this guide when a browser, CI
 check, or API client must reach a deployed environment.
 
+Cloud environment access is separate from
+[`security.auth.oidc`](./application-auth.md). Use Cloud environment access for
+deployment visibility and application authentication for end-user identity
+inside the app. A protected preview URL can require both gates.
+
 ## Check a protected environment
 
 Open the environment URL in a browser signed in as a project member. A protected

@@ -221,6 +221,7 @@ export type DeclarativeConfigErrorReason =
   | "hosted-extensions"
   | "hosted-render-cache-backend"
   | "hosted-render-cache-capacity"
+  | "hosted-trusted-proxy-auth"
   | "import-form"
   | "intermediate-string"
   | "missing-default-export"
@@ -2648,7 +2649,23 @@ function enforceHostedResultPolicy(
 
   if (!hasOwn(result, "security")) return;
   const security = runtimeRecordValue(result, "security");
-  if (!isRuntimeRecord(security) || !hasOwn(security, "cors")) return;
+  if (!isRuntimeRecord(security)) return;
+  if (hasOwn(security, "auth")) {
+    const auth = runtimeRecordValue(security, "auth");
+    if (
+      isRuntimeRecord(auth) && hasOwn(auth, "trustedProxy") &&
+      runtimeRecordValue(auth, "trustedProxy") !== undefined
+    ) {
+      return throwEvaluationError(
+        "unsupported-hosted-feature",
+        "result",
+        "hosted-trusted-proxy-auth",
+        context,
+        program,
+      );
+    }
+  }
+  if (!hasOwn(security, "cors")) return;
   const cors = runtimeRecordValue(security, "cors");
   if (!isRuntimeRecord(cors) || !hasOwn(cors, "origin")) return;
   const origin = runtimeRecordValue(cors, "origin");

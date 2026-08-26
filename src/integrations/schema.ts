@@ -309,13 +309,18 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // Opts this execution default into the model-facing tool input schema.
     // Use only when the value is safe and useful as model guidance.
     exposeDefault: v.boolean().optional(),
+    // Restricts string inputs before endpoint interpolation. Authority path
+    // params must use this to prevent credentials from reaching untrusted hosts.
+    pattern: v.string().optional(),
     // For query params only: the HTTP query parameter name to send when it differs
     // from the agent-facing parameter key (e.g. input query -> query param $search).
     queryName: v.string().optional(),
     // For query params only: provider-specific formatting applied to the value
-    // before sending. Microsoft Graph message $search requires the entire AQS
-    // query to be enclosed in double quotes.
-    queryValueFormat: v.enum(["microsoft-graph-search"]).optional(),
+    // before sending. Search encloses the AQS query in double quotes. Conversation
+    // ID formatting escapes the value and builds a fixed conversationId predicate.
+    queryValueFormat: v
+      .enum(["microsoft-graph-search", "microsoft-graph-conversation-id"])
+      .optional(),
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
     headerName: v.string().optional(),

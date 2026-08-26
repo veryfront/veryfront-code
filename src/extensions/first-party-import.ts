@@ -16,6 +16,12 @@ const FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN =
   /^@veryfront\/ext-[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*)?$/;
 const SAFE_RELATIVE_PATH_FRAGMENT_PATTERN =
   /^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$/;
+const ReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrim = String.prototype.trim;
 
 /** Optional non-root entry point for a first-party extension import. */
 export interface FirstPartyExtensionImportOptions {
@@ -32,6 +38,11 @@ export interface FirstPartyExtensionImportOptions {
    * omitted, the package root is used.
    */
   readonly packageSubpath?: string;
+}
+
+function regexpMatches(pattern: RegExp, value: string): boolean {
+  pattern.lastIndex = 0;
+  return ReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
 }
 
 type CapturedFirstPartyExtensionImportOptions = Readonly<{
@@ -185,7 +196,7 @@ function throwInvalidImportOptions(): never {
 function assertValidSourceDirectory(sourceDirectory: unknown): asserts sourceDirectory is string {
   if (
     typeof sourceDirectory !== "string" ||
-    !FIRST_PARTY_SOURCE_DIRECTORY_PATTERN.test(sourceDirectory)
+    !regexpMatches(FIRST_PARTY_SOURCE_DIRECTORY_PATTERN, sourceDirectory)
   ) {
     throw new TypeError(
       "Invalid first-party extension source directory",
@@ -196,7 +207,7 @@ function assertValidSourceDirectory(sourceDirectory: unknown): asserts sourceDir
 function assertValidPackageName(packageName: unknown): asserts packageName is string {
   if (
     typeof packageName !== "string" ||
-    !FIRST_PARTY_PACKAGE_PATTERN.test(packageName)
+    !regexpMatches(FIRST_PARTY_PACKAGE_PATTERN, packageName)
   ) {
     throw new TypeError(
       "Invalid first-party extension package name",
@@ -205,7 +216,7 @@ function assertValidPackageName(packageName: unknown): asserts packageName is st
 }
 
 function assertValidEntry(label: string, entry: unknown): asserts entry is string {
-  if (typeof entry !== "string" || !FIRST_PARTY_ENTRY_PATTERN.test(entry)) {
+  if (typeof entry !== "string" || !regexpMatches(FIRST_PARTY_ENTRY_PATTERN, entry)) {
     throw new TypeError(`Invalid first-party extension ${label}`);
   }
 }
@@ -261,7 +272,95 @@ export function isMissingFirstPartyExtensionModule(
   return matched;
 }
 
+/**
+ * The specifier a runtime says it could not resolve, or `undefined`.
+ *
+ * Every pattern is anchored. An ordinary error that merely quotes a resolver
+ * phrase -- `Setup failed: Module not found "db"` -- must not be mistaken for
+ * one, because the caller acts on the answer.
+ */
 function reportedMissingSpecifier(message: string): string | undefined {
+  const whole = matchReportedMissingSpecifier(message);
+  if (whole !== undefined) return whole;
+  // Deno appends a `hint:` line and an `at <location>` line to its resolution
+  // errors, so the real-world message is three lines where the pattern expects
+  // one. Retrying on the first line keeps every pattern anchored -- loosening
+  // the anchors instead would let an ordinary error that merely quotes a
+  // resolver phrase (`Setup failed: Module not found "db"`) be read as one.
+  // Tried second so the genuinely multi-line Require-stack form still wins.
+  const firstLine = firstLineIfOnlyRuntimeTrailerFollows(message);
+  if (firstLine === undefined) return undefined;
+  return matchReportedMissingSpecifier(firstLine);
+}
+
+/** What an ANSI SGR sequence leaves behind once its ESC is stripped. */
+const SGR_RESIDUE = /\[[0-9;]*m/g;
+
+/**
+ * The ESC that opens an ANSI sequence.
+ *
+ * Removed by split/join rather than a regex: a character class naming it is a
+ * `no-control-regex` violation, and this repository forbids suppressions.
+ */
+const ESCAPE_CHARACTER = String.fromCharCode(27);
+
+/** The only Deno trailers this classifier may discard after a resolution error. */
+const RUNTIME_TRAILER_LINE =
+  /^\s*(?:hint:\s+(?:If you want to use (?:the npm|a JSR) package, try running `deno add (?:npm|jsr):[^`]+`|try running `deno add`)|at\s+(?:file|https?|npm|jsr):\S+:\d+:\d+)$/;
+
+/**
+ * The first line, but only when every line after it is a runtime trailer.
+ *
+ * Retrying on the first line unconditionally would defeat the end anchor for
+ * any multi-line message: an extension or bundler can throw
+ * `Cannot find module 'x'` followed by its own diagnostic, and matching the
+ * first line alone would report the extension as absent and hide the real
+ * failure. Deno colours its `hint:` and `at` lines, so the escape is stripped
+ * before the shape is tested.
+ */
+function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
+  const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
+  if (lines.length < 2) return undefined;
+  for (let index = 1; index < lines.length; index += 1) {
+    const withoutEscape = ReflectApply(StringPrototypeReplaceAll, lines[index]!, [
+      ESCAPE_CHARACTER,
+      "",
+    ]) as string;
+    const line = removeSgrResidue(withoutEscape);
+    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
+    if (ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null) {
+      return undefined;
+    }
+  }
+  return lines[0];
+}
+
+function removeSgrResidue(value: string): string {
+  let result = "";
+  let offset = 0;
+  SGR_RESIDUE.lastIndex = 0;
+  while (true) {
+    const match = ReflectApply(RegExpPrototypeExec, SGR_RESIDUE, [value]) as
+      | RegExpExecArray
+      | null;
+    if (!match) break;
+    result += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
+    offset = match.index + match[0].length;
+  }
+  SGR_RESIDUE.lastIndex = 0;
+  return result + (ReflectApply(StringPrototypeSlice, value, [offset]) as string);
+}
+
+/**
+ * The specifier named by a single, complete resolver message.
+ *
+ * Split out from `reportedMissingSpecifier` so the first-line retry can reuse
+ * the same anchored patterns instead of loosening them. Each branch is one
+ * runtime's real wording; the `exports`-shaped branches rebuild the subpath
+ * the importer asked for, because the runtime reports only the package and
+ * the subpath separately.
+ */
+function matchReportedMissingSpecifier(message: string): string | undefined {
   for (
     const prefix of [
       "[ERR_PACKAGE_PATH_NOT_EXPORTED] ",
@@ -274,18 +373,24 @@ function reportedMissingSpecifier(message: string): string | undefined {
     }
   }
 
-  const unknownExport = message.match(
+  const unknownExport = ReflectApply(
+    RegExpPrototypeExec,
     /^Unknown export\s+["'](\.\/[^"']+)["']\s+for\s+["']([^"']+)["']$/,
-  ) ?? message.match(
+    [message],
+  ) as RegExpExecArray | null ?? ReflectApply(
+    RegExpPrototypeExec,
     /^Unknown export\s+["'](\.\/[^"']+)["']\s+for\s+["']([^"']+)["']\.\n {2}Package exports:(?:\n \* [^\r\n]+)+(?:\n {4}at [^\r\n]+\n?)?$/,
-  );
+    [message],
+  ) as RegExpExecArray | null;
   if (unknownExport) {
     return `${unknownExport[2]}/${unknownExport[1]!.slice(2)}`;
   }
 
-  const packageSubpath = message.match(
+  const packageSubpath = ReflectApply(
+    RegExpPrototypeExec,
     /^Package subpath\s+["'](\.\/[^"']+)["']\s+is not defined by\s+["']exports["']\s+in\s+(?:["']([^"']+[/\\]package\.json)["']|(.+?[/\\]package\.json))(?:\s+imported from\s+.+)?$/,
-  );
+    [message],
+  ) as RegExpExecArray | null;
   if (packageSubpath) {
     const packageName = packageNameFromManifestPath(
       packageSubpath[2] ?? packageSubpath[3]!,
@@ -293,9 +398,22 @@ function reportedMissingSpecifier(message: string): string | undefined {
     if (packageName) return `${packageName}/${packageSubpath[1]!.slice(2)}`;
   }
 
-  const bunResolveMessage = message.match(
+  // Deno reports an import of an absent absolute file as a filesystem loader
+  // failure instead of its usual `Cannot find module` resolver wording. Keep
+  // the complete error shape anchored so only the requested file can match;
+  // callers still compare the captured path exactly with the expected source.
+  const denoFilesystemLoad = ReflectApply(
+    RegExpPrototypeExec,
+    /^Unable to load ([^\r\n]+)\r?\n {2}Caused by:\r?\n {4}(?:(?:No such file or directory|The system cannot find the file specified\.?) \(os error 2\)|The system cannot find the path specified\.? \(os error 3\))$/,
+    [message],
+  ) as RegExpExecArray | null;
+  if (denoFilesystemLoad) return denoFilesystemLoad[1];
+
+  const bunResolveMessage = ReflectApply(
+    RegExpPrototypeExec,
     /^(?:ResolveMessage:\s+)?Cannot find module\s+["']([^"']+)["']\s+from\s+["']([^"']+)["']$/,
-  );
+    [message],
+  ) as RegExpExecArray | null;
   if (bunResolveMessage) {
     const specifier = bunResolveMessage[1]!;
     const importer = bunResolveMessage[2]!;
@@ -317,7 +435,8 @@ function reportedMissingSpecifier(message: string): string | undefined {
   for (
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
-      /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
+      /^(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+imported from\s+["']?(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+$/,
+      /^Module not found\s+["']([^"']+)["']\.$/,
       // Deno, when the importer itself resolves out of the npm cache. The
       // trailing parenthetical names the owning package when the referrer
       // lives in the global Deno npm cache (`deno add npm:veryfront`).
@@ -326,7 +445,9 @@ function reportedMissingSpecifier(message: string): string | undefined {
       /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
     ]
   ) {
-    const match = message.match(pattern);
+    const match = ReflectApply(RegExpPrototypeExec, pattern, [message]) as
+      | RegExpExecArray
+      | null;
     if (match) return match[1];
   }
   return undefined;
@@ -356,13 +477,13 @@ function matchesExpectedSpecifier(
     return reportedFilePath === expectedFilePath;
   }
 
-  if (FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN.test(expectedSpecifier)) {
-    return FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN.test(reportedSpecifier) &&
+  if (regexpMatches(FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN, expectedSpecifier)) {
+    return regexpMatches(FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN, reportedSpecifier) &&
       reportedSpecifier === expectedSpecifier;
   }
 
   const relativeFragment = expectedSpecifier.replaceAll("\\", "/");
-  if (!SAFE_RELATIVE_PATH_FRAGMENT_PATTERN.test(relativeFragment)) return false;
+  if (!regexpMatches(SAFE_RELATIVE_PATH_FRAGMENT_PATTERN, relativeFragment)) return false;
   const normalizedReportedSpecifier = reportedSpecifier.replaceAll("\\", "/");
   if (
     reportedFilePath === undefined &&
@@ -391,7 +512,7 @@ function matchesExpectedSpecifier(
 }
 
 function canonicalFilePath(specifier: string): string | undefined {
-  if (/^file:/i.test(specifier)) {
+  if (regexpMatches(/^file:/i, specifier)) {
     try {
       const url = new URL(specifier);
       if (
@@ -401,13 +522,13 @@ function canonicalFilePath(specifier: string): string | undefined {
         url.port !== "" ||
         url.search !== "" ||
         url.hash !== "" ||
-        /%2f|%5c/i.test(url.pathname)
+        regexpMatches(/%2f|%5c/i, url.pathname)
       ) {
         return undefined;
       }
       const host = url.hostname === "localhost" ? "" : url.hostname;
       let path = decodeURIComponent(url.pathname).replaceAll("\\", "/");
-      if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+      if (regexpMatches(/^\/[A-Za-z]:\//, path)) path = path.slice(1);
       return host ? `//${host.toLowerCase()}${path}` : normalizeAbsoluteFilePath(path);
     } catch {
       return undefined;
@@ -418,7 +539,7 @@ function canonicalFilePath(specifier: string): string | undefined {
   if (
     !normalized.startsWith("/") &&
     !normalized.startsWith("//") &&
-    !/^[A-Za-z]:\//.test(normalized)
+    !regexpMatches(/^[A-Za-z]:\//, normalized)
   ) {
     return undefined;
   }
@@ -426,10 +547,12 @@ function canonicalFilePath(specifier: string): string | undefined {
 }
 
 function normalizeAbsoluteFilePath(path: string): string {
-  if (/^[A-Za-z]:\//.test(path)) {
+  if (regexpMatches(/^[A-Za-z]:\//, path)) {
     return `${path[0]!.toLowerCase()}${path.slice(1)}`;
   }
-  const uncPath = path.match(/^\/\/([^/]+)(\/.*)$/);
+  const uncPath = ReflectApply(RegExpPrototypeExec, /^\/\/([^/]+)(\/.*)$/, [path]) as
+    | RegExpExecArray
+    | null;
   return uncPath ? `//${uncPath[1]!.toLowerCase()}${uncPath[2]}` : path;
 }
 

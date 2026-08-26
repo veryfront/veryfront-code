@@ -133,6 +133,34 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps the cross-runtime SSR pipeline fixture in Node and Bun", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain cross-runtime SSR pipeline coverage`,
+      );
+    }
+  });
+
+  it("keeps Bun-owned tests out of Deno integration plans", async () => {
+    for (
+      const suite of [
+        "integration:legacy-tests-root",
+        "coverage:integration",
+      ] as const
+    ) {
+      const plan = await planSuiteFiles({ suite });
+      assertEquals(
+        plan.files.some((path) => path.startsWith("tests/bun/")),
+        false,
+        `${suite} must leave tests/bun to runtime:bun`,
+      );
+    }
+  });
+
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
     const paths = Array.from(
       { length: 27 },
@@ -508,6 +536,7 @@ async function legacyUnitCoverageFiles(): Promise<string[]> {
 async function legacyIntegrationRootFiles(): Promise<string[]> {
   return sorted(
     (await collectLegacyTestFiles(["tests"], true))
+      .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
         path !== "tests/integration/compiled-binary-e2e.test.ts"
@@ -548,6 +577,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
       "src/",
@@ -557,6 +587,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"
     ? [

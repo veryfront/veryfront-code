@@ -149,7 +149,9 @@ export async function POST() {
 Run this route after files in `content/` change:
 
 ```bash title="Terminal"
-curl -X POST http://localhost:3000/api/ingest
+curl -X POST http://localhost:3000/api/ingest \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check"
 ```
 
 Keep indexing out of the chat request path. `indexContentDir()` reads files from

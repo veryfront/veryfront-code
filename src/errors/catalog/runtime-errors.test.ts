@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildErrorDocsUrl } from "../diagnostic-policy.ts";
 import { RUNTIME_ERROR_CATALOG } from "./runtime-errors.ts";
 
 describe("errors/catalog/runtime-errors", () => {
@@ -24,9 +25,21 @@ describe("errors/catalog/runtime-errors", () => {
     it("should have correct structure for each entry", () => {
       for (const [slug, solution] of Object.entries(RUNTIME_ERROR_CATALOG)) {
         assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
-        assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
-        assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
-        assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
+        assertEquals(
+          solution.title.trim().length > 0,
+          true,
+          `title must be non-empty copy for ${slug}`,
+        );
+        assertEquals(
+          solution.message.trim().length > 0,
+          true,
+          `message must be non-empty copy for ${slug}`,
+        );
+        assertEquals(
+          solution.docs,
+          buildErrorDocsUrl(slug),
+          `docs URL must be the canonical errors anchor for ${slug}`,
+        );
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
         assertEquals(
           solution.steps?.length ? solution.steps.length > 0 : false,

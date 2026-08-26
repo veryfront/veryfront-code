@@ -91,6 +91,7 @@ import {
 } from "./manifest-schema.ts";
 import type { CompileProjectCssResult } from "./css-compile.ts";
 import { materializeReleaseDependencyGraph } from "./dependency-artifact-graph.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = serverLogger.component("release-asset-build");
 
@@ -3010,7 +3011,7 @@ async function mergeModuleCssImports(
   const segments: string[] = [];
   let moduleCount = 0;
   let regularCount = 0;
-  for (const relativePath of [...importedPaths].sort()) {
+  for (const relativePath of [...importedPaths].sort(compareStrings)) {
     if (relativePath === stylesheet?.path) continue;
     const content = sourceByPath.get(relativePath);
     if (content === undefined) continue;

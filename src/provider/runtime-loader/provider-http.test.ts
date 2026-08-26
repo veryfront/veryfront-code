@@ -842,8 +842,10 @@ describe("provider-http", () => {
     });
 
     it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
-      // Three unclamped 200ms attempts would spend ~600ms. The budget must stop
-      // it at ~250ms, below the enclosing watchdog.
+      // An immediate retryable response proves replay independently of timer
+      // scheduling. The remaining unclamped 500ms attempts would take about
+      // 1,000ms, while the 550ms total budget must stop them below 800ms even
+      // with parallel-suite scheduling overhead.
       let attempts = 0;
       const startedAt = performance.now();
       await assertRejects(
@@ -852,22 +854,31 @@ describe("provider-http", () => {
             url: "https://provider.test/stream",
             fetchImpl: () => {
               attempts++;
+              if (attempts === 1) {
+                return Promise.resolve(
+                  jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  ),
+                );
+              }
               return new Promise<Response>(() => {});
             },
             init: { method: "POST" },
             providerLabel: "veryfront-cloud",
             providerKind: "openai",
-            headersTimeoutMs: 200,
-            totalHeadersBudgetMs: 250,
+            headersTimeoutMs: 500,
+            totalHeadersBudgetMs: 550,
           }),
         ProviderRequestError,
         "request timed out",
       );
       const elapsedMs = performance.now() - startedAt;
 
-      assertEquals(attempts > 1, true, "the budget must still buy a replay");
+      assertEquals(attempts > 1, true, "the immediate failure must still be replayed");
       assertEquals(
-        elapsedMs < 500,
+        elapsedMs < 800,
         true,
         `total header wait must stay inside the budget, spent ${elapsedMs}ms`,
       );
@@ -1136,6 +1147,73 @@ describe("provider-http", () => {
         attempts,
         1,
         "the response body is already claimed, so no attempt may be replayed",
+      );
+    });
+
+    it("disposes the deadline when the stream wrapper throws at handoff", async () => {
+      // A throw from streamWithCleanup (getReader() on an unreadable body)
+      // used to skip deadline.dispose(): ownership had already transferred,
+      // but no stream existed to exercise it, so the abort listener registered
+      // on the caller's signal stayed attached for the signal's lifetime
+      // (veryfront-issue-inbox#750).
+      const caller = new AbortController();
+      const signal = caller.signal;
+      let abortListenersAdded = 0;
+      let abortListenersRemoved = 0;
+      const originalAdd = signal.addEventListener.bind(signal);
+      const originalRemove = signal.removeEventListener.bind(signal);
+      signal.addEventListener = ((
+        ...args: Parameters<typeof signal.addEventListener>
+      ) => {
+        const [type] = args;
+        if (type === "abort") abortListenersAdded++;
+        originalAdd(...args);
+      }) as typeof signal.addEventListener;
+      signal.removeEventListener = ((
+        ...args: Parameters<typeof signal.removeEventListener>
+      ) => {
+        const [type] = args;
+        if (type === "abort") abortListenersRemoved++;
+        originalRemove(...args);
+      }) as typeof signal.removeEventListener;
+
+      let requestInit: RequestInit | undefined;
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (_url, init) => {
+              requestInit = init;
+              return Promise.resolve({
+                ok: true,
+                status: 200,
+                body: {
+                  getReader() {
+                    throw new TypeError("body is locked");
+                  },
+                },
+              } as unknown as Response);
+            },
+            init: { method: "POST", signal },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        TypeError,
+        "body is locked",
+      );
+
+      assertEquals(abortListenersAdded >= 1, true, "the deadline must observe the caller signal");
+      assertEquals(
+        abortListenersRemoved,
+        abortListenersAdded,
+        "every abort listener the deadline added must be removed on the handoff failure",
+      );
+      // No stream was handed off, so nothing else releases the provider
+      // connection: the request itself must be aborted before the rethrow.
+      assertEquals(
+        requestInit?.signal?.aborted,
+        true,
+        "the provider request must be aborted when the handoff fails",
       );
     });
 

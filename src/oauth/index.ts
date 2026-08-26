@@ -27,6 +27,7 @@
 export type {
   AuthorizationUrlOptions,
   OAuthProviderConfig,
+  OAuthScopeSource,
   OAuthServiceConfig,
   OAuthState,
   OAuthTokens,
@@ -39,6 +40,7 @@ export type {
 } from "./types.ts";
 
 export { OAuthProvider, OAuthService } from "./providers/base.ts";
+export { isSupersededOAuthGrant } from "./grant-policy.ts";
 
 export {
   AuthorizationUrlOptionsSchema,

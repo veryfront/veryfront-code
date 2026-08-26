@@ -4,6 +4,7 @@ import {
   allocatePort,
   assertCondition,
   ensureCommand,
+  fetchCsrfToken,
   installDependencies,
   type PackedWorkspace,
   packNpmPackage,
@@ -14,6 +15,7 @@ import {
   startDevServer,
   stopDevServer,
   waitForRoute,
+  withCsrfDoubleSubmit,
 } from "./runtime-e2e-helpers.ts";
 
 export {
@@ -217,11 +219,21 @@ async function verifyBrowserRoute(
 
 async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
   const topic = `Runtime E2E ${crypto.randomUUID().slice(0, 8)}`;
+  // The workflow start route sits behind the template's CSRF gate, which
+  // local development enforces exactly as a deployed build does, so this
+  // mutation has to complete the double-submit the way a browser client would.
+  const csrfToken = await fetchCsrfToken(rootUrl);
+  assertCondition(
+    csrfToken.length > 0,
+    "the dev server served no __Host-vf_csrf cookie on its HTML document",
+  );
   const startResponse = await fetch(
     new URL("/api/workflows/content-pipeline/start", rootUrl),
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: withCsrfDoubleSubmit(csrfToken, {
+        "Content-Type": "application/json",
+      }),
       body: JSON.stringify({ input: { topic } }),
     },
   );

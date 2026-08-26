@@ -50,6 +50,7 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -112,6 +113,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
     skills?: true | false | string[];
   };
   projectId: string | null;
@@ -241,6 +243,7 @@ export type HostedChatExecutionPreparationInput<
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -337,15 +340,16 @@ function resolveInitialModelVisibleToolNames(input: {
   const hostAllow = input.hostToolPolicy === undefined
     ? undefined
     : new Set(input.hostToolPolicy.allow);
+  const deniedToolNames = new Set(input.runtimeConfig.deniedToolNames ?? []);
   const isHostAllowed = (toolName: string): boolean =>
-    hostAllow === undefined || hostAllow.has(toolName);
+    (hostAllow === undefined || hostAllow.has(toolName)) && !deniedToolNames.has(toolName);
 
   if (input.runtimeConfig.requestedAllowedTools === undefined) {
     return [
       ...(isHostAllowed("form_input") ? ["form_input"] : []),
       ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
-      TOOL_SEARCH_TOOL_NAME,
-    ].sort();
+      ...(isHostAllowed(TOOL_SEARCH_TOOL_NAME) ? [TOOL_SEARCH_TOOL_NAME] : []),
+    ].sort(compareStrings);
   }
 
   const visibleToolNames = new Set(
@@ -358,7 +362,7 @@ function resolveInitialModelVisibleToolNames(input: {
   ) {
     visibleToolNames.add("load_skill");
   }
-  return [...visibleToolNames].sort();
+  return [...visibleToolNames].sort(compareStrings);
 }
 
 /** Options accepted by prepare hosted chat runtime creation. */
@@ -389,13 +393,14 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selectedSkills,
     hostToolPolicy: input.hostToolPolicy,
   });
+  const promptSkills = initialModelVisibleToolNames.includes("load_skill") ? selectedSkills : [];
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: selectedSkills,
+    skills: promptSkills,
     availableToolNames: initialModelVisibleToolNames,
   });
   return {
@@ -424,6 +429,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
         : {}),
       ...(runtimeConfig.requestedAllowedTools !== undefined
         ? { allowedTools: runtimeConfig.requestedAllowedTools }
+        : {}),
+      ...(runtimeConfig.deniedToolNames !== undefined
+        ? { deniedTools: runtimeConfig.deniedToolNames }
         : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
@@ -495,6 +503,7 @@ export async function prepareHostedChatExecution<
     allowedRemoteTools?: unknown;
     providerTools?: string[];
     tools?: true | string[];
+    deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(

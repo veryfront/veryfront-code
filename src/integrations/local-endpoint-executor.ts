@@ -53,6 +53,8 @@ const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
 const removeEventListener = EventTarget.prototype.removeEventListener;
 const readableStreamCancel = ReadableStream.prototype.cancel;
+const RegExpConstructor = RegExp;
+const regexpTest = RegExp.prototype.test;
 const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")?.get;
 const responseHeaders = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
@@ -273,7 +275,27 @@ function fieldValue(
   if (!valueMatchesType(value, field.type)) {
     requestInvalid(`Local integration argument "${name}" must have type "${field.type}"`);
   }
+  const pattern = fieldPattern(field);
+  if (pattern !== undefined) {
+    assertPattern(value, pattern, name);
+  }
   return { present: true, value };
+}
+
+/**
+ * Reads a field's declared pattern as an own data property.
+ *
+ * A prototype-traversing read (`"pattern" in field`, `field.pattern`) would let
+ * an `Object.prototype.pattern` pollution poison validation for every field --
+ * or execute an inherited getter -- so only a string the catalog entry itself
+ * carries is ever enforced.
+ */
+function fieldPattern(
+  field: IntegrationEndpointParam | IntegrationEndpointBodyField,
+): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(field, "pattern");
+  if (!descriptor || !("value" in descriptor)) return undefined;
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
 }
 
 function scalarString(value: unknown): string {
@@ -282,6 +304,19 @@ function scalarString(value: unknown): string {
     return StringConstructor(value);
   }
   requestInvalid("Local integration path, query, and header arguments must be scalar values");
+}
+
+function assertPattern(value: unknown, pattern: string, name: string): void {
+  if (typeof value !== "string") return;
+  let matcher: RegExp;
+  try {
+    matcher = new RegExpConstructor(pattern);
+  } catch {
+    requestInvalid(`Local integration argument pattern for "${name}" is invalid`);
+  }
+  if (!apply(regexpTest, matcher, [value])) {
+    requestInvalid(`Local integration argument "${name}" does not match its allowed pattern`);
+  }
 }
 
 /**
@@ -310,6 +345,8 @@ function appendQueryValue(
   const append = (item: string): void => {
     const formatted = field.queryValueFormat === "microsoft-graph-search"
       ? `"${replaceAll(item, '"', '\\"')}"`
+      : field.queryValueFormat === "microsoft-graph-conversation-id"
+      ? `conversationId eq '${replaceAll(item, "'", "''")}'`
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
@@ -360,7 +397,26 @@ function assertKnownArguments(
 export function snapshotLocalIntegrationEndpointArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
-): { args: Record<string, unknown>; body: string | undefined } {
+): {
+  args: Record<string, unknown>;
+  body: string | undefined;
+  endpointOrigin: string | undefined;
+} {
+  const snapshot = snapshotLocalIntegrationEndpointInput(endpoint, args);
+  return {
+    ...snapshot,
+    endpointOrigin: resolveLocalIntegrationEndpointOrigin(endpoint, snapshot.args),
+  };
+}
+
+/** @internal Validate and serialize endpoint input without resolving its URL authority. */
+export function snapshotLocalIntegrationEndpointInput(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): {
+  args: Record<string, unknown>;
+  body: string | undefined;
+} {
   const snapshot = snapshotAndValidateArguments(endpoint, args);
   // Assembled rather than checked field by field: an omitted field still
   // contributes its catalog default, so fields that each fit can still add up
@@ -373,6 +429,20 @@ export function snapshotLocalIntegrationEndpointArguments(
   // produce a body that was never bounded -- or throw outright.
   const body = assembleBody(endpoint, snapshot);
   return { args: snapshot, body };
+}
+
+/** @internal Resolve the admitted origin after host templates have been pinned. */
+export function resolveLocalIntegrationEndpointOrigin(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): string | undefined {
+  return callStringBoolean(
+      stringIncludes,
+      endpoint.url,
+      "{{oauth.raw.instance_url}}",
+    )
+    ? undefined
+    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, args));
 }
 
 /**
@@ -474,33 +544,9 @@ function buildRequest(
   preSerializedBody?: string | undefined,
 ): LocalIntegrationEndpointTransportRequest {
   assertKnownArguments(args, endpoint);
-  let endpointUrl = endpoint.url;
   const headers = new HeadersConstructor();
-
   const parameterNames = objectKeys(endpoint.params ?? {});
-  for (let index = 0; index < parameterNames.length; index++) {
-    const name = parameterNames[index]!;
-    const field = endpoint.params?.[name];
-    if (!field) continue;
-    const resolved = fieldValue(args, name, field);
-    if (!resolved.present) continue;
-    if (field.in === "path") {
-      endpointUrl = replaceAll(endpointUrl, `{${name}}`, pathSegment(resolved.value));
-    } else if (field.in === "header") {
-      setHeader(headers, field.headerName ?? name, scalarString(resolved.value));
-    }
-  }
-
-  if (callStringBoolean(stringIncludes, endpointUrl, "{")) {
-    requestInvalid("Local integration endpoint contains an unresolved path parameter");
-  }
-
-  let url: URL;
-  try {
-    url = new URLConstructor(endpointUrl);
-  } catch {
-    requestInvalid("Local integration endpoint URL is invalid");
-  }
+  const url = resolveEndpointUrl(endpoint, args);
   if (urlValue(urlOrigin, url) !== allowedOrigin) {
     requestInvalid("Local integration endpoint origin does not match its admitted origin");
   }
@@ -510,9 +556,13 @@ function buildRequest(
   for (let index = 0; index < parameterNames.length; index++) {
     const name = parameterNames[index]!;
     const field = endpoint.params?.[name];
-    if (!field || field.in !== "query") continue;
+    if (!field) continue;
     const resolved = fieldValue(args, name, field);
-    if (resolved.present) appendQueryValue(searchParams, name, resolved.value, field);
+    if (!resolved.present) continue;
+    if (field.in === "query") appendQueryValue(searchParams, name, resolved.value, field);
+    else if (field.in === "header") {
+      setHeader(headers, field.headerName ?? name, scalarString(resolved.value));
+    }
   }
 
   const authHeaderNames = objectKeys(authHeaders);
@@ -544,6 +594,31 @@ function buildRequest(
       signal,
     }),
   });
+}
+
+function resolveEndpointUrl(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): URL {
+  let endpointUrl = endpoint.url;
+  const parameterNames = objectKeys(endpoint.params ?? {});
+  for (let index = 0; index < parameterNames.length; index++) {
+    const name = parameterNames[index]!;
+    const field = endpoint.params?.[name];
+    if (!field || field.in !== "path") continue;
+    const resolved = fieldValue(args, name, field);
+    if (resolved.present) {
+      endpointUrl = replaceAll(endpointUrl, `{${name}}`, pathSegment(resolved.value));
+    }
+  }
+  if (callStringBoolean(stringIncludes, endpointUrl, "{")) {
+    requestInvalid("Local integration endpoint contains an unresolved path parameter");
+  }
+  try {
+    return new URLConstructor(endpointUrl);
+  } catch {
+    requestInvalid("Local integration endpoint URL is invalid");
+  }
 }
 
 function createRequestSignal(

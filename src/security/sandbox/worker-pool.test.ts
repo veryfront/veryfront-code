@@ -90,6 +90,7 @@ function makeRequest(
     projectDir: "/tmp",
     sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     projectEnv,
+    applicationIdentity: null,
   };
 }
 
@@ -617,6 +618,7 @@ testSuite("WorkerPool", () => {
           params: {},
           projectDir: "/allowed/path",
           sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          applicationIdentity: null,
         }),
       VeryfrontError,
       "outside the allowed project boundary",
@@ -1627,14 +1629,14 @@ describe("Feature flag caching", () => {
   });
 
   describe("when the runtime cannot prepare an isolated API module", () => {
-    it("downgrades WORKER_ISOLATION_API under an explicit host-execution grant", async () => {
+    it("keeps WORKER_ISOLATION_API set with the deprecated override configured", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
       Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
       __setCompiledBinaryForTests(true);
       await __resetPoolForTests();
 
-      assertEquals(isWorkerIsolationEnabled(), false);
+      assertEquals(isWorkerIsolationEnabled(), true);
     });
 
     it("keeps WORKER_ISOLATION_API set when host execution is not granted", async () => {
@@ -1657,7 +1659,7 @@ describe("Feature flag caching", () => {
       assertEquals(isWorkerIsolationEnabled(), true);
     });
 
-    it("never downgrades data isolation, which uses a different transport", async () => {
+    it("keeps API and data isolation, which use different transports", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
       Deno.env.set("WORKER_ISOLATION_DATA", "1");
@@ -1665,7 +1667,7 @@ describe("Feature flag caching", () => {
       __setCompiledBinaryForTests(true);
       await __resetPoolForTests();
 
-      assertEquals(isWorkerIsolationEnabled(), false);
+      assertEquals(isWorkerIsolationEnabled(), true);
       assertEquals(isDataIsolationEnabled(), true);
     });
 

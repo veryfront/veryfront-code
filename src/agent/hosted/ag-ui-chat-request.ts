@@ -48,7 +48,6 @@ export type HostedAgUiChatForwardedConfig = InferSchema<
 /** Context for derived hosted AG-UI chat. */
 export type DerivedHostedAgUiChatContext = {
   validatedContext: ChatRequestContext;
-  agentId?: string;
   projectId: string | null;
   conversationId: string | undefined;
   model: string | undefined;
@@ -125,9 +124,6 @@ export function deriveHostedAgUiChatContext(
     parseAgUiContextString(contextMap.get(`${contextNamespace}.environmentContext`));
   const conversationId = forwardedConfig?.conversationId ??
     parseAgUiContextString(contextMap.get(`${contextNamespace}.conversationId`));
-  const agentId = forwardedConfig?.agentId ??
-    parseAgUiContextString(contextMap.get(`${contextNamespace}.agentId`));
-
   const validatedContext: ChatRequestContext = {
     projectId,
     branchId,
@@ -137,7 +133,6 @@ export function deriveHostedAgUiChatContext(
 
   return {
     validatedContext,
-    ...(agentId ? { agentId } : {}),
     projectId,
     conversationId,
     model: forwardedConfig?.model ??
@@ -192,7 +187,6 @@ export async function buildParsedHostedAgUiRequest(
   }
 
   return {
-    agentId: chatContext.agentId,
     agUiInput: input.agUiInput,
     userId: input.userId,
     authToken: input.authToken,
@@ -201,6 +195,7 @@ export async function buildParsedHostedAgUiRequest(
     projectId: chatContext.projectId,
     conversationId: chatContext.conversationId,
     parentRunId: input.agUiInput.parentRunId,
+    agentId: undefined,
     upstreamParentConversationId: undefined,
     upstreamParentRunId: undefined,
     spawnedFromToolCallId: undefined,

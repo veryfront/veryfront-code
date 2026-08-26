@@ -10,7 +10,7 @@
 import { cliLogger } from "veryfront/utils/logger";
 import { type ExtensionFactory, ExtensionLoader } from "veryfront/extensions";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
-import { getEnv, setEnv } from "veryfront/platform/env";
+import { getEnv, setEnv } from "veryfront/platform";
 import {
   createProxyShutdownAggregateError,
   type RegisterProxyShutdownHook,

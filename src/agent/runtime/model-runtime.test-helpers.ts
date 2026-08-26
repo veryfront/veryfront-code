@@ -11,6 +11,7 @@
  */
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { RuntimeStreamPart } from "#veryfront/agent/runtime/runtime-tool-types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export type ScriptedUsage = NonNullable<
   Extract<RuntimeStreamPart, { type: "finish" }>["totalUsage"]
@@ -106,9 +107,9 @@ export function toolNamesOf(options: unknown): string[] {
         : typeof toolEntry.id === "string"
         ? toolEntry.id
         : "";
-    }).toSorted();
+    }).toSorted(compareStrings);
   }
-  return Object.keys((tools as Record<string, unknown> | undefined) ?? {}).toSorted();
+  return Object.keys((tools as Record<string, unknown> | undefined) ?? {}).toSorted(compareStrings);
 }
 
 const DEFAULT_USAGE: ScriptedUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
