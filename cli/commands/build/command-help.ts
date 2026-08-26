@@ -8,7 +8,7 @@ export const buildHelp: CommandHelp = {
   options: [
     {
       flag: "-o, --output <dir>",
-      description: "Output directory (also configurable via build.outDir)",
+      description: "Output directory. build.outDir configures the default.",
       default: "dist",
     },
     {
@@ -45,7 +45,9 @@ export const buildHelp: CommandHelp = {
     },
   ],
   notes: [
+    "The default production preset requires build.outDir to resolve inside the project because the build clears that directory. Use -o/--output for a one-off external destination.",
     "--preset embedded emits a single bundle, so of the build flags it honours only -o/--output and build.outDir. Global flags such as --json, --verbose and --quiet are unaffected.",
+    "The embedded preset does not clear its output root, so its build.outDir can resolve outside the project.",
     "It rejects --dry-run, --split/--no-split, --compress/--no-compress, --prefetch, --ssg/--no-ssg, --include and --exclude rather than ignoring them.",
   ],
   examples: [
