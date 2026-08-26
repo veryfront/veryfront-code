@@ -842,8 +842,9 @@ describe("provider-http", () => {
     });
 
     it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
-      // Three unclamped 200ms attempts would spend ~600ms. The budget must stop
-      // it at ~250ms, below the enclosing watchdog.
+      // An immediate retryable response proves replay independently of timer
+      // scheduling. The remaining unclamped 200ms attempts would exceed the
+      // 250ms budget, which must stop them below the enclosing watchdog.
       let attempts = 0;
       const startedAt = performance.now();
       await assertRejects(
@@ -852,6 +853,15 @@ describe("provider-http", () => {
             url: "https://provider.test/stream",
             fetchImpl: () => {
               attempts++;
+              if (attempts === 1) {
+                return Promise.resolve(
+                  jsonResponse(
+                    429,
+                    { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                    { "retry-after": "0" },
+                  ),
+                );
+              }
               return new Promise<Response>(() => {});
             },
             init: { method: "POST" },
@@ -865,7 +875,7 @@ describe("provider-http", () => {
       );
       const elapsedMs = performance.now() - startedAt;
 
-      assertEquals(attempts > 1, true, "the budget must still buy a replay");
+      assertEquals(attempts > 1, true, "the immediate failure must still be replayed");
       assertEquals(
         elapsedMs < 500,
         true,
