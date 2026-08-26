@@ -173,6 +173,53 @@ describe("Singleflight", () => {
     assertEquals(await replacement, 42);
   });
 
+  it("fully removes detached followers so reused slots retain nothing", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+
+    // Far more attach/detach cycles than the follower cap: every detach must
+    // release its slot AND drop the waiter's subscription on the shared work,
+    // so this loop neither hits the cap nor accumulates retained callbacks.
+    for (let i = 0; i < 50; i++) {
+      const caller = new AbortController();
+      const churned = sf.do("key", () => Promise.resolve(-1), {
+        maxFollowers: 1,
+        signal: caller.signal,
+      });
+      caller.abort(new DOMException("request closed", "AbortError"));
+      await assertRejects(() => churned, DOMException, "request closed");
+    }
+
+    let liveSettlements = 0;
+    const live = sf.do("key", () => Promise.resolve(-1), { maxFollowers: 1 })
+      .then((value) => {
+        liveSettlements++;
+        return value;
+      });
+
+    operation.resolve(42);
+    assertEquals(await leader, 42);
+    assertEquals(await live, 42);
+    await delay(0);
+    assertEquals(liveSettlements, 1, "settlement must reach a live waiter exactly once");
+  });
+
+  it("removes detached shared-promise waiters instead of retaining them", async () => {
+    const shared = Promise.withResolvers<number>();
+
+    for (let i = 0; i < 50; i++) {
+      const caller = new AbortController();
+      const churned = waitForSharedPromise(shared.promise, caller.signal);
+      caller.abort(new DOMException("request closed", "AbortError"));
+      await assertRejects(() => churned, DOMException, "request closed");
+    }
+
+    const live = waitForSharedPromise(shared.promise, new AbortController().signal);
+    shared.resolve(7);
+    assertEquals(await live, 7);
+  });
+
   it("should allow different keys to run concurrently", async () => {
     const sf = new Singleflight<string>();
     let callCount = 0;
