@@ -216,8 +216,8 @@ const FILE_EXTENSION = /\.[0-9]*[A-Za-z][A-Za-z0-9]*$/;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
-const EXACT_SEMVER = new RegExp(
-  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
+const SEMVER_VERSION_OR_RANGE = new RegExp(
+  `^(?:[~^])?v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?` +
     `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
@@ -332,7 +332,7 @@ function addressesRemoteFile(mapping: string): boolean {
 
   const versionSeparator = decodedLastSegment.lastIndexOf("@");
   const version = versionSeparator > 0 ? decodedLastSegment.slice(versionSeparator + 1) : undefined;
-  if (version && (EXACT_SEMVER.test(version) || WILDCARD_SEMVER_RANGE.test(version))) {
+  if (version && (SEMVER_VERSION_OR_RANGE.test(version) || WILDCARD_SEMVER_RANGE.test(version))) {
     return false;
   }
 
@@ -345,15 +345,15 @@ function addressesRemoteFile(mapping: string): boolean {
 }
 
 function coordinateSelectsExport(coordinate: string): boolean {
-  // A trailing separator is the package root written as a directory, the same
-  // reading the remote branch gives it.
-  if (coordinate.endsWith("/")) return false;
+  // A separator immediately after the coordinate is its directory spelling;
+  // one after a deeper path remains part of the already-selected export.
+  const classifiedCoordinate = coordinate.endsWith("/") ? coordinate.slice(0, -1) : coordinate;
 
-  const firstSeparator = coordinate.indexOf("/");
+  const firstSeparator = classifiedCoordinate.indexOf("/");
   if (firstSeparator === -1) return false;
-  if (!coordinate.startsWith("@")) return true;
+  if (!classifiedCoordinate.startsWith("@")) return true;
 
-  return coordinate.includes("/", firstSeparator + 1);
+  return classifiedCoordinate.includes("/", firstSeparator + 1);
 }
 
 function isSingleModuleMapping(mapping: string): boolean {

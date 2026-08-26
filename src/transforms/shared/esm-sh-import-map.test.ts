@@ -332,19 +332,21 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
-  it("recognizes alphabetic SemVer prereleases before file extensions", () => {
+  it("recognizes alphabetic SemVer versions and ranges before file extensions", () => {
     for (
       const version of [
         "2.0.0-rc.alpha",
         "2.0.0-0.alpha",
         "2.0.0+build.alpha",
+        "^1.2.3-alpha.beta",
+        "~2.0.0-rc.1",
       ] as const
     ) {
       const mapping = `https://cdn.example/pkg@${version}`;
       assertEquals(
         resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
         `${mapping}/sub`,
-        `${version} is an exact package version rather than a file extension`,
+        `${version} is a package version or range rather than a file extension`,
       );
     }
 
@@ -382,6 +384,21 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "jsr:@std/path@1/sub",
       "the scope must not be mistaken for an export when the separator trails",
     );
+  });
+
+  it("preserves trailing separators on npm and jsr export mappings", () => {
+    for (
+      const mapping of [
+        "npm:react@19/jsx-runtime/",
+        "jsr:@std/path@1/posix/",
+      ] as const
+    ) {
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/other", { pkg: mapping }),
+        mapping,
+        "a trailing separator below the package coordinate remains an exact export",
+      );
+    }
   });
 
   it("recognises a percent-encoded scope in a CDN coordinate", () => {
