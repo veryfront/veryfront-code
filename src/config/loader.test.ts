@@ -1015,6 +1015,34 @@ export default config as const;
         assertEquals(error.message.includes("http[path]"), false);
       });
 
+      it("redacts a machine path glued to the preceding diagnostic text", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-path-",
+          `throw new Error("Failed at" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // A left boundary on WINDOWS_ABSOLUTE_PATH refuses this, and REMOTE_URL
+        // cannot claim a backslash form, so the path would reach the caller.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+      });
+
+      it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-truecolor-sgr-",
+          `throw new Error("Failed to load ${escape}[38:2:255:0:0m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // A true-colour sequence separates its parameters with colons. Matching
+        // only [0-9;] left "[38:2:255:0:0m" in front of the path, which defeats
+        // POSIX_ABSOLUTE_PATH's boundary exactly as an unstripped "[31m" would.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("38:2"), false);
+      });
+
       it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(

@@ -1631,10 +1631,16 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // A colorized cause arrives as ESC + "[31m" + text. Dropping only the ESC as a
 // control character leaves the "[31m" behind, and that residue sits between the
 // start of the token and the path -- which defeats any pattern anchored on what
-// precedes a path. Remove the whole SGR sequence so the path patterns see the
-// text a plain terminal would.
+// precedes a path. Remove the whole sequence so the path patterns see the text
+// a plain terminal would.
+//
+// Matches the full CSI grammar rather than the colour sequences alone:
+// parameter bytes 0x30-0x3F, intermediate bytes 0x20-0x2F, one final byte
+// 0x40-0x7E. Accepting only digits and semicolons missed the colon-separated
+// form a true-colour sequence uses (`ESC[38:2:255:0:0m`), whose residue then
+// defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
 // deno-lint-ignore no-control-regex
-const ANSI_SGR_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]/g;
+const ANSI_CSI_SEQUENCE = /\u001B\[[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
 // A remote config URL is redacted whole rather than picked apart. AGENTS.md
 // counts private hostnames among the values user-facing output must not carry,
 // and the caller cannot tell an internal registry from a public CDN by looking
@@ -1651,7 +1657,12 @@ const REMOTE_URL = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[A-Za-z][A-Za-z0-9+.-]+:\/(?
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
-const WINDOWS_ABSOLUTE_PATH = /(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+// Unanchored on the left. A boundary here refuses a path glued to preceding
+// text (`Failed atC:\\Users\\alice\\...`), and REMOTE_URL cannot claim a
+// backslash form, so the path would reach the caller intact. The scheme match
+// in REMOTE_URL is what keeps `https:/` away from the drive-letter alternative,
+// so the boundary is not needed for that either.
+const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function replaceMatchesWithCapturedExec(
@@ -1725,11 +1736,15 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
-  const redacted = sanitizeUrlCredentials(message);
+  // De-colorize first. An escape sequence sitting inside a credential leaves it
+  // noncontiguous, so sanitizeUrlCredentials would not match it -- and stripping
+  // the sequence afterwards would rejoin the halves into a usable secret with no
+  // sanitiser left to run.
+  const deColorized = replaceMatchesWithCapturedExec(message, ANSI_CSI_SEQUENCE, "");
+  const redacted = sanitizeUrlCredentials(deColorized);
   const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
     "";
-  const deColorized = replaceMatchesWithCapturedExec(firstLine, ANSI_SGR_SEQUENCE, "");
-  const replaced = replaceMatchesWithCapturedExec(deColorized, CONTROL_CHARACTERS, " ");
+  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
   const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
