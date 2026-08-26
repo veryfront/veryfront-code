@@ -75,7 +75,7 @@ export interface NodeFileSystemCapabilityOptions {
   readonly noFollow?: number;
   /** Test seam for native open and path semantics. */
   readonly platform?: NativeSnapshotPlatform;
-  /** Adapter-owned assertion that Windows bigint file identity is usable. */
+  /** Adapter-owned assertion that Windows bigint handle identity and generation fields are usable. */
   readonly windowsSnapshotIdentity?: boolean;
   /** Test seam for create-new primitive availability. */
   readonly exclusiveCreate?: boolean;
@@ -155,10 +155,10 @@ function detectNodeCompatibleRuntime(): NodeCompatibleRuntimeProvenance {
 export function hasUsableWindowsSnapshotIdentity(
   runtime: NodeCompatibleRuntimeProvenance,
 ): boolean {
-  // Node exposes bigint file identity and generation fields on Windows. Each
-  // snapshot still validates that the native identity is present and usable.
-  // Bun and Deno do not currently document an equivalent contract, so their
-  // Windows adapters must fail closed.
+  // Runtime detection grants this default only to Node. Bun and Deno adapters
+  // opt in after asserting that their Node-compatible file handles expose the
+  // same bigint identity and generation fields. Each snapshot still validates
+  // that those native fields are present and usable.
   return runtime === "node";
 }
 

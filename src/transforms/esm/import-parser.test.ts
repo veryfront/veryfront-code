@@ -350,6 +350,10 @@ describe("transforms/esm/import-parser", () => {
     );
   });
 
+  it("rejects encoded separators in compiled file URLs", () => {
+    assertEquals(importParserInternals.fileUrlToPath("file:///project/a%2Fb.tsx"), null);
+  });
+
   // Regression: symlinkSemantics was read as an inherited property, so a
   // marker inherited through the prototype chain (for example Object.prototype
   // pollution with "none") switched realPath() off and an in-project symlink

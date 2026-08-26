@@ -1,6 +1,6 @@
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { dirname, join, normalize, relative, resolve } from "#veryfront/compat/path";
+import { dirname, fromFileUrl, join, normalize, relative, resolve } from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -268,7 +268,7 @@ function isPathWithinProject(path: string, projectDir: string): boolean {
 }
 
 /** @internal Test seams for portable containment rules. */
-export const importParserInternals = Object.freeze({ isPathWithinProject });
+export const importParserInternals = Object.freeze({ isPathWithinProject, fileUrlToPath });
 
 /**
  * Everything one parse needs to decide containment, captured once per parse:
@@ -431,7 +431,7 @@ function fileUrlToPath(specifier: string): string | null {
   try {
     const url = new URL(specifier);
     if (url.protocol !== "file:") return null;
-    return decodeURIComponent(url.pathname);
+    return fromFileUrl(url);
   } catch (_) {
     /* expected: not a well-formed URL */
     return null;
