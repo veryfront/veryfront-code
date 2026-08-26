@@ -270,7 +270,7 @@ it("agent service routes classify AG-UI setup failures", async () => {
   );
 });
 
-Deno.test("agent service routes preserve forwarded AG-UI target agent ids", async () => {
+Deno.test("agent service routes ignore client-controlled AG-UI target agent ids", async () => {
   const { routeSet, preparedRequests } = createRouteSet();
   const response = await routeSet.handleAgUiRequest(
     createAuthenticatedRequest("/api/ag-ui", {
@@ -286,7 +286,7 @@ Deno.test("agent service routes preserve forwarded AG-UI target agent ids", asyn
 
   assertEquals(response.status, 200);
   assertEquals(preparedRequests.length, 1);
-  assertEquals(preparedRequests[0]?.agentId, "researcher");
+  assertEquals(preparedRequests[0]?.agentId, undefined);
   assertEquals(preparedRequests[0]?.projectId, "project_123");
 });
 
