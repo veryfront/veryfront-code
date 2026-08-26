@@ -113,9 +113,10 @@ describe("formatUserError environment gating", () => {
       const result = formatUserError(error);
 
       assert(result.includes("Stack trace:"), "unknown errors render a stack trace section");
-      assert(
-        result.includes("at handler@alias"),
-        "a multi-delimiter frame keeps its full callable label",
+      assertEquals(
+        result.includes("handler@alias"),
+        false,
+        "a punctuation-bearing custom label is withheld",
       );
       assertEquals(
         result.includes("at outer"),
@@ -297,6 +298,23 @@ describe("formatUserError environment gating", () => {
     error.stack = [
       "Error: unknown error custom_stack_payload_dev",
       "customer_payload=acme-order-42",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const result = formatUserError(error);
+
+      assert(result.includes("at <anonymous>"));
+      assertEquals(result.includes("customer_payload"), false);
+      assertEquals(result.includes("acme-order-42"), false);
+      return Promise.resolve();
+    });
+  });
+
+  it("fails closed on forged V8 frames with nonidentifier labels", async () => {
+    const error = new Error("unknown error forged_v8_stack_payload_dev");
+    error.stack = [
+      "Error: unknown error forged_v8_stack_payload_dev",
+      "    at customer_payload=acme-order-42 (app.ts:1:1)",
     ].join("\n");
 
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
@@ -856,6 +874,35 @@ describe("formatUserError environment gating", () => {
       assert(output.includes("at <anonymous>"));
       assertEquals(output.includes("publicHandler"), false);
       assertEquals(output.includes("live RegExp.test"), false);
+      return Promise.resolve();
+    });
+  });
+
+  it("does not call the live RegExp split protocol while sanitizing stacks", async () => {
+    const error = new Error("unknown error mutated_regexp_split");
+    error.stack = [
+      "Error: unknown error mutated_regexp_split",
+      "    at publicHandler (/srv/app.ts:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const descriptor = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.split)!;
+      let output: string;
+      try {
+        Object.defineProperty(RegExp.prototype, Symbol.split, {
+          ...descriptor,
+          value() {
+            throw new Error("live RegExp Symbol.split must not run");
+          },
+        });
+        output = formatUserError(error);
+      } finally {
+        Object.defineProperty(RegExp.prototype, Symbol.split, descriptor);
+      }
+
+      assert(output.includes("at <anonymous>"));
+      assertEquals(output.includes("publicHandler"), false);
+      assertEquals(output.includes("live RegExp Symbol.split"), false);
       return Promise.resolve();
     });
   });

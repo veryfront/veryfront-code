@@ -635,6 +635,127 @@ describe("error-context", () => {
       }
     });
 
+    it("redacts Unicode UNC aliases for IDN file authorities in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        [
+          "file://xn--bcher-kva.example/share/private-read-marker",
+          "\\\\bücher.example\\share\\private-read-marker",
+        ],
+        [
+          "file://xn--bcher-kva.example/share/private-stat-marker",
+          "\\\\bücher.example\\share\\private-stat-marker",
+        ],
+        [
+          "file://xn--bcher-kva.example/share/private-directory-marker",
+          "\\\\bücher.example\\share\\private-directory-marker",
+        ],
+      ] as const;
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(`read failed for ${cases[0][1]}`)) } },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(`stat failed for ${cases[1][1]}`)) } },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error(`directory read failed for ${cases[2][1]}`),
+                );
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (let index = 0; index < cases.length; index++) {
+        const diagnostic = captured[index];
+        assertExists(diagnostic);
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(JSON.stringify(diagnostic).includes(cases[index]![1]), false);
+        assertEquals(String(diagnostic.data.errorMessage).includes("private-"), false);
+        assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
+      }
+    });
+
+    it("redacts JSON-escaped Windows paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const paths = [
+        "C:\\private-read-marker\\nope",
+        "D:\\private-stat-marker\\nope",
+        "E:\\private-directory-marker\\nope",
+      ] as const;
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () =>
+                Promise.reject(new Error(`read failed for ${JSON.stringify(paths[0])}`)),
+            },
+          },
+          paths[0],
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error(`stat failed for ${JSON.stringify(paths[1])}`)),
+            },
+          },
+          paths[1],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error(`directory read failed for ${JSON.stringify(paths[2])}`),
+                );
+              },
+            },
+          },
+          paths[2],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (let index = 0; index < paths.length; index++) {
+        const diagnostic = captured[index];
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(errorMessage.includes(JSON.stringify(paths[index])), false);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
     it("fails closed for truncated single-segment paths in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;

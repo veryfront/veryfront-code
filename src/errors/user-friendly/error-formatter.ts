@@ -11,6 +11,7 @@ import {
 } from "../safe-diagnostics.ts";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
+const arrayPrototypePush = Array.prototype.push;
 const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
 const regExpPrototypeExec = RegExp.prototype.exec;
@@ -23,7 +24,6 @@ const stringPrototypeIncludes = String.prototype.includes;
 const stringPrototypeIndexOf = String.prototype.indexOf;
 const stringPrototypeLastIndexOf = String.prototype.lastIndexOf;
 const stringPrototypeSlice = String.prototype.slice;
-const stringPrototypeSplit = String.prototype.split;
 const stringPrototypeStartsWith = String.prototype.startsWith;
 const stringPrototypeTrim = String.prototype.trim;
 
@@ -66,8 +66,41 @@ function sliceString(value: string, start?: number, end?: number): string {
   return reflectApply(stringPrototypeSlice, value, [start, end]);
 }
 
-function splitString(value: string, separator: string | RegExp): string[] {
-  return reflectApply(stringPrototypeSplit, value, [separator]);
+function splitString(value: string, separator: string): string[] {
+  if (!separator) return [value];
+  const parts: string[] = [];
+  let start = 0;
+  for (
+    let end = indexOfString(value, separator, start);;
+    end = indexOfString(value, separator, start)
+  ) {
+    if (end === -1) {
+      reflectApply(arrayPrototypePush, parts, [sliceString(value, start)]);
+      return parts;
+    }
+    reflectApply(arrayPrototypePush, parts, [sliceString(value, start, end)]);
+    start = end + separator.length;
+  }
+}
+
+/** Split stack lines without dispatching through a mutable RegExp protocol hook. */
+function splitStackLines(value: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = reflectApply(stringPrototypeCharCodeAt, value, [index]) as number;
+    if (codeUnit !== 10 && codeUnit !== 13) continue;
+    reflectApply(arrayPrototypePush, lines, [sliceString(value, start, index)]);
+    if (
+      codeUnit === 13 &&
+      reflectApply(stringPrototypeCharCodeAt, value, [index + 1]) === 10
+    ) {
+      index++;
+    }
+    start = index + 1;
+  }
+  reflectApply(arrayPrototypePush, lines, [sliceString(value, start)]);
+  return lines;
 }
 
 function startsWithString(value: string, search: string): boolean {
@@ -232,6 +265,9 @@ const CALLABLE_ALIAS_SUFFIX = /^(.+)\s+\[as\s+([^\]\r\n]+)\]$/;
 /** Capture one whitespace-delimited display token without using live string hooks. */
 const CALLABLE_LABEL_TOKEN_SEQUENCE = /^(\S+)(?:\s+([\s\S]*))?$/;
 
+/** A retained V8 label must contain only JavaScript identifier paths. */
+const CALLABLE_IDENTIFIER_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+
 /** Captures a frame whose text after `at ` can be a bare source location. */
 const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 
@@ -246,7 +282,8 @@ function isSourceLocationText(text: string): boolean {
 function isRetainableCallableLabel(label: string): boolean {
   // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
   // label gets the same source-location validation as location text itself.
-  return !!label && !isSourceLocationText(label) &&
+  return !!label && testRegExp(CALLABLE_IDENTIFIER_PATH, label) &&
+    !isSourceLocationText(label) &&
     !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
     !testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) &&
     (!isHostnameShapedCallableLabel(label) ||
@@ -372,7 +409,7 @@ export function formatUserError(error: Error): string {
   const stack = snapshotErrorForBoundary(stableError).stack;
   if (!isProduction() && stack) {
     output.push(yellow("Stack trace:"));
-    const stackLines = splitString(stack, /\r\n?|\n/);
+    const stackLines = splitStackLines(stack);
     for (let index = 1; index < stackLines.length && index < 4; index++) {
       const line = stackLines[index]!;
       output.push(dim(`  ${sanitizeUserFacingStackFrame(line)}`));

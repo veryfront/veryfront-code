@@ -1,3 +1,4 @@
+import { domainToUnicode as nativeDomainToUnicode } from "node:url";
 import {
   type ErrorCategory,
   isVeryfrontErrorInstance,
@@ -697,6 +698,7 @@ function containsTruncatedFilesystemPathPrefix(input: string, path: string): boo
 function platformPathFromNormalizedFileUrl(
   normalizedPath: string,
   preservePosixVerticalBar = false,
+  decodeAuthority = false,
 ): string | undefined {
   if (lowercaseString(sliceString(normalizedPath, 0, 5)) !== "file:") return undefined;
   if (!URL_HOSTNAME_GETTER || !URL_PATHNAME_GETTER) return undefined;
@@ -730,7 +732,11 @@ function platformPathFromNormalizedFileUrl(
   decodedBody = sliceString(decodedBody, bodyStart);
 
   if (canonicalAuthority && lowercaseString(canonicalAuthority) !== "localhost") {
-    return preservePosixVerticalBar ? undefined : `//${canonicalAuthority}/${decodedBody}`;
+    if (preservePosixVerticalBar) return undefined;
+    const authority = decodeAuthority
+      ? nativeDomainToUnicode(canonicalAuthority)
+      : canonicalAuthority;
+    return authority ? `//${authority}/${decodedBody}` : undefined;
   }
   // The WHATWG file URL parser also accepts the legacy vertical-bar drive
   // spelling ("file:///C|/nope"), which the host resolves to "C:\nope", so
@@ -776,6 +782,14 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const rawNormalizedPlatformPath = normalizationSource === normalizedPath
     ? undefined
     : platformPathFromNormalizedFileUrl(normalizedPath);
+  const rawCanonicalUnicodePlatformPath = platformPathFromNormalizedFileUrl(
+    normalizationSource,
+    false,
+    true,
+  );
+  const rawNormalizedUnicodePlatformPath = normalizationSource === normalizedPath
+    ? undefined
+    : platformPathFromNormalizedFileUrl(normalizedPath, false, true);
   const rawCanonicalPosixVerticalBarPath = platformPathFromNormalizedFileUrl(
     normalizationSource,
     true,
@@ -802,6 +816,21 @@ export function snapshotThrowableDiagnosticRedactingPath(
       rawNormalizedPlatformPath === canonicalPlatformPath
     ? undefined
     : rawNormalizedPlatformPath;
+  const canonicalUnicodePlatformPath = rawCanonicalUnicodePlatformPath === path ||
+      rawCanonicalUnicodePlatformPath === normalizationSource ||
+      rawCanonicalUnicodePlatformPath === normalizedPath ||
+      rawCanonicalUnicodePlatformPath === canonicalPlatformPath ||
+      rawCanonicalUnicodePlatformPath === normalizedPlatformPath
+    ? undefined
+    : rawCanonicalUnicodePlatformPath;
+  const normalizedUnicodePlatformPath = rawNormalizedUnicodePlatformPath === path ||
+      rawNormalizedUnicodePlatformPath === normalizationSource ||
+      rawNormalizedUnicodePlatformPath === normalizedPath ||
+      rawNormalizedUnicodePlatformPath === canonicalPlatformPath ||
+      rawNormalizedUnicodePlatformPath === normalizedPlatformPath ||
+      rawNormalizedUnicodePlatformPath === canonicalUnicodePlatformPath
+    ? undefined
+    : rawNormalizedUnicodePlatformPath;
   const canonicalPosixDrivePath = rawCanonicalPosixDrivePath === path ||
       rawCanonicalPosixDrivePath === normalizationSource ||
       rawCanonicalPosixDrivePath === normalizedPath ||
@@ -828,7 +857,9 @@ export function snapshotThrowableDiagnosticRedactingPath(
       rawNormalizedPosixVerticalBarPath === canonicalPosixVerticalBarPath
     ? undefined
     : rawNormalizedPosixVerticalBarPath;
+  const jsonEscapedPath = jsonStringify(path);
   let redacted = redactPathFromText(diagnostic, path, replacement);
+  redacted = redactPathFromText(redacted, jsonEscapedPath, replacement);
   if (normalizationSource !== path) {
     redacted = redactPathFromText(redacted, normalizationSource, replacement);
   }
@@ -860,8 +891,15 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (normalizedPlatformPath !== undefined) {
     redacted = redactPathFromText(redacted, normalizedPlatformPath, replacement);
   }
+  if (canonicalUnicodePlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalUnicodePlatformPath, replacement);
+  }
+  if (normalizedUnicodePlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedUnicodePlatformPath, replacement);
+  }
   if (
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
+    containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
     (normalizationSource !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
     (normalizedPath !== path && normalizedPath !== normalizationSource &&
@@ -879,7 +917,11 @@ export function snapshotThrowableDiagnosticRedactingPath(
     (canonicalPlatformPath !== undefined &&
       containsTruncatedFilesystemPathPrefix(redacted, canonicalPlatformPath)) ||
     (normalizedPlatformPath !== undefined &&
-      containsTruncatedFilesystemPathPrefix(redacted, normalizedPlatformPath))
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPlatformPath)) ||
+    (canonicalUnicodePlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalUnicodePlatformPath)) ||
+    (normalizedUnicodePlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedUnicodePlatformPath))
   ) {
     return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
   }
