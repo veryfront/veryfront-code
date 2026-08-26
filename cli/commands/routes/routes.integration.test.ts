@@ -5,7 +5,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { routesCommand } from "./index.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { setLoggerPreset } from "veryfront/utils/logger";
+import { setLoggerPreset } from "#cli/logger-config";
 import { type TestContext, withTestContext } from "../../../tests/_helpers/context.ts";
 
 async function setupPagesRouter(context: TestContext): Promise<void> {

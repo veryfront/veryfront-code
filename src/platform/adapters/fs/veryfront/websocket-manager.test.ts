@@ -154,6 +154,7 @@ function createWebSocketManager(options: {
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
     replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => 0),
     pregenerateStyles: options.pregenerateStyles,
+    createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
   });
 }
 
@@ -724,6 +725,7 @@ describe("WebSocketManager", () => {
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
       replaceSourceSnapshot: async () => 0,
+      createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
     });
 
     manager.connect("project-1");
@@ -786,6 +788,7 @@ describe("WebSocketManager", () => {
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
       replaceSourceSnapshot: async () => 0,
+      createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
     });
 
     manager.connect("project-1");
@@ -825,6 +828,7 @@ describe("WebSocketManager", () => {
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
       replaceSourceSnapshot: async () => 0,
+      createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
     });
 
     manager.connect("project-1");
@@ -864,6 +868,7 @@ describe("WebSocketManager", () => {
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
       replaceSourceSnapshot: async () => 0,
+      createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
     });
 
     manager.connect("project-1");
@@ -903,6 +908,7 @@ describe("WebSocketManager", () => {
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
       replaceSourceSnapshot: async () => 0,
+      createWebSocket: (url, protocols) => new globalThis.WebSocket(url, protocols),
     });
 
     manager.connect("project-1");

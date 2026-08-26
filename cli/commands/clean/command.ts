@@ -1,6 +1,7 @@
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
-import { getEnv, runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
+import { getEnv } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
 import { getProjectCacheDir } from "veryfront/utils/cache-dir";

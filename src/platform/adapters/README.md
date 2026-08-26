@@ -5,19 +5,22 @@ The Adapters module provides runtime abstraction layer for cross-platform compat
 ## Imports
 
 ```typescript
-// Public runtime adapter API
-import { runtime, type RuntimeAdapter } from "veryfront/platform";
+// Public runtime adapter type
+import type { RuntimeAdapter } from "veryfront/platform";
+
+// Internal framework runtime registry
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 // Concrete adapter classes for adapter-maintainer code
 import { BunAdapter, DenoAdapter, NodeAdapter } from "#veryfront/platform/adapters/index.ts";
 ```
 
-## Public API Overview
+## API overview
 
 The Adapters module exports:
 
 - **`RuntimeAdapter`** - Base adapter interface for runtime abstraction
-- **`runtime.get()`** - Auto-detects and returns the singleton runtime adapter
+- **`runtime.get()`** - Internal framework registry that returns the singleton runtime adapter
 - **Runtime-Specific Adapters** - BunAdapter, DenoAdapter, NodeAdapter
 - **Filesystem Abstraction** - FSAdapter, VeryfrontFSAdapter, FSAdapterWrapper
 - **API Client** - VeryfrontApiClient for remote filesystem access
@@ -44,10 +47,11 @@ adapters/
 
 ## Quick Start
 
-### Auto-Detect Runtime
+### Internal runtime detection
 
 ```ts
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const adapter = await runtime.get();
 
@@ -264,7 +268,8 @@ interface VeryfrontAPIConfig {
 ## Runtime Detection
 
 ```ts
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const adapter = await runtime.get();
 
@@ -294,7 +299,8 @@ import {
   NotSupportedError,
   VeryfrontError,
 } from "#veryfront/platform/adapters/index.ts";
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 try {
   const adapter = await runtime.get();
@@ -312,7 +318,7 @@ try {
 
 ## Best Practices
 
-1. **Use `runtime.get()` for auto-detection** - Let the runtime be detected automatically and reused
+1. **Use `runtime.get()` only in framework code** - Let the internal registry detect and reuse the runtime adapter
 2. **Initialize adapters** - Always call `initialize()` after creating an adapter
 3. **Handle missing features** - Check for optional methods before using them
 4. **Cache remote FS calls** - Enable caching for Veryfront API to reduce latency

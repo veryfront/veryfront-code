@@ -5,26 +5,10 @@ import { withEnv } from "#veryfront/testing";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import {
   HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-  isHostProjectExecutionOverrideConfigured,
-  resolveHostProjectExecutionPosture,
+  isHostProjectExecutionOverrideEnabled,
 } from "./host-execution-policy.ts";
 
 describe("security/host-execution-policy operator override", () => {
-  it("treats the deprecated override as ignored in every runtime topology", () => {
-    assertEquals(
-      resolveHostProjectExecutionPosture({ sharedRuntime: true, overrideConfigured: true }),
-      { allowHostProjectCodeExecution: false, overrideIgnored: true },
-    );
-    assertEquals(
-      resolveHostProjectExecutionPosture({ sharedRuntime: false, overrideConfigured: true }),
-      { allowHostProjectCodeExecution: true, overrideIgnored: true },
-    );
-    assertEquals(
-      resolveHostProjectExecutionPosture({ sharedRuntime: false, overrideConfigured: false }),
-      { allowHostProjectCodeExecution: true, overrideIgnored: false },
-    );
-  });
-
   it("names the operator-owned environment variable", () => {
     assertEquals(
       HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
@@ -33,20 +17,20 @@ describe("security/host-execution-policy operator override", () => {
     );
   });
 
-  it("reports the override as unconfigured when it is absent", () => {
+  it("denies execution when the override is absent", () => {
     assertEquals(
-      isHostProjectExecutionOverrideConfigured(undefined),
+      isHostProjectExecutionOverrideEnabled(undefined),
       false,
-      "an unset override must be reported as unconfigured",
+      "an unset override must leave the shared runtime denied",
     );
   });
 
-  it("recognizes accepted affirmative values", () => {
+  it("grants execution for accepted affirmative values", () => {
     for (const value of ["1", "true", "yes", "on", " TRUE ", "On"]) {
       assertEquals(
-        isHostProjectExecutionOverrideConfigured(value),
+        isHostProjectExecutionOverrideEnabled(value),
         true,
-        `"${value}" should identify the deprecated override`,
+        `"${value}" should grant host project execution`,
       );
     }
   });
@@ -54,9 +38,9 @@ describe("security/host-execution-policy operator override", () => {
   it("fails closed for negative, empty, and unrecognized values", () => {
     for (const value of ["", " ", "0", "false", "no", "off", "maybe", "2", "enabled"]) {
       assertEquals(
-        isHostProjectExecutionOverrideConfigured(value),
+        isHostProjectExecutionOverrideEnabled(value),
         false,
-        `"${value}" must not identify an active override`,
+        `"${value}" must not grant host project execution`,
       );
     }
   });
@@ -67,7 +51,7 @@ describe("security/host-execution-policy operator override", () => {
     // never executed and the wiring could silently break.
     await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
       assertEquals(
-        isHostProjectExecutionOverrideConfigured(),
+        isHostProjectExecutionOverrideEnabled(),
         true,
         "the override must be readable from the host environment",
       );
@@ -76,7 +60,7 @@ describe("security/host-execution-policy operator override", () => {
 
     await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
       assertEquals(
-        isHostProjectExecutionOverrideConfigured(),
+        isHostProjectExecutionOverrideEnabled(),
         false,
         "a negative host value must fail closed",
       );
@@ -86,14 +70,14 @@ describe("security/host-execution-policy operator override", () => {
 
   it("uses the host environment rather than project env", async () => {
     // getHostEnv deliberately bypasses the project env overlay, so a project
-    // environment variable of the same name cannot configure the host. A
+    // environment variable of the same name cannot grant host execution. A
     // competing project scope has to be registered for that to mean anything.
     await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
       runWithProjectEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
         assertEquals(
-          isHostProjectExecutionOverrideConfigured(),
+          isHostProjectExecutionOverrideEnabled(),
           false,
-          "a project env value must never configure the host-owned override",
+          "a project env value must never grant host-realm project execution",
         );
       });
       return Promise.resolve();
@@ -102,9 +86,9 @@ describe("security/host-execution-policy operator override", () => {
     await withEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "1" }, () => {
       runWithProjectEnv({ [HOST_PROJECT_EXECUTION_OVERRIDE_ENV]: "0" }, () => {
         assertEquals(
-          isHostProjectExecutionOverrideConfigured(),
+          isHostProjectExecutionOverrideEnabled(),
           true,
-          "the host configuration must remain visible while a project overlay is active",
+          "the host grant must still win while a project overlay is active",
         );
       });
       return Promise.resolve();

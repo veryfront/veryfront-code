@@ -5,7 +5,7 @@
  * Parses request logs to extract metadata for structured display.
  */
 
-import { getLogBuffer } from "veryfront/observability";
+import { getLogBuffer } from "#cli/observability/log-buffer";
 import type { LogMeta, StateUpdater } from "../state.ts";
 import { addLog } from "../state.ts";
 import { ANSI_REGEX } from "../../ui/ansi.ts";

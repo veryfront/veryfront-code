@@ -419,8 +419,8 @@ A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
 (`security/sandbox/isolation-capability.ts`), so `WORKER_ISOLATION_API=1` in a
 compiled deployment keeps the requested isolation posture and API ownership
-returns the typed `project-execution-unavailable` 503 naming it. The deprecated
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` setting does not override the
+returns the typed `project-execution-unavailable` 503 naming it. The broad
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grant does not override the
 API-specific isolation flag.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
@@ -435,21 +435,29 @@ dedicated single-project runtimes grant the capability at their host-owned
 entrypoints. Shared proxy runtimes reject these operations before reading or
 evaluating tenant modules.
 
-## Deprecated shared execution override
+## Operator-granted shared execution
 
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` no longer grants host execution. A
-shared runtime always rejects same-process tenant execution and routes it to a
-dedicated isolated project runtime. A dedicated single-project runtime already
-has the required capability, so the setting changes no supported topology.
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION=1` grants the host-execution capability
+to a shared runtime whose deployment intends that runtime to _be_ the project
+executor. Absent and unrecognized values fail closed, matching
+`VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`.
 
-Veryfront still reads an affirmative value at server startup so it can report
-stale deployment configuration. The startup warning states that the setting is
-ignored and explains whether the runtime is shared or already dedicated. The
-read uses `getHostEnv`, so a project environment variable cannot manufacture
-the operator diagnostic.
+The override is read exactly once, at server startup in
+`server/production-server.ts`, and the resulting capability is fixed into the
+handler for the process lifetime. It is read through `getHostEnv`, which
+bypasses the project env overlay, so a project environment variable of the
+same name cannot grant execution. Reading once at startup keeps a deployment's
+posture fixed and declared in a single place.
 
-Remove the deprecated setting. Shared multi-project execution must use a
-separately limited external process or container.
+This is a deliberate posture, not a bypass. With the override set, tenant
+project code is evaluated in the shared host process. Per-request separation is
+the `runWithContext` source scope and the project-scoped registry transaction,
+not a process, memory, or CPU boundary between tenants. Deno Workers do not
+change that; they share the host process.
+
+Operators who need a genuine tenant boundary must leave the override unset and
+route execution to an external or dedicated isolated project runtime. Unsetting
+it re-arms every surface above with no code change.
 
 `WORKER_ISOLATION_SSR=1` additionally requires explicit registration of an
 `IsolatedSsrRendererProvider`. The provider supplies a local, offline renderer

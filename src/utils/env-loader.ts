@@ -1,4 +1,4 @@
-import { refreshLoggerConfig, serverLogger } from "./logger/index.ts";
+import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
 import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
 import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";

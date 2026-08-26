@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assert } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { setLoggerPreset } from "veryfront/utils/logger";
+import { setLoggerPreset } from "#cli/logger-config";
 import { setVerboseMode } from "#cli/utils";
 import { displayBuildConfig, displayBuildStart } from "./config-display.ts";
 import type { BuildOptions } from "./types.ts";

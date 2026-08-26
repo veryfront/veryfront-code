@@ -9,7 +9,9 @@ import {
 import {
   getVerifiedCacheApiCredential,
   runWithVerifiedCacheApiCredential,
+  withoutVerifiedCacheApiCredential,
 } from "./verified-api-credential-context.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 async function createVerifiedClaims(token?: string) {
   const rawBody = JSON.stringify(
@@ -111,5 +113,58 @@ describe("verified cache API credential context", () => {
     await stream.getReader().read();
     assertEquals(observedToken, "stream-token");
     assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("clears the credential through captured async-context operations", async () => {
+    const verifiedClaims = await createVerifiedClaims("signed-body-token");
+    const originalDisable = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "disable",
+    )!;
+    const originalEnterWith = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "enterWith",
+    )!;
+    const originalGetStore = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "getStore",
+    )!;
+    const originalRun = Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, "run")!;
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project AsyncLocalStorage hook must not run");
+    };
+    Object.defineProperty(AsyncLocalStorage.prototype, "disable", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "getStore", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "run", {
+      configurable: true,
+      value: poison,
+    });
+    try {
+      await runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+        assertEquals(getVerifiedCacheApiCredential()?.token, "signed-body-token");
+        const observed = await withoutVerifiedCacheApiCredential(async () =>
+          getVerifiedCacheApiCredential()?.token
+        )();
+        assertEquals(observed, undefined);
+      });
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      Object.defineProperty(AsyncLocalStorage.prototype, "disable", originalDisable);
+      Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", originalEnterWith);
+      Object.defineProperty(AsyncLocalStorage.prototype, "getStore", originalGetStore);
+      Object.defineProperty(AsyncLocalStorage.prototype, "run", originalRun);
+    }
   });
 });

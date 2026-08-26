@@ -16,7 +16,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { FakeTime } from "#std/testing/time";
 import { getPendingApprovalResponseSchemaId } from "./pending-approval-metadata.ts";
-import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 

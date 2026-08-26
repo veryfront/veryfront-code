@@ -52,6 +52,7 @@ export {
 export { MAX_CACHE_REVISION_LENGTH } from "./types.ts";
 export type {
   CacheBackend,
+  CacheReadOptions,
   CacheRevisionMutation,
   CacheRevisionSnapshot,
   RevisionedCacheBackend,

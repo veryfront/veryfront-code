@@ -17,7 +17,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
@@ -2761,6 +2761,22 @@ describe("RedisBackend", () => {
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
       assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
+    it("preserves the historical append contract for unconditional approval saves", async () => {
+      const runId = "run-ap-unconditional-append";
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      await backend.savePendingApproval(runId, approval("first"));
+      await backend.savePendingApproval(runId, approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ id }) => id),
+        ["first", "second"],
+      );
     });
 
     it("allows a new wait instance while the previous decision is reconciling", async () => {

@@ -3,10 +3,12 @@
 export { MAX_CACHE_REVISION_LENGTH } from "#veryfront/cache/types.ts";
 export type {
   CacheBackend,
+  CacheReadOptions,
   CacheRevisionMutation,
   CacheRevisionSnapshot,
   RevisionedCacheBackend,
 } from "#veryfront/cache/types.ts";
+export type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 export {
   assertCacheReadMaximumBytes,
   assertCacheValueWithinLimit,

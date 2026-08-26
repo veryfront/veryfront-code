@@ -13,15 +13,12 @@
  */
 
 import type { DiscoveryConfig, DiscoveryResult } from "#veryfront/discovery/types.ts";
-import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ExtendedFileSystemAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import type { DiscoveryOptions } from "./production-server.ts";
 
 export interface RunStartupDiscoveryInput {
   config: DiscoveryOptions;
-  /** Host-owned runtime topology used to constrain the deployment grant. */
-  runtimeAdapter: RuntimeAdapter;
   /**
    * The deployment's posture, computed once by the host-owned entrypoint and
    * shared with the request handler. Never hardcoded here.
@@ -71,10 +68,7 @@ export async function runStartupDiscovery(
     baseDir: config.baseDir,
     fsAdapter: config.fsAdapter,
     verbose: config.verbose ?? false,
-    allowHostProjectCodeExecution: isHostProjectCodeExecutionAllowed({
-      adapter: input.runtimeAdapter,
-      allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
-    }),
+    allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
   });
   return { ran: true };
 }

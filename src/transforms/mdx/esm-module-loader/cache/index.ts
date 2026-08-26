@@ -7,7 +7,7 @@
  */
 
 import { fromFileUrl, join, relative } from "#veryfront/compat/path";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
 import {
   ensureCacheDirIgnored,
   getCacheBaseDir,

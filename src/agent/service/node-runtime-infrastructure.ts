@@ -3,7 +3,7 @@ import {
   createOpenTelemetryServiceTracer,
   type ServiceTracerAttributes,
 } from "../../observability/tracing/service-tracer.ts";
-import { __registerLogRecordEmitter, agentLogger, type Logger } from "../../utils/logger/index.ts";
+import { __registerLogRecordEmitter, agentLogger, type Logger } from "../../utils/logger/logger.ts";
 import {
   type AgentServiceConfig,
   type AgentServiceConfigInput,

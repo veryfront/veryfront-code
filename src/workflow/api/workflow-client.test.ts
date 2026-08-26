@@ -2526,6 +2526,21 @@ function sharedBackendView(backend: MemoryBackend): WorkflowBackend {
   });
 }
 
+class ConcurrentDeliveryClaimListBackend extends MemoryBackend {
+  private claimReads = 0;
+  private readonly bothClaimsRead = Promise.withResolvers<void>();
+
+  override async listRunEventDeliveryClaims(
+    runId?: string,
+  ): ReturnType<MemoryBackend["listRunEventDeliveryClaims"]> {
+    const claims = await super.listRunEventDeliveryClaims(runId);
+    this.claimReads++;
+    if (this.claimReads === 2) this.bothClaimsRead.resolve();
+    await this.bothClaimsRead.promise;
+    return claims;
+  }
+}
+
 class ReactivateFailedDuringAppendBackend extends MemoryBackend {
   reactivateOnAppend = false;
 
@@ -3511,6 +3526,139 @@ describe("WorkflowClient durable event waits", () => {
     } finally {
       await parked.destroy();
       await recovering.destroy();
+    }
+  });
+
+  it("registers the drain before abandoned-claim recovery can re-enter it", async () => {
+    const shared = new MemoryBackend();
+    const runId = "run-reentrant-delivery-recovery";
+    await shared.createRun({
+      id: runId,
+      workflowId: "reentrant-delivery-recovery",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "completed", attempt: 1 },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await shared.savePendingEventWait(runId, {
+      id: "evw-reentrant-recovery",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await shared.appendRunEvent(runId, {
+      id: "evt-reentrant-recovery",
+      eventName: "gate.ready",
+      payload: {},
+      publishedAt: new Date(),
+    });
+    assertExists(
+      await shared.claimRunEventForWait(runId, "evw-reentrant-recovery", "gate.ready"),
+    );
+    let resumeCalls = 0;
+    const managerRef: { current?: EventWaitManager } = {};
+    const executor = {
+      resume: async () => {
+        resumeCalls++;
+        if (resumeCalls === 1) await managerRef.current!.drainPendingEvents(runId);
+      },
+    } as unknown as WorkflowExecutor;
+    const recovering = new EventWaitManager({
+      backend: shared,
+      executor,
+      expirationCheckInterval: 0,
+      claimRecoveryCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 0,
+    });
+    managerRef.current = recovering;
+
+    try {
+      await recovering.drainPendingEvents(runId);
+      assertEquals(resumeCalls, 1);
+      assertEquals(await shared.listRunEventDeliveryClaims(runId), []);
+    } finally {
+      recovering.stop();
+    }
+  });
+
+  it("lets only one manager recover an abandoned event delivery", async () => {
+    const shared = new ConcurrentDeliveryClaimListBackend();
+    const runId = "run-concurrent-delivery-recovery";
+    await shared.createRun({
+      id: runId,
+      workflowId: "concurrent-delivery-recovery",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "completed", attempt: 1 },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await shared.savePendingEventWait(runId, {
+      id: "evw-concurrent-recovery",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await shared.appendRunEvent(runId, {
+      id: "evt-concurrent-recovery",
+      eventName: "gate.ready",
+      payload: {},
+      publishedAt: new Date(),
+    });
+    assertExists(
+      await shared.claimRunEventForWait(runId, "evw-concurrent-recovery", "gate.ready"),
+    );
+    let resumeCalls = 0;
+    const executor = {
+      resume: () => {
+        resumeCalls++;
+        return Promise.resolve();
+      },
+    } as unknown as WorkflowExecutor;
+    const first = new EventWaitManager({
+      backend: sharedBackendView(shared),
+      executor,
+      expirationCheckInterval: 0,
+      claimRecoveryCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 0,
+    });
+    const second = new EventWaitManager({
+      backend: sharedBackendView(shared),
+      executor,
+      expirationCheckInterval: 0,
+      claimRecoveryCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 0,
+    });
+
+    try {
+      await Promise.all([
+        first.drainPendingEvents(runId),
+        second.drainPendingEvents(runId),
+      ]);
+      assertEquals(resumeCalls, 1);
+      assertEquals(await shared.listRunEventDeliveryClaims(runId), []);
+    } finally {
+      first.stop();
+      second.stop();
     }
   });
 

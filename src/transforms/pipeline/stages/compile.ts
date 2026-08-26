@@ -1,7 +1,7 @@
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { COMPILATION_ERROR } from "#veryfront/errors";
-import { getErrorCollector } from "#veryfront/observability";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { upgradeImportAssertions } from "../../esm/import-attributes.ts";
 import {
   ESBUILD_SUPPORTED_FEATURES,

@@ -8,9 +8,11 @@ function importIndex(): Promise<typeof import("./index.ts")> {
 
 describe("platform/index.ts exports", () => {
   describe("adapters re-exports", () => {
-    it("should export runtime", async () => {
-      const { runtime } = await importIndex();
-      assertExists(runtime);
+    it("does not export the mutable runtime registry", async () => {
+      const publicPlatform = await importIndex();
+      assertEquals("runtime" in publicPlatform, false);
+      assertEquals("getAdapter" in publicPlatform, false);
+      assertEquals("getLocalAdapter" in publicPlatform, false);
     });
 
     it("should export createFSAdapter", async () => {
@@ -29,15 +31,26 @@ describe("platform/index.ts exports", () => {
       const { VeryfrontApiClient } = await importIndex();
       assertExists(VeryfrontApiClient);
       assertEquals(typeof VeryfrontApiClient, "function");
+      assertEquals(Object.isFrozen(VeryfrontApiClient.prototype), true);
+      const setProjectSlug = VeryfrontApiClient.prototype.setProjectSlug;
+      Reflect.set(VeryfrontApiClient.prototype, "setProjectSlug", () => {});
+      assertEquals(VeryfrontApiClient.prototype.setProjectSlug, setProjectSlug);
     });
   });
 
   describe("compat re-exports", () => {
+    it("does not expose host command execution", async () => {
+      const publicPlatform = await importIndex();
+      assertEquals("runCommand" in publicPlatform, false);
+    });
+
     it("should export the host runtime seam", async () => {
-      const { createInMemoryHostRuntime, isHostExit, liveHostRuntime } = await importIndex();
-      assertEquals(typeof liveHostRuntime, "function", "live adapter factory is exported");
+      const publicPlatform = await importIndex();
+      const { createInMemoryHostRuntime, isHostExit } = publicPlatform;
+      assertEquals("liveHostRuntime" in publicPlatform, false, "live adapter stays internal");
       assertEquals(typeof createInMemoryHostRuntime, "function", "in-memory factory is exported");
       assertEquals(typeof isHostExit, "function", "host exit guard is exported");
+      assertEquals("getDenoRuntime" in publicPlatform, false, "raw Deno stays internal");
     });
 
     it("should export createKVStore", async () => {

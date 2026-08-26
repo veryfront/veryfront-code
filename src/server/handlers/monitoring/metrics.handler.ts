@@ -1,6 +1,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { metrics, snapshotRequestProfiles } from "#veryfront/observability";
+import { createSnapshot } from "#veryfront/observability/simple-metrics/metrics-state.ts";
+import { snapshotRequestProfiles } from "#veryfront/observability/request-profiler.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -14,6 +15,13 @@ import {
 } from "#veryfront/security/http/local-control-request.ts";
 
 export class MetricsHandler extends BaseHandler {
+  readonly #metrics: { snapshot: typeof createSnapshot };
+
+  constructor(metricsRuntime: { snapshot: typeof createSnapshot } = { snapshot: createSnapshot }) {
+    super();
+    this.#metrics = metricsRuntime;
+  }
+
   metadata: HandlerMetadata = {
     name: "MetricsHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
@@ -36,7 +44,7 @@ export class MetricsHandler extends BaseHandler {
     const corsConfig = ctx.securityConfig?.cors;
 
     try {
-      const snap = metrics.snapshot();
+      const snap = this.#metrics.snapshot();
       const profiling = snapshotRequestProfiles();
       const memory = this.safeCall(memoryUsage);
       const uptimeValue = this.safeCall(uptime);

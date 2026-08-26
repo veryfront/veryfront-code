@@ -332,6 +332,43 @@ recompiling every route. Veryfront Cloud provides this cache for you, so
 local dev requirement: `REDIS_URL` is unset by default and dev uses the disk
 cache.
 
+## Release file cache tier
+
+A deployed runtime reaches the distributed file cache once per key per request.
+Immutable release assets are held in a small process-local tier in front of it,
+so a warm asset costs no round trip at all. Only release-scoped keys are held.
+Branch-scoped content changes on every save and always reaches the backend.
+
+These variables tune that tier. The defaults are chosen to be safe, and every
+one of them is a bound rather than a performance dial, so raise them
+deliberately.
+
+| Variable                                  | Default    | What it bounds                                                                 |
+| ----------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `VERYFRONT_FILE_CACHE_L1_TTL_MS`          | `5000`     | How long a held entry is served without consulting the backend, up to `60000`. |
+| `VERYFRONT_FILE_CACHE_L1_MAX_ENTRIES`     | `2000`     | How many entries the tier holds.                                               |
+| `VERYFRONT_FILE_CACHE_L1_MAX_VALUE_BYTES` | `524288`   | The largest single value the tier holds.                                       |
+| `VERYFRONT_FILE_CACHE_L1_MAX_TOTAL_BYTES` | `67108864` | Total bytes held across every project and credential.                          |
+
+Set any of them to `0` to turn the tier off. `VERYFRONT_FILE_CACHE_L1_TTL_MS=0`
+disables it outright; a zero byte or entry ceiling means nothing is ever
+admitted. Values above `60000` for `VERYFRONT_FILE_CACHE_L1_TTL_MS` are clamped
+to `60000`.
+
+The TTL is worth understanding before you raise it, because it bounds two
+different things:
+
+- **Credential revocation.** A held entry is served without asking the backend,
+  which is where authorization is decided. So the TTL is the longest a
+  credential revoked mid-flight can keep reading release assets of a project it
+  was already authorized for.
+- **Cross-pod publish visibility.** A publish invalidates this tier on the
+  runtime instance that received the notification, and only that one. Every
+  other instance keeps serving what it already holds until those entries
+  expire. So the TTL is also the longest a publish can take to become visible
+  everywhere. Raising it delays publishes on instances that did not handle the
+  notification.
+
 ## Environment-based config
 
 Use `getEnv` to read environment variables inside your config:

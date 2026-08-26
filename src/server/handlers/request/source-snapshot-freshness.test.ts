@@ -477,8 +477,9 @@ it("documents every capability required for strict configuration markers", () =>
     SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.suggestion,
     "Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() " +
       "with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1. " +
-      "Strict preview configuration also requires getSourceSnapshotIdentity() and " +
-      "getSourceSnapshotVersion() to return a stable identity and concrete generation.",
+      "Strict preview configuration also requires stable getSourceSnapshotIdentity() and " +
+      "concrete getSourceSnapshotVersion(); agent execution also requires " +
+      "getSourceSnapshotFingerprint().",
   );
 });
 

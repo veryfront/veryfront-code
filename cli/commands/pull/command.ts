@@ -13,7 +13,9 @@ import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
 import { resolveCliApiUrl } from "#cli/shared/constants";
-import { createFileSystem, cwd, env, runCommand } from "veryfront/platform";
+import { env } from "#cli/process-env";
+import { runCommand } from "#cli/process-command";
+import { createFileSystem, cwd } from "veryfront/platform";
 import {
   createApiClient,
   readConfigFile,

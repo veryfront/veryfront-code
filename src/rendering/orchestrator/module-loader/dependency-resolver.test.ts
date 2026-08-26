@@ -3,7 +3,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import {
   type ResolvedModuleDependency,
   resolveModuleDependencies,

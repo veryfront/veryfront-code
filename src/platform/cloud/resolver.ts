@@ -5,6 +5,21 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeTrim = String.prototype.trim;
+
+function trimString(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+}
+
+function replaceString(value: string, searchValue: RegExp, replaceValue: string): string {
+  return IntrinsicReflectApply(StringPrototypeReplace, value, [
+    searchValue,
+    replaceValue,
+  ]) as string;
+}
+
 // ---------------------------------------------------------------------------
 // GlobalThis bridges — config/ is a middle layer, platform/ is bottom layer.
 // config/runtime-config.ts and config/env.ts register these at init time.
@@ -32,9 +47,13 @@ function isRuntimeConfigInitialized(): boolean {
 const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
 
 function normalizeApiBaseUrl(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
+  const trimmed = value === undefined ? undefined : trimString(value);
   if (!trimmed) return undefined;
-  return trimmed.replace(/\/graphql\/?$/, "/api").replace(/\/+$/, "");
+  return replaceString(
+    replaceString(trimmed, /\/graphql\/?$/, "/api"),
+    /\/+$/,
+    "",
+  );
 }
 
 export function resolveVeryfrontApiBaseUrlFromHostEnv(): string {

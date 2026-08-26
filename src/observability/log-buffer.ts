@@ -197,6 +197,8 @@ export class LogBuffer {
   }
 }
 
+Object.freeze(LogBuffer.prototype);
+
 let globalBuffer: LogBuffer | null = null;
 
 type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";

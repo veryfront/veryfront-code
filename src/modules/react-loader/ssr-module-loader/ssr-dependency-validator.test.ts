@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
@@ -7,11 +12,13 @@ import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   cachedCodeUsesResolvedDependencies,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
+import { getCSSImportReferences, runWithCSSCollector } from "../css-import-collector.ts";
 
 describe("SSRDependencyValidator", () => {
   afterAll(async () => {
@@ -121,6 +128,21 @@ describe("SSRDependencyValidator", () => {
       adapterReads.push(path);
       return Promise.resolve('export const child = "from-adapter";');
     };
+    // In-project reads bind containment to the read through the adapter's
+    // snapshot capability when it has one, so route that through the adapter
+    // double as well instead of letting it reach the real disk. The native
+    // adapter publishes the capability as a non-writable property, so the
+    // override must be defined rather than assigned.
+    Object.defineProperty(adapterFs, "readFileSnapshotWithinLimit", {
+      value: (path: string) => {
+        adapterReads.push(path);
+        return Promise.resolve(
+          new TextEncoder().encode('export const child = "from-adapter";'),
+        );
+      },
+      configurable: true,
+      enumerable: true,
+    });
     const adapter = Object.create(denoAdapter, {
       fs: { value: adapterFs },
     }) as typeof denoAdapter;
@@ -139,7 +161,11 @@ describe("SSRDependencyValidator", () => {
       await writeTextFile(dependencyPath, 'export const child = "from-disk";');
 
       const importPaths = await validator.processLocalImports(
-        [{ absolutePath: dependencyPath, specifier: "./child.tsx" }],
+        [{
+          absolutePath: dependencyPath,
+          specifier: "./child.tsx",
+          rewriteSpecifier: `file://${dependencyPath}`,
+        }],
         join(projectDir, "page.tsx"),
         0,
         createFileSystem(),
@@ -161,6 +187,7 @@ describe("SSRDependencyValidator", () => {
         "/tmp/child.js",
         "the transformed dependency output must be mapped for the specifier",
       );
+      assertEquals(importPaths.get(`file://${dependencyPath}`), "/tmp/child.js");
       assertEquals(
         validator.missingDependencies,
         [],
@@ -169,6 +196,466 @@ describe("SSRDependencyValidator", () => {
     } finally {
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("falls back to adapter readFile when snapshot reads are unsupported", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const projectDir = join(tempDir, "project");
+    const dependencyPath = join(projectDir, "child.tsx");
+    const adapterReads: string[] = [];
+    const transformedSources: Array<string | undefined> = [];
+    const adapter = {
+      fs: {
+        readFile(path: string) {
+          adapterReads.push(path);
+          return Promise.resolve('export const child = "from-adapter";');
+        },
+        lstat(path: string) {
+          return Promise.resolve({
+            isFile: path === dependencyPath,
+            isDirectory: false,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        },
+        realPath(path: string) {
+          return Promise.resolve(path);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (_filePath, source) => {
+        transformedSources.push(source);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      projectDir,
+    );
+
+    try {
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(dependencyPath, 'export const child = "from-disk";');
+
+      const importPaths = await validator.processLocalImports(
+        [{
+          absolutePath: dependencyPath,
+          specifier: "./child.tsx",
+          rewriteSpecifier: `file://${dependencyPath}`,
+          projectContained: true,
+        }],
+        join(projectDir, "page.tsx"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(adapterReads, [dependencyPath]);
+      assertEquals(transformedSources, ['export const child = "from-adapter";']);
+      assertEquals(importPaths.get("./child.tsx"), "/tmp/child.js");
+      assertEquals(validator.missingDependencies, []);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not dispatch local dependency batches through mutable array methods", async () => {
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        readFile: () => Promise.resolve("export const child = true;"),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+    const imports = [{ absolutePath: "/project/child.ts", specifier: "./child.ts" }];
+    Object.defineProperties(imports, {
+      map: { value: () => [] },
+      slice: { value: () => [] },
+    });
+
+    const importPaths = await validator.processLocalImports(
+      imports,
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+    assertEquals(transformedPaths, ["/project/child.ts"]);
+    assertEquals(importPaths.get("./child.ts"), "/tmp/child.js");
+  });
+
+  // Regression: import containment approves a canonical pathname, but the
+  // later read followed whatever the path named by then, so a symlink placed
+  // at the approved path after validation escaped the project. The read must
+  // be bound to containment: the adapter's no-follow snapshot capability
+  // refuses the replaced path instead of following it.
+  it("refuses to read an approved project path replaced by a symlink", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-toctou-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      const externalDir = join(tempDir, "external");
+      await mkdir(projectDir, { recursive: true });
+      await mkdir(externalDir, { recursive: true });
+      await writeTextFile(join(externalDir, "secret.ts"), `export const leaked = "secret";`);
+      const approvedPath = join(projectDir, "child.ts");
+      // The path was approved while it named a regular file; by read time an
+      // attacker has replaced it with a link to an out-of-project target.
+      await Deno.symlink(join(externalDir, "secret.ts"), approvedPath);
+
+      const transformedSources: Array<string | undefined> = [];
+      const validator = new SSRDependencyValidator(
+        (_filePath, source) => {
+          transformedSources.push(source);
+          return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await validator.processLocalImports(
+        [{ absolutePath: approvedPath, specifier: "./child.ts" }],
+        join(projectDir, "page.ts"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(transformedSources, [], "the replaced path must not be transformed");
+      assertEquals(
+        validator.missingDependencies.length,
+        1,
+        "the bound read must refuse the retargeted symlink",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  // Regression: a stable in-project relative symlink is a legitimate source
+  // layout, but the no-follow snapshot read refuses any terminal link, so a
+  // previously-valid dependency was reported missing. The link must be
+  // canonicalized to its in-project target before the bound read, while a
+  // link that escapes the project stays refused (see the test above).
+  it("reads a stable in-project symlinked dependency through its canonical target", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-symlink-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(join(projectDir, "real.ts"), 'export const child = "via-link";');
+      const linkPath = join(projectDir, "child.ts");
+      await Deno.symlink(join(projectDir, "real.ts"), linkPath);
+
+      const transformedSources: Array<string | undefined> = [];
+      const validator = new SSRDependencyValidator(
+        (_filePath, source) => {
+          transformedSources.push(source);
+          return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await validator.processLocalImports(
+        [{ absolutePath: linkPath, specifier: "./child.ts" }],
+        join(projectDir, "page.ts"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(
+        validator.missingDependencies,
+        [],
+        "an in-project symlinked dependency must stay resolvable",
+      );
+      assertEquals(transformedSources, ['export const child = "via-link";']);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps CSS behind a stable in-project symlink readable at consumption", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-css-symlink-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(join(projectDir, "real.css"), ".linked { color: green; }");
+      const linkPath = join(projectDir, "theme.css");
+      await Deno.symlink(join(projectDir, "real.css"), linkPath);
+
+      const validator = new SSRDependencyValidator(
+        () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await runWithCSSCollector(async () => {
+        validator.registerContainedCSSImport({
+          absolutePath: linkPath,
+          requestedPath: linkPath,
+          projectContained: true,
+          specifier: "./theme.css",
+        });
+        const reference = getCSSImportReferences()[0];
+        assertExists(reference?.read);
+        assertEquals(await reference.read(), ".linked { color: green; }");
+      });
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("uses the compatibility read path without a bound reader for a contained project import", async () => {
+    let directReads = 0;
+    let transforms = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("direct");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => {
+        transforms++;
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(directReads, 1);
+    assertEquals(transforms, 1);
+    assertEquals(validator.missingDependencies, []);
+  });
+
+  it("decodes malformed contained source bytes like ordinary text reads", async () => {
+    const malformedSource = new Uint8Array([
+      0x65,
+      0x78,
+      0x70,
+      0x6f,
+      0x72,
+      0x74,
+      0x20,
+      0xc3,
+      0x28,
+    ]);
+    const transformedSources: Array<string | undefined> = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFileSnapshotWithinLimit: () => Promise.resolve(malformedSource),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (_path, source) => {
+        transformedSources.push(source);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(validator.missingDependencies, []);
+    assertEquals(transformedSources, [new TextDecoder().decode(malformedSource)]);
+  });
+
+  it("reads canonical project paths but transforms with the authored path", async () => {
+    const snapshotCalls: Array<{ path: string; root: string }> = [];
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => Promise.reject(new Error("direct read must not run")),
+        readFileSnapshotWithinLimit: (path: string, root: string) => {
+          snapshotCalls.push({ path, root });
+          return Promise.resolve(new TextEncoder().encode("source"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/linked/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/real/project/child.tsx",
+        requestedPath: "/linked/project/child.tsx",
+        projectContained: true,
+        specifier: "./child.tsx",
+      }],
+      "/linked/project/page.tsx",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(snapshotCalls, [{ path: "/real/project/child.tsx", root: "/linked/project" }]);
+    assertEquals(transformedPaths, ["/linked/project/child.tsx"]);
+  });
+
+  it("registers contained CSS with its bound snapshot reader", async () => {
+    let directReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("external");
+        },
+        readFileSnapshotWithinLimit: () =>
+          Promise.resolve(new TextEncoder().encode(".safe { color: green; }")),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    const { cssImports } = await runWithCSSCollector(async () => {
+      validator.registerContainedCSSImport({
+        absolutePath: "/project/theme.css",
+        requestedPath: "/project/theme.css",
+        projectContained: true,
+        specifier: "./theme.css",
+      });
+      const reference = getCSSImportReferences()[0];
+      assertExists(reference?.read);
+      assertEquals(await reference.read(), ".safe { color: green; }");
+    });
+
+    assertEquals(cssImports, ["/project/theme.css"]);
+    assertEquals(directReads, 0);
+  });
+
+  it("transforms a contained import from its resolved lexical filename", async () => {
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        readFile: () => Promise.resolve("export default null;"),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/workspace/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "components/Post.mdx",
+        requestedPath: "/workspace/project/components/Post",
+        resolvedPath: "/workspace/project/components/Post.mdx",
+        projectContained: true,
+        specifier: "./Post",
+      }],
+      "/workspace/project/components/Page.mdx",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(transformedPaths, ["/workspace/project/components/Post.mdx"]);
+  });
+
+  it("classifies shadowed legacy project paths through captured string intrinsics", async () => {
+    let directReads = 0;
+    let snapshotReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("external");
+        },
+        readFileSnapshotWithinLimit: () => {
+          snapshotReads++;
+          return Promise.resolve(new TextEncoder().encode(".safe { color: green; }"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    const shadowedPath = new String("/project/theme.css") as unknown as string;
+    Object.defineProperty(shadowedPath, "startsWith", { value: () => false });
+
+    let source: string | undefined;
+    await runWithCSSCollector(async () => {
+      validator.registerContainedCSSImport({
+        absolutePath: shadowedPath,
+        requestedPath: "/project/theme.css",
+        specifier: "./theme.css",
+      });
+      const reference = getCSSImportReferences()[0];
+      assertExists(reference?.read);
+      source = await reference.read();
+    });
+
+    assertEquals(source, ".safe { color: green; }");
+    assertEquals(snapshotReads, 1);
+    assertEquals(directReads, 0);
   });
 
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {

@@ -1104,7 +1104,11 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(restored);
   }
 
-  finalizeRunEventDelivery(runId: string, eventId: string, delivered: boolean): Promise<void> {
+  finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
     const claim = this.runEventClaims.get(runId)?.get(eventId);
     if (claim) {
       const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);

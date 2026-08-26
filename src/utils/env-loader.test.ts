@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { __resetEnvLoaderForTests, getEnvSource, loadEnv, supportsEnvFiles } from "./env-loader.ts";
-import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/index.ts";
+import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/logger.ts";
 
 describe("env-loader", () => {
   let tempDir: string;

@@ -727,9 +727,10 @@ function parseRunObservationRecords(
  *
  * Returns 1 when the append was journaled, 0 when the run hash is absent (the
  * approval is still appended, preserving the unconditional-save contract),
- * 2 when insufficient decided history can be evicted, and 3 when a pending
- * approval already exists for the same node. Duplicate preflight, retention,
- * append, revision increment, and journal write all happen atomically.
+ * 2 when insufficient decided history can be evicted, and 3 when a coalescing
+ * append finds a pending approval for the same wait execution. Duplicate
+ * preflight, retention, append, revision increment, and journal write all
+ * happen atomically.
  */
 const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${RETAIN_APPROVALS_LUA}

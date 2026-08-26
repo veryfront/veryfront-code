@@ -10,7 +10,6 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { WorkflowBackend, WorkflowRunUpdate } from "../backends/types.ts";
 import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -152,6 +151,27 @@ class BoundaryPatchRecordingBackend extends MemoryBackend {
       patch.status === undefined && patch.nodeStates !== undefined && patch.context !== undefined
     ) {
       this.boundaryContextKeys.push(Object.keys(patch.context).sort());
+    }
+    return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
+  }
+}
+
+class ReplacementPatchRecordingBackend extends MemoryBackend {
+  readonly boundaryPatches: Array<Partial<WorkflowRun>> = [];
+
+  constructor() {
+    super();
+    Object.defineProperty(this, "supportsRunPatchKeyMerge", { value: false });
+  }
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === undefined && patch.nodeStates !== undefined) {
+      this.boundaryPatches.push(patch);
     }
     return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
   }
@@ -336,48 +356,28 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("input")), false);
   });
 
-  it("omits key-merge deletion fields for replacement backends", async () => {
-    const target = new MemoryBackend();
-    const boundaryPatches: WorkflowRunUpdate[] = [];
-    const backend = new Proxy(target, {
-      get(_target, property) {
-        if (property === "supportsRunPatchKeyMerge") return false;
-        if (property === "updateRunIfStatusAndWorker") {
-          return async (
-            runId: string,
-            expectedStatuses: WorkflowRun["status"][],
-            expectedWorkerId: string,
-            patch: WorkflowRunUpdate,
-          ) => {
-            if (patch.status === undefined && patch.nodeStates !== undefined) {
-              boundaryPatches.push(patch);
-            }
-            return await target.updateRunIfStatusAndWorker(
-              runId,
-              expectedStatuses,
-              expectedWorkerId,
-              patch,
-            );
-          };
-        }
-        const value = Reflect.get(target, property, target);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    }) as WorkflowBackend;
+  it("omits merge-only deletes from replacement backend patches", async () => {
+    const backend = new ReplacementPatchRecordingBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
     executor.register(
       workflow({
-        id: "replacement-boundary-fields",
+        id: "replacement-boundary-shape",
         steps: [step("work", { tool: createTool("work", () => ({ done: true })) })],
       }).definition,
     );
 
-    const handle = await executor.start("replacement-boundary-fields", {});
+    const handle = await executor.start("replacement-boundary-shape", { retained: true });
     await handle.settled();
 
-    assertEquals(boundaryPatches.length > 0, true);
-    assertEquals(boundaryPatches.some((patch) => Object.hasOwn(patch, "nodeStateDeletes")), false);
-    assertEquals(boundaryPatches.some((patch) => Object.hasOwn(patch, "contextDeletes")), false);
+    assertEquals(backend.boundaryPatches.length > 0, true);
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("contextDeletes" in patch)),
+      true,
+    );
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("nodeStateDeletes" in patch)),
+      true,
+    );
   });
 
   it("persists the exact source integration policy when a run starts", async () => {

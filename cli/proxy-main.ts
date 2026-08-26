@@ -1,6 +1,6 @@
 /** Dedicated compiled proxy entrypoint. Optional CLI arguments are ignored. */
 
-import { setLoggerPreset } from "veryfront/utils/logger";
+import { setLoggerPreset } from "#cli/logger-config";
 import { runStandaloneProxyRuntime } from "./commands/serve/proxy-runtime.ts";
 
 // Keep the proxy's runtime-selected providers in the compile graph. Using

@@ -86,7 +86,7 @@ export async function getPreferredRouter(
   projectDir: string,
 ): Promise<"pages-router" | "app-router"> {
   try {
-    const { runtime } = await import("veryfront/platform");
+    const { runtime } = await import("#cli/runtime-adapter");
     const adapter = await runtime.get();
     const cfg = await getConfig(projectDir, adapter);
     const pref = cfg?.generate?.preferredRouter ?? cfg?.router;

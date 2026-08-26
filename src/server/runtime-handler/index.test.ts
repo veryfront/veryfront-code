@@ -21,8 +21,10 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
-import { metrics } from "#veryfront/observability";
-import { resetMetrics } from "#veryfront/observability/simple-metrics/metrics-state.ts";
+import {
+  createSnapshot,
+  resetMetrics,
+} from "#veryfront/observability/simple-metrics/metrics-state.ts";
 import { resetOtelInstruments } from "#veryfront/observability/simple-metrics/otel-instruments.ts";
 import {
   _resetShimForTests,
@@ -653,7 +655,7 @@ describe("server/runtime-handler/index", () => {
     }
 
     assertEquals(middlewareCalls, 0);
-    assertEquals(metrics.snapshot().requests, 3);
+    assertEquals(createSnapshot().requests, 3);
     assertEquals(otelRequests.count(), 3);
   });
 
@@ -695,7 +697,7 @@ describe("server/runtime-handler/index", () => {
     assertEquals(normal.status, 200);
     assertEquals(monitoring.status, 200);
     assertEquals(middlewareCalls, 1);
-    assertEquals(metrics.snapshot().requests, 2);
+    assertEquals(createSnapshot().requests, 2);
     assertEquals(otelRequests.count(), 2);
   });
 

@@ -20,16 +20,8 @@ const expectedRuntimeExports = [
   "endSpan",
   "extractContext",
   "getActiveContext",
-  "getErrorCollector",
-  "getGlobalMetricsAPI",
-  "getLogBuffer",
-  "getMetricsState",
   "getTraceContext",
   "flushApplicationErrors",
-  "initAutoInstrumentation",
-  "initMetrics",
-  "initTracing",
-  "initializeOTLP",
   "injectContext",
   "instrument",
   "instrumentBatch",
@@ -38,7 +30,6 @@ const expectedRuntimeExports = [
   "instrumentHttpHandler",
   "instrumentReactRender",
   "instrumentSync",
-  "interceptConsole",
   "isAutoInstrumentEnabled",
   "isMetricsEnabled",
   "isOTLPEnabled",
@@ -73,15 +64,9 @@ const expectedRuntimeExports = [
   "recordRender",
   "recordRenderError",
   "recordSecurityHeaders",
-  "resetErrorCollector",
-  "resetLogBuffer",
   "setActiveSpanAttributes",
   "setCacheSize",
   "setSpanAttributes",
-  "shutdownMetrics",
-  "shutdownOTLP",
-  "shutdownTracing",
-  "snapshotRequestProfiles",
   "startSpan",
   "trace",
   "withActiveSpan",
@@ -98,15 +83,77 @@ describe("veryfront/observability public export surface", () => {
   });
 
   it("does not expose test resets or mutable metrics state", () => {
+    assertEquals("initializeApplicationErrorReporter" in observability, false);
+    assertEquals("interceptConsole" in observability, false);
     assertEquals("_resetShimForTests" in observability, false);
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);
     assertEquals("reset" in observability.metrics, false);
+    assertEquals("snapshot" in observability.metrics, false);
+    assertEquals("getRequestCount" in observability.metrics, false);
+    assertEquals("getGlobalMetricsAPI" in observability, false);
+    assertEquals("getMetricsState" in observability, false);
+    assertEquals(Object.isFrozen(observability.metrics), true);
+    assertEquals(Reflect.set(observability.metrics, "incRequest", () => {}), false);
+    for (
+      const processGlobal of [
+        "getErrorCollector",
+        "getHostTelemetryEnv",
+        "getLogBuffer",
+        "initAutoInstrumentation",
+        "initMetrics",
+        "resetErrorCollector",
+        "resetLogBuffer",
+        "shutdownMetrics",
+        "shutdownOTLP",
+        "shutdownTracing",
+        "snapshotRequestProfiles",
+        "initTracing",
+        "initializeOTLP",
+      ]
+    ) {
+      assertEquals(processGlobal in observability, false);
+    }
   });
 
   it("does not expose process-wide error-reporter mutators", () => {
     assertEquals("initializeApplicationErrorReporter" in observability, false);
     assertEquals("setApplicationErrorReporter" in observability, false);
     assertEquals("getHostTelemetryEnv" in observability, false);
+  });
+
+  it("seals diagnostic prototypes shared with host collectors", () => {
+    assertEquals(Object.isFrozen(observability.ErrorCollector.prototype), true);
+    assertEquals(Object.isFrozen(observability.FileLogSubscriber.prototype), true);
+    assertEquals(Object.isFrozen(observability.LogBuffer.prototype), true);
+    assertEquals(
+      Reflect.set(observability.ErrorCollector.prototype, "addRuntimeError", () => {}),
+      false,
+    );
+    assertEquals(
+      Reflect.set(observability.FileLogSubscriber.prototype, "getSubscriber", () => () => {}),
+      false,
+    );
+    assertEquals(Reflect.set(observability.LogBuffer.prototype, "append", () => {}), false);
+  });
+
+  it("freezes the shared span kind and status registries", () => {
+    assertEquals(Object.isFrozen(observability.SpanKind), true);
+    assertEquals(Object.isFrozen(observability.SpanStatusCode), true);
+    assertEquals(Reflect.set(observability.SpanKind, "CLIENT", 99), false);
+    assertEquals(observability.SpanKind.CLIENT, 2);
+    assertEquals(Reflect.set(observability.SpanStatusCode, "ERROR", 0), false);
+    assertEquals(observability.SpanStatusCode.ERROR, 2);
+  });
+
+  it("exposes a read-only tracing facade without global provider access", () => {
+    assertStrictEquals(observability.trace, localObservability.trace);
+    assertEquals("setGlobalTracerProvider" in observability.trace, false);
+    assertEquals("getGlobalTracerProvider" in observability.trace, false);
+    assertEquals(Object.isFrozen(observability.trace), true);
+    assertEquals(typeof observability.trace.getTracer, "function");
+    assertEquals(typeof observability.trace.getSpan, "function");
+    assertEquals(typeof observability.trace.setSpan, "function");
+    assertEquals(typeof observability.trace.getActiveSpan, "function");
   });
 });

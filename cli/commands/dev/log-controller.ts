@@ -1,5 +1,6 @@
-import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
-import { isTruthyEnvValue, refreshLoggerConfig } from "veryfront/utils";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
+import { refreshLoggerConfig } from "#cli/logger-config";
+import { isTruthyEnvValue } from "veryfront/utils";
 
 export interface DevLogController {
   isVerbose(): boolean;

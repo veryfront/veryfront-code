@@ -4,7 +4,8 @@
  * @module cli/commands/demo
  */
 
-import { chdir, cwd, promptSync, writeStdout } from "veryfront/platform";
+import { chdir } from "#cli/process-lifecycle";
+import { cwd, promptSync, writeStdout } from "veryfront/platform";
 import { getStdinReader, setRawMode } from "veryfront/platform";
 import {
   AnimatedDotMatrix,

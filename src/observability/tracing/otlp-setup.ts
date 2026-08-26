@@ -20,6 +20,8 @@ import {
   type AttributeValue,
   type Context,
   context as shimContext,
+  createPublicContext,
+  createPublicSpan,
   defaultTextMapGetter,
   defaultTextMapSetter,
   getTracer,
@@ -31,6 +33,8 @@ import {
   SpanStatusCode,
   trace as shimTrace,
   type Tracer,
+  unwrapPublicContext,
+  unwrapPublicSpan,
 } from "./api-shim.ts";
 import { formatTraceparent, parseTraceparent } from "./traceparent.ts";
 import { getHostTelemetryEnv } from "./telemetry-env.ts";
@@ -382,7 +386,7 @@ export async function withSpan<T>(
   try {
     const result = await runAsyncWithContextFallback(
       (callback) => shimContext.with(spanContext, callback),
-      () => fn(span),
+      () => fn(createPublicSpan(span)),
       (error) => reportTelemetryFailure("Failed to activate span context", error),
     );
     return result;
@@ -427,7 +431,9 @@ export function extractContext(headers: Headers): Context | undefined {
   try {
     const carrier: Record<string, string> = {};
     for (const [k, v] of headers) carrier[k.toLowerCase()] = v;
-    return shimPropagation.extract(getActiveContextSafely(), carrier, defaultTextMapGetter);
+    return createPublicContext(
+      shimPropagation.extract(getActiveContextSafely(), carrier, defaultTextMapGetter),
+    );
   } catch (error) {
     reportTelemetryFailure("Failed to extract tracing context", error);
     return undefined;
@@ -455,7 +461,7 @@ export function startServerSpan(
   let spanPath: string;
   let span: Span;
   try {
-    ctx = (parentContext ?? getActiveContextSafely()) as Context;
+    ctx = unwrapPublicContext((parentContext ?? getActiveContextSafely()) as Context);
     spanPath = sanitizeUrlForSpan(path);
     const candidate = getTracingRuntime().tracer.startSpan(
       sanitizeTelemetryText(`${method} ${spanPath}`, MAX_SPAN_NAME_LENGTH),
@@ -488,14 +494,17 @@ export function startServerSpan(
   } catch (error) {
     reportTelemetryFailure("Failed to associate server span with context", error);
   }
-  return { span, context: spanContext };
+  return {
+    span: createPublicSpan(span),
+    context: createPublicContext(spanContext),
+  };
 }
 
 /** End an active server tracing span. */
 export function endServerSpan(span: unknown, statusCode: number, error?: Error): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   runTelemetryOperation(
     () => otelSpan.setAttribute("http.status_code", statusCode),
     "Failed to set server span status code",
@@ -532,7 +541,7 @@ export function setSpanAttributes(
 ): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   for (const [key, value] of Object.entries(sanitizeTelemetryAttributes(attributes))) {
     runTelemetryOperation(
       () => otelSpan.setAttribute(key, value),
@@ -549,7 +558,7 @@ export function addSpanEvent(
 ): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   runTelemetryOperation(
     () =>
       otelSpan.addEvent(
@@ -600,7 +609,7 @@ export function setActiveSpanErrorStatus(error: unknown): void {
 /** Context for with. */
 export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
   return await runAsyncWithContextFallback(
-    (callback) => shimContext.with(spanContext as Context, callback),
+    (callback) => shimContext.with(unwrapPublicContext(spanContext as Context), callback),
     fn,
     (error) => logger.debug("Failed to activate explicit span context", error),
   );

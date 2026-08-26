@@ -14,7 +14,7 @@
 
 import { LOCALHOST } from "veryfront/config";
 import { PORT_IN_USE } from "veryfront/errors";
-import { getDenoRuntime } from "veryfront/platform";
+import { getDenoRuntime } from "#cli/platform-runtime";
 
 /** How many consecutive ports to try before giving up. */
 export const MAX_PORT_FALLBACK_ATTEMPTS = 10;

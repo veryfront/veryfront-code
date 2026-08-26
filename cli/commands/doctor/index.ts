@@ -2,7 +2,7 @@ import type { DiagnosticResult } from "./types.ts";
 import { checkDenoVersion, checkReactCompatibility } from "./version-checks.ts";
 import { createError, toError } from "veryfront/errors";
 import { getConfig } from "veryfront/config";
-import { runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import {
   checkCacheSystem,
   checkConfiguration,

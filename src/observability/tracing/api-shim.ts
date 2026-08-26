@@ -22,6 +22,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
+const IntrinsicObjectFreeze = Object.freeze;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
+
 // ---------------------------------------------------------------------------
 // Tracing types
 // ---------------------------------------------------------------------------
@@ -143,6 +149,7 @@ export const SpanKind = {
   PRODUCER: 3,
   CONSUMER: 4,
 } as const;
+Object.freeze(SpanKind);
 
 export type SpanKind = typeof SpanKind[keyof typeof SpanKind];
 
@@ -151,6 +158,7 @@ export const SpanStatusCode = {
   OK: 1,
   ERROR: 2,
 } as const;
+Object.freeze(SpanStatusCode);
 
 export type SpanStatusCode = typeof SpanStatusCode[keyof typeof SpanStatusCode];
 
@@ -628,6 +636,204 @@ export const trace = {
     }
   },
 };
+
+const publicSpanFacades = new IntrinsicWeakMap<object, Span>();
+const publicSpanTargets = new IntrinsicWeakMap<object, Span>();
+const publicContextFacades = new IntrinsicWeakMap<object, Context>();
+const publicContextTargets = new IntrinsicWeakMap<object, Context>();
+
+function weakMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(WeakMapPrototypeSet, map, [key, value]);
+}
+
+/** @internal Wrap a provider-owned span before returning it to project code. */
+export function createPublicSpan(providerSpan: Span): Span {
+  const existing = weakMapGet(publicSpanFacades, providerSpan);
+  if (existing) return existing;
+
+  const setAttribute = providerSpan.setAttribute;
+  const setAttributes = providerSpan.setAttributes;
+  const setStatus = providerSpan.setStatus;
+  const recordException = providerSpan.recordException;
+  const addEvent = providerSpan.addEvent;
+  const end = providerSpan.end;
+  const spanContext = providerSpan.spanContext;
+  const updateName = providerSpan.updateName;
+  const facade: Span = IntrinsicObjectFreeze({
+    setAttribute(key: string, value: AttributeValue): Span {
+      IntrinsicReflectApply(setAttribute, providerSpan, [key, value]);
+      return facade;
+    },
+    setAttributes(attrs: Record<string, AttributeValue>): Span {
+      IntrinsicReflectApply(setAttributes, providerSpan, [attrs]);
+      return facade;
+    },
+    setStatus(status: { code: number; message?: string }): Span {
+      IntrinsicReflectApply(setStatus, providerSpan, [status]);
+      return facade;
+    },
+    recordException(err: unknown): void {
+      IntrinsicReflectApply(recordException, providerSpan, [err]);
+    },
+    addEvent(name: string, attrs?: Record<string, AttributeValue>): Span {
+      IntrinsicReflectApply(addEvent, providerSpan, [name, attrs]);
+      return facade;
+    },
+    end(endTime?: number): void {
+      IntrinsicReflectApply(end, providerSpan, [endTime]);
+    },
+    spanContext(): SpanContext {
+      const context = IntrinsicReflectApply(spanContext, providerSpan, []) as SpanContext;
+      return IntrinsicObjectFreeze({
+        traceId: context.traceId,
+        spanId: context.spanId,
+        traceFlags: context.traceFlags,
+      });
+    },
+    updateName(name: string): void {
+      IntrinsicReflectApply(updateName, providerSpan, [name]);
+    },
+  });
+  weakMapSet(publicSpanFacades, providerSpan, facade);
+  weakMapSet(publicSpanTargets, facade, providerSpan);
+  return facade;
+}
+
+/** @internal Restore a provider-owned span at an internal tracing boundary. */
+export function unwrapPublicSpan(span: Span): Span {
+  return weakMapGet(publicSpanTargets, span) ?? span;
+}
+
+function isWeakMapKey(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function exposeKnownProviderValue(value: unknown): unknown {
+  if (!isWeakMapKey(value)) return value;
+  return weakMapGet(publicSpanFacades, value) ??
+    weakMapGet(publicContextFacades, value) ??
+    value;
+}
+
+function restoreKnownProviderValue(value: unknown): unknown {
+  if (!isWeakMapKey(value)) return value;
+  return weakMapGet(publicSpanTargets, value) ??
+    weakMapGet(publicContextTargets, value) ??
+    value;
+}
+
+/** @internal Wrap a provider-owned context before returning it to project code. */
+export function createPublicContext(providerContext: Context): Context {
+  const existing = weakMapGet(publicContextFacades, providerContext);
+  if (existing) return existing;
+
+  const getValue = providerContext.getValue;
+  const setValue = providerContext.setValue;
+  const deleteValue = providerContext.deleteValue;
+  const facade: Context = IntrinsicObjectFreeze({
+    getValue(key: symbol): unknown {
+      const value = IntrinsicReflectApply(getValue, providerContext, [key]);
+      if (key === ACTIVE_SPAN_CONTEXT_KEY && isWeakMapKey(value)) {
+        return createPublicSpan(value as Span);
+      }
+      return exposeKnownProviderValue(value);
+    },
+    setValue(key: symbol, value: unknown): Context {
+      const next = IntrinsicReflectApply(setValue, providerContext, [
+        key,
+        restoreKnownProviderValue(value),
+      ]) as Context;
+      return createPublicContext(next);
+    },
+    deleteValue(key: symbol): Context {
+      const next = IntrinsicReflectApply(deleteValue, providerContext, [key]) as Context;
+      return createPublicContext(next);
+    },
+  });
+  weakMapSet(publicContextFacades, providerContext, facade);
+  weakMapSet(publicContextTargets, facade, providerContext);
+  return facade;
+}
+
+/** @internal Restore a provider-owned context at an internal tracing boundary. */
+export function unwrapPublicContext<T extends object>(ctx: T): T | Context {
+  return weakMapGet(publicContextTargets, ctx) ?? ctx;
+}
+
+/**
+ * Read-only tracing facade for the public `veryfront/observability` surface.
+ *
+ * Omits the process-wide provider accessors (`setGlobalTracerProvider`,
+ * `getGlobalTracerProvider`) so project code cannot install or reach the
+ * global tracer provider. Framework bootstrap wires providers through the
+ * internal `trace` object and `setGlobalTracerProvider` instead.
+ */
+export const publicTrace: Readonly<
+  Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
+> = IntrinsicObjectFreeze({
+  getTracer(name: string, version?: string): Tracer {
+    const providerTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const startActiveSpan = ((
+      spanName: string,
+      second: unknown,
+      third?: unknown,
+      fourth?: unknown,
+    ): unknown => {
+      if (fourth !== undefined) {
+        const callback = fourth as (span: Span) => unknown;
+        return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+          spanName,
+          second,
+          unwrapPublicContext(third as Context),
+          (span: Span) => callback(createPublicSpan(span)),
+        ]);
+      }
+      if (third !== undefined) {
+        const callback = third as (span: Span) => unknown;
+        return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+          spanName,
+          second,
+          (span: Span) => callback(createPublicSpan(span)),
+        ]);
+      }
+      const callback = second as (span: Span) => unknown;
+      return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+        spanName,
+        (span: Span) => callback(createPublicSpan(span)),
+      ]);
+    }) as Tracer["startActiveSpan"];
+
+    return IntrinsicObjectFreeze({
+      startSpan(spanName: string, options?: SpanStartOptions, activeContext?: Context): Span {
+        return createPublicSpan(
+          IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
+            spanName,
+            options,
+            activeContext ? unwrapPublicContext(activeContext) : activeContext,
+          ]) as Span,
+        );
+      },
+      startActiveSpan,
+    });
+  },
+  setSpan(ctx: Context, span: Span): Context {
+    return createPublicContext(
+      trace.setSpan(unwrapPublicContext(ctx), unwrapPublicSpan(span)),
+    );
+  },
+  getSpan(ctx: Context): Span | undefined {
+    const span = trace.getSpan(unwrapPublicContext(ctx));
+    return span ? createPublicSpan(span) : undefined;
+  },
+  getActiveSpan(): Span | undefined {
+    const span = trace.getActiveSpan();
+    return span ? createPublicSpan(span) : undefined;
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Propagation API

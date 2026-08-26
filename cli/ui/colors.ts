@@ -1,4 +1,5 @@
-import { env as getEnvObject, isStdoutTTY } from "veryfront/platform";
+import { env as getEnvObject } from "#cli/process-env";
+import { isStdoutTTY } from "veryfront/platform";
 import { ESC, RESET } from "./ansi.ts";
 
 export type ColorLevel = "truecolor" | "256" | "16" | "none";

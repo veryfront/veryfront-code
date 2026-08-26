@@ -48,6 +48,12 @@ export const RENDER_PER_PROJECT_QUEUE_SIZE = Math.max(
   ),
 );
 
+/** Maximum requests that may wait on one deduplicated cacheable render. */
+export const RENDER_SINGLEFLIGHT_MAX_FOLLOWERS = Math.max(
+  0,
+  getEnvNumber("RENDER_SINGLEFLIGHT_MAX_FOLLOWERS", 20),
+);
+
 /**
  * Timeout for acquiring render permit (ms).
  * This is the total foreground admission budget across project and global
