@@ -27,6 +27,7 @@ import {
   _createLocalIntegrationToolSourceForTesting,
   type LocalIntegrationToolSourceOptions,
 } from "./local-tool-source.ts";
+import { connectors } from "./_data.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
@@ -542,6 +543,7 @@ describe("createLocalIntegrationToolSource", () => {
   it("keeps exposed host enums detached from runtime enforcement", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;
+    const requestedOrigins: string[] = [];
     const source = _createLocalIntegrationToolSourceForTesting(
       {
         tools: ["datadog__validate_api_key"],
@@ -550,8 +552,9 @@ describe("createLocalIntegrationToolSource", () => {
           return TEST_CREDENTIAL;
         },
       },
-      () => {
+      (request) => {
         transportCalls += 1;
+        requestedOrigins.push(request.url.origin);
         return Promise.resolve(Response.json({ valid: true }));
       },
     );
@@ -573,6 +576,36 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(error.slug, "local-integration-request-invalid");
     assertEquals(credentialProviderCalls, 0);
     assertEquals(transportCalls, 0);
+
+    assertEquals(await source.executeTool("datadog__validate_api_key", {}), { valid: true });
+    assertEquals(credentialProviderCalls, 2);
+    assertEquals(transportCalls, 1);
+    assertEquals(requestedOrigins, ["https://api.datadoghq.com"]);
+  });
+
+  it("rejects unsupported capabilities on enumerated-host endpoints", async () => {
+    const datadog = connectors.find((connector) => connector.name === "datadog")!;
+    const tool = datadog.tools.find((candidate) => candidate.id === "datadog__validate_api_key")!;
+    const endpoint = tool.endpoint!;
+    const originalType = endpoint.type;
+
+    try {
+      endpoint.type = "graphql";
+      const isolated = await import("./local-tool-source.ts?enumerated-host-capability-regression");
+      await assertConfigurationError(async () => {
+        const source = isolated._createLocalIntegrationToolSourceForTesting(
+          {
+            tools: ["datadog__validate_api_key"],
+            credentialProvider: testCredentialProvider,
+          },
+          () => Promise.resolve(Response.json({ valid: true })),
+        );
+        await source.listTools();
+      }, "GraphQL");
+    } finally {
+      if (originalType === undefined) delete endpoint.type;
+      else endpoint.type = originalType;
+    }
   });
 
   it("mints client credentials before executing a fixed-origin provider tool", async () => {

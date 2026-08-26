@@ -397,11 +397,10 @@ function assertSupportedAuth(
   );
 }
 
-function assertSupportedEndpoint(
-  connector: LocalCatalogConnector,
+function assertSupportedEndpointCapabilities(
   endpoint: IntegrationEndpoint,
   toolId: string,
-): string | undefined {
+): void {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
   }
@@ -418,7 +417,13 @@ function assertSupportedEndpoint(
       configurationError(`Local integration tool "${toolId}" uses an unsupported encoded body`);
     }
   }
+}
 
+function resolveSupportedEndpointOrigin(
+  connector: LocalCatalogConnector,
+  endpoint: IntegrationEndpoint,
+  toolId: string,
+): string | undefined {
   if (connector.name === "salesforce") {
     if (!stringBoolean(stringStartsWith, endpoint.url, "{{oauth.raw.instance_url}}/")) {
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
@@ -533,10 +538,11 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
+  assertSupportedEndpointCapabilities(tool.endpoint, canonicalToolId);
   const enumeratedHost = enumeratedHostBinding(tool.endpoint, canonicalToolId);
   const endpointOrigin = enumeratedHost
     ? undefined
-    : assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
+    : resolveSupportedEndpointOrigin(connector, tool.endpoint, canonicalToolId);
   assertSupportedAuth(connector, tool.endpoint);
   const authPlan = createLocalCredentialAuthPlan(connector);
   return freeze({
@@ -605,7 +611,8 @@ function createLocalIntegrationToolSourceInternal(
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;
       if (tool.enumeratedHost) {
-        const host = validated.args[tool.enumeratedHost.parameterName];
+        const host = validated.args[tool.enumeratedHost.parameterName] ??
+          endpoint.params?.[tool.enumeratedHost.parameterName]?.default;
         if (typeof host !== "string") {
           configurationError(`Local integration tool "${toolName}" has no allowed host`);
         }
