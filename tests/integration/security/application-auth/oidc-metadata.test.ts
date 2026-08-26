@@ -924,7 +924,7 @@ describe("security/application-auth OIDC metadata", () => {
             Map.prototype,
             "has",
             function (this: Map<unknown, unknown>, key: unknown): boolean {
-              if (typeof key === "string" && key.includes(issuerB)) return true;
+              if (typeof key === "string" && key === issuerB) return true;
               return TestReflectApply(TestMapPrototypeHas, this, [key]) as boolean;
             },
           ),
