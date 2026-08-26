@@ -57,6 +57,7 @@ export enum LogLevel {
   WARN = 2,
   ERROR = 3,
 }
+Object.freeze(LogLevel);
 
 export type LogFormat = "text" | "json";
 

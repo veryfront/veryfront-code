@@ -39,6 +39,8 @@ function captureStrings(messages: string[]): (...args: unknown[]) => void {
 describe("Logger", () => {
   describe("Log Levels", () => {
     it("LogLevel enum has correct values", () => {
+      assertEquals(Object.isFrozen(LogLevel), true);
+      assertEquals(Reflect.set(LogLevel, "ERROR", 0), false);
       assertEquals(LogLevel.DEBUG, 0);
       assertEquals(LogLevel.INFO, 1);
       assertEquals(LogLevel.WARN, 2);

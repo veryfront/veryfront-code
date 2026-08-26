@@ -1,6 +1,6 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { metrics } from "#veryfront/observability";
+import { createSnapshot } from "#veryfront/observability/simple-metrics/metrics-state.ts";
 import { snapshotRequestProfiles } from "#veryfront/observability/request-profiler.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
@@ -15,9 +15,9 @@ import {
 } from "#veryfront/security/http/local-control-request.ts";
 
 export class MetricsHandler extends BaseHandler {
-  readonly #metrics: Pick<typeof metrics, "snapshot">;
+  readonly #metrics: { snapshot: typeof createSnapshot };
 
-  constructor(metricsRuntime: Pick<typeof metrics, "snapshot"> = metrics) {
+  constructor(metricsRuntime: { snapshot: typeof createSnapshot } = { snapshot: createSnapshot }) {
     super();
     this.#metrics = metricsRuntime;
   }

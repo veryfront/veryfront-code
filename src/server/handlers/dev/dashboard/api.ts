@@ -17,7 +17,7 @@ import {
 } from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
-import { metrics } from "#veryfront/observability";
+import { createSnapshot } from "#veryfront/observability/simple-metrics/metrics-state.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import {
@@ -454,7 +454,7 @@ function handleListHandlers(ctx: HandlerContext): Response {
 
 function handleGetMetrics(): Response {
   try {
-    return jsonResponse({ counters: metrics.snapshot(), timestamp: new Date().toISOString() });
+    return jsonResponse({ counters: createSnapshot(), timestamp: new Date().toISOString() });
   } catch (error) {
     return errorResponse(getErrorMessage(error));
   }

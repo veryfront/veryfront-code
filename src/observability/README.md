@@ -223,13 +223,10 @@ runtime setup are documented by `@veryfront/ext-observability-sentry`.
 
 ## In-process metrics
 
-The `metrics` object exposes counters and bounded histogram snapshots for
-framework-local diagnostics. Root-level convenience exports also include
-`recordApiRequest`, `recordApiRetry`, `recordContentCacheHit`, and
-`recordContentNetworkFetch`.
-
-`metrics.snapshot()` returns a detached snapshot. Histogram boundaries and
-counts in returned snapshots are safe for callers to mutate.
+The public `metrics` object exposes recording operations only. Root-level
+convenience exports also include `recordApiRequest`, `recordApiRetry`,
+`recordContentCacheHit`, and `recordContentNetworkFetch`. Process-wide metric
+snapshots stay internal to trusted monitoring handlers.
 
 ## Request profiling
 

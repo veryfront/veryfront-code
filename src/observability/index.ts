@@ -98,7 +98,26 @@ export type { RequestProfileRecord } from "./request-profiler.ts";
 
 // Simple in-process metrics
 import { metrics as internalMetrics } from "./simple-metrics/index.ts";
-export const metrics = Object.freeze({ ...internalMetrics });
+export const metrics = Object.freeze({
+  incRequest: internalMetrics.incRequest,
+  recordHttp: internalMetrics.recordHttp,
+  recordCacheGet: internalMetrics.recordCacheGet,
+  recordCacheSet: internalMetrics.recordCacheSet,
+  recordCacheInvalidate: internalMetrics.recordCacheInvalidate,
+  recordSSR: internalMetrics.recordSSR,
+  recordRSCStreamDuration: internalMetrics.recordRSCStreamDuration,
+  recordRSC: internalMetrics.recordRSC,
+  recordCorsRejection: internalMetrics.recordCorsRejection,
+  recordSecurityHeaders: internalMetrics.recordSecurityHeaders,
+  recordApiRequest: internalMetrics.recordApiRequest,
+  recordApiRetry: internalMetrics.recordApiRetry,
+  recordContentCacheHit: internalMetrics.recordContentCacheHit,
+  recordContentNetworkFetch: internalMetrics.recordContentNetworkFetch,
+  recordModuleServe: internalMetrics.recordModuleServe,
+  recordModuleTransform: internalMetrics.recordModuleTransform,
+  recordRouteManifestLookup: internalMetrics.recordRouteManifestLookup,
+  recordSSRSourceUnavailable: internalMetrics.recordSSRSourceUnavailable,
+});
 export {
   recordApiRequest,
   recordApiRetry,
