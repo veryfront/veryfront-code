@@ -37,6 +37,8 @@ const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
 
 const reflectApply = Reflect.apply;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
 // Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
 // turning an otherwise present dependency into a missing import.
 const utf8Decoder = new TextDecoder("utf-8");
@@ -44,6 +46,14 @@ const decodeUtf8 = TextDecoder.prototype.decode;
 
 function decodeDependencySource(bytes: Uint8Array): string {
   return reflectApply(decodeUtf8, utf8Decoder, [bytes]) as string;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return reflectApply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function startsWithString(value: string, prefix: string): boolean {
+  return reflectApply(stringStartsWith, value, [prefix]) as boolean;
 }
 
 export interface ResolvedCachedDependencies {
@@ -339,9 +349,11 @@ export class SSRDependencyValidator {
   }
 
   private isProjectAbsolutePath(path: string): boolean {
-    const projectDir = this.projectDir.replace(/\/+$/, "");
+    let projectDirEnd = this.projectDir.length;
+    while (projectDirEnd > 0 && this.projectDir[projectDirEnd - 1] === "/") projectDirEnd--;
+    const projectDir = sliceString(this.projectDir, 0, projectDirEnd);
     if (!projectDir || projectDir === "/") return false;
-    return path === projectDir || path.startsWith(`${projectDir}/`);
+    return path === projectDir || startsWithString(path, `${projectDir}/`);
   }
 
   /**
@@ -406,7 +418,7 @@ export class SSRDependencyValidator {
   ): Promise<string> {
     const path = imported.absolutePath;
     if (imported.projectContained) return this.readProjectImportSource(path);
-    if (!path.startsWith("/")) {
+    if (!startsWithString(path, "/")) {
       return this.adapter.fs.readFile(path);
     }
 

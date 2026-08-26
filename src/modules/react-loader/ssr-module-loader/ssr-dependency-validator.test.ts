@@ -484,6 +484,49 @@ describe("SSRDependencyValidator", () => {
     assertEquals(directReads, 0);
   });
 
+  it("classifies shadowed legacy project paths through captured string intrinsics", async () => {
+    let directReads = 0;
+    let snapshotReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("external");
+        },
+        readFileSnapshotWithinLimit: () => {
+          snapshotReads++;
+          return Promise.resolve(new TextEncoder().encode(".safe { color: green; }"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    const shadowedPath = new String("/project/theme.css") as unknown as string;
+    Object.defineProperty(shadowedPath, "startsWith", { value: () => false });
+
+    let source: string | undefined;
+    await runWithCSSCollector(async () => {
+      validator.registerContainedCSSImport({
+        absolutePath: shadowedPath,
+        requestedPath: "/project/theme.css",
+        specifier: "./theme.css",
+      });
+      const reference = getCSSImportReferences()[0];
+      assertExists(reference?.read);
+      source = await reference.read();
+    });
+
+    assertEquals(source, ".safe { color: green; }");
+    assertEquals(snapshotReads, 1);
+    assertEquals(directReads, 0);
+  });
+
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
     const projectDir = join(tempDir, "project");

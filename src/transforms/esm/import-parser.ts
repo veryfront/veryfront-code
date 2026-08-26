@@ -383,6 +383,7 @@ async function resolveContainedFilePath(
 async function toContainedImportPath(
   resolved: string,
   containment: ContainmentContext,
+  requestedPath = resolved,
 ): Promise<ContainedImportPath | null> {
   if (containment.symlinkFree) {
     // Hosted adapters return paths in their project-relative namespace. Check
@@ -391,7 +392,7 @@ async function toContainedImportPath(
     if (!isPathWithinProject(resolve(containment.projectDir, resolved), containment.projectDir)) {
       return null;
     }
-    return { absolutePath: resolved, requestedPath: resolved };
+    return { absolutePath: resolved, requestedPath };
   }
   if (containment.canonicalize === null) return null;
 
@@ -408,7 +409,7 @@ async function toContainedImportPath(
   const canonicalProjectDir = canonicalPaths[0]!;
   const canonicalResolved = canonicalPaths[1]!;
   if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
-  return { absolutePath: canonicalResolved, requestedPath: resolved };
+  return { absolutePath: canonicalResolved, requestedPath };
 }
 
 function isExpectedCanonicalizationRace(error: unknown): boolean {
@@ -528,7 +529,13 @@ async function resolveAliasImportPath(
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) return await toContainedImportPath(resolved, containment);
+      if (resolved) {
+        return await toContainedImportPath(
+          resolved,
+          containment,
+          containment.symlinkFree ? lexicalPath : resolved,
+        );
+      }
     } catch (_) {
       /* expected: resolveFile may not be supported */
       // Fall through to manual resolution

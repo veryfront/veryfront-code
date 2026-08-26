@@ -485,6 +485,29 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(result.imports[0]?.projectContained, true);
   });
 
+  it("preserves hosted CSS module identity separately from its adapter read path", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(path === "theme.module.css" ? "theme.module.css" : null),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import styles from "@/theme.module.css";\nexport default styles.root;`;
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(result.cssImports[0]?.absolutePath, "theme.module.css");
+    assertEquals(result.cssImports[0]?.requestedPath, "/workspace/project/theme.module.css");
+    assertEquals(result.cssImports[0]?.projectContained, true);
+  });
+
   it("reports a canonicalization race as a missing import", async () => {
     const projectDir = "/workspace/project";
     const missing = Object.assign(new Error("removed during canonicalization"), { code: "ENOENT" });
