@@ -11,6 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { buildReactUrl, getReactImportMap } from "../../import-rewriter/url-builder.ts";
 import {
@@ -547,6 +548,9 @@ describe("ssr-vf-modules relative import resolution", {
       code,
       target: "ssr",
       projectDir: "/tmp/test-project",
+      // components/Head is an internal dependency reached from framework
+      // source, not a tenant-selected entry point.
+      filePath: join(FRAMEWORK_ROOT, "src", "react", "public.ts"),
       reactVersion: REACT_DEFAULT_VERSION,
     } as TransformContext;
 
@@ -570,6 +574,9 @@ describe("ssr-vf-modules relative import resolution", {
       code,
       target: "ssr",
       projectDir: "/tmp/test-project",
+      // components/index is an internal dependency reached from framework
+      // source, not a tenant-selected entry point.
+      filePath: join(FRAMEWORK_ROOT, "src", "react", "public.ts"),
       reactVersion: REACT_DEFAULT_VERSION,
     } as TransformContext;
 

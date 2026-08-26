@@ -191,21 +191,25 @@ describe("Process Compat", () => {
       });
     });
 
-    it("returns undefined instead of throwing when an env read is denied", () => {
+    it("returns undefined instead of throwing when an env read is denied", async () => {
       // Under a tightened env permission allowlist (project isolation workers),
       // Deno.env.get throws NotCapable for a non-allowlisted key. getHostEnv must
       // degrade to undefined rather than propagating the throw and crashing the
-      // request. Simulate the denial by stubbing Deno.env.get.
-      if (typeof Deno === "undefined") return;
-      const original = Deno.env.get;
-      try {
-        Deno.env.get = () => {
-          throw new Error("Requires env access, run again with the --allow-env flag");
-        };
-        assertEquals(getHostEnv("__DENIED_BY_ALLOWLIST__"), undefined);
-      } finally {
-        Deno.env.get = original;
-      }
+      // request. Exercise the real permission boundary in a child process because
+      // the installed project-scoped Deno.env view is intentionally immutable.
+      if (!isDeno) return;
+      const envModuleUrl = new URL("./process/env.ts", import.meta.url).href;
+      const configPath = new URL("../../../deno.json", import.meta.url).pathname;
+      const script = `const { getHostEnv } = await import(${JSON.stringify(envModuleUrl)});` +
+        `console.log(String(getHostEnv("__DENIED_BY_ALLOWLIST__")));`;
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--config", configPath, script],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.success, true, new TextDecoder().decode(output.stderr));
+      assertEquals(new TextDecoder().decode(output.stdout).trim(), "undefined");
     });
   });
 

@@ -486,11 +486,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(renderCalls, 0);
     });
 
-    it("renders once the host grants execution", async () => {
-      // The granted counterpart to the fail-closed test above. veryfront-code
-      // #3364 shipped a hardcoded `true` on a sibling surface that survived
-      // review because a fail-closed test cannot tell a correct predicate from
-      // a literal denial. Only this direction can.
+    it("keeps shared rendering denied despite a host grant", async () => {
       let renderCalls = 0;
       const handler = new SSRHandler(createMockSSRService({
         renderPage: () => {
@@ -513,8 +509,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         } as Partial<HandlerContext>),
       );
 
-      assertEquals(result.response?.status, 200);
-      assertEquals(renderCalls, 1);
+      assertEquals(result.response?.status, 503);
+      assertEquals(renderCalls, 0);
     });
 
     it("returns response from renderPage result", async () => {
@@ -845,6 +841,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       });
       const handler = new SSRHandler(mockService);
       const { ctx } = makeExtendedCtx({}, {
+        isLocalProject: true,
         allowHostProjectCodeExecution: true,
         projectSlug: "preview-project",
         projectId: "project-1",

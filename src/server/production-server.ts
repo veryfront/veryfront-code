@@ -269,6 +269,7 @@ export function startProductionServer(
 
             const outcome = await runStartupDiscovery({
               config: discoveryConfig,
+              runtimeAdapter: adapter,
               allowHostProjectCodeExecution,
               discoverAll,
               isExtendedFSAdapter,

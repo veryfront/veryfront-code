@@ -55,6 +55,7 @@ export async function resolveFrameworkFile(
   vfModulePath: string,
   fs: ReturnType<typeof createFileSystem>,
   existsFn: (path: string) => Promise<boolean> = exists,
+  options: { trustedFrameworkParent?: boolean } = {},
 ): Promise<{ sourcePath: string; content: string } | null> {
   const normalizedVfModulePath = vfModulePath.replace(/^file:\/\/(?=\/_vf_modules\/)/, "");
 
@@ -67,7 +68,7 @@ export async function resolveFrameworkFile(
     ? pathWithoutPrefix.slice("_veryfront/".length)
     : pathWithoutPrefix;
   if (!isSafeFrameworkSourceKey(frameworkRelativePath)) return null;
-  if (!isPublicFrameworkSourceKey(frameworkRelativePath)) {
+  if (!options.trustedFrameworkParent && !isPublicFrameworkSourceKey(frameworkRelativePath)) {
     logger.warn(`${LOG_PREFIX} Refusing non-public framework module for tenant import`, {
       vfModulePath,
       frameworkRelativePath,

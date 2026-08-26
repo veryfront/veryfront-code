@@ -149,6 +149,28 @@ describe("resolveFrameworkFile", () => {
     );
   });
 
+  it("resolves a non-public dependency for a trusted framework parent", async () => {
+    const sourcePath = join(
+      FRAMEWORK_ROOT,
+      "src",
+      "html",
+      "managed-head-protocol.ts",
+    );
+    const files: Record<string, string> = {
+      [sourcePath]: "export const MANAGED_HEAD_ATTRIBUTE = 'data-vf-head';",
+    };
+    const fs = createMockFs(files);
+
+    const result = await resolveFrameworkFile(
+      "/_vf_modules/_veryfront/html/managed-head-protocol.js?ssr=true",
+      fs,
+      createExistsFn(files),
+      { trustedFrameworkParent: true },
+    );
+
+    assertEquals(result?.sourcePath, sourcePath);
+  });
+
   it("still resolves the public platform/env facade", async () => {
     const sourcePath = join(
       FRAMEWORK_ROOT,

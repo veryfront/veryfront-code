@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
@@ -337,9 +337,7 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
-  it("starts shared-runtime API discovery once the host grants execution", async () => {
-    // The granted counterpart of the fail-closed case above. Without this,
-    // nothing pins that the operator grant actually reaches this surface.
+  it("keeps shared-runtime API discovery denied despite a host grant", async () => {
     let projectContextEntries = 0;
     let filesystemReads = 0;
     const ctx = createCtx({});
@@ -372,17 +370,9 @@ describe("ApiHandlerWrapper", () => {
       ctx,
     );
 
-    assertNotEquals(
-      result.response?.status,
-      503,
-      "a granted shared executor must not return project-execution-unavailable",
-    );
+    assertEquals(result.response?.status, 503);
     assertEquals(projectContextEntries, 1);
-    assertEquals(
-      filesystemReads > 0,
-      true,
-      "the request must reach source resolution instead of failing at the guard",
-    );
+    assertEquals(filesystemReads, 0);
   });
 
   it("forwards environmentName into multi-project request context", async () => {
