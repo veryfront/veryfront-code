@@ -2607,6 +2607,10 @@ describe("WorkflowClient durable event waits", () => {
     client = createWorkflowClient({ backend });
   });
 
+  afterEach(async () => {
+    await client.destroy();
+  });
+
   it("coalesces concurrent event-wait creation for the same live node", async () => {
     const run: WorkflowRun = {
       id: "run_concurrent_event_wait",
@@ -3022,10 +3026,6 @@ describe("WorkflowClient durable event waits", () => {
     } finally {
       await racingClient.destroy();
     }
-  });
-
-  afterEach(async () => {
-    await client.destroy();
   });
 
   it("persists a pending event wait naming the event the run is parked on", async () => {

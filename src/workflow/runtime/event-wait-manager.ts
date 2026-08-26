@@ -38,10 +38,11 @@ const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const MAX_DELIVERY_FINALIZATION_ATTEMPTS = 8;
 const MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS = 8;
 const ACTIVE_WAIT_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
-const MAILBOX_RETAINING_RUN_STATUSES: WorkflowRun["status"][] = [
+const ACTIVE_WAIT_STATUS_SET = new Set<WorkflowRun["status"]>(ACTIVE_WAIT_STATUSES);
+const MAILBOX_RETAINING_RUN_STATUSES = new Set<WorkflowRun["status"]>([
   ...ACTIVE_WAIT_STATUSES,
   "failed",
-];
+]);
 const expiryTimersByBackend = new WeakMap<
   WorkflowBackend,
   Map<string, Map<EventWaitManager, ReturnType<typeof setTimeout>>>
@@ -497,21 +498,12 @@ export class EventWaitManager {
       });
     }
 
-    if (
-      !isCanonicalNonEmptyString(eventName) ||
-      eventName.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS ||
-      eventName === INTERNAL_DELAY_EVENT_NAME
-    ) {
-      throw INVALID_ARGUMENT.create({
-        detail: "publishEvent eventName must be a canonical non-empty public event name of at " +
-          `most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
-      });
-    }
+    this.assertPublicEventName(eventName, "publishEvent");
 
     // An absent run is not terminal: publishing to a reserved id before the run
     // starts is the case the mailbox exists to serve.
     const run = await backend.getRun(runId);
-    if (run && !MAILBOX_RETAINING_RUN_STATUSES.includes(run.status)) return "run-terminal";
+    if (run && !MAILBOX_RETAINING_RUN_STATUSES.has(run.status)) return "run-terminal";
 
     const envelope: RunEventEnvelope = {
       id: generateId("evt"),
@@ -525,20 +517,8 @@ export class EventWaitManager {
       // Failed runs are retryable but cannot reconcile a delivery until retry()
       // makes them active again. Preserve the event for the sibling wait instead
       // of claiming and immediately rolling it back against the failed run.
-      if (run?.status === "failed") {
-        const latestAfterAppend = await backend.getRun(runId);
-        if (latestAfterAppend?.status === "failed") return "buffered";
-        if (!latestAfterAppend) {
-          await backend.removeRunEvent(runId, envelope.id);
-          return "run-terminal";
-        }
-        if (
-          !MAILBOX_RETAINING_RUN_STATUSES.includes(latestAfterAppend.status)
-        ) {
-          await backend.removeRunEvent(runId, envelope.id);
-          return "run-terminal";
-        }
-      }
+      const failedRunOutcome = await this.classifyFailedRunAppend(runId, envelope.id, run);
+      if (failedRunOutcome) return failedRunOutcome;
       const outcome = await this.drain(runId, true);
 
       // The outcome reports what happened to THIS envelope. With concurrent
@@ -561,7 +541,7 @@ export class EventWaitManager {
         await backend.removeRunEvent(runId, envelope.id);
         return "run-terminal";
       }
-      if (latest && !MAILBOX_RETAINING_RUN_STATUSES.includes(latest.status)) {
+      if (latest && !MAILBOX_RETAINING_RUN_STATUSES.has(latest.status)) {
         await backend.removeRunEvent(runId, envelope.id);
         return "run-terminal";
       }
@@ -581,16 +561,7 @@ export class EventWaitManager {
         detail: "The configured workflow backend does not support durable event delivery",
       });
     }
-    if (
-      !isCanonicalNonEmptyString(eventName) ||
-      eventName.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS ||
-      eventName === INTERNAL_DELAY_EVENT_NAME
-    ) {
-      throw INVALID_ARGUMENT.create({
-        detail: "retryEventDelivery eventName must be a canonical non-empty public event name " +
-          `of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
-      });
-    }
+    this.assertPublicEventName(eventName, "retryEventDelivery");
 
     const envelope = await backend.peekRunEvent(runId, eventName);
     if (!envelope) return false;
@@ -603,6 +574,35 @@ export class EventWaitManager {
     } finally {
       this.clearEventPublicationActive(runId, envelope.id);
     }
+  }
+
+  private assertPublicEventName(eventName: string, operation: string): void {
+    if (
+      isCanonicalNonEmptyString(eventName) &&
+      eventName.length <= MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS &&
+      eventName !== INTERNAL_DELAY_EVENT_NAME
+    ) return;
+    throw INVALID_ARGUMENT.create({
+      detail: `${operation} eventName must be a canonical non-empty public event name of at ` +
+        `most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
+    });
+  }
+
+  private async classifyFailedRunAppend(
+    runId: string,
+    eventId: string,
+    run: WorkflowRun | null,
+  ): Promise<PublishEventOutcome | undefined> {
+    if (run?.status !== "failed") return undefined;
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return undefined;
+    const latestAfterAppend = await backend.getRun(runId);
+    if (latestAfterAppend?.status === "failed") return "buffered";
+    if (!latestAfterAppend || !MAILBOX_RETAINING_RUN_STATUSES.has(latestAfterAppend.status)) {
+      await backend.removeRunEvent(runId, eventId);
+      return "run-terminal";
+    }
+    return undefined;
   }
 
   private markEventPublicationActive(eventId: string): void {
@@ -1584,7 +1584,7 @@ export class EventWaitManager {
     const run = await backend.getRun(wait.runId);
     if (!run) return true;
     if (run.status === "failed") return false;
-    if (!ACTIVE_WAIT_STATUSES.includes(run.status)) return true;
+    if (!ACTIVE_WAIT_STATUS_SET.has(run.status)) return true;
 
     const existingNodeState = run.nodeStates[wait.nodeId];
     if (
@@ -1653,7 +1653,7 @@ export class EventWaitManager {
   ): Promise<void> {
     const status = await this.readSweepRunStatus(runId, runStatuses);
     if (status === undefined || status === "failed") return;
-    if (status !== null && !ACTIVE_WAIT_STATUSES.includes(status)) {
+    if (status !== null && !ACTIVE_WAIT_STATUS_SET.has(status)) {
       await this.cleanUpTerminalWait(runId, wait.id);
       return;
     }
@@ -1721,12 +1721,12 @@ export class EventWaitManager {
   /** Stop the manager and drop every timer it owns. */
   stop(): void {
     this.destroyed = true;
-    for (const waitId of [...this.expiryTimers.keys()]) this.clearOwnedExpiry(waitId);
-    for (const eventId of [...this.finalizationRetryTimers.keys()]) {
+    for (const waitId of this.expiryTimers.keys()) this.clearOwnedExpiry(waitId);
+    for (const eventId of this.finalizationRetryTimers.keys()) {
       this.clearFinalizationRetry(eventId);
     }
     this.finalizationRetryAttempts.clear();
-    for (const runId of [...this.deliveryRetryTimers.keys()]) this.clearDeliveryRetry(runId);
+    for (const runId of this.deliveryRetryTimers.keys()) this.clearDeliveryRetry(runId);
     this.deliveryRetryAttempts.clear();
     for (const key of this.committedResumeRetryTimers.keys()) {
       clearTimeout(this.committedResumeRetryTimers.get(key)!);

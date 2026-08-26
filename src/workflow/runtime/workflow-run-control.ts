@@ -366,53 +366,33 @@ export async function claimWorkflowRunControl(
  * runs. Without the retry loop it could be consumed while leaving the workflow
  * permanently parked on the node it already resolved.
  */
+type ReconcileNodeOutcomeInput = {
+  runId: string;
+  maxAttempts: number;
+  buildPatch(run: WorkflowRun): WorkflowRunUpdate;
+  isApplicable?(run: WorkflowRun): boolean;
+  shouldResume: boolean;
+  resume?(runId: string, expectedWorkerId?: string): Promise<void>;
+  ownershipChurnDetail: string;
+  preserveCommittedOutcomeOnError?: boolean;
+};
+
 async function reconcileNodeOutcome(
   backend: WorkflowBackend,
-  input: {
-    runId: string;
-    maxAttempts: number;
-    buildPatch(run: WorkflowRun): WorkflowRunUpdate;
-    isApplicable?(run: WorkflowRun): boolean;
-    shouldResume: boolean;
-    resume?(runId: string, expectedWorkerId?: string): Promise<void>;
-    ownershipChurnDetail: string;
-    preserveCommittedOutcomeOnError?: boolean;
-  },
+  input: ReconcileNodeOutcomeInput,
 ): Promise<WorkflowRunControlReconcileOutcome> {
   let outcomeCommitted = false;
   try {
     for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
-      const run = await backend.getRun(input.runId);
-      if (!run) {
-        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${input.runId}` });
-      }
-      if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
-        return { status: "skipped-terminal", run };
-      }
-      if (input.isApplicable && !input.isApplicable(run)) {
-        return { status: "stale-wait", run };
-      }
+      const run = await requireActiveReconcileRun(backend, input.runId);
+      if (!isActiveReconcileRun(run)) return { status: "skipped-terminal", run };
+      if (input.isApplicable && !input.isApplicable(run)) return { status: "stale-wait", run };
 
       const expectedWorkerId = run.workerId;
-      let updated: boolean;
-      try {
-        updated = await updateRunIfStatus(
-          backend,
-          input.runId,
-          ACTIVE_RECONCILE_STATUSES,
-          input.buildPatch(run),
-          expectedWorkerId,
-        );
-      } catch (error) {
-        // A backend can reject after accepting a write. Treat that boundary as
-        // uncertain so callers never restore a durable event over a landed node.
-        throw input.preserveCommittedOutcomeOnError
-          ? markWorkflowRunControlOutcomeMayBeCommitted(error)
-          : error;
-      }
+      const updated = await patchNodeOutcome(backend, input, run, expectedWorkerId);
       if (!updated) {
         const latest = await backend.getRun(input.runId);
-        if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
+        if (!isActiveReconcileRun(latest)) {
           return { status: "skipped-terminal", run: latest ?? undefined };
         }
         continue;
@@ -420,23 +400,8 @@ async function reconcileNodeOutcome(
       outcomeCommitted = true;
 
       const reconciledRun = await backend.getRun(input.runId);
-      if (!input.shouldResume || !input.resume) {
-        return { status: "reconciled", run: reconciledRun ?? undefined };
-      }
-
-      try {
-        await input.resume(input.runId, expectedWorkerId);
-        return { status: "reconciled", run: reconciledRun ?? undefined };
-      } catch (error) {
-        const latestRun = await backend.getRun(input.runId);
-        if (
-          latestRun && ACTIVE_RECONCILE_STATUSES.includes(latestRun.status) &&
-          latestRun.workerId !== expectedWorkerId
-        ) {
-          continue;
-        }
-        throw error;
-      }
+      if (!await resumeReconciledRun(backend, input, expectedWorkerId)) continue;
+      return { status: "reconciled", run: reconciledRun ?? undefined };
     }
   } catch (error) {
     if (outcomeCommitted && input.preserveCommittedOutcomeOnError) {
@@ -446,6 +411,58 @@ async function reconcileNodeOutcome(
   }
 
   throw ORCHESTRATION_ERROR.create({ detail: input.ownershipChurnDetail });
+}
+
+function isActiveReconcileRun(run: WorkflowRun | null): run is WorkflowRun {
+  return run !== null && ACTIVE_RECONCILE_STATUSES.includes(run.status);
+}
+
+async function requireActiveReconcileRun(
+  backend: WorkflowBackend,
+  runId: string,
+): Promise<WorkflowRun> {
+  const run = await backend.getRun(runId);
+  if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+  return run;
+}
+
+async function patchNodeOutcome(
+  backend: WorkflowBackend,
+  input: ReconcileNodeOutcomeInput,
+  run: WorkflowRun,
+  expectedWorkerId: string | undefined,
+): Promise<boolean> {
+  try {
+    return await updateRunIfStatus(
+      backend,
+      input.runId,
+      ACTIVE_RECONCILE_STATUSES,
+      input.buildPatch(run),
+      expectedWorkerId,
+    );
+  } catch (error) {
+    // A backend can reject after accepting a write. Treat that boundary as
+    // uncertain so callers never restore a durable event over a landed node.
+    throw input.preserveCommittedOutcomeOnError
+      ? markWorkflowRunControlOutcomeMayBeCommitted(error)
+      : error;
+  }
+}
+
+async function resumeReconciledRun(
+  backend: WorkflowBackend,
+  input: ReconcileNodeOutcomeInput,
+  expectedWorkerId: string | undefined,
+): Promise<boolean> {
+  if (!input.shouldResume || !input.resume) return true;
+  try {
+    await input.resume(input.runId, expectedWorkerId);
+    return true;
+  } catch (error) {
+    const latestRun = await backend.getRun(input.runId);
+    if (isActiveReconcileRun(latestRun) && latestRun.workerId !== expectedWorkerId) return false;
+    throw error;
+  }
 }
 
 /**
@@ -930,7 +947,7 @@ export async function executeWorkflowRunControl(
 
       const pausedRun = await backend.getRun(runId);
       if (
-        !pausedRun || pausedRun.status !== "waiting" ||
+        pausedRun?.status !== "waiting" ||
         executionController.signal.aborted ||
         !input.isCurrentExecution(runId, executionController) ||
         (expectedWorkerId !== undefined && pausedRun.workerId !== expectedWorkerId)

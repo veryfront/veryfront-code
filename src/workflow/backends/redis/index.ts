@@ -1140,34 +1140,28 @@ export class RedisBackend implements WorkflowBackend {
       ? serializeWorkflowJson(patch.context, "context", runId)
       : undefined;
     const fields: Record<string, string> = {};
-    if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
-    if (Object.hasOwn(patch, "output")) {
-      fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
-    }
+    const setOwnedField = (patchKey: keyof WorkflowRunUpdate, fieldKey: string, value: string) => {
+      if (Object.hasOwn(patch, patchKey)) fields[fieldKey] = value;
+    };
+    const setNonEmptyArrayField = (fieldKey: string, value: unknown[] | undefined) => {
+      if (value !== undefined && value.length > 0) fields[fieldKey] = JSON.stringify(value);
+    };
+    setOwnedField("workerId", "workerId", patch.workerId ?? "");
+    setOwnedField(
+      "output",
+      "output",
+      patch.output !== undefined ? JSON.stringify(patch.output) : "",
+    );
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
-    if (patch.nodeStateDeletes !== undefined && patch.nodeStateDeletes.length > 0) {
-      fields.nodeStateDeletes = JSON.stringify(patch.nodeStateDeletes);
-    }
+    setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (context !== undefined) fields.context = context;
-    if (patch.contextDeletes !== undefined && patch.contextDeletes.length > 0) {
-      fields.contextDeletes = JSON.stringify(patch.contextDeletes);
-    }
-    if (Object.hasOwn(patch, "error")) {
-      fields.error = patch.error ? JSON.stringify(patch.error) : "";
-    }
-    if (Object.hasOwn(patch, "startedAt")) {
-      fields.startedAt = patch.startedAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "heartbeatAt")) {
-      fields.heartbeatAt = patch.heartbeatAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "completedAt")) {
-      fields.completedAt = patch.completedAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "_traceContext")) {
-      fields.traceContext = patch._traceContext ?? "";
-    }
+    setNonEmptyArrayField("contextDeletes", patch.contextDeletes);
+    setOwnedField("error", "error", patch.error ? JSON.stringify(patch.error) : "");
+    setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
+    setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
+    setOwnedField("completedAt", "completedAt", patch.completedAt?.toISOString() ?? "");
+    setOwnedField("_traceContext", "traceContext", patch._traceContext ?? "");
     return fields;
   }
 

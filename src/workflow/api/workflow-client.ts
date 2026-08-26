@@ -51,6 +51,14 @@ type IndexedWaitNodeConfig = WaitNodeConfig & {
   readonly [waitResponseSchemaId]?: string;
 };
 
+type PersistedWaitInput = {
+  type?: string;
+  eventName?: string;
+  timeout?: string | number;
+  message?: string;
+  payload?: unknown;
+};
+
 function withWaitResponseSchemaId(
   config: WaitNodeConfig,
   responseSchemaId: string,
@@ -118,15 +126,7 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.executor,
       onWaitingPersist: async (run, nodeId, activeWaitConfig) => {
-        const input = run.nodeStates[nodeId]?.input as
-          | {
-            type?: string;
-            eventName?: string;
-            timeout?: string | number;
-            message?: string;
-            payload?: unknown;
-          }
-          | undefined;
+        const input = run.nodeStates[nodeId]?.input as PersistedWaitInput | undefined;
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
@@ -134,31 +134,7 @@ export class WorkflowClient {
         }
 
         if (input.type === "event") {
-          // The node input is the durable identity this execution already
-          // promised to wait on. Runtime and registered definitions are only
-          // fallbacks for older snapshots that did not persist an event name.
-          const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
-          const persistedEventConfig: WaitNodeConfig | undefined = input.eventName === undefined
-            ? undefined
-            : {
-              type: "wait",
-              waitType: "event",
-              eventName: input.eventName,
-              ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
-            };
-          const eventConfig = [persistedEventConfig, activeWaitConfig, registeredEventConfig]
-            .find((candidate) => candidate?.waitType === "event");
-          if (eventConfig) {
-            try {
-              await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
-              logger.debug("Created event wait for node", { nodeId });
-            } catch (error) {
-              logger.error("Failed to create event wait", error);
-              throw error;
-            }
-          } else {
-            logger.warn("No event wait config found for node", { runId: run.id, nodeId });
-          }
+          await this.createEventWaitFromPersistedInput(run, nodeId, input, activeWaitConfig);
           return;
         }
 
@@ -166,43 +142,7 @@ export class WorkflowClient {
           return;
         }
 
-        // Node state persists only the resolved message and payload. Carry the
-        // exact runtime config across the pause boundary so nested nodes that
-        // reuse an id and function-generated nodes retain their own policy.
-        // The registered definition remains a compatibility fallback for an
-        // execution result produced without the runtime config.
-        const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
-        const configured = activeWaitConfig ?? registered;
-        const waitConfig: WaitNodeConfig = {
-          type: "wait" as const,
-          waitType: "approval" as const,
-          message: input.message,
-          payload: input.payload,
-          ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
-          ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
-          ...(configured?.responseSchema !== undefined
-            ? { responseSchema: configured.responseSchema }
-            : {}),
-        };
-
-        try {
-          const responseSchemaId = configured?.responseSchema
-            ? getWaitResponseSchemaId(configured)
-            : undefined;
-          await this.approvalManager.createApproval(
-            run,
-            nodeId,
-            waitConfig,
-            run.context,
-            responseSchemaId === undefined
-              ? { notify: false }
-              : { responseSchemaId, notify: false },
-          );
-          logger.debug("Created approval for node", { nodeId });
-        } catch (error) {
-          logger.error("Failed to create approval", error);
-          throw error;
-        }
+        await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
       },
       onWaiting: async (run, nodeId, activeWaitConfig) => {
         if ((run.nodeStates[nodeId]?.input as { type?: string } | undefined)?.type === "approval") {
@@ -249,6 +189,76 @@ export class WorkflowClient {
         return await userInternalResponseSchemaResolver?.(input);
       },
     });
+  }
+
+  private async createEventWaitFromPersistedInput(
+    run: WorkflowRun,
+    nodeId: string,
+    input: PersistedWaitInput,
+    activeWaitConfig: WaitNodeConfig | undefined,
+  ): Promise<void> {
+    // The node input is the durable identity this execution already promised to
+    // wait on. Runtime and registered definitions are fallbacks for snapshots
+    // that did not persist an event name.
+    const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+    const persistedEventConfig: WaitNodeConfig | undefined = input.eventName === undefined
+      ? undefined
+      : {
+        type: "wait",
+        waitType: "event",
+        eventName: input.eventName,
+        ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+      };
+    const eventConfig = [persistedEventConfig, activeWaitConfig, registeredEventConfig]
+      .find((candidate) => candidate?.waitType === "event");
+    if (!eventConfig) {
+      logger.warn("No event wait config found for node", { runId: run.id, nodeId });
+      return;
+    }
+    try {
+      await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
+      logger.debug("Created event wait for node", { nodeId });
+    } catch (error) {
+      logger.error("Failed to create event wait", error);
+      throw error;
+    }
+  }
+
+  private async createApprovalFromPersistedInput(
+    run: WorkflowRun,
+    nodeId: string,
+    input: PersistedWaitInput,
+    activeWaitConfig: WaitNodeConfig | undefined,
+  ): Promise<void> {
+    const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+    const configured = activeWaitConfig ?? registered;
+    const waitConfig: WaitNodeConfig = {
+      type: "wait" as const,
+      waitType: "approval" as const,
+      message: input.message,
+      payload: input.payload,
+      ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
+      ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
+      ...(configured?.responseSchema !== undefined
+        ? { responseSchema: configured.responseSchema }
+        : {}),
+    };
+    const responseSchemaId = configured?.responseSchema
+      ? getWaitResponseSchemaId(configured)
+      : undefined;
+    try {
+      await this.approvalManager.createApproval(
+        run,
+        nodeId,
+        waitConfig,
+        run.context,
+        responseSchemaId === undefined ? { notify: false } : { responseSchemaId, notify: false },
+      );
+      logger.debug("Created approval for node", { nodeId });
+    } catch (error) {
+      logger.error("Failed to create approval", error);
+      throw error;
+    }
   }
 
   register(workflow: Workflow | WorkflowDefinition): void {

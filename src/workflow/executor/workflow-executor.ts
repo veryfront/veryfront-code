@@ -209,7 +209,7 @@ export class WorkflowExecutor {
         ownership,
       }) => {
         const keyMerge = hasRunPatchKeyMergeSupport(this.config.backend);
-        const { _tenant: _tenant, ...publicContextPatch } = contextPatch.set;
+        const { _tenant, ...publicContextPatch } = contextPatch.set;
         const publicContextDeletes = contextPatch.delete.filter((key) => key !== "_tenant");
         return updateRunIfStatus(
           this.config.backend,
@@ -380,29 +380,7 @@ export class WorkflowExecutor {
       });
     }
 
-    if (hasEventWaitSupport(this.config.backend)) {
-      for (const wait of await this.config.backend.listTimedEventWaitClaims(runId)) {
-        const currentState = run.nodeStates[wait.nodeId];
-        if (
-          !isSameWaitNodeExecution(wait, {
-            nodeId: wait.nodeId,
-            waitInstanceId: currentState?._waitInstanceId,
-          })
-        ) {
-          await this.config.backend.finalizeTimedEventWaitClaim(runId, wait.id);
-          continue;
-        }
-        const committedStatus = wait.waitKind === "delay" ? "completed" : "failed";
-        if (currentState?.status !== committedStatus) {
-          throw ORCHESTRATION_ERROR.create({
-            status: 409,
-            detail: `Cannot retry workflow run "${runId}": timed wait "${wait.id}" ` +
-              "has not finished reconciling.",
-          });
-        }
-        await this.config.backend.finalizeTimedEventWaitClaim(runId, wait.id);
-      }
-    }
+    await this.finalizeTimedWaitClaimsBeforeRetry(run);
 
     const executionWorkerId = hasExecutionOwnershipSupport(this.config.backend)
       ? `run-execution:${generateId("exec")}`
@@ -466,6 +444,31 @@ export class WorkflowExecutor {
     settled.catch((error) => {
       logger.error("Workflow retry failed", { runId }, error);
     });
+  }
+
+  private async finalizeTimedWaitClaimsBeforeRetry(run: WorkflowRun): Promise<void> {
+    if (!hasEventWaitSupport(this.config.backend)) return;
+    for (const wait of await this.config.backend.listTimedEventWaitClaims(run.id)) {
+      const currentState = run.nodeStates[wait.nodeId];
+      if (
+        !isSameWaitNodeExecution(wait, {
+          nodeId: wait.nodeId,
+          waitInstanceId: currentState?._waitInstanceId,
+        })
+      ) {
+        await this.config.backend.finalizeTimedEventWaitClaim(run.id, wait.id);
+        continue;
+      }
+      const committedStatus = wait.waitKind === "delay" ? "completed" : "failed";
+      if (currentState?.status !== committedStatus) {
+        throw ORCHESTRATION_ERROR.create({
+          status: 409,
+          detail: `Cannot retry workflow run "${run.id}": timed wait "${wait.id}" ` +
+            "has not finished reconciling.",
+        });
+      }
+      await this.config.backend.finalizeTimedEventWaitClaim(run.id, wait.id);
+    }
   }
 
   private async resumeRun(

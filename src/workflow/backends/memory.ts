@@ -701,7 +701,7 @@ export class MemoryBackend implements WorkflowBackend {
     staleBefore: Date,
   ): Promise<boolean> {
     const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
-    if (!approval || approval.reconciliationPending !== true) return Promise.resolve(false);
+    if (approval?.reconciliationPending !== true) return Promise.resolve(false);
     if (approval.recoveryClaimedAt && approval.recoveryClaimedAt > staleBefore) {
       return Promise.resolve(false);
     }
@@ -862,7 +862,7 @@ export class MemoryBackend implements WorkflowBackend {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     // Pending-precondition gate: delivery, expiry, and cancellation race for
     // the same record, and only the winner may act on the run.
-    if (!wait || wait.status !== "pending") return Promise.resolve(false);
+    if (wait?.status !== "pending") return Promise.resolve(false);
     wait.status = status;
     if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
     return Promise.resolve(true);
@@ -874,7 +874,7 @@ export class MemoryBackend implements WorkflowBackend {
     // failed, or an expired claim whose run failure did not commit. A record
     // still pending was never claimed by anyone, and a cancelled record
     // belongs to a terminal run.
-    if (!wait || (wait.status !== "delivered" && wait.status !== "expired")) {
+    if (wait?.status !== "delivered" && wait?.status !== "expired") {
       return Promise.resolve(false);
     }
     wait.status = "pending";
@@ -908,7 +908,7 @@ export class MemoryBackend implements WorkflowBackend {
     staleBefore: Date,
   ): Promise<boolean> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
-    const isTimedClaim = wait !== undefined && wait.claimedAt !== undefined &&
+    const isTimedClaim = wait?.claimedAt !== undefined &&
       ((wait.waitKind === "delay" && wait.status === "delivered") ||
         (wait.waitKind === "event" && wait.status === "expired"));
     if (
@@ -973,16 +973,16 @@ export class MemoryBackend implements WorkflowBackend {
   private evictOrphanRunEventMailboxes(requiredSlots = 0): void {
     let overflow = this.runEvents.size + requiredSlots - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
     if (overflow <= 0) return;
-    const mailboxRetainingStatuses: WorkflowRun["status"][] = [
+    const mailboxRetainingStatuses = new Set<WorkflowRun["status"]>([
       "pending",
       "running",
       "waiting",
       "failed",
-    ];
+    ]);
     for (const mailboxRunId of this.runEvents.keys()) {
       if (overflow <= 0) return;
       const run = this.runs.get(mailboxRunId);
-      if (run && mailboxRetainingStatuses.includes(run.status)) continue;
+      if (run && mailboxRetainingStatuses.has(run.status)) continue;
       if ((this.runEventClaims.get(mailboxRunId)?.size ?? 0) > 0) continue;
       this.runEvents.delete(mailboxRunId);
       overflow--;
@@ -1012,7 +1012,7 @@ export class MemoryBackend implements WorkflowBackend {
     publishedBefore?: Date,
   ): Promise<RunEventEnvelope | null> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
-    if (!wait || wait.status !== "pending") return Promise.resolve(null);
+    if (wait?.status !== "pending") return Promise.resolve(null);
     const mailbox = this.runEvents.get(runId);
     if (!mailbox) return Promise.resolve(null);
     const taken = takeRetainedRunEvent(mailbox, eventName, publishedBefore);
@@ -1051,7 +1051,7 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const claim = this.runEventClaims.get(runId)?.get(eventId);
     if (
-      !claim || claim.wait.id !== waitId ||
+      claim?.wait.id !== waitId ||
       (claim.wait.recoveryClaimedAt !== undefined &&
         claim.wait.recoveryClaimedAt > staleBefore)
     ) {
@@ -1086,7 +1086,7 @@ export class MemoryBackend implements WorkflowBackend {
     event: RunEventEnvelope,
   ): Promise<boolean> {
     const claim = this.runEventClaims.get(runId)?.get(event.id);
-    if (!claim || claim.wait.id !== waitId) return Promise.resolve(false);
+    if (claim?.wait.id !== waitId) return Promise.resolve(false);
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
     if (restored) {
