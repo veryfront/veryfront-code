@@ -439,7 +439,10 @@ async function resolveAgentSourceConfig(
   if (!cacheKey) {
     throw new Error("Explicit agent source requires a project identity");
   }
-  await ctx.adapter.fs.ensureSourceSnapshotFresh?.("agent-source-config");
+  await refreshAgentSourceSnapshot(
+    ctx.adapter.fs as SourceContextFsWrapper,
+    "agent-source-config",
+  );
   return await getHostedConfig(ctx.projectDir, ctx.adapter, {
     cacheKey,
     sourceContext: buildAgentSourceRunOptions(sourceContext),
@@ -669,11 +672,27 @@ type SourceContextFsWrapper = {
     },
   ) => Promise<R>;
   ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
+  refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   getSourceSnapshotFingerprint?: () =>
     | string
     | undefined
     | Promise<string | undefined>;
 };
+
+async function refreshAgentSourceSnapshot(
+  fs: SourceContextFsWrapper,
+  reason: string,
+): Promise<boolean> {
+  const ensureSourceSnapshotFresh = fs.ensureSourceSnapshotFresh;
+  if (typeof ensureSourceSnapshotFresh === "function") {
+    await IntrinsicReflectApply(ensureSourceSnapshotFresh, fs, [reason]);
+    return true;
+  }
+  const refreshSourceSnapshot = fs.refreshSourceSnapshot;
+  if (typeof refreshSourceSnapshot !== "function") return false;
+  await IntrinsicReflectApply(refreshSourceSnapshot, fs, [reason]);
+  return true;
+}
 
 function isPrototypeInstance(
   prototype: FSAdapterWrapper | MultiProjectFSAdapter,
@@ -738,15 +757,18 @@ async function requireAgentSourceSnapshotFingerprint(
   reason: string,
 ): Promise<string> {
   const fs = ctx.adapter.fs as SourceContextFsWrapper;
-  if (!fs.ensureSourceSnapshotFresh || !fs.getSourceSnapshotFingerprint) {
+  const getSourceSnapshotFingerprint = fs.getSourceSnapshotFingerprint;
+  if (
+    typeof getSourceSnapshotFingerprint !== "function" ||
+    !await refreshAgentSourceSnapshot(fs, reason)
+  ) {
     throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
       detail: "The project filesystem cannot verify the branch source snapshot identity",
     });
   }
 
-  await fs.ensureSourceSnapshotFresh(reason);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const fingerprint = await fs.getSourceSnapshotFingerprint();
+    const fingerprint = await IntrinsicReflectApply(getSourceSnapshotFingerprint, fs, []);
     if (fingerprint) return fingerprint;
   }
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
@@ -966,187 +988,190 @@ export class AgentStreamHandler extends BaseHandler {
         this.withAgentSourceContext(
           requestScopedContext,
           payload.agentSource,
-          async () => {
-            // Resolved before the config load because hosted evaluation binds
-            // config to the same environment the run will execute with.
-            const envVarsForAgent = await (
-              this.deps.loadAgentSourceEnvironment ?? resolveAgentSourceEnvironment
-            )(
-              requestScopedContext,
-              payload.agentSource,
-              payload,
-              apiAuthToken,
-              req.signal,
-            );
-            const requestSourceFingerprint = payload.agentSource.type === "branch"
-              ? await requireAgentSourceSnapshotFingerprint(
+          () =>
+            runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+              // Resolved before the config load because hosted evaluation binds
+              // config to the same environment the run will execute with.
+              const envVarsForAgent = await (
+                this.deps.loadAgentSourceEnvironment ?? resolveAgentSourceEnvironment
+              )(
                 requestScopedContext,
-                "agent-source-config-start",
-              )
-              : undefined;
-            const sourceConfig = await resolveAgentSourceConfig(
-              requestScopedContext,
-              payload.agentSource,
-              envVarsForAgent,
-            );
-            if (requestSourceFingerprint !== undefined) {
-              const configSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
-                requestScopedContext,
-                "agent-source-config-identity",
+                payload.agentSource,
+                payload,
+                apiAuthToken,
+                req.signal,
               );
-              if (configSourceFingerprint !== requestSourceFingerprint) {
-                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                  detail: "The branch source changed while its agent configuration was evaluated",
-                });
-              }
-            }
-            const sourceScopedContext: HandlerContext = {
-              ...requestScopedContext,
-              config: sourceConfig,
-            };
-            // Source selection and config loading are framework-owned and may
-            // use the signed user credential. Re-enter the same source with the
-            // runtime credential before discovery or any project-authored agent
-            // code can execute.
-            const projectScopedContext: HandlerContext = {
-              ...sourceScopedContext,
-              proxyToken: projectRuntimeToken || undefined,
-              requestContext: sourceScopedContext.requestContext
-                ? { ...sourceScopedContext.requestContext, token: projectRuntimeToken }
-                : sourceScopedContext.requestContext,
-            };
-            return await this.withAgentSourceContext(
-              projectScopedContext,
-              payload.agentSource,
-              withoutVerifiedCacheApiCredential(async () => {
-                const sourceIntegrationPolicy = (
-                  this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
-                )(sourceConfig.integrations);
-                if (requestSourceFingerprint !== undefined) {
-                  const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
-                    projectScopedContext,
-                    "agent-source-credential-handoff",
-                  );
-                  if (runtimeSourceFingerprint !== requestSourceFingerprint) {
-                    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                      detail:
-                        "The branch source changed while credentials were isolated for agent execution",
-                    });
-                  }
+              const requestSourceFingerprint = payload.agentSource.type === "branch"
+                ? await requireAgentSourceSnapshotFingerprint(
+                  requestScopedContext,
+                  "agent-source-config-start",
+                )
+                : undefined;
+              const sourceConfig = await resolveAgentSourceConfig(
+                requestScopedContext,
+                payload.agentSource,
+                envVarsForAgent,
+              );
+              if (requestSourceFingerprint !== undefined) {
+                const configSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+                  requestScopedContext,
+                  "agent-source-config-identity",
+                );
+                if (configSourceFingerprint !== requestSourceFingerprint) {
+                  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                    detail: "The branch source changed while its agent configuration was evaluated",
+                  });
                 }
-
-                return await runWithExactSourceIntegrationPolicy(
-                  sourceIntegrationPolicy,
+              }
+              const sourceScopedContext: HandlerContext = {
+                ...requestScopedContext,
+                config: sourceConfig,
+              };
+              // Source selection and config loading are framework-owned and may
+              // use the signed user credential. Re-enter the same source with the
+              // runtime credential before discovery or any project-authored agent
+              // code can execute.
+              const projectScopedContext: HandlerContext = {
+                ...sourceScopedContext,
+                proxyToken: projectRuntimeToken || undefined,
+                requestContext: sourceScopedContext.requestContext
+                  ? { ...sourceScopedContext.requestContext, token: projectRuntimeToken }
+                  : sourceScopedContext.requestContext,
+              };
+              return await withoutVerifiedCacheApiCredential(() =>
+                this.withAgentSourceContext(
+                  projectScopedContext,
+                  payload.agentSource,
                   async () => {
-                    await this.deps.ensureProjectDiscovery(projectScopedContext);
+                    const sourceIntegrationPolicy = (
+                      this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
+                    )(sourceConfig.integrations);
                     if (requestSourceFingerprint !== undefined) {
-                      const discoverySourceFingerprint =
-                        await requireAgentSourceSnapshotFingerprint(
-                          projectScopedContext,
-                          "agent-source-discovery-identity",
-                        );
-                      if (discoverySourceFingerprint !== requestSourceFingerprint) {
+                      const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+                        projectScopedContext,
+                        "agent-source-credential-handoff",
+                      );
+                      if (runtimeSourceFingerprint !== requestSourceFingerprint) {
                         throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                          detail: "The branch source changed while project agents were discovered",
+                          detail:
+                            "The branch source changed while credentials were isolated for agent execution",
                         });
                       }
                     }
 
-                    const agent = this.deps.getAgent(payload.agentId);
-                    if (!agent) {
-                      logger.warn("Internal agent stream request referenced unknown agent", {
-                        runId: payload.runId,
-                        agentId: payload.agentId,
-                        projectId: projectScopedContext.projectId,
-                        projectSlug: projectScopedContext.projectSlug,
-                      });
-                      return this.respond(builder.json({ error: "Agent not found" }, 404));
-                    }
+                    return await runWithExactSourceIntegrationPolicy(
+                      sourceIntegrationPolicy,
+                      async () => {
+                        await this.deps.ensureProjectDiscovery(projectScopedContext);
+                        if (requestSourceFingerprint !== undefined) {
+                          const discoverySourceFingerprint =
+                            await requireAgentSourceSnapshotFingerprint(
+                              projectScopedContext,
+                              "agent-source-discovery-identity",
+                            );
+                          if (discoverySourceFingerprint !== requestSourceFingerprint) {
+                            throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                              detail:
+                                "The branch source changed while project agents were discovered",
+                            });
+                          }
+                        }
 
-                    // veryfront-api is the trusted control-plane caller; it resolves
-                    // authorization before attaching request-scoped project-agent config.
-                    const runtimeBaseAgent = payload.agentConfig
-                      ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
-                      : agent;
-                    const runtimeInput = sanitizeRuntimeRunAgentInput(
-                      toRuntimeRunAgentInput(payload),
-                      runtimeBaseAgent as Agent,
-                    );
-                    const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
-                    const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
-                      agent: runtimeBaseAgent as Agent,
-                      token: projectRuntimeToken || null,
-                      projectId: projectScopedContext.projectId ?? null,
-                      availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                    });
-                    const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
-                      agent: platformRuntimeAgent,
-                      token: projectRuntimeToken || null,
-                      projectId: projectScopedContext.projectId ?? null,
-                      forwardedProps: runtimeInput.forwardedProps,
-                      availableToolNames: runtimeInput.tools.map((tool) => tool.name),
-                      conversationId: runtimeInput.threadId,
-                    });
+                        const agent = this.deps.getAgent(payload.agentId);
+                        if (!agent) {
+                          logger.warn("Internal agent stream request referenced unknown agent", {
+                            runId: payload.runId,
+                            agentId: payload.agentId,
+                            projectId: projectScopedContext.projectId,
+                            projectSlug: projectScopedContext.projectSlug,
+                          });
+                          return this.respond(builder.json({ error: "Agent not found" }, 404));
+                        }
 
-                    // Source-defined MCP tool headers resolve these via
-                    // _getProjectEnv(); they are the same variables the source
-                    // config was evaluated against.
-                    logger.debug("Agent stream env vars loaded", {
-                      runId: payload.runId,
-                      projectSlug: projectScopedContext.projectSlug,
-                      count: Object.keys(envVarsForAgent).length,
-                    });
-
-                    const runAgentStream = () =>
-                      createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
-                        ...this.deps,
-                        localTools,
-                        projectAgentSandbox: {
-                          apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-                          authToken: projectRuntimeToken || undefined,
-                          branchId: payload.runtimeTargetBranchId,
+                        // veryfront-api is the trusted control-plane caller; it resolves
+                        // authorization before attaching request-scoped project-agent config.
+                        const runtimeBaseAgent = payload.agentConfig
+                          ? createRuntimeAgentFromMarkdownDefinition(payload.agentConfig)
+                          : agent;
+                        const runtimeInput = sanitizeRuntimeRunAgentInput(
+                          toRuntimeRunAgentInput(payload),
+                          runtimeBaseAgent as Agent,
+                        );
+                        const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
+                        const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+                          agent: runtimeBaseAgent as Agent,
+                          token: projectRuntimeToken || null,
                           projectId: projectScopedContext.projectId ?? null,
-                        },
-                      });
-                    const shouldIsolateEnv = apiAuthToken.length > 0;
-                    const response = shouldIsolateEnv
-                      ? await runWithProjectEnv(
-                        buildAgentStreamEnv({
-                          envVars: envVarsForAgent,
-                          proxyToken: projectRuntimeToken,
+                          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                        });
+                        const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
+                          agent: platformRuntimeAgent,
+                          token: projectRuntimeToken || null,
+                          projectId: projectScopedContext.projectId ?? null,
+                          forwardedProps: runtimeInput.forwardedProps,
+                          availableToolNames: runtimeInput.tools.map((tool) => tool.name),
+                          conversationId: runtimeInput.threadId,
+                        });
+
+                        // Source-defined MCP tool headers resolve these via
+                        // _getProjectEnv(); they are the same variables the source
+                        // config was evaluated against.
+                        logger.debug("Agent stream env vars loaded", {
+                          runId: payload.runId,
                           projectSlug: projectScopedContext.projectSlug,
-                        }),
-                        runAgentStream,
-                      )
-                      : await runAgentStream();
-                    logger.info("Internal agent stream response created", {
-                      runId: payload.runId,
-                      threadId: payload.threadId,
-                      agentId: payload.agentId,
-                      projectId: projectScopedContext.projectId,
-                      projectSlug: projectScopedContext.projectSlug,
-                    });
-                    const runtimeOwnerInvokeUrl =
-                      await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
-                        null;
-                    const responseWithOwner = runtimeOwnerInvokeUrl
-                      ? setResponseHeader(
-                        response,
-                        RUNTIME_OWNER_INVOKE_URL_HEADER,
-                        runtimeOwnerInvokeUrl,
-                      )
-                      : response;
-                    return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
+                          count: Object.keys(envVarsForAgent).length,
+                        });
+
+                        const runAgentStream = () =>
+                          createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+                            ...this.deps,
+                            localTools,
+                            projectAgentSandbox: {
+                              apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+                              authToken: projectRuntimeToken || undefined,
+                              branchId: payload.runtimeTargetBranchId,
+                              projectId: projectScopedContext.projectId ?? null,
+                            },
+                          });
+                        const shouldIsolateEnv = apiAuthToken.length > 0;
+                        const response = shouldIsolateEnv
+                          ? await runWithProjectEnv(
+                            buildAgentStreamEnv({
+                              envVars: envVarsForAgent,
+                              proxyToken: projectRuntimeToken,
+                              projectSlug: projectScopedContext.projectSlug,
+                            }),
+                            runAgentStream,
+                          )
+                          : await runAgentStream();
+                        logger.info("Internal agent stream response created", {
+                          runId: payload.runId,
+                          threadId: payload.threadId,
+                          agentId: payload.agentId,
+                          projectId: projectScopedContext.projectId,
+                          projectSlug: projectScopedContext.projectSlug,
+                        });
+                        const runtimeOwnerInvokeUrl =
+                          await this.deps.resolveRuntimeOwnerInvokeUrl?.(req) ??
+                            null;
+                        const responseWithOwner = runtimeOwnerInvokeUrl
+                          ? setResponseHeader(
+                            response,
+                            RUNTIME_OWNER_INVOKE_URL_HEADER,
+                            runtimeOwnerInvokeUrl,
+                          )
+                          : response;
+                        return this.respond(
+                          applyBuilderHeaders(responseWithOwner, builder.headers),
+                        );
+                      },
+                    );
                   },
-                );
-              }),
-            );
-          },
+                )
+              )();
+            }),
         );
-      return await runWithVerifiedCacheApiCredential(
-        verifiedClaims,
-        runWithAgentSourceContext,
-      );
+      return await runWithAgentSourceContext();
     } catch (caught) {
       // The first negative-cache failure owns diagnostics. Replays retain the
       // original error for response construction but must not repeat reports.

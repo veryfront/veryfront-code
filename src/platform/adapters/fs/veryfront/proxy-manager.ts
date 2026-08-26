@@ -304,7 +304,7 @@ export class ProxyFSAdapterManager {
       elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
     });
 
-    const adapter = await this.createAdapter(
+    const adapter = await this.#createAdapter(
       cacheKey,
       diagnosticCacheKey,
       projectSlug,
@@ -428,7 +428,7 @@ export class ProxyFSAdapterManager {
     return null;
   }
 
-  private createAdapter(
+  #createAdapter(
     cacheKey: string,
     diagnosticCacheKey: string,
     projectSlug: string,

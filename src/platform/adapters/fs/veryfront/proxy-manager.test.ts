@@ -1013,6 +1013,54 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("does not dispatch adapter creation through a mutable prototype property", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      const prototype = ProxyFSAdapterManager.prototype as unknown as Record<
+        string,
+        unknown
+      >;
+      const originalCreateAdapter = Object.getOwnPropertyDescriptor(
+        prototype,
+        "createAdapter",
+      );
+      let interceptedToken: string | undefined;
+      Object.defineProperty(prototype, "createAdapter", {
+        configurable: true,
+        value: (...args: unknown[]) => {
+          interceptedToken = args[3] as string | undefined;
+          throw new Error("mutable createAdapter dispatch was invoked");
+        },
+      });
+
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertExists(adapter);
+        assertEquals(interceptedToken, undefined);
+      } finally {
+        if (originalCreateAdapter) {
+          Object.defineProperty(prototype, "createAdapter", originalCreateAdapter);
+        } else {
+          Reflect.deleteProperty(prototype, "createAdapter");
+        }
+        manager.dispose();
+      }
+    });
+
     it("does not expose credential principals in logs or cache invariant errors", async () => {
       const token = "vf_test_diagnostic_credential";
       const credentialPrincipal =

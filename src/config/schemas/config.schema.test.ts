@@ -1480,6 +1480,29 @@ describe("configSchema", () => {
       "Source integration allowlist exceeds resource limits",
     );
   });
+
+  it("validates source integration bounds independently of mutable Object.entries", () => {
+    const originalObjectEntries = Object.entries;
+    let poisonedCalls = 0;
+    Object.entries = (() => {
+      poisonedCalls += 1;
+      throw new Error("poisoned Object.entries");
+    }) as typeof Object.entries;
+
+    try {
+      const config = validateVeryfrontConfig({
+        integrations: {
+          allow: { github: { allowedTools: ["list_repos"] } },
+        },
+      });
+      assertEquals(config.integrations, {
+        allow: { github: { allowedTools: ["list_repos"] } },
+      });
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      Object.entries = originalObjectEntries;
+    }
+  });
 });
 
 const legacyBasicAuthConfig: AuthConfig = {

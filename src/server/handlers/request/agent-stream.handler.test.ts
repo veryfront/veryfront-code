@@ -1101,7 +1101,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
     const originalSigningKey = Deno.env.get(signingKeyEnv);
+    const originalObjectEntries = Object.entries;
+    let observedValidationCredential:
+      | ReturnType<typeof getVerifiedCacheApiCredential>
+      | undefined;
     Deno.env.set(signingKeyEnv, publicKeyPem);
+    Object.entries = ((value: object) => {
+      if (Object.prototype.hasOwnProperty.call(value, "gmail")) {
+        observedValidationCredential = getVerifiedCacheApiCredential();
+      }
+      return originalObjectEntries(value);
+    }) as typeof Object.entries;
     let result;
     try {
       result = await withMockFetch(
@@ -1123,6 +1133,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ),
       );
     } finally {
+      Object.entries = originalObjectEntries;
       if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
       else Deno.env.set(signingKeyEnv, originalSigningKey);
     }
@@ -1137,6 +1148,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
     assertEquals(observedNormalizationCredential, undefined);
+    assertEquals(observedValidationCredential, undefined);
     assertEquals(capturedSourcePolicy, {
       schemaVersion: 1,
       mode: "allowlist",
@@ -3012,6 +3024,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
+    const observedSourceContextCredentials: Array<
+      ReturnType<typeof getVerifiedCacheApiCredential>
+    > = [];
     const runWithContextCalls: Array<{
       token?: string;
       productionMode?: boolean;
@@ -3097,10 +3112,16 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
     ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter(runWithContextCalls);
+    const runWithContext = fs.runWithContext;
+    fs.runWithContext = (...args) => {
+      observedSourceContextCredentials.push(getVerifiedCacheApiCredential());
+      return runWithContext(...args);
+    };
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
-      fs: createNoopFsAdapter(runWithContextCalls),
+      fs,
     };
 
     const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -3150,7 +3171,55 @@ describe("server/handlers/request/agent-stream.handler", () => {
       projectSlug: "demo-project",
     });
     assertEquals(observedCacheCredential, undefined);
+    assertEquals(observedSourceContextCredentials, [undefined, undefined]);
     assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("accepts refresh-only branch snapshot adapters", async () => {
+    const refreshReasons: Array<string | undefined> = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter([]);
+    Reflect.deleteProperty(fs, "ensureSourceSnapshotFresh");
+    fs.refreshSourceSnapshot = (reason) => {
+      refreshReasons.push(reason);
+      return Promise.resolve();
+    };
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 404);
+    assertEquals(refreshReasons, [
+      "agent-source-config-start",
+      "agent-source-config",
+      "agent-source-config-identity",
+      "agent-source-credential-handoff",
+      "agent-source-discovery-identity",
+    ]);
   });
 
   it("uses captured source context switches after project prototype mutation", async () => {
