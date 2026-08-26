@@ -1755,7 +1755,6 @@ const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
 
 function isIntrinsicError(value: unknown): value is Error {
-  if (value === null) return false;
   if (typeof value !== "object") return false;
   let prototype: object | null;
   try {
