@@ -130,7 +130,8 @@ describe("agent/agent-service-runtime", () => {
         instructions: "You are a test assistant.",
         skills: ["support-triage"],
         tools: ["search_knowledge", "get_file"],
-        deniedTools: ["load_skill"],
+        providerTools: ["web_search", "web_fetch"],
+        deniedTools: ["load_skill", "web_search"],
       }),
       logger: createLogger(),
       prepareExecution: async () => ({ ok: true }),
@@ -148,6 +149,7 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(tools?.load_skill, false);
     assertEquals(typeof tools?.load_skill_reference, "object");
     assertEquals(typeof tools?.execute_skill_script, "object");
+    assertEquals(serviceAgent?.config.providerTools, ["web_fetch"]);
   });
 
   it("starts the node agent service server from the assembled runtime", async () => {

@@ -134,6 +134,16 @@ Deno.test("sanitizeDefaultHostedChildRequestedTools adds reverse file-writing co
   assertEquals(result, ["update_file", "create_file"]);
 });
 
+Deno.test("sanitizeDefaultHostedChildRequestedTools excludes denied companions", () => {
+  const result = sanitizeDefaultHostedChildRequestedTools({
+    prompt: "Create the requested file",
+    requestedTools: ["create_file"],
+    excludedTools: new Set(["update_file"]),
+  });
+
+  assertEquals(result, ["create_file"]);
+});
+
 Deno.test("sanitizeDefaultHostedChildRequestedTools prunes sandbox tools for text artifact prompts", () => {
   const result = sanitizeDefaultHostedChildRequestedTools({
     prompt: "Write a markdown research report",

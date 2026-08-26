@@ -24,7 +24,10 @@ export function createRuntimeAgentFromMarkdownDefinition(
       : {}),
     ...Object.fromEntries(deniedToolEntries),
   };
-  const selectedTools: true | Record<string, boolean> | undefined = definition.tools === true
+  // AgentConfig cannot express "all except". When an unrestricted serialized
+  // selector also carries denials, retain the false-only map and fail closed.
+  const selectedTools: true | Record<string, boolean> | undefined = definition.tools === true &&
+      deniedToolEntries.length === 0
     ? true
     : Object.keys(selectedToolMap).length > 0
     ? selectedToolMap

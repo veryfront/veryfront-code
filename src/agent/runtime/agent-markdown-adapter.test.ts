@@ -38,6 +38,24 @@ it("createRuntimeAgentFromMarkdownDefinition restores explicit tool denials", ()
   });
 });
 
+it("createRuntimeAgentFromMarkdownDefinition keeps denials for unrestricted selectors", () => {
+  toolRegistryInternal.clearAll();
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "unrestricted-locked-down-md",
+    name: "Unrestricted Locked Down",
+    description: "All visible tools except denied tools",
+    instructions: "Do not use denied tools.",
+    tools: true,
+    deniedTools: ["load_skill", "web_search"],
+  });
+
+  const tools = runtimeAgent.config.tools;
+  assertEquals(tools === true, false);
+  assertEquals(tools && tools !== true ? tools.load_skill : undefined, false);
+  assertEquals(tools && tools !== true ? tools.web_search : undefined, false);
+});
+
 it("createRuntimeAgentFromMarkdownDefinition merges denials with positive tool selections", () => {
   toolRegistryInternal.clearAll();
 

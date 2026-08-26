@@ -296,17 +296,24 @@ it("default hosted invoke resolves and runs configured child against the target 
             model: "configured-model",
             temperature: 0.35,
             maxSteps: 12,
-            toolNames: ["lookup_job"],
+            toolNames: ["create_file"],
+            deniedToolNames: ["update_file"],
             availableSkillIds: ["extraction"],
           });
         },
         buildGlobalTools: (context, childAgentId, childConfig) => {
           assertEquals(context.projectId, "target-project-id");
           assertEquals(childAgentId, "extraction-agent");
-          assertEquals(childConfig?.toolNames, ["lookup_job"]);
+          assertEquals(childConfig?.toolNames, ["create_file"]);
+          assertEquals(childConfig?.deniedToolNames, ["update_file"]);
           return {
-            lookup_job: {
-              description: "Lookup a job posting",
+            create_file: {
+              description: "Create a file",
+              inputSchema: {},
+              execute: () => ({ ok: true }),
+            },
+            update_file: {
+              description: "Update a file",
               inputSchema: {},
               execute: () => ({ ok: true }),
             },
@@ -369,7 +376,7 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.model, "resolved-configured-model");
   assertEquals(captured.temperature, 0.35);
   assertEquals(captured.maxSteps, 12);
-  assertEquals(captured.forkToolNames, ["lookup_job"]);
+  assertEquals(captured.forkToolNames, ["create_file"]);
   assert(Array.isArray(captured.system));
   assertEquals(captured.system[0], {
     role: "system",

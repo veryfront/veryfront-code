@@ -94,6 +94,58 @@ function restoreEnv(key: string, value: string | undefined): void {
   setEnv(key, value);
 }
 
+it("keeps tool_search denied in deferred hosted runtime planning", async () => {
+  clearModelProviders();
+  let capturedToolNames: string[] = [];
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/denied-tool-search",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedToolNames = ((options as { tools?: Array<{ name: string }> }).tools ?? [])
+        .map((tool) => tool.name);
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Use only authorized tools.",
+        model: "test/denied-tool-search",
+        deniedTools: ["tool_search"],
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({ sleep: localTool("Sleep") }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the first provider turn.
+        }
+      },
+    );
+
+    assertEquals(capturedToolNames, ["sleep"]);
+  } finally {
+    clearModelProviders();
+  }
+});
+
 it("preserves layered cache metadata through hosted provider dispatch", async () => {
   clearModelProviders();
   let capturedPrompt: unknown;

@@ -401,6 +401,9 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     forkModel: input.forkModel,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    ...(input.childConfig?.deniedToolNames?.length
+      ? { excludedTools: new Set(input.childConfig.deniedToolNames) }
+      : {}),
     activeProjectId: options.context.projectId || null,
     activeBranchId: options.context.branchId,
     logger: options.logger,

@@ -194,6 +194,16 @@ function normalizeAgentServiceTools(
   };
 }
 
+function normalizeAgentServiceProviderTools(
+  providerTools: RuntimeAgentMarkdownDefinition["providerTools"],
+  deniedTools: RuntimeAgentMarkdownDefinition["deniedTools"],
+): string[] | undefined {
+  if (!providerTools) return undefined;
+  if (!deniedTools?.length) return providerTools;
+  const denied = new Set(deniedTools);
+  return providerTools.filter((toolId) => !denied.has(toolId));
+}
+
 export function combineAgentServiceLifecycle(
   primary: AgentServiceServerLifecycle,
   secondary: AgentServiceServerLifecycle | undefined,
@@ -277,7 +287,10 @@ export function createAgentServiceRuntime<
       model: agentConfig.model,
       temperature: agentConfig.temperature,
       maxSteps: agentConfig.maxSteps,
-      providerTools: agentConfig.providerTools,
+      providerTools: normalizeAgentServiceProviderTools(
+        agentConfig.providerTools,
+        agentConfig.deniedTools,
+      ),
       skills: agentConfig.skills,
       tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
     }),
