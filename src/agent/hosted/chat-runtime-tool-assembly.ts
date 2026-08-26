@@ -110,10 +110,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
   /**
-   * Marks `allowedToolNames` as derived from the agent's own trusted config
-   * (no request-level override), preserving legacy runtime-essential tool
-   * inclusion for empty and non-empty configured sets alike. Request- or
-   * delegation-scoped callers must not set this.
+   * Include runtime-essential tools when `allowedToolNames` is an empty set.
+   * Non-empty selectors remain restrictive.
    */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
@@ -302,11 +300,11 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
-/** Prepare hosted chat runtime tool assembly. */
-export async function prepareHostedChatRuntimeToolAssembly<
+async function prepareHostedChatRuntimeToolAssemblyInternal<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+  configDerivedSelector: boolean,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const authorizedLocalTools = applyHostedHostToolPolicy(
     input.localTools,
@@ -324,10 +322,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
-    // The pipeline flag is set exactly when the selector came from the agent's
-    // own trusted config (no request-level allowedTools override), so it is
-    // the provenance signal for legacy runtime-essential inclusion.
-    configDerivedSelector: input.includeRuntimeEssentialToolsWhenEmpty,
+    configDerivedSelector: configDerivedSelector ||
+      (input.includeRuntimeEssentialToolsWhenEmpty === true &&
+        normalizedAllowedToolNames?.size === 0),
   });
   const postFormInputLocalTools = filterPostFormInputLocalTools(
     authorizedLocalTools,
@@ -484,4 +481,25 @@ export async function prepareHostedChatRuntimeToolAssembly<
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),
   };
+}
+
+/** Prepare hosted chat runtime tool assembly. */
+export function prepareHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(input, false);
+}
+
+/** @internal Prepare an assembly whose selector provenance was verified by the hosted runtime. */
+export function prepareConfigDerivedHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(
+    input,
+    input.includeRuntimeEssentialToolsWhenEmpty === true,
+  );
 }

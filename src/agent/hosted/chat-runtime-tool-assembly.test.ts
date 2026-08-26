@@ -17,6 +17,7 @@ import {
   augmentVeryfrontApiMcpServerPolicy,
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
+  prepareConfigDerivedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "./chat-runtime-tool-assembly.ts";
 
@@ -363,7 +364,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps delegation for config-derived non-empty tools", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly keeps non-empty public selectors restrictive", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -372,6 +373,35 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps delegation for config-deri
   };
 
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    includeRuntimeEssentialToolsWhenEmpty: true,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "sleep"]);
+});
+
+Deno.test("configured runtime assembly keeps delegation for non-empty agent tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+
+  const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",

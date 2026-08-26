@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
@@ -343,36 +343,38 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested lega
   assertEquals(resolve([]), ["get_file"]);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig distinguishes unrestricted and omitted agent tools", () => {
-  const resolve = (
-    tools: RuntimeAgentMarkdownDefinition["tools"],
-    providerTools?: string[],
-  ) => {
-    const result = resolveHostedRuntimeRequestConfig({
-      request: {},
-      agentConfig: createAgentConfig({ tools, providerTools }),
-      resolveModelId: (model) => model,
-    });
-    return {
-      tools: result.requestedAllowedTools,
-      providerTools: result.requestedAllowedProviderTools,
-      includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
+describe("resolveHostedRuntimeRequestConfig", () => {
+  it("distinguishes unrestricted and omitted agent tools", () => {
+    const resolve = (
+      tools: RuntimeAgentMarkdownDefinition["tools"],
+      providerTools?: string[],
+    ) => {
+      const result = resolveHostedRuntimeRequestConfig({
+        request: {},
+        agentConfig: createAgentConfig({ tools, providerTools }),
+        resolveModelId: (model) => model,
+      });
+      return {
+        tools: result.requestedAllowedTools,
+        providerTools: result.requestedAllowedProviderTools,
+        includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
+      };
     };
-  };
 
-  assertEquals(resolve(true), {
-    tools: undefined,
-    providerTools: [],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-  });
-  assertEquals(resolve(undefined), {
-    tools: [],
-    providerTools: [],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-  });
-  assertEquals(resolve(undefined, ["web_search"]), {
-    tools: [],
-    providerTools: ["web_search"],
-    includeRuntimeEssentialToolsWhenEmpty: true,
+    assertEquals(resolve(true), {
+      tools: undefined,
+      providerTools: [],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
+    assertEquals(resolve(undefined), {
+      tools: [],
+      providerTools: [],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
+    assertEquals(resolve(undefined, ["web_search"]), {
+      tools: [],
+      providerTools: ["web_search"],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
   });
 });
