@@ -559,6 +559,31 @@ describe("routing/api/module-loader/http-validator", () => {
           `${bindingSource} must retain descriptor capability checks`,
         );
       }
+      for (
+        const bindingSource of [
+          `const [get] = [Object.getOwnPropertyDescriptor];`,
+          `let get; [get] = [Object.getOwnPropertyDescriptor];`,
+          `const [[get]] = [[Object.getOwnPropertyDescriptor]];`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `${bindingSource}` +
+                ` const make = get(Object.getPrototypeOf(() => {}), "constructor").value;` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${bindingSource} must retain array destructuring provenance`,
+        );
+      }
+      await validateHTTPImports(
+        `const [safe] = [() => "ok", Object.getOwnPropertyDescriptor];` +
+          ` export const value = safe();`,
+        [],
+      );
       await assertRejects(
         async () =>
           await validateHTTPImports(

@@ -443,6 +443,62 @@ function collectDestructuringAliasAssignments(
   }
 }
 
+function arrayDestructuringInitializer(
+  arrayInitializer: ASTNode,
+  index: number | null,
+): ASTNode {
+  return {
+    type: "MemberExpression",
+    object: arrayInitializer,
+    property: index === null
+      ? { type: "Identifier", name: "__veryfront_unknown_array_index" }
+      : { type: "StringLiteral", value: String(index) },
+    computed: true,
+  };
+}
+
+function recordPatternInitializer(
+  scope: Scope,
+  pattern: ASTNode,
+  initializer: ASTNode,
+  assignment: boolean,
+): void {
+  if (pattern.type === "Identifier" && typeof pattern.name === "string") {
+    const binding = assignment
+      ? resolveBinding(scope, pattern.name)
+      : ensureBinding(scope, pattern.name);
+    if (binding === null) return;
+    binding.hasAliasAssignment ||= assignment;
+    binding.initializers.push(initializer);
+    return;
+  }
+  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+    recordPatternInitializer(scope, pattern.left, initializer, assignment);
+    if (isNode(pattern.right)) {
+      recordPatternInitializer(scope, pattern.left, pattern.right, assignment);
+    }
+    return;
+  }
+  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+    recordPatternInitializer(scope, pattern.argument, initializer, assignment);
+    return;
+  }
+  if (pattern.type === "ObjectPattern") {
+    if (assignment) collectDestructuringAliasAssignments(scope, pattern, initializer);
+    else registerDestructuringAliases(scope, pattern, initializer);
+    return;
+  }
+  if (pattern.type !== "ArrayPattern" || !Array.isArray(pattern.elements)) return;
+  pattern.elements.forEach((element, index) => {
+    if (!isNode(element)) return;
+    const elementInitializer = arrayDestructuringInitializer(
+      initializer,
+      element.type === "RestElement" ? null : index,
+    );
+    recordPatternInitializer(scope, element, elementInitializer, assignment);
+  });
+}
+
 function nearestFunctionScope(scope: Scope): Scope {
   for (let candidate: Scope | null = scope; candidate; candidate = candidate.parent) {
     if (candidate.kind === "function" || candidate.kind === "program") return candidate;
@@ -567,10 +623,8 @@ function registerVariableBinding(
   const bindingScope = declaration?.kind === "var" ? nearestFunctionScope(scope) : scope;
   const id = patternChild(node.id);
   registerPattern(bindingScope, id);
-  if (id?.type === "Identifier" && typeof id.name === "string" && isNode(node.init)) {
-    ensureBinding(bindingScope, id.name).initializers.push(node.init);
-  } else if (id?.type === "ObjectPattern" && isNode(node.init)) {
-    registerDestructuringAliases(bindingScope, id, node.init);
+  if (id !== undefined && isNode(node.init)) {
+    recordPatternInitializer(bindingScope, id, node.init, false);
   }
   return false;
 }
@@ -661,14 +715,11 @@ function collectAssignments(
       ALIAS_ASSIGNMENT_OPERATORS.has(String(node.operator)) &&
       isNode(node.left) && isNode(node.right)
     ) {
-      if (node.left.type === "Identifier" && typeof node.left.name === "string") {
-        const binding = resolveBinding(scope, node.left.name);
-        if (binding) {
-          binding.hasAliasAssignment = true;
-          binding.initializers.push(node.right);
-        }
-      } else if (node.left.type === "ObjectPattern") {
-        collectDestructuringAliasAssignments(scope, node.left, node.right);
+      if (
+        node.left.type === "Identifier" || node.left.type === "ObjectPattern" ||
+        node.left.type === "ArrayPattern"
+      ) {
+        recordPatternInitializer(scope, node.left, node.right, true);
       } else if (isMemberExpressionWithObject(node.left)) {
         recordPropertyInitializer(
           node.left.object,
