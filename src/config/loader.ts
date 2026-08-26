@@ -1,7 +1,6 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
 import {
-  basename,
   dirname,
   extname,
   isAbsolute,
