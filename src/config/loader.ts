@@ -1737,8 +1737,67 @@ const CSI_GLUED_URL =
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+//
+// The final two alternatives keep an unbalanced parenthesis from ending the
+// match. Without them the
+// hostname redacted but the tail did not, so
+// `https://host/a(TOKEN/c.ts` came back as `[url](TOKEN/c.ts` and a query-string
+// token printed verbatim into the caller-visible error
+// (veryfront-issue-inbox#845). It reproduces on `origin/main`, so this is a
+// pre-existing gap rather than one introduced with the URL passes.
+//
+// The distinct lookaheads are load-bearing. A lone opening parenthesis may
+// precede any non-blank URL tail. A lone closing parenthesis continues only
+// before a URL-like character, so prose punctuation in
+// `Failed (see https://host/x). Retry` stays outside the match.
+//
+// Dropping the balanced branch instead would be simpler and 25x faster, and was
+// rejected. It takes the quadratic guard's probe from ~45ms to ~0.2ms, which
+// leaves that guard passing while measuring nothing -- a failure mode that
+// already defanged it once -- and it emits `[url])` for a URL ending in `(b)`,
+// adding a cosmetic artefact to a change whose purpose is removing one.
+//
+// The balanced and lone-`(` branches are both ambiguous on `(`, so the cost was
+// measured rather than assumed. On the quadratic guard's own `"ab://(".repeat(n)`
+// input, for n of 10k/20k/40k, the tail costs 20/40/80ms against origin/main's
+// 21/45/83ms -- within noise, still linear at 2x per doubling, and far inside the
+// guard's 20x ratio. Shapes that exercise the `)` branch stay at 0-3ms on both.
+//
+// The closing-paren lookahead asks a structural question -- is the rest of this
+// token nothing but trailing punctuation or symbols? -- rather than listing the
+// characters prose is allowed to end with. Listing them does not converge: `.,;:)]` still
+// mangled `Failed (see https://host/x)! Retry` into `Failed (see [url] Retry`,
+// and adding `!` next would have left `?`, `}`, `>` and the rest of sentence
+// punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
+// opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
+// with its token in the caller-visible detail.
+// Unicode's `Punctuation`, `Symbol`, `Mark`, and `Format` properties supply the
+// structural categories, covering sentence marks and complete emoji sequences.
+// The latter need marks such as variation selectors and format characters such
+// as zero-width joiners in addition to their symbol code points.
+//
+// Asking the structural question settles both at once. A `)` whose remaining
+// token is only punctuation before a boundary is prose, so it stays outside the
+// match; anything else is URL and is consumed. `https://host/a)?t=SECRET` is
+// redacted whole because `t=SECRET` follows the `?`, while `(see .../x)? Retry`
+// keeps its bracket because nothing but the space follows.
+//
+// The `{0,16}` bound is load-bearing, like every other bound in this file. An
+// unbounded run rescans from each `)` in a long chain of them, so a single token
+// carrying 2k/4k/8k closing parens cost 6/22/89ms -- 4x per doubling, quadratic,
+// and reachable from a project-authored error. Bounded, the same inputs are
+// 0/0/1ms. No real sentence ends in 16 punctuation marks.
+//
+// Keep this source shared by every URL shape. Apart from preventing the four
+// redactors from drifting, the extraction keeps each complete expression below
+// the static-analysis complexity threshold.
+const URL_TOKEN_TAIL_SOURCE = String
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+const SCHEME_URL = new RegExp(
+  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
+);
+
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -1781,8 +1840,11 @@ const SCHEME_URL =
 // minimum is not enough to separate a scheme from prose glued to a drive letter.
 // A glued *URL* still redacts: the match simply starts later in the token, so
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
-const MALFORMED_SCHEME_URL =
-  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+const ASCII_SPECIAL_SCHEME_SOURCE = "(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])";
+const MALFORMED_SCHEME_URL = new RegExp(
+  String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
+);
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
 // the two-slash form, but neither pattern above matches it -- both require at
@@ -1791,19 +1853,23 @@ const MALFORMED_SCHEME_URL =
 // `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
 // (`warning:something`) and, at one character, drive letters.
 //
-// The `i` flag is load-bearing rather than tidy. A URL scheme is
-// case-insensitive, and the two patterns above get that free from `[A-Za-z]`; a
-// literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
-// and the hostname survived into the caller-visible detail.
-const ZERO_SLASH_SCHEME_URL =
-  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+// Scheme matching is ASCII-case-insensitive by construction. The Unicode `iu`
+// combination folds `ſ` to `s`, which would make ordinary `httpſ:failure` prose
+// look like a special-scheme URL even though URL schemes are ASCII-only.
+const ZERO_SLASH_SCHEME_URL = new RegExp(
+  String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
+);
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
 // past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
 // home directory was redacted either way -- but it reported a local path as a
 // remote URL, which is this PR's original misclassification running backwards.
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+const FILE_URL_ABSOLUTE_PATH = new RegExp(
+  `file:///${URL_TOKEN_TAIL_SOURCE}`,
+  "giu",
+);
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in

@@ -1134,6 +1134,16 @@ export default config as const;
         );
 
         assertStringIncludes(prose.message, "warning:something happened");
+
+        // URL schemes are ASCII. With both `i` and `u` on the literal scheme
+        // pattern, Unicode case folding made the long-s match ASCII `s` and
+        // incorrectly redacted this ordinary diagnostic.
+        const unicodeFold = await loadFailure(
+          "vf-config-zero-slash-unicode-fold-",
+          `throw new Error("The parser reported httpſ:failure code");\n`,
+        );
+
+        assertStringIncludes(unicodeFold.message, "httpſ:failure code");
       });
 
       it("redacts a URL whose userinfo contains an apostrophe", async () => {
@@ -1513,6 +1523,153 @@ export default config as const;
 
         assertEquals(completed.message.includes("server"), false);
         assertStringIncludes(completed.message, "[path]");
+      });
+
+      it("redacts a URL whose parentheses do not balance", async () => {
+        // The shared interior matched either a non-paren character or a BALANCED
+        // `(...)` pair, so a lone paren ended the match: the hostname redacted
+        // and the tail printed verbatim, which is where a query-string token
+        // sits (veryfront-issue-inbox#845). Reproduces on `origin/main`, so this
+        // is a pre-existing gap, not one introduced with the URL passes.
+        const unclosed = await loadFailure(
+          "vf-config-paren-unclosed-",
+          `throw new Error("https://registry.internal/a(SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(unclosed.message.includes("SUPERSECRET"), false);
+        assertEquals(unclosed.message.includes("registry.internal"), false);
+        assertStringIncludes(unclosed.message, "[url]");
+
+        const unopened = await loadFailure(
+          "vf-config-paren-unopened-",
+          `throw new Error("https://registry.internal/a)SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(unopened.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(unopened.message, "[url]");
+
+        // The counterpart that keeps the fix honest. A trailing `)` has nothing
+        // but the end of the token after it, so the lookahead leaves it outside
+        // the match and the sentence keeps its own bracket. Without this the
+        // obvious wider fix -- taking any paren -- would swallow it.
+        const prose = await loadFailure(
+          "vf-config-paren-prose-",
+          `throw new Error("Failed (see https://registry.internal/x)");\n`,
+        );
+
+        assertEquals(prose.message.includes("registry.internal"), false);
+        assertStringIncludes(prose.message, "(see [url])");
+
+        const period = await loadFailure(
+          "vf-config-paren-period-",
+          `throw new Error("Failed (see https://registry.internal/x). Retry");\n`,
+        );
+
+        assertEquals(period.message.includes("registry.internal"), false);
+        assertStringIncludes(period.message, "Failed (see [url]). Retry");
+
+        const comma = await loadFailure(
+          "vf-config-paren-comma-",
+          `throw new Error("Failed (see https://registry.internal/x), then retry");\n`,
+        );
+
+        assertEquals(comma.message.includes("registry.internal"), false);
+        assertStringIncludes(comma.message, "Failed (see [url]), then retry");
+
+        // `!` and `?` are the cases a list of allowed trailing characters kept
+        // missing. The lookahead asks whether the rest of the token is only
+        // punctuation instead of enumerating which marks count, so a sentence
+        // ending keeps its bracket whatever the mark is.
+        const bang = await loadFailure(
+          "vf-config-paren-bang-",
+          `throw new Error("Failed (see https://registry.internal/x)! Retry");\n`,
+        );
+
+        assertEquals(bang.message.includes("registry.internal"), false);
+        assertStringIncludes(bang.message, "Failed (see [url])! Retry");
+
+        const question = await loadFailure(
+          "vf-config-paren-question-",
+          `throw new Error("Failed (see https://registry.internal/x)? Retry");\n`,
+        );
+
+        assertEquals(question.message.includes("registry.internal"), false);
+        assertStringIncludes(question.message, "Failed (see [url])? Retry");
+
+        for (
+          const punctuation of ["…", "。", "¿", "»", "🙂", "❤️", "⚠️", "👩‍💻"] as const
+        ) {
+          const unicode = await loadFailure(
+            "vf-config-paren-unicode-punctuation-",
+            `throw new Error(${
+              JSON.stringify(
+                `Failed (see https://registry.internal/x)${punctuation} Retry`,
+              )
+            });\n`,
+          );
+
+          assertEquals(unicode.message.includes("registry.internal"), false);
+          assertStringIncludes(unicode.message, `Failed (see [url])${punctuation} Retry`);
+        }
+      });
+
+      it("cannot keep prose that follows a redacted URL without a space", async () => {
+        // The trailing-punctuation rule needs a boundary -- whitespace, a quote,
+        // or end of line. A script that does not put spaces between sentences
+        // gives it none, so the punctuation run never terminates, the `)` is
+        // taken as URL, and the rest of the line goes with it.
+        //
+        // Asserted rather than left implicit, because the Unicode class above
+        // makes this look handled. `Failed (see .../x)。 Retry` passes, and it is
+        // the space doing that work, not the class. Remove the space and the
+        // whole remainder is redacted.
+        const glued = await loadFailure(
+          "vf-config-paren-cjk-glued-",
+          `throw new Error("Failed (see https://registry.internal/x)。次を試してください");\n`,
+        );
+
+        assertStringIncludes(glued.message, "Failed (see [url]");
+        assertEquals(glued.message.includes("次を試してください"), false);
+
+        // Pre-existing, and not something the parenthesis branches introduced:
+        // origin/main redacts this identically, because the ordinary tail branch
+        // already eats CJK glued to a URL. The whole tail assumes an ASCII token
+        // delimited by whitespace. Closing it means redefining the boundary
+        // across every pattern here, which is a separate change.
+        const noParen = await loadFailure(
+          "vf-config-cjk-glued-",
+          `throw new Error("Failed https://registry.internal/x次を試してください");\n`,
+        );
+
+        assertEquals(noParen.message.includes("registry.internal"), false);
+        assertEquals(noParen.message.includes("次を試してください"), false);
+      });
+
+      it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
+        // The other half of the structural rule, and the reason it is not a list
+        // of characters prose may end with. Punctuation after a `)` does not make
+        // the rest of the token prose -- what matters is whether anything follows
+        // it. Here something does, so the tail is still URL and must be redacted.
+        const period = await loadFailure(
+          "vf-config-paren-tail-period-",
+          `throw new Error("https://registry.internal/a).SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(period.message.includes("SUPERSECRET"), false);
+        assertEquals(period.message.includes("registry.internal"), false);
+        assertStringIncludes(period.message, "[url]");
+
+        // `?` is why the exclusion-list spelling could not have worked. Excluding
+        // it to protect `(see .../x)? Retry` would have stranded this query
+        // string; including it would have mangled that sentence. The structural
+        // question answers both -- `t=SUPERSECRET` follows, so this is URL.
+        const query = await loadFailure(
+          "vf-config-paren-tail-query-",
+          `throw new Error("https://registry.internal/a)?t=SUPERSECRET");\n`,
+        );
+
+        assertEquals(query.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(query.message, "[url]");
       });
 
       it("reports a CSI-glued file URL as a path, not a remote URL", async () => {
