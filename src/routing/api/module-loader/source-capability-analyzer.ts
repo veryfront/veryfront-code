@@ -79,8 +79,8 @@ const REMOTE_OR_INLINE_URL = /^(?:https?|data|blob):/i;
 const FILE_URL = /^file:/i;
 const LOCAL_MODULE_SPECIFIER = /^\.\.?\//;
 const ALIAS_ASSIGNMENT_OPERATORS = new Set(["=", "&&=", "||=", "??="]);
-const IMPORT_META_PREFIX =
-  /\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*\.(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))*meta\b/;
+const IMPORT_KEYWORD = "import";
+const META_KEYWORD = "meta";
 
 function isNode(value: unknown): value is ASTNode {
   return typeof value === "object" && value !== null &&
@@ -175,7 +175,11 @@ export async function rewriteImportMetaUrl(
   source: string,
   moduleUrl: string,
 ): Promise<string | null> {
-  if (!IMPORT_META_PREFIX.test(source)) return source;
+  const importIndex = source.indexOf(IMPORT_KEYWORD);
+  if (
+    importIndex === -1 ||
+    source.indexOf(META_KEYWORD, importIndex + IMPORT_KEYWORD.length) === -1
+  ) return source;
   const program = await parseSource(source);
   if (program === null) return null;
 
@@ -190,7 +194,8 @@ export async function rewriteImportMetaUrl(
   visit(program);
 
   const replacement = JSON.stringify(moduleUrl);
-  return ranges.sort((left, right) => right.start - left.start).reduce(
+  ranges.sort((left, right) => right.start - left.start);
+  return ranges.reduce(
     (rewritten, range) =>
       rewritten.slice(0, range.start) + replacement + rewritten.slice(range.end),
     source,

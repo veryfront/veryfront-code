@@ -36,6 +36,11 @@ describe("rewriteImportMetaUrl", () => {
       `const url = ${JSON.stringify(moduleUrl)};`,
       "comments between import.meta tokens must not bypass the module URL rewrite",
     );
+    assertEquals(
+      await rewriteImportMetaUrl(`const text = "import metadata";`, moduleUrl),
+      `const text = "import metadata";`,
+      "the conservative prefilter must leave parser-confirmed inert text unchanged",
+    );
   });
 });
 
