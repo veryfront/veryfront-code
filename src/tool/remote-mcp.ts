@@ -1152,9 +1152,9 @@ interface ParsedTrustedEndpoint {
 
 function parseTrustedEndpoint(value: string): ParsedTrustedEndpoint | undefined {
   if (
-    !urlHrefGetter || !urlProtocolGetter || !urlUsernameGetter ||
-    !urlPasswordGetter || !urlSearchGetter || !urlHashGetter ||
-    !urlOriginGetter || !urlPathnameGetter
+    !urlProtocolGetter || !urlUsernameGetter || !urlPasswordGetter ||
+    !urlSearchGetter || !urlHashGetter || !urlOriginGetter ||
+    !urlPathnameGetter
   ) return undefined;
   try {
     const url = new NativeURL(value);
@@ -1166,10 +1166,12 @@ function parseTrustedEndpoint(value: string): ParsedTrustedEndpoint | undefined 
       reflectApply(urlSearchGetter, url, []) ||
       reflectApply(urlHashGetter, url, [])
     ) return undefined;
+    const origin = reflectApply(urlOriginGetter, url, []) as string;
+    const pathname = reflectApply(urlPathnameGetter, url, []) as string;
     return {
-      normalized: reflectApply(urlHrefGetter, url, []) as string,
-      origin: reflectApply(urlOriginGetter, url, []) as string,
-      pathname: reflectApply(urlPathnameGetter, url, []) as string,
+      normalized: `${origin}${pathname}`,
+      origin,
+      pathname,
     };
   } catch {
     return undefined;

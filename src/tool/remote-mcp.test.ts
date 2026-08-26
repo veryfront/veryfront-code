@@ -65,6 +65,25 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 1);
   });
 
+  it("normalizes empty fragment markers before matching trusted endpoints", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp#"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+
+    await createSource({ endpoint: "http://veryfront-api/mcp#" }).listTools();
+    assertEquals(transportCalls, 1);
+  });
+
   it("pins trusted transport endpoints against mutable URL globals", async () => {
     const trustedEndpoint = "http://veryfront-api/mcp";
     let requestedEndpoint: RequestInfo | URL | undefined;
