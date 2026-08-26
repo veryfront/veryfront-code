@@ -46,7 +46,10 @@ export function isSafeFrameworkSourceKey(candidate: string): boolean {
  * import `getHostEnv` and read host-only secrets while its project
  * environment overlay is active.
  */
-const PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES = ["platform/compat/process"] as const;
+const PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES = [
+  "platform/compat/process",
+  "platform/cloud/resolver",
+] as const;
 
 const FRAMEWORK_SOURCE_KEY_EXT_RE = /\.(?:src|tsx|ts|jsx|js|mjs|cjs|mdx|md|json)$/;
 

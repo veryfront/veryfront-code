@@ -418,6 +418,22 @@ describe("module-fetcher", () => {
       );
       assertEquals(result, null);
     });
+
+    it("refuses a tenant entry import of the host cloud bootstrap", async () => {
+      const ctx = createModuleFetcherContext(
+        "/cache",
+        untouchableAdapter,
+        "/project",
+        "proj-privileged",
+        { strictMissingModules: true },
+      );
+
+      const result = await fetchAndCacheModule(
+        "/_vf_modules/_veryfront/platform/cloud/resolver.js",
+        ctx,
+      );
+      assertEquals(result, null);
+    });
   });
 
   describe("strictMissingModules", () => {

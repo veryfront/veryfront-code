@@ -326,6 +326,9 @@ describe("framework-source-resolver — privileged source keys", () => {
     "platform/compat/process/host-runtime.ts",
     "platform/compat/process/lifecycle.ts",
     "platform/compat/process/command.ts",
+    "platform/cloud/resolver",
+    "platform/cloud/resolver.ts",
+    "platform/cloud/resolver.js?ssr=true",
   ];
 
   for (const key of privilegedKeys) {

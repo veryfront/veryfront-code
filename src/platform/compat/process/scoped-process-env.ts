@@ -28,6 +28,7 @@ type ScopedWrites = Map<string, string | null>;
 
 const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
+const ReflectApply = Reflect.apply;
 const ReflectDefineProperty = Reflect.defineProperty;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectGet = Reflect.get;
@@ -38,6 +39,15 @@ const ReflectSet = Reflect.set;
 
 // Keyed by the snapshot object, which the scope owns for exactly its lifetime.
 const writesBySnapshot = new WeakMap<ProjectEnvSnapshot, ScopedWrites>();
+
+/** Minimal contract implemented by the Deno environment capability. */
+export interface DenoEnvView {
+  get(key: string): string | undefined;
+  set(key: string, value: string): void;
+  delete(key: string): void;
+  has(key: string): boolean;
+  toObject(): Record<string, string>;
+}
 
 function writesFor(snapshot: ProjectEnvSnapshot): ScopedWrites {
   const existing = writesBySnapshot.get(snapshot);
@@ -84,6 +94,61 @@ export function deleteProjectScopedEnv(
   key: string,
 ): void {
   writesFor(snapshot).set(key, null);
+}
+
+/**
+ * Create an ambient-scope-aware view over the Deno environment capability.
+ *
+ * The host methods are captured before tenant code runs. Project reads and
+ * writes use the same snapshot log as process.env, while calls outside a
+ * project scope preserve native Deno behavior and permission checks.
+ */
+export function createProjectScopedDenoEnvView(
+  hostEnv: DenoEnvView,
+  getSnapshot: ProjectEnvSnapshotGetter,
+): DenoEnvView {
+  const hostGet = hostEnv.get;
+  const hostSet = hostEnv.set;
+  const hostDelete = hostEnv.delete;
+  const hostHas = hostEnv.has;
+  const hostToObject = hostEnv.toObject;
+
+  return {
+    get(key) {
+      const snapshot = getSnapshot();
+      return snapshot === undefined
+        ? ReflectApply(hostGet, hostEnv, [key])
+        : readScoped(snapshot, key);
+    },
+    set(key, value) {
+      const snapshot = getSnapshot();
+      if (snapshot === undefined) {
+        ReflectApply(hostSet, hostEnv, [key, value]);
+        return;
+      }
+      writeProjectScopedEnv(snapshot, key, value);
+    },
+    delete(key) {
+      const snapshot = getSnapshot();
+      if (snapshot === undefined) {
+        ReflectApply(hostDelete, hostEnv, [key]);
+        return;
+      }
+      deleteProjectScopedEnv(snapshot, key);
+    },
+    has(key) {
+      const snapshot = getSnapshot();
+      return snapshot === undefined
+        ? ReflectApply(hostHas, hostEnv, [key])
+        : readScoped(snapshot, key) !== undefined;
+    },
+    toObject() {
+      const snapshot = getSnapshot();
+      return snapshot === undefined
+        ? ReflectApply(hostToObject, hostEnv, [])
+        : projectScopedEnvRecord(snapshot);
+    },
+  };
 }
 
 /** The scoped view as a plain record, for the bulk accessor. */

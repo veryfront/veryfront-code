@@ -113,6 +113,7 @@ describe("resolveFrameworkFile", () => {
       "/_vf_modules/_veryfront/platform/compat/process/runtime-process.js",
       "/_vf_modules/_veryfront/platform/compat/process/scoped-process-env.js",
       "/_vf_modules/_veryfront/platform/compat/process.js",
+      "/_vf_modules/_veryfront/platform/cloud/resolver.js",
       "file:///_vf_modules/_veryfront/platform/compat/process/env.js?ssr=true",
     ]
   ) {

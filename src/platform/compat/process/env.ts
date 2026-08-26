@@ -1,6 +1,7 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
 import {
+  createProjectScopedDenoEnvView,
   deleteProjectScopedEnv,
   installProjectScopedProcessEnv,
   projectScopedEnvRecord,
@@ -13,6 +14,8 @@ type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
 
 const apply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
 const denoEnv = denoRuntime?.env;
 const denoEnvGet = denoEnv?.get;
@@ -126,6 +129,23 @@ export function getHostEnv(key: string): string | undefined {
 }
 
 let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
+let denoEnvViewInstalled = false;
+
+function installProjectScopedDenoEnv(
+  getSnapshot: () => ProjectEnvSnapshot | undefined,
+): void {
+  if (denoEnvViewInstalled || !denoRuntime || !denoEnv) return;
+
+  const descriptor = ObjectGetOwnPropertyDescriptor(denoRuntime, "env");
+  const view = createProjectScopedDenoEnvView(denoEnv, getSnapshot);
+  ObjectDefineProperty(denoRuntime, "env", {
+    value: view,
+    writable: false,
+    enumerable: descriptor?.enumerable ?? true,
+    configurable: false,
+  });
+  denoEnvViewInstalled = true;
+}
 
 /**
  * Register the server-owned project environment snapshot bridge.
@@ -144,6 +164,7 @@ export function registerTrustedProjectEnvSnapshot(
   if (_trustedProjectEnvSnapshot && _trustedProjectEnvSnapshot !== getter) {
     throw new Error("Project environment snapshot bridge is already registered");
   }
+  installProjectScopedDenoEnv(getter);
   _trustedProjectEnvSnapshot = getter;
   installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
 }
