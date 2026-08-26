@@ -507,8 +507,8 @@ export function useAttachments(
             const response = await fetch(endpoint, {
               method: "POST",
               body: form,
-              // Production enables CSRF by default, so this POST has to echo
-              // the `__Host-vf_csrf` cookie or the server answers 403.
+              // CSRF is enforced in every environment, so this POST has to echo
+              // the browser-readable token or the server answers 403.
               headers: csrfMutationHeaders(endpoint, { headers: headersRef.current }),
               signal: controller.signal,
             });

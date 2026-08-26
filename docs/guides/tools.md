@@ -367,6 +367,8 @@ export async function POST(request: Request) {
 ```bash
 curl -X POST http://localhost:3000/api/debug/tools \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"name":"getWeather","input":{"city":"Berlin"}}'
 ```
 
