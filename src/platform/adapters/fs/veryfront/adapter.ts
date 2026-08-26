@@ -11,7 +11,11 @@ import type {
   StyleCallbacks,
   StylePregenerationFile,
 } from "./types.ts";
-import type { FileInfo, ResolveFileOptions } from "../../base.ts";
+import type {
+  FileInfo,
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -115,6 +119,7 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
   readonly projectContextSemantics: "fixed" | undefined;
@@ -125,6 +130,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
+  private initializationGeneration = 0;
   private exactReadInitializationPromise: Promise<void> | null = null;
   private exactReadInitializationGeneration = 0;
 
@@ -465,6 +472,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+
+    const initialization = this.performInitialization();
+    const initializationGeneration = ++this.initializationGeneration;
+    this.initializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationGeneration === initializationGeneration) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async performInitialization(): Promise<void> {
     const initStartTime = performance.now();
     const projectSlug = this.client.getProjectSlug();
 
@@ -921,6 +946,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // listing arrives. Advance the generation immediately so an older warmup
     // cannot repopulate the cache or answer a waiting read in that window.
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotCheckedAt = 0;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -1164,13 +1191,40 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
-    await this.ensureInitialized();
+  async ensureSourceSnapshotFresh(
+    reason = "freshness-check",
+    options?: SourceSnapshotFreshnessOptions,
+    initializedByManager = false,
+  ): Promise<void> {
+    const initializedNow = initializedByManager || await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
 
+    // The snapshot identity only names the branch, so an edit to a draft file
+    // never changes it. The lease age is therefore the only thing that can
+    // detect a content change, and a caller that cannot tolerate a stale render
+    // asks for maxAgeMs: 0 to bypass it.
+    const maxAgeMs = options?.maxAgeMs ?? BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS;
+
+    // Cold initialization just fetched and installed the complete listing for
+    // this branch. That authority check happened inside this call, so it also
+    // satisfies a zero-age caller without immediately listing the same source
+    // tree a second time.
     if (
+      initializedNow &&
       this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
-      Date.now() - this.sourceSnapshotCheckedAt < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS
+      this.sourceSnapshotCheckedAt > 0
+    ) {
+      return;
+    }
+
+    // A non-positive budget bypasses the lease unconditionally. Comparing the
+    // age against it would not: a backward wall-clock step makes the age
+    // negative, and a negative age is below every budget, so the caller that
+    // asked to accept no lease at all would silently be handed one.
+    if (
+      maxAgeMs > 0 &&
+      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
+      Date.now() - this.sourceSnapshotCheckedAt < maxAgeMs
     ) {
       return;
     }
@@ -1180,6 +1234,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getSourceSnapshotVersion(): number {
     return this.sourceSnapshotVersion;
+  }
+
+  /**
+   * Names the branch/environment/release the snapshot currently targets, so a
+   * caller that established freshness earlier in a request can detect a
+   * context change (for example `setRequestBranch` on this reused adapter)
+   * before trusting that establishment.
+   */
+  getSourceSnapshotIdentity(): string | undefined {
+    return this.getCurrentSourceSnapshotIdentity();
   }
 
   getPokeMetrics(): {
@@ -1271,6 +1335,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.initializationGeneration++;
+    this.initializationPromise = null;
     this.exactReadInitializationPromise = null;
     this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
@@ -1528,9 +1594,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.client;
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  private async ensureInitialized(): Promise<boolean> {
+    if (this.initialized) return false;
     await this.initialize();
+    return true;
   }
 
   private async ensureExactReadInitialized(): Promise<void> {

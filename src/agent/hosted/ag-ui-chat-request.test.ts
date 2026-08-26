@@ -123,6 +123,27 @@ describe("agent/hosted-ag-ui-chat-request", () => {
     });
   });
 
+  it("does not derive runtime agent selection from client-controlled input", async () => {
+    const parsed = await buildParsedHostedAgUiRequest({
+      agUiInput: createAgUiInput({
+        context: [{ description: "veryfront.agentId", value: '"context-agent"' }],
+        forwardedProps: {
+          veryfront: {
+            agentId: "forwarded-agent",
+          },
+        },
+      }),
+      authToken: "auth-token",
+      userId: "user-1",
+    });
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.agentId, undefined);
+  });
+
   it("builds parsed hosted AG-UI requests and verifies project access", async () => {
     let verifiedProjectId: string | undefined;
     let verifiedAuthToken: string | undefined;

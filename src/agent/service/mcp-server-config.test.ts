@@ -7,10 +7,7 @@ import {
 } from "./mcp-server-config.ts";
 
 it("defaultAgentServiceMcpServers enables first-party MCP servers", () => {
-  assertEquals(defaultAgentServiceMcpServers(), [
-    { kind: "veryfront-api" },
-    { kind: "veryfront-studio" },
-  ]);
+  assertEquals(defaultAgentServiceMcpServers(), [{ kind: "veryfront-api" }]);
 });
 
 it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async () => {
@@ -42,7 +39,7 @@ it("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", async ()
       ? await config.headers({ authToken: "run-token-1" })
       : config?.headers,
     {
-      Authorization: "Bearer run-token-1",
+      Authorization: "Bearer token-1",
     },
   );
 
