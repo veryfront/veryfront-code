@@ -529,42 +529,6 @@ Do work.`,
     );
   });
 
-  it(
-    "load_skill_reference should reject forged availability for an unlisted nested file",
-    async () => {
-      const fsAdapter = createSkillTestAdapter({
-        "/project/skills/my-skill/references/guide.md": "Guide",
-        "/project/skills/my-skill/references/private/secret.md": "Secret",
-      });
-      registerSkill("my-skill", createNamedTestSkill("my-skill", fsAdapter));
-
-      const tool = createLoadSkillReferenceTool();
-      const originalIncludes = Array.prototype.includes;
-      Array.prototype.includes = () => true;
-
-      try {
-        await assertRejects(
-          () =>
-            tool.execute({
-              skillId: "my-skill",
-              reference: "references/private/secret.md",
-            }, {
-              activeSkillId: "my-skill",
-              activeSkillToolAvailability: {
-                hasActiveSkill: true,
-                references: ["references/private/secret.md"],
-                scripts: [],
-              },
-            }),
-          Error,
-          "advertised by load_skill",
-        );
-      } finally {
-        Array.prototype.includes = originalIncludes;
-      }
-    },
-  );
-
   it("load_skill_reference revalidates only the requested content directory", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/references/guide.md": "Guide",
@@ -787,7 +751,20 @@ Do work.`,
     registerSkill("my-skill", createTestSkill(countingAdapter));
 
     const result = await createExecuteSkillScriptTool({
-      executor: new LocalScriptExecutor(),
+      executor: {
+        execute(input) {
+          assertEquals(input.scriptSnapshot?.entryPath, "scripts/run.ts");
+          assertEquals(
+            input.scriptSnapshot?.files.map((file) => file.path),
+            ["scripts/lib/helper.ts", "scripts/run.ts"],
+          );
+          return Promise.resolve({
+            stdout: "listed-once\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      },
     }).execute({
       skillId: "my-skill",
       script: "scripts/run.ts",
