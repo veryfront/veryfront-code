@@ -133,6 +133,8 @@ export interface WorkflowRunObservation {
 /** Approval record persisted by workflow backends, including internal restart metadata. */
 export interface PersistedPendingApproval extends PendingApproval {
   responseSchemaId?: string;
+  /** The decision is durable, but its node outcome has not finished reconciling. */
+  reconciliationPending?: true;
 }
 
 /** Event-wait record persisted by workflow backends, including worker ownership. */
@@ -141,6 +143,10 @@ export interface PersistedPendingEventWait extends PendingEventWait {
   workerId?: string;
   /** Time a delivered or expired claim left the pending set. */
   claimedAt?: Date;
+  /** Exact event reserved by an unfinished delivery claim. */
+  claimedEventId?: string;
+  /** Exact event whose delivery was durably finalized. */
+  deliveredEventId?: string;
 }
 
 /** One event durably buffered in a run's mailbox until a wait consumes it. */
@@ -234,8 +240,9 @@ export interface WorkflowBackend {
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
   /**
-   * Append an approval unless this run already has a pending approval for the
-   * same node. The duplicate check and append must be one atomic operation.
+   * Append an approval unless this run already has a pending approval or an
+   * unfinished decision claim for the same node. The duplicate check and
+   * append must be one atomic operation.
    */
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void>;
   /**
@@ -271,6 +278,12 @@ export interface WorkflowBackend {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<boolean | void>;
+  /** Enumerate decided approvals whose node outcomes are still reconciling. */
+  listApprovalDecisionClaims?(runId?: string): Promise<
+    Array<{ runId: string; approval: PersistedPendingApproval }>
+  >;
+  /** Release a decision claim after its node outcome commits. */
+  finalizeApprovalDecision?(runId: string, approvalId: string): Promise<void>;
   listPendingApprovals?(filter?: {
     workflowId?: string;
     approver?: string;
@@ -304,8 +317,9 @@ export interface WorkflowBackend {
    * none of them cannot, and `hasEventWaitSupport` reports that honestly rather
    * than letting a run park on nothing.
    *
-   * Append an event wait unless this run already has a pending wait for the
-   * same node. The duplicate check and append must be one atomic operation.
+   * Append an event wait unless this run already has a pending wait or an
+   * unfinished delivery or timeout claim for the same node. The duplicate
+   * check and append must be one atomic operation.
    */
   savePendingEventWait?(runId: string, wait: PersistedPendingEventWait): Promise<void>;
   /**
@@ -442,6 +456,8 @@ export interface WorkflowBackend {
    * against the backend's mailbox bound.
    */
   finalizeRunEventDelivery?(runId: string, eventId: string): Promise<void>;
+  /** Report whether one exact event delivery was durably finalized. */
+  hasRunEventDeliveryReceipt?(runId: string, eventId: string): Promise<boolean>;
 
   /**
    * @deprecated Never implemented by any built-in backend and never called by
@@ -613,6 +629,7 @@ type WithEventWaitSupport =
       | "restoreRunEvent"
       | "restoreRunEventDelivery"
       | "finalizeRunEventDelivery"
+      | "hasRunEventDeliveryReceipt"
     >
   >;
 
@@ -623,11 +640,13 @@ type WithEventWaitSupport =
  * record a wait but not buffer an event, or buffer an event but not resolve a
  * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
  * `restoreRunEvent`, `restoreRunEventDelivery`, `finalizeRunEventDelivery`,
- * recoverable delivery claims, and recoverable timeout claims are part of the
- * group for the same reason: without them a delivery that fails halfway leaves
- * the run parked on a wait already marked delivered, re-orders its mailbox,
- * loses the event outright when a crash lands between the two separate
- * restores, or scans an already-committed timeout claim forever.
+ * exact delivery receipts, recoverable delivery claims, recoverable timeout
+ * claims, and key-merge run patches are part of the group for the same reason:
+ * without them a delivery that fails halfway leaves the run parked on a wait
+ * already marked delivered, re-orders its mailbox, loses the event outright
+ * when a crash lands between the two separate restores, misattributes a
+ * cross-process delivery, reverts a concurrent node outcome, or scans an
+ * already-committed timeout claim forever.
  *
  * A backend that also supports worker execution ownership must implement
  * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
@@ -653,6 +672,8 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.restoreRunEvent === "function" &&
     typeof backend.restoreRunEventDelivery === "function" &&
     typeof backend.finalizeRunEventDelivery === "function" &&
+    typeof backend.hasRunEventDeliveryReceipt === "function" &&
+    hasRunPatchKeyMergeSupport(backend) &&
     (!hasWorkerSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")
   );

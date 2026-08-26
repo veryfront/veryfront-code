@@ -18,7 +18,10 @@ import {
 } from "./workflow-run-control.ts";
 import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { unrefTimer } from "#veryfront/compat/process.ts";
-import { MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES } from "../limits.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+} from "../limits.ts";
 
 const logger = baseLogger.component("event-wait-manager");
 
@@ -101,7 +104,13 @@ interface DrainSession {
 
 /** Strip backend-only fields so callers never see worker ownership. */
 function projectEventWait(wait: PersistedPendingEventWait): PendingEventWait {
-  const { workerId: _workerId, claimedAt: _claimedAt, ...projected } = wait;
+  const {
+    workerId: _workerId,
+    claimedAt: _claimedAt,
+    claimedEventId: _claimedEventId,
+    deliveredEventId: _deliveredEventId,
+    ...projected
+  } = wait;
   return projected;
 }
 
@@ -334,9 +343,14 @@ export class EventWaitManager {
       });
     }
 
-    if (!isCanonicalNonEmptyString(eventName) || eventName === INTERNAL_DELAY_EVENT_NAME) {
+    if (
+      !isCanonicalNonEmptyString(eventName) ||
+      eventName.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS ||
+      eventName === INTERNAL_DELAY_EVENT_NAME
+    ) {
       throw INVALID_ARGUMENT.create({
-        detail: "publishEvent eventName must be a canonical non-empty public event name",
+        detail: "publishEvent eventName must be a canonical non-empty public event name of at " +
+          `most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
       });
     }
 
@@ -357,7 +371,17 @@ export class EventWaitManager {
       // Failed runs are retryable but cannot reconcile a delivery until retry()
       // makes them active again. Preserve the event for the sibling wait instead
       // of claiming and immediately rolling it back against the failed run.
-      if (run?.status === "failed") return "buffered";
+      if (run?.status === "failed") {
+        const latestAfterAppend = await backend.getRun(runId);
+        if (latestAfterAppend?.status === "failed") return "buffered";
+        if (
+          latestAfterAppend &&
+          !MAILBOX_RETAINING_RUN_STATUSES.includes(latestAfterAppend.status)
+        ) {
+          await backend.removeRunEvent(runId, envelope.id);
+          return "run-terminal";
+        }
+      }
       const outcome = await this.drain(runId, true);
 
       // The outcome reports what happened to THIS envelope. With concurrent
@@ -365,7 +389,8 @@ export class EventWaitManager {
       // envelope with the same name while this one stays buffered, and a caller
       // told "delivered" about an envelope that was not would retry and
       // duplicate the event.
-      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id);
+      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id) ||
+        await backend.hasRunEventDeliveryReceipt(runId, envelope.id);
       if (outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain) {
         return "delivered";
       }
@@ -395,9 +420,14 @@ export class EventWaitManager {
         detail: "The configured workflow backend does not support durable event delivery",
       });
     }
-    if (!isCanonicalNonEmptyString(eventName) || eventName === INTERNAL_DELAY_EVENT_NAME) {
+    if (
+      !isCanonicalNonEmptyString(eventName) ||
+      eventName.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS ||
+      eventName === INTERNAL_DELAY_EVENT_NAME
+    ) {
       throw INVALID_ARGUMENT.create({
-        detail: "retryEventDelivery eventName must be a canonical non-empty public event name",
+        detail: "retryEventDelivery eventName must be a canonical non-empty public event name " +
+          `of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
       });
     }
 
@@ -406,7 +436,8 @@ export class EventWaitManager {
     this.markEventPublicationActive(envelope.id);
     try {
       const outcome = await this.drain(runId, true);
-      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id);
+      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id) ||
+        await backend.hasRunEventDeliveryReceipt(runId, envelope.id);
       return outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain;
     } finally {
       this.clearEventPublicationActive(runId, envelope.id);
@@ -627,15 +658,21 @@ export class EventWaitManager {
   ): void {
     if (this.destroyed || this.finalizationRetryTimers.has(event.id)) return;
     const attempt = (this.finalizationRetryAttempts.get(event.id) ?? 0) + 1;
-    if (attempt >= MAX_DELIVERY_FINALIZATION_ATTEMPTS) {
+    const hasExpirationSweep = (this.config.expirationCheckInterval ?? 0) > 0;
+    if (attempt >= MAX_DELIVERY_FINALIZATION_ATTEMPTS && hasExpirationSweep) {
       this.finalizationRetryAttempts.delete(event.id);
       return;
     }
-    this.finalizationRetryAttempts.set(event.id, attempt);
-    const retryDelay = Math.min(
-      MIN_EXPIRY_RETRY_DELAY_MS * 2 ** (attempt - 1),
-      DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
+    this.finalizationRetryAttempts.set(
+      event.id,
+      Math.min(attempt, MAX_DELIVERY_FINALIZATION_ATTEMPTS),
     );
+    const retryDelay = attempt >= MAX_DELIVERY_FINALIZATION_ATTEMPTS
+      ? DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS
+      : Math.min(
+        MIN_EXPIRY_RETRY_DELAY_MS * 2 ** (attempt - 1),
+        DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
+      );
     const timer = setTimeout(() => {
       this.finalizationRetryTimers.delete(event.id);
       if (this.destroyed) return;

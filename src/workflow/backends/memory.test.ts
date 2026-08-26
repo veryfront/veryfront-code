@@ -547,6 +547,16 @@ describe("MemoryBackend", () => {
           run.id,
           ["waiting"],
           "worker-a",
+          approval("retry-before-finalize"),
+        ),
+        false,
+      );
+      await backend.finalizeApprovalDecision(run.id, "first");
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "worker-a",
           approval("retry"),
         ),
         true,
@@ -874,6 +884,7 @@ describe("MemoryBackend", () => {
         await backend.resolvePendingEventWait("run-events", "first", "delivered"),
         true,
       );
+      await backend.finalizeTimedEventWaitClaim("run-events", "first");
       await backend.savePendingEventWait("run-events", createEventWait("retry"));
       assertEquals(
         (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
@@ -1246,6 +1257,68 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-after",
         "a refused claim must leave the event buffered",
+      );
+    });
+
+    it("persists an exact delivery receipt when finalization releases a claim", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-receipt"));
+      await backend.appendRunEvent("run-events", {
+        id: "evt-receipt",
+        eventName: "payment.confirmed",
+        payload: { accepted: true },
+        publishedAt: new Date(),
+      });
+      assertExists(
+        await backend.claimRunEventForWait(
+          "run-events",
+          "evw-receipt",
+          "payment.confirmed",
+        ),
+      );
+      assertEquals(
+        await backend.hasRunEventDeliveryReceipt("run-events", "evt-receipt"),
+        false,
+        "an in-flight claim is not a committed delivery",
+      );
+
+      await backend.finalizeRunEventDelivery("run-events", "evt-receipt");
+
+      assertEquals(
+        await backend.hasRunEventDeliveryReceipt("run-events", "evt-receipt"),
+        true,
+      );
+      assertEquals(await backend.listRunEventDeliveryClaims("run-events"), []);
+    });
+
+    it("does not evict an in-flight timed claim at the wait-history bound", async () => {
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-in-flight", {
+          nodeId: "delay",
+          eventName: "__delay__",
+          waitKind: "delay",
+        }),
+      );
+      await backend.resolvePendingEventWait("run-events", "evw-in-flight", "delivered");
+      for (let index = 1; index < MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES; index++) {
+        const waitId = `evw-resolved-${index}`;
+        await backend.savePendingEventWait(
+          "run-events",
+          createEventWait(waitId, {
+            nodeId: `node-${index}`,
+          }),
+        );
+        await backend.resolvePendingEventWait("run-events", waitId, "cancelled");
+      }
+
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-new", { nodeId: "new-node" }),
+      );
+
+      assertEquals(
+        (await backend.listTimedEventWaitClaims("run-events")).map((wait) => wait.id),
+        ["evw-in-flight"],
       );
     });
 

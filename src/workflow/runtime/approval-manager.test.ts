@@ -16,6 +16,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { FakeTime } from "#std/testing/time";
 import { getPendingApprovalResponseSchemaId } from "./pending-approval-metadata.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -624,6 +625,34 @@ describe("ApprovalManager", () => {
         "the initial append records the delivery failure",
       );
     });
+
+    it("warns when a backend cannot persist a notifier failure", async () => {
+      Object.defineProperty(backend, "updatePendingApproval", { value: undefined });
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: failingNotifier,
+      });
+      const messages: string[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => messages.push(entry.message));
+      try {
+        const runId = "run-notify-failure-without-patch-support";
+        await backend.createRun(createTestRun(runId, { status: "waiting" }));
+        await manager.createApproval(
+          await backend.getRun(runId) as WorkflowRun,
+          "review-node",
+          { type: "wait", waitType: "approval", message: "Approve please", payload: {} },
+          createContext(runId),
+        );
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(
+        messages.some((message) => message.includes("cannot persist approval notification state")),
+        true,
+      );
+    });
   });
 
   describe("approval lookup", () => {
@@ -963,6 +992,7 @@ describe("ApprovalManager", () => {
       await manager.approve(runId, "apr-owner-bound-decision", "reviewer");
 
       assertEquals(resumeCalls, [[runId, undefined, "worker-current-owner"]]);
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
 
     it("reconciles a decision when ownership changes during the run patch", async () => {

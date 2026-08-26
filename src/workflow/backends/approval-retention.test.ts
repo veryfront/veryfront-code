@@ -148,6 +148,7 @@ describe("workflow approval retention", () => {
       approved: true,
       approver: "ops",
     });
+    await backend.finalizeApprovalDecision("unconditional", "decided");
     for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
       await backend.savePendingApproval("unconditional", approval(`live-${index}`));
     }
@@ -195,6 +196,7 @@ describe("workflow approval retention", () => {
     assertEquals(await saveOwned(approval("live-oldest")), true);
     assertEquals(await saveOwned(approval("decided")), true);
     await backend.updateApproval("owned", "decided", { approved: false, approver: "ops" });
+    await backend.finalizeApprovalDecision("owned", "decided");
     for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
       assertEquals(await saveOwned(approval(`live-${index}`)), true);
     }

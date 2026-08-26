@@ -230,18 +230,28 @@ export class ApprovalManager {
     }
 
     if (approval.notificationError) {
-      try {
-        await this.config.backend.updatePendingApproval?.(
-          runId,
-          approval.id,
-          { notificationError: approval.notificationError },
-        );
-      } catch (error) {
-        logger.error(
-          "Failed to persist approval notification state",
+      const updatePendingApproval = this.config.backend.updatePendingApproval;
+      if (!updatePendingApproval) {
+        logger.warn(
+          "Backend cannot persist approval notification state; the failed notification is " +
+            "reported only to this caller",
           { approvalId: approval.id, runId },
-          error,
         );
+      } else {
+        try {
+          await updatePendingApproval.call(
+            this.config.backend,
+            runId,
+            approval.id,
+            { notificationError: approval.notificationError },
+          );
+        } catch (error) {
+          logger.error(
+            "Failed to persist approval notification state",
+            { approvalId: approval.id, runId },
+            error,
+          );
+        }
       }
     }
 
@@ -386,6 +396,15 @@ export class ApprovalManager {
             : undefined,
         },
       });
+      try {
+        await this.config.backend.finalizeApprovalDecision?.(runId, approvalId);
+      } catch (error) {
+        logger.error(
+          "Failed to finalize an approval decision claim",
+          { approvalId, runId },
+          error,
+        );
+      }
     } catch (error) {
       if (decision.approved && this.config.executor) {
         logger.error("Failed to resume workflow", error);
@@ -497,6 +516,15 @@ export class ApprovalManager {
         error: { message: `Approval "${approval.id}" expired` },
         completedAt: new Date(),
       });
+      try {
+        await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+      } catch (error) {
+        logger.error(
+          "Failed to finalize an expired approval decision claim",
+          { approvalId: approval.id, runId },
+          error,
+        );
+      }
     }
   }
 

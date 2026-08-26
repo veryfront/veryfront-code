@@ -6,7 +6,7 @@ import {
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 function isResolved(wait: PersistedPendingEventWait): boolean {
-  return wait.status !== "pending";
+  return wait.status !== "pending" && wait.claimedAt === undefined;
 }
 
 /**
@@ -15,9 +15,10 @@ function isResolved(wait: PersistedPendingEventWait): boolean {
  * Retention is state-aware for the same reason approval retention is: a wait a
  * run is still parked on must never be evicted, because nothing could then
  * deliver its event or expire it and the run would wait forever. At the bound
- * the oldest resolved record is evicted first, and when there are not enough
- * resolved records to make room the append is rejected without changing
- * existing history.
+ * the oldest finalized record is evicted first. A resolved record with an
+ * unfinished claim remains reserved. When there are not enough finalized
+ * records to make room, the append is rejected without changing existing
+ * history.
  */
 export function appendRetainedPendingEventWait(
   waits: PersistedPendingEventWait[],

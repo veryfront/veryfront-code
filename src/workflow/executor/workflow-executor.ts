@@ -364,6 +364,20 @@ export class WorkflowExecutor {
       });
     }
 
+    if (hasEventWaitSupport(this.config.backend)) {
+      for (const wait of await this.config.backend.listTimedEventWaitClaims(runId)) {
+        const committedStatus = wait.waitKind === "delay" ? "completed" : "failed";
+        if (run.nodeStates[wait.nodeId]?.status !== committedStatus) {
+          throw ORCHESTRATION_ERROR.create({
+            status: 409,
+            detail: `Cannot retry workflow run "${runId}": timed wait "${wait.id}" ` +
+              "has not finished reconciling.",
+          });
+        }
+        await this.config.backend.finalizeTimedEventWaitClaim(runId, wait.id);
+      }
+    }
+
     const executionWorkerId = supportsExecutionOwnership(this.config.backend)
       ? `run-execution:${generateId("exec")}`
       : undefined;

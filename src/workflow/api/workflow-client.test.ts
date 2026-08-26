@@ -22,8 +22,12 @@ import type {
   PersistedPendingEventWait,
   RunEventDeliveryClaim,
   RunEventEnvelope,
+  WorkflowBackend,
 } from "../backends/types.ts";
-import { MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES } from "../limits.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+} from "../limits.ts";
 import { branch } from "../dsl/branch.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { loop } from "../dsl/loop.ts";
@@ -2367,6 +2371,12 @@ class AlwaysFailDeliveryFinalizationBackend extends MemoryBackend {
   }
 }
 
+class RejectTimedFinalizationBackend extends MemoryBackend {
+  override finalizeTimedEventWaitClaim(): Promise<void> {
+    return Promise.reject(new Error("timed claim finalization unavailable"));
+  }
+}
+
 class CountingDeliveryClaimReadsBackend extends MemoryBackend {
   deliveryClaimReads = 0;
 
@@ -2383,6 +2393,27 @@ class DrainFromOtherManagerOnAppendBackend extends MemoryBackend {
   override async appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
     await super.appendRunEvent(runId, event);
     if (this.armed) await this.manager?.drainPendingEvents(runId);
+  }
+}
+
+function sharedBackendView(backend: MemoryBackend): WorkflowBackend {
+  return new Proxy(backend, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+class ReactivateFailedDuringAppendBackend extends MemoryBackend {
+  reactivateOnAppend = false;
+
+  override async appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    await super.appendRunEvent(runId, event);
+    if (this.reactivateOnAppend) {
+      this.reactivateOnAppend = false;
+      await super.updateRun(runId, { status: "waiting", error: undefined });
+    }
   }
 }
 
@@ -2464,8 +2495,8 @@ describe("WorkflowClient durable event waits", () => {
 
   it("attributes delivery when another client drains during publication", async () => {
     const shared = new DrainFromOtherManagerOnAppendBackend();
-    const parked = createWorkflowClient({ backend: shared });
-    const publisher = createWorkflowClient({ backend: shared });
+    const parked = createWorkflowClient({ backend: sharedBackendView(shared) });
+    const publisher = createWorkflowClient({ backend: sharedBackendView(shared) });
     try {
       parked.register(eventWorkflow);
       const handle = await parked.start("event-workflow", {});
@@ -2486,7 +2517,14 @@ describe("WorkflowClient durable event waits", () => {
   });
 
   it("rejects event names that no public wait can consume", async () => {
-    for (const eventName of ["", " payment.confirmed ", "__delay__"]) {
+    for (
+      const eventName of [
+        "",
+        " payment.confirmed ",
+        "__delay__",
+        "x".repeat(MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS + 1),
+      ]
+    ) {
       await assertRejects(
         () => client.publishEvent("run_invalid_event_name", eventName, {}),
         Error,
@@ -2872,8 +2910,8 @@ describe("WorkflowClient durable event waits", () => {
       );
       assertEquals(
         countingBackend.deliveryClaimReads,
-        1,
-        "only the outer drain may scan abandoned claims while its in-process claim is live",
+        2,
+        "run control checks the live claim once and only the outer drain scans it for recovery",
       );
     } finally {
       await countingClient.destroy();
@@ -3503,7 +3541,7 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
-  it("bounds persistent delivery-finalization retries with exponential backoff", async () => {
+  it("continues low-frequency delivery finalization when sweeping is disabled", async () => {
     using time = new FakeTime();
     const failing = new AlwaysFailDeliveryFinalizationBackend();
     const failingClient = createWorkflowClient({
@@ -3522,23 +3560,21 @@ describe("WorkflowClient durable event waits", () => {
       await handle.settled();
 
       assertEquals(await failingClient.publishEvent(handle.runId, "gate.ready", {}), "delivered");
-      for (const retryDelay of [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000]) {
+      for (const retryDelay of [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000]) {
         await time.tickAsync(retryDelay);
       }
 
       assertEquals(
         failing.finalizationAttempts,
         8,
-        "a persistent backend failure must not keep a one-second retry loop alive forever",
+        "prompt retries must remain exponentially backed off",
       );
 
-      await failingClient.getEventWaitManager().checkExpiredEventWaits();
-      assertEquals(failing.finalizationAttempts, 9);
-      await time.tickAsync(1_000);
+      await time.tickAsync(60_000);
       assertEquals(
         failing.finalizationAttempts,
-        10,
-        "exhausting one retry series must not leak its counter or suppress a later recovery",
+        9,
+        "without a sweep, low-frequency retries must keep reconciling the durable claim",
       );
     } finally {
       await failingClient.destroy();
@@ -4314,6 +4350,29 @@ describe("WorkflowClient durable event waits", () => {
     );
   });
 
+  it("does not reactivate a failed run until its timeout claim is finalized", async () => {
+    const fenced = new RejectTimedFinalizationBackend();
+    const fencedClient = createWorkflowClient({ backend: fenced });
+    try {
+      fencedClient.register(workflow({
+        id: "retry-timeout-finalization-fence",
+        steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: 30 })],
+      }));
+      const handle = await fencedClient.start("retry-timeout-finalization-fence", {});
+      await handle.settled();
+      await waitFor(async () => (await fencedClient.getRun(handle.runId))?.status === "failed");
+
+      await assertRejects(
+        () => fencedClient.retry(handle.runId),
+        Error,
+        "timed claim finalization unavailable",
+      );
+      assertEquals((await fencedClient.getRun(handle.runId))?.status, "failed");
+    } finally {
+      await fencedClient.destroy();
+    }
+  });
+
   it("retains buffered mail while a failed run is retried", async () => {
     client.register(workflow({
       id: "retry-retains-buffered-mail",
@@ -4528,6 +4587,46 @@ describe("WorkflowClient durable event waits", () => {
         null,
         "the unconsumable envelope must be reclaimed rather than left buffered forever",
       );
+    } finally {
+      await racingClient.destroy();
+    }
+  });
+
+  it("rechecks a failed run after append before deferring delivery", async () => {
+    const racing = new ReactivateFailedDuringAppendBackend();
+    const racingClient = createWorkflowClient({ backend: racing });
+    try {
+      racingClient.register(workflow({
+        id: "failed-publish-reactivation",
+        steps: [waitForEvent("gate", { eventName: "gate.ready" })],
+      }));
+      const runId = "run-failed-publish-reactivation";
+      await racing.createRun({
+        id: runId,
+        workflowId: "failed-publish-reactivation",
+        status: "failed",
+        input: {},
+        nodeStates: { gate: { nodeId: "gate", status: "running", attempt: 1 } },
+        currentNodes: ["gate"],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        error: { message: "retryable" },
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await racing.savePendingEventWait(runId, {
+        id: "evw-reactivated",
+        runId,
+        nodeId: "gate",
+        eventName: "gate.ready",
+        waitKind: "event",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      racing.reactivateOnAppend = true;
+
+      assertEquals(await racingClient.publishEvent(runId, "gate.ready", {}), "delivered");
     } finally {
       await racingClient.destroy();
     }

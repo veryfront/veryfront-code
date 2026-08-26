@@ -211,6 +211,7 @@ export class MemoryBackend implements WorkflowBackend {
     // Completed and cancelled runs can never consume mail again. Failed runs
     // are retryable, so their buffered events must survive for the retried DAG.
     if (patch.status === "completed" || patch.status === "cancelled") {
+      if (patch.status === "completed") this.persistRunEventDeliveryReceipts(runId);
       this.runEvents.delete(runId);
       this.runEventClaims.delete(runId);
     }
@@ -285,6 +286,7 @@ export class MemoryBackend implements WorkflowBackend {
       this.stalledClaims.delete(runId);
     }
     if (snapshot.status === "completed" || snapshot.status === "cancelled") {
+      if (snapshot.status === "completed") this.persistRunEventDeliveryReceipts(runId);
       this.runEvents.delete(runId);
       this.runEventClaims.delete(runId);
     }
@@ -534,7 +536,8 @@ export class MemoryBackend implements WorkflowBackend {
     const approvals = this.approvals.get(runId) ?? [];
     if (
       approvals.some((candidate) =>
-        candidate.status === "pending" && candidate.nodeId === approval.nodeId
+        (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+        candidate.nodeId === approval.nodeId
       )
     ) {
       return Promise.resolve();
@@ -569,7 +572,8 @@ export class MemoryBackend implements WorkflowBackend {
     const approvals = this.approvals.get(runId) ?? [];
     if (
       approvals.some((candidate) =>
-        candidate.status === "pending" && candidate.nodeId === approval.nodeId
+        (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+        candidate.nodeId === approval.nodeId
       )
     ) {
       return Promise.resolve(false);
@@ -648,7 +652,29 @@ export class MemoryBackend implements WorkflowBackend {
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
     approval.comment = decision.comment;
+    approval.reconciliationPending = true;
     return Promise.resolve(true);
+  }
+
+  listApprovalDecisionClaims(
+    runId?: string,
+  ): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
+    const claims: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
+    for (const [claimRunId, approvals] of this.approvals) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const approval of approvals) {
+        if (approval.reconciliationPending === true) {
+          claims.push({ runId: claimRunId, approval: structuredClone(approval) });
+        }
+      }
+    }
+    return Promise.resolve(claims);
+  }
+
+  finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (approval) delete approval.reconciliationPending;
+    return Promise.resolve();
   }
 
   listPendingApprovals(filter?: {
@@ -694,7 +720,12 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug("Saving event wait", { waitId: wait.id, runId });
     const waits = this.eventWaits.get(runId) ?? [];
     if (
-      waits.some((candidate) => candidate.status === "pending" && candidate.nodeId === wait.nodeId)
+      waits.some((candidate) =>
+        (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
+          (candidate.claimedAt !== undefined &&
+            (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
+        candidate.nodeId === wait.nodeId
+      )
     ) {
       return Promise.resolve();
     }
@@ -722,7 +753,12 @@ export class MemoryBackend implements WorkflowBackend {
     }
     const waits = this.eventWaits.get(runId) ?? [];
     if (
-      waits.some((candidate) => candidate.status === "pending" && candidate.nodeId === wait.nodeId)
+      waits.some((candidate) =>
+        (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
+          (candidate.claimedAt !== undefined &&
+            (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
+        candidate.nodeId === wait.nodeId
+      )
     ) {
       return Promise.resolve(false);
     }
@@ -779,6 +815,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     wait.status = "pending";
     delete wait.claimedAt;
+    delete wait.claimedEventId;
     return Promise.resolve(true);
   }
 
@@ -893,6 +930,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!taken) return Promise.resolve(null);
     wait.status = "delivered";
     wait.claimedAt = new Date();
+    wait.claimedEventId = taken.id;
     const claims = this.runEventClaims.get(runId) ?? new Map<string, RunEventDeliveryClaim>();
     claims.set(taken.id, {
       wait: structuredClone(wait),
@@ -945,6 +983,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (restored) {
       wait.status = "pending";
       delete wait.claimedAt;
+      delete wait.claimedEventId;
     }
     // The event goes back even when the wait belongs to another actor now: it
     // held its mailbox place before the claim.
@@ -956,10 +995,37 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+    const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (claim) {
+      const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);
+      if (wait) {
+        delete wait.claimedAt;
+        delete wait.claimedEventId;
+        wait.deliveredEventId = eventId;
+      }
+    }
     this.releaseRunEventClaim(runId, eventId);
     const mailbox = this.runEvents.get(runId);
     if (mailbox) this.deleteEmptyRunEventMailbox(runId, mailbox);
     return Promise.resolve();
+  }
+
+  hasRunEventDeliveryReceipt(runId: string, eventId: string): Promise<boolean> {
+    return Promise.resolve(
+      this.eventWaits.get(runId)?.some((wait) => wait.deliveredEventId === eventId) ?? false,
+    );
+  }
+
+  private persistRunEventDeliveryReceipts(runId: string): void {
+    const waits = this.eventWaits.get(runId);
+    if (!waits) return;
+    for (const [eventId, claim] of this.runEventClaims.get(runId) ?? []) {
+      const wait = waits.find((candidate) => candidate.id === claim.wait.id);
+      if (!wait) continue;
+      delete wait.claimedAt;
+      delete wait.claimedEventId;
+      wait.deliveredEventId = eventId;
+    }
   }
 
   private releaseRunEventClaim(runId: string, eventId: string): void {

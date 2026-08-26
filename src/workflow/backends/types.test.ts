@@ -48,6 +48,7 @@ describe("hasEventWaitSupport", () => {
         "restoreRunEvent",
         "restoreRunEventDelivery",
         "finalizeRunEventDelivery",
+        "hasRunEventDeliveryReceipt",
       ] as const
     ) {
       const partial = new MemoryBackend() as unknown as Record<string, unknown>;
@@ -58,6 +59,16 @@ describe("hasEventWaitSupport", () => {
         `a backend without ${missing} cannot wake a parked run and must not claim support`,
       );
     }
+  });
+
+  it("requires atomic key-merge run patches", () => {
+    const replacementBackend = new MemoryBackend() as unknown as Record<string, unknown>;
+    replacementBackend["supportsRunPatchKeyMerge"] = false;
+    assertEquals(
+      hasEventWaitSupport(replacementBackend as unknown as WorkflowBackend),
+      false,
+      "replacement-map updates cannot safely merge concurrent durable event outcomes",
+    );
   });
 
   it("requires the worker-owned save when the backend supports execution ownership", () => {

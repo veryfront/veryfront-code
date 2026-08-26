@@ -156,12 +156,12 @@ end
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
-    local deleted = decodePatchJson(value)
+    local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
     redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
   elseif field == 'contextDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
-    local deleted = decodePatchJson(value)
+    local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
     redis.call('hset', KEYS[1], 'context', cjson.encode(current))
   elseif field == 'nodeStates' or field == 'context' then
@@ -225,12 +225,12 @@ end
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
-    local deleted = decodePatchJson(value)
+    local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
     redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
   elseif field == 'contextDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
-    local deleted = decodePatchJson(value)
+    local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
     redis.call('hset', KEYS[1], 'context', cjson.encode(current))
   elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
@@ -473,7 +473,7 @@ const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
     local raw = redis.call('lindex', key, i)
     if raw then
       local approval = cjson.decode(raw)
-      if approval.status ~= 'pending' then
+      if approval.status ~= 'pending' and approval.reconciliationPending ~= true then
         table.insert(decidedIndexes, i)
         if #decidedIndexes == evictionsRequired then break end
       end
@@ -605,7 +605,8 @@ local approval = cjson.decode(ARGV[1])
 local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
   local candidate = cjson.decode(existingApprovals[i])
-  if candidate.status == 'pending' and candidate.nodeId == approval.nodeId then
+  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
+      candidate.nodeId == approval.nodeId then
     return 3
   end
 end
@@ -685,7 +686,8 @@ local approval = cjson.decode(ARGV[expectedCount + 3])
 local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
   local candidate = cjson.decode(existingApprovals[i])
-  if candidate.status == 'pending' and candidate.nodeId == approval.nodeId then
+  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
+      candidate.nodeId == approval.nodeId then
     return 3
   end
 end
@@ -792,7 +794,25 @@ for i = 0, len - 1 do
       approval.status = ARGV[2]
       approval.decidedBy = ARGV[3]
       approval.decidedAt = ARGV[4]
+      approval.reconciliationPending = true
       if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
+      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Release one approval decision reservation after its node outcome commits. */
+const FINALIZE_APPROVAL_DECISION_SCRIPT = `-- finalize-approval-decision
+local approvalId = ARGV[1]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      approval.reconciliationPending = nil
       redis.call('lset', KEYS[1], i, cjson.encode(approval))
       return 1
     end
@@ -937,12 +957,12 @@ export class RedisBackend implements WorkflowBackend {
       fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
     }
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
-    if (patch.nodeStateDeletes !== undefined) {
+    if (patch.nodeStateDeletes !== undefined && patch.nodeStateDeletes.length > 0) {
       fields.nodeStateDeletes = JSON.stringify(patch.nodeStateDeletes);
     }
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (context !== undefined) fields.context = context;
-    if (patch.contextDeletes !== undefined) {
+    if (patch.contextDeletes !== undefined && patch.contextDeletes.length > 0) {
       fields.contextDeletes = JSON.stringify(patch.contextDeletes);
     }
     if (Object.hasOwn(patch, "error")) {
@@ -1582,6 +1602,39 @@ export class RedisBackend implements WorkflowBackend {
     }
     // 1 = applied; 2 = found but already decided (lost race).
     return code === 1;
+  }
+
+  async listApprovalDecisionClaims(
+    runId?: string,
+  ): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
+    const client = await this.ensureClient();
+    const result: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
+    if (runId !== undefined) {
+      for (const approval of await this.getApprovals(runId)) {
+        if (approval.reconciliationPending === true) result.push({ runId, approval });
+      }
+      return result;
+    }
+
+    const approvalsPrefix = `${this.storagePrefix()}approvals:`;
+    for (const key of await client.keys(`${approvalsPrefix}*`)) {
+      const claimRunId = key.replace(approvalsPrefix, "");
+      for (const approval of await this.getApprovals(claimRunId)) {
+        if (approval.reconciliationPending === true) {
+          result.push({ runId: claimRunId, approval });
+        }
+      }
+    }
+    return result;
+  }
+
+  async finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+    const client = await this.ensureClient();
+    await client.eval(
+      FINALIZE_APPROVAL_DECISION_SCRIPT,
+      [this.approvalsKey(runId)],
+      [approvalId],
+    );
   }
 
   async listPendingApprovals(filter?: {

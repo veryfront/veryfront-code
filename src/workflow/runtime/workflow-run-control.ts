@@ -478,6 +478,11 @@ function reconcileEventDelivery(
   backend: WorkflowBackend,
   operation: WorkflowRunControlEventDeliveryOperation,
 ): Promise<WorkflowRunControlReconcileOutcome> {
+  if (!hasRunPatchKeyMergeSupport(backend)) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Durable event delivery requires backend key-merge run patches",
+    });
+  }
   const deliveredAt = operation.deliveredAt ?? new Date();
   const outcome = operation.waitKind === "delay" ? { delayed: true } : {
     eventName: operation.eventName,
@@ -1100,11 +1105,25 @@ async function hasLiveNodeWait(
   runId: string,
   nodeId: string,
 ): Promise<boolean> {
-  const approvals = await backend.getPendingApprovals(runId);
-  if (approvals.some((approval) => approval.nodeId === nodeId)) return true;
-  if (!hasEventWaitSupport(backend)) return false;
-  const waits = await backend.getPendingEventWaits(runId);
-  return waits.some((wait) => wait.nodeId === nodeId);
+  try {
+    const approvals = await backend.getPendingApprovals(runId);
+    if (approvals.some((approval) => approval.nodeId === nodeId)) return true;
+    const approvalClaims = await backend.listApprovalDecisionClaims?.(runId) ?? [];
+    if (approvalClaims.some(({ approval }) => approval.nodeId === nodeId)) return true;
+    if (!hasEventWaitSupport(backend)) return false;
+    const waits = await backend.getPendingEventWaits(runId);
+    if (waits.some((wait) => wait.nodeId === nodeId)) return true;
+    const deliveryClaims = await backend.listRunEventDeliveryClaims(runId);
+    if (deliveryClaims.some((claim) => claim.wait.nodeId === nodeId)) return true;
+    const timedClaims = await backend.listTimedEventWaitClaims(runId);
+    return timedClaims.some((wait) => wait.nodeId === nodeId);
+  } catch (error) {
+    logger.warn(
+      "Could not read durable wait records; re-announcing the wait",
+      { runId, nodeId, error: ensureError(error).message },
+    );
+    return false;
+  }
 }
 
 async function pauseRun(

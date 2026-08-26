@@ -315,7 +315,8 @@ class MockRedisAdapter implements RedisAdapter {
       if (
         list.some((raw) => {
           const candidate = JSON.parse(raw);
-          return candidate.status === "pending" && candidate.nodeId === approval.nodeId;
+          return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+            candidate.nodeId === approval.nodeId;
         })
       ) return Promise.resolve(3);
       if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(2);
@@ -361,7 +362,8 @@ class MockRedisAdapter implements RedisAdapter {
       if (
         list.some((raw) => {
           const candidate = JSON.parse(raw);
-          return candidate.status === "pending" && candidate.nodeId === approval.nodeId;
+          return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+            candidate.nodeId === approval.nodeId;
         })
       ) return Promise.resolve(3);
       if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
@@ -412,8 +414,25 @@ class MockRedisAdapter implements RedisAdapter {
             approval.status = newStatus;
             approval.decidedBy = decidedBy;
             approval.decidedAt = decidedAt;
+            approval.reconciliationPending = true;
             if (hasComment) approval.comment = comment;
             else delete approval.comment;
+            list[i] = JSON.stringify(approval);
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("finalize-approval-decision")) {
+      const approvalId = args[0]!;
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            delete approval.reconciliationPending;
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -590,7 +609,7 @@ class MockRedisAdapter implements RedisAdapter {
     const decidedIndexes: number[] = [];
     for (let index = 0; index < list.length; index++) {
       const approval = JSON.parse(list[index]!);
-      if (approval.status !== "pending") {
+      if (approval.status !== "pending" && approval.reconciliationPending !== true) {
         decidedIndexes.push(index);
         if (decidedIndexes.length === evictionsRequired) break;
       }
@@ -1958,6 +1977,23 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("omits empty deletion patches and decodes non-empty deletion lists on Redis 7", async () => {
+      await backend.createRun(createTestRun("run-empty-deletes"));
+
+      await backend.updateRun("run-empty-deletes", {
+        nodeStateDeletes: [],
+        contextDeletes: [],
+      });
+
+      assertEquals(mockRedis.lastArgs.includes("nodeStateDeletes"), false);
+      assertEquals(mockRedis.lastArgs.includes("contextDeletes"), false);
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "local deleted = cjson.decode(value)",
+        "known string-list deletion fields must not require Redis 8.4 array metadata",
+      );
+    });
+
     it("replaces context and node states wholesale on a snapshot restore", async () => {
       const runId = "run-snapshot-restore";
       await backend.createRun(createTestRun(runId));
@@ -2656,6 +2692,16 @@ describe("RedisBackend", () => {
           runId,
           ["waiting"],
           "worker-a",
+          approval("retry-before-finalize"),
+        ),
+        false,
+      );
+      await backend.finalizeApprovalDecision(runId, "first");
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
           approval("retry"),
         ),
         true,
@@ -2671,6 +2717,7 @@ describe("RedisBackend", () => {
         approved: true,
         approver: "admin",
       });
+      await backend.finalizeApprovalDecision("run-ap-bounded", "ap-decided");
       for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
         await backend.savePendingApproval("run-ap-bounded", makeApproval(`ap-${index}`));
       }
@@ -2717,6 +2764,7 @@ describe("RedisBackend", () => {
         }),
         true,
       );
+      await backend.finalizeApprovalDecision("run-ap-expired", "ap-expired");
       await backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest"));
       assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), false);
       assertEquals(JSON.parse(stored.at(-1)!).id, "ap-newest");
@@ -2793,6 +2841,7 @@ describe("RedisBackend", () => {
         approved: false,
         approver: "admin",
       });
+      await backend.finalizeApprovalDecision("run-ap-owned-bounded", "owned-decided");
       for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
         assertEquals(await saveOwned(makeApproval(`owned-${index}`)), true);
       }
