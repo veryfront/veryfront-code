@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createDenoServer,
@@ -273,6 +278,65 @@ describe("Deno HTTP server lifecycle", () => {
     // The original is preserved rather than swallowed: an operator still needs
     // the OS-level signature to correlate with the platform's own logs.
     assertStrictEquals(error.cause, addrInUse);
+    // The canonical phrase is a contract, not decoration. `isPortInUseError` in
+    // cli/commands/dev/port-fallback.ts classifies a taken port by matching it,
+    // and server-start-failure.integration.test.ts asserts the surfaced message
+    // still says the port is in use. Dropping it disabled the dev server's port
+    // fallback silently -- nothing threw, the retry just stopped happening.
+    // Asserted here rather than by importing the CLI, which this layer must not
+    // depend on.
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
+  });
+
+  it("reports the port alone when the bind host could be private", async () => {
+    // A deployment can bind through an internal DNS name, and AGENTS.md:124
+    // lists private hostnames among the values that must never reach an error
+    // message -- this one is logged and reaches Sentry. The port is the
+    // actionable half and is still named.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "registry.internal", port: 4321 },
+        ),
+      Error,
+      "4321",
+    ) as Error;
+
+    assertEquals(error.message.includes("registry.internal"), false);
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
+  });
+
+  it("brackets an IPv6 bind host so the port stays readable", async () => {
+    // `::1` and `4321` joined by a colon reads as another segment of the
+    // address rather than as a port.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "::1", port: 4321 },
+        ),
+      Error,
+      "[::1]:4321",
+    ) as Error;
+
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
   });
 
   it("rethrows a non-bind serve failure untouched", async () => {

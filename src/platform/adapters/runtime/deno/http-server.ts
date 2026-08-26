@@ -33,6 +33,26 @@ function isAddressBindFailure(error: unknown): boolean {
   return code === "EADDRINUSE" || code === "EADDRNOTAVAIL";
 }
 
+/**
+ * The bind host rendered for an error message, or `undefined` to omit it.
+ *
+ * A deployment can bind through an internal DNS name, and AGENTS.md:124 lists
+ * private hostnames among the values that must never reach an error message --
+ * this one is logged and reaches Sentry. Only loopback and wildcard literals are
+ * named; anything else could be infrastructure, so the caller reports the port
+ * alone, which is the actionable half either way.
+ *
+ * An IPv6 literal is bracketed, because `::1` and `4321` joined by a colon reads
+ * as another segment of the address rather than as a port.
+ */
+function describeBindHost(hostname: string): string | undefined {
+  const host = hostname.toLowerCase();
+  const isLoopbackOrWildcard = host === "localhost" || host === "::1" ||
+    host === "::" || host === "0.0.0.0" || host.startsWith("127.");
+  if (!isLoopbackOrWildcard) return undefined;
+  return host.includes(":") ? `[${hostname}]` : hostname;
+}
+
 export interface DenoNativeHttpServer {
   readonly addr: unknown;
   readonly finished: Promise<void>;
@@ -222,9 +242,25 @@ export async function createDenoServerWithRuntime(
     // an unrelated startup fault as an address collision, which is worse than
     // the raw error it replaces, so anything else is rethrown untouched.
     if (!isAddressBindFailure(error)) throw error;
+    // The canonical phrase is kept at the front of the message on purpose. The
+    // CLI classifies a taken port by matching it (`isPortInUseError`,
+    // cli/commands/dev/port-fallback.ts), and dropping it silently disabled the
+    // dev server's port fallback and broke
+    // server-start-failure.integration.test.ts, which asserts the surfaced
+    // message still says the port is in use. Naming the port is the point of
+    // this change; keeping the phrase is what lets it be added without
+    // rewriting a contract other code already depends on.
+    const safeHost = describeBindHost(hostname);
     throw INITIALIZATION_ERROR.create({
-      detail: `Deno.serve() could not bind ${hostname}:${port}`,
-      context: { platform: "deno", operation: "serve", hostname, port },
+      detail: safeHost === undefined
+        ? `Address already in use: port ${port}`
+        : `Address already in use: ${safeHost}:${port}`,
+      context: {
+        platform: "deno",
+        operation: "serve",
+        port,
+        ...(safeHost === undefined ? {} : { hostname: safeHost }),
+      },
       cause: error,
     });
   }
