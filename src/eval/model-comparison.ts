@@ -15,6 +15,7 @@ import {
   isEvalRecord,
   normalizeEvalString,
 } from "./validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const DEFAULT_MIN_GROUNDEDNESS = 0.8;
 const DEFAULT_MIN_EFFICIENCY_IMPROVEMENT = 0.1;
@@ -63,7 +64,9 @@ function reportModel(report: EvalReport): string {
 }
 
 function failedExampleIds(report: EvalReport): string[] {
-  return (report.summary.failedExamples ?? []).map((example) => example.exampleId).sort();
+  return (report.summary.failedExamples ?? []).map((example) => example.exampleId).sort(
+    compareStrings,
+  );
 }
 
 function allMetricResults(report: EvalReport): EvalMetricResult[] {
@@ -768,7 +771,7 @@ export function compareEvalModelReports(
   const duplicates = [...reportsByModel.entries()]
     .filter(([, matches]) => matches.length > 1)
     .map(([model]) => model)
-    .sort();
+    .sort(compareStrings);
   if (duplicates.length > 0) {
     throw INVALID_ARGUMENT.create({
       detail: `Duplicate eval model report(s): ${duplicates.join(", ")}`,

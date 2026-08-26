@@ -3,6 +3,10 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateCsrf } from "#veryfront/security/csrf/helpers.ts";
 import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
+import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
+import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
+import { applySecurityHeaders } from "#veryfront/server/handlers/request/api/security-headers.ts";
+import type { HandlerContext } from "#veryfront/types";
 
 function withDocument<T>(value: Document, run: () => T): T {
   const original = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -71,6 +75,30 @@ describe("security/csrf/browser-mutation-headers", () => {
     );
   });
 
+  it("round-trips the HTTP-compatible default on a LAN development origin", () => {
+    const headers = withDocument(
+      {
+        baseURI: "http://192.168.1.20:3000/cases",
+        cookie: "vf_csrf=lan-token",
+        location: { origin: "http://192.168.1.20:3000" },
+      } as Document,
+      () => csrfMutationHeaders("/api/cases"),
+    );
+    headers.set("cookie", "vf_csrf=lan-token");
+
+    assertEquals(headers.get("x-csrf-token"), "lan-token");
+    assertEquals(
+      validateCsrf(
+        new Request("http://192.168.1.20:3000/api/cases", {
+          method: "POST",
+          headers,
+        }),
+        { cookieName: "vf_csrf" },
+      ),
+      true,
+    );
+  });
+
   it("rejects invalid configured names instead of silently diverging from the server", () => {
     assertThrows(
       () => csrfMutationHeaders("/api/cases", { cookieName: "bad\r\nname" }),
@@ -79,6 +107,73 @@ describe("security/csrf/browser-mutation-headers", () => {
     assertThrows(
       () => csrfMutationHeaders("/api/cases", { headerName: "" }),
       TypeError,
+    );
+  });
+  it("completes the development round trip the deployed build then repeats", async () => {
+    // Local development now resolves `security.csrf` exactly as production
+    // does, so the contract has to be satisfiable locally end to end: the
+    // page response issues the token cookie, the browser helper echoes it, and
+    // the same gate that rejects a bare mutation accepts this one.
+    const localSecurity = deriveSecurityContext(
+      { security: {} },
+      { productionDefaults: false },
+    ).securityConfig;
+    const ctx = {
+      projectDir: "/tmp/local-project",
+      adapter: { env: { get: () => undefined } },
+      isLocalProject: true,
+      securityConfig: localSecurity,
+    } as unknown as HandlerContext;
+
+    const pageHeaders = new Headers();
+    applySecurityHeaders(
+      pageHeaders,
+      ctx,
+      new Request("http://localhost:3000/cases", { headers: { accept: "text/html" } }),
+    );
+    const setCookie = pageHeaders.get("set-cookie") ?? "";
+    const token = /__Host-vf_csrf=([^;]+)/.exec(setCookie)?.[1] ?? "";
+
+    assertEquals(
+      token.length > 0,
+      true,
+      "a local HTML page must ship the token the gate below then demands",
+    );
+
+    const handler = new CsrfHandler();
+    const bare = await handler.handle(
+      new Request("http://localhost:3000/api/cases", { method: "POST" }),
+      ctx,
+    );
+
+    assertEquals(
+      bare.response?.status,
+      403,
+      "a hand-rolled local mutation must fail before deploy, not after it",
+    );
+
+    const headers = withDocument(
+      {
+        baseURI: "http://localhost:3000/cases",
+        cookie: `__Host-vf_csrf=${token}`,
+        location: { origin: "http://localhost:3000" },
+      } as Document,
+      () =>
+        csrfMutationHeaders("/api/cases", {
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    headers.set("cookie", `__Host-vf_csrf=${token}`);
+
+    const accepted = await handler.handle(
+      new Request("http://localhost:3000/api/cases", { method: "POST", headers }),
+      ctx,
+    );
+
+    assertEquals(
+      accepted.continue,
+      true,
+      "the documented helper must produce a request local development accepts",
     );
   });
 });

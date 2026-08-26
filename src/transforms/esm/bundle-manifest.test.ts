@@ -138,6 +138,19 @@ describe("Bundle Manifest", () => {
 
       assertEquals(manifest.bundles, [second, first]);
     });
+
+    it("orders persisted entries by code unit instead of ambient locale behavior", async () => {
+      const first = { hash: "aaaaaa", url: "https://esm.sh/lower@1", sizeBytes: 20 };
+      const second = { hash: "AAAAAA", url: "https://esm.sh/upper@1", sizeBytes: 10 };
+
+      const manifest = await createBundleManifest([first, second]);
+
+      assertEquals(
+        manifest.bundles.map((bundle) => bundle.hash),
+        ["AAAAAA", "aaaaaa"],
+        "manifest bundle order must use code-unit ordering for valid hash strings",
+      );
+    });
   });
 
   describe("parseBundleManifest", () => {

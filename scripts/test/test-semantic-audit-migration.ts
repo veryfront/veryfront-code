@@ -1172,15 +1172,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4e",
       },
     ),
-    entry("extensions/ext-document-kreuzberg/src/index.test.ts", ["process"], {
-      "disposition": "integration-relocation",
-      "owner": "extensions-templates",
-      "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
-      "destination":
-        "tests/integration/semantic-unit-boundary/extensions/ext-document-kreuzberg/src/index.test.ts",
-      "removalPr": "PR 4e",
-    }),
     entry("extensions/ext-eval-report-mlflow/src/index.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "extensions-templates",

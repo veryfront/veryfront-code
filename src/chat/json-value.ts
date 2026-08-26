@@ -7,6 +7,7 @@
  * cyclic, or excessively large values from crashing message preparation.
  */
 
+import { compareStrings } from "#veryfront/utils/compare.ts";
 const DEFAULT_MAX_DEPTH = 64;
 const DEFAULT_MAX_NODES = 65_536;
 const DEFAULT_MAX_STRING_CHARS = 8 * 1024 * 1024;
@@ -171,7 +172,7 @@ function convertObject(
     keys = Reflect.ownKeys(value)
       .filter((key): key is string => typeof key === "string")
       .filter((key) => readDescriptor(value, key)?.enumerable === true)
-      .sort();
+      .sort(compareStrings);
   } catch {
     return UNREADABLE_MARKER;
   }

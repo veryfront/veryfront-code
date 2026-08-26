@@ -33,6 +33,7 @@ import type {
   CSSProcessingResult,
 } from "../types/index.ts";
 import { extractSelectors, globFiles } from "../utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export interface PurgeContentSource {
   path: string;
@@ -105,7 +106,7 @@ function validateSelectorEvidence(selectors: Set<string>): string[] {
     }
     tokens.push(token);
   }]);
-  return tokens.sort();
+  return tokens.sort(compareStrings);
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -397,7 +398,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
 
     let totalBytes = 0;
     const sources: PurgeContentSource[] = [];
-    for (const path of [...files].sort()) {
+    for (const path of [...files].sort(compareStrings)) {
       const info = this.fs.lstat ? await this.fs.lstat(path) : await this.fs.stat(path);
       if (
         !info.isFile ||

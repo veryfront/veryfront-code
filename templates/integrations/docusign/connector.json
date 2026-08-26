@@ -9,8 +9,12 @@
     "provider": "docusign",
     "authorizationUrl": "https://account.docusign.com/oauth/auth",
     "tokenUrl": "https://account.docusign.com/oauth/token",
-    "scopes": ["signature"],
-    "optionalScopes": ["extended"],
+    "scopes": [
+      "signature"
+    ],
+    "optionalScopes": [
+      "extended"
+    ],
     "callbackPath": "/oauth/callback/docusign",
     "tokenAuthMethod": "basic",
     "supportsRefreshToken": true,
@@ -42,7 +46,7 @@
     {
       "id": "docusign__get_user_info",
       "name": "Get User Info",
-      "description": "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountServer (base_uri host) and accountId values every other tool needs",
+      "description": "Get the connected user's accounts from the OAuth userinfo endpoint - the source of the accountId and base_uri (accountHostPrefix) values every other tool needs",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -56,12 +60,12 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -110,12 +114,12 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -145,12 +149,12 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/recipients",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/recipients",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -180,12 +184,12 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -230,12 +234,12 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -267,12 +271,12 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/templates",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/templates",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -315,12 +319,12 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{accountServer}/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/documents/combined",
+        "url": "https://{accountHostPrefix}.docusign.net/restapi/v2.1/accounts/{accountId}/envelopes/{envelopeId}/documents/combined",
         "params": {
-          "accountServer": {
+          "accountHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Account base host from the base_uri returned by /oauth/userinfo, e.g. na3.docusign.net (production) or demo.docusign.net (developer)",
+            "description": "DocuSign account host prefix: the base_uri host from /oauth/userinfo without the .docusign.net suffix, e.g. na3 (production) or demo (developer). Use the prefix from the same userinfo entry as accountId so each account is routed to its own host.",
             "required": true
           },
           "accountId": {
@@ -367,7 +371,11 @@
       "icon": "users"
     }
   ],
-  "suggestedWith": ["gmail", "slack", "drive"],
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "drive"
+  ],
   "SETUP_GUIDE": {
     "title": "DocuSign setup",
     "steps": [
@@ -384,12 +392,12 @@
       {
         "step": 3,
         "title": "Find your account server and account ID",
-        "description": "After connecting, call GET https://account.docusign.com/oauth/userinfo (or account-d.docusign.com for developer accounts) with your access token. The response lists your accounts, each with an account_id (GUID) and a base_uri such as https://na3.docusign.net. Use the base_uri host as the accountServer parameter (e.g. na3.docusign.net, or demo.docusign.net for developer accounts) and account_id as accountId. Admins can also see the API Account ID under Settings, then Apps and Keys."
+        "description": "After connecting, call GET https://account.docusign.com/oauth/userinfo (or account-d.docusign.com for developer accounts) with your access token. The response lists your accounts, each with an account_id (GUID) and a base_uri such as https://na3.docusign.net. On each tool call, pass account_id as accountId and the base_uri host without .docusign.net as accountHostPrefix (e.g. na3, or demo for developer accounts). Keep both values from the same account entry so each account reaches its own host. Admins can also see the API Account ID under Settings, then Apps and Keys."
       },
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the List Envelopes tool with your accountServer, accountId, and a from_date such as the first day of last month."
+        "description": "Run the List Envelopes tool with your accountHostPrefix, accountId, and a from_date such as the first day of last month."
       },
       {
         "step": 5,
@@ -398,7 +406,8 @@
       }
     ],
     "notes": [
-      "The eSignature REST base URL is account-specific: https://{base_uri host}/restapi/v2.1/accounts/{accountId}/... - both values come from /oauth/userinfo",
+      "The eSignature REST base URL is account-specific: https://<accountHostPrefix>.docusign.net/restapi/v2.1/accounts/<accountId>/... - both values come from the same /oauth/userinfo account entry, and tools accept only the host prefix so credentials stay pinned to docusign.net",
+      "Migrating from earlier versions: the accountServer parameter and the interim DOCUSIGN_ACCOUNT_HOST environment variable are gone. Pass the base_uri host without .docusign.net as the accountHostPrefix parameter on each call.",
       "The signature scope covers sending and tracking envelopes; the optional extended scope lets refresh tokens be renewed beyond 30 days",
       "List Envelopes requires from_date (or specific envelope IDs); Download Envelope Documents returns raw PDF bytes"
     ],

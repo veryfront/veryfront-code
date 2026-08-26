@@ -1,6 +1,7 @@
 import type { ChunkSuggestion, PageImports } from "./contracts.ts";
 import { CHUNK_SIZE_ESTIMATES } from "./limits.ts";
 import { hasScheme, readScheme } from "./specifier.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const CHUNKABLE_SCHEMES = new Set(["http", "https", "jsr", "npm"]);
 
@@ -30,7 +31,7 @@ function findPagesUsingDeps(
   for (const dependency of dependencies) {
     for (const page of dependencyPages.get(dependency) ?? []) pages.add(page);
   }
-  return [...pages].sort();
+  return [...pages].sort(compareStrings);
 }
 
 function isVersionedPackageSegment(segment: string, name: string): boolean {
