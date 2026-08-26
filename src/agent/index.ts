@@ -485,6 +485,11 @@ export {
   resolveNodeHostedAgentServiceTelemetryConfig,
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 } from "./service/node-telemetry.ts";
+// The runtime-infrastructure factories stay internal: their
+// initializeApplicationErrors() publishes an env-selected reporter into the
+// process-wide application-error singleton, so exporting them would let
+// tenant code redirect framework error payloads. Framework runtimes reach
+// them through relative imports inside src/agent.
 export {
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
   type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,

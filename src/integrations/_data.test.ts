@@ -10,6 +10,8 @@ import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors, icons } from "./_data.ts";
 import { historicalToolSummaries } from "./_tool_summaries.ts";
 import { filterVisibleIntegrations } from "./feature-flags.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
@@ -393,16 +395,13 @@ describe("integration endpoint specs", () => {
       ],
     );
 
-    const servicenowQuery = getTool("servicenow", "query_table");
-    assertEquals(servicenowQuery.requiresWrite, false);
-    assertEquals(
-      servicenowQuery.endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/{tableName}",
-    );
-    assertEquals(
-      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
-      "passthrough",
-    );
+    const servicenow = getConnector("servicenow");
+    const servicenowToolIds = getLocalToolIds("servicenow", servicenow.tools);
+    assertEquals(servicenowToolIds.includes("query_table"), false);
+    assertEquals(servicenowToolIds.includes("create_table_record"), false);
+    assertEquals(servicenowToolIds.includes("update_table_record"), false);
+    assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_incident").endpoint?.method, "PATCH");
   });
 
   it("declares the Salesforce baseline tools", () => {
@@ -695,7 +694,7 @@ describe("integration endpoint specs", () => {
     assertEquals(tool.endpoint?.method, "POST");
     assertEquals(
       tool.endpoint?.url,
-      "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+      "https://{{env.SAP_HOST}}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
     );
     assertEquals(tool.endpoint?.params?.SupplierInvoice?.in, "query");
     assertEquals(tool.endpoint?.params?.SupplierInvoice?.required, true);
@@ -779,7 +778,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 63],
+      ["outlook", 60],
       ["teams", 7],
     ]);
 
@@ -1364,6 +1363,209 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("does not accept credentialed integration hosts as tool input", () => {
+    // Catalog-wide credential-forwarding invariant: an endpoint URL authority
+    // must be fixed, derived from configured environment variables via
+    // {{env.VAR}} placeholders, or pinned to a provider-validated OAuth origin
+    // ({{oauth.raw.*}}). Tool input may at most select tenant subdomains ahead
+    // of a fixed registrable domain; a placeholder that controls the
+    // registrable domain would let a caller forward the connector's
+    // credentials to an arbitrary host.
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const endpoint = tool.endpoint;
+        if (!endpoint) continue;
+        const label = `${connector.name}:${tool.id ?? tool.name}`;
+        const url = endpoint.url;
+        if (/^{{oauth\.raw\.[A-Za-z0-9_.-]+}}\//.test(url)) continue;
+        assert(
+          url.startsWith("https://"),
+          `${label} must use an HTTPS endpoint URL`,
+        );
+        const authority = url.slice("https://".length).split("/")[0]!;
+        assert(
+          !authority.includes("@"),
+          `${label} must not embed credentials in its URL authority`,
+        );
+        const withoutEnvTemplates = authority.replace(
+          /{{env\.([A-Za-z0-9_]+)}}/g,
+          (_match, envVarName: string) => {
+            assertExists(
+              connector.envVars?.find((envVar) => envVar.name === envVarName),
+              `${label} must declare the ${envVarName} environment variable its URL authority uses`,
+            );
+            return "env-derived-host";
+          },
+        );
+        assert(
+          !withoutEnvTemplates.includes("{{"),
+          `${label} uses an unsupported template in its URL authority`,
+        );
+        const host = withoutEnvTemplates.replace(/:\d+$/, "");
+        if (!host.includes("{")) continue;
+        // Tool input may only pick tenant subdomains: placeholders must be
+        // whole leading labels, and the final two labels (the registrable
+        // domain) must be literal.
+        const hostLabels = host.split(".");
+        assert(
+          hostLabels.length >= 3,
+          `${label} must not put tool input in control of its registrable domain (${authority})`,
+        );
+        for (const domainLabel of hostLabels.slice(-2)) {
+          assert(
+            /^[A-Za-z0-9-]+$/.test(domainLabel),
+            `${label} must not put tool input in control of its registrable domain (${authority})`,
+          );
+        }
+        for (const subdomainLabel of hostLabels.slice(0, -2)) {
+          assert(
+            /^(?:{[A-Za-z0-9_]+}|[A-Za-z0-9-]+)$/.test(subdomainLabel),
+            `${label} must keep tool-input placeholders confined to whole subdomain labels (${authority})`,
+          );
+        }
+      }
+    }
+  });
+
+  it("masks configured hosts that may name self-hosted infrastructure", () => {
+    for (
+      const [connectorName, variableName] of [
+        ["adyen", "ADYEN_CHECKOUT_HOST"],
+        ["langfuse", "LANGFUSE_HOST"],
+        ["posthog", "POSTHOG_HOST"],
+        ["sap", "SAP_HOST"],
+        ["servicenow", "SERVICENOW_INSTANCE"],
+      ] as const
+    ) {
+      const envVar = getConnector(connectorName).envVars?.find(
+        (candidate) => candidate.name === variableName,
+      );
+      assertEquals(envVar?.sensitive, true, `${variableName} must be masked in CLI output`);
+    }
+  });
+
+  it("shows the QuickBooks sandbox host in scaffolded setup guidance", async () => {
+    const setupMarkdown = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url)),
+    );
+    const setupHelpers = await readTextFile(
+      fromFileUrl(
+        new URL(
+          "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
+          import.meta.url,
+        ),
+      ),
+    );
+
+    for (const setupSurface of [setupMarkdown, setupHelpers]) {
+      assertEquals(setupSurface.includes("QUICKBOOKS_API_HOST"), true);
+      const configuredHosts = new Set(
+        [...setupSurface.matchAll(/QUICKBOOKS_API_HOST=([A-Za-z0-9.-]+)/g)].map(
+          (match) => match[1],
+        ),
+      );
+      assertEquals(configuredHosts.has("sandbox-quickbooks.api.intuit.com"), true);
+    }
+  });
+
+  it("shows regional Mixpanel hosts in scaffolded setup guidance", async () => {
+    const setupMarkdown = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url)),
+    );
+    const setupHelpers = await readTextFile(
+      fromFileUrl(
+        new URL(
+          "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
+          import.meta.url,
+        ),
+      ),
+    );
+
+    for (const setupSurface of [setupMarkdown, setupHelpers]) {
+      assertStringIncludes(setupSurface, "MIXPANEL_HOST");
+      assertStringIncludes(setupSurface, "MIXPANEL_EXPORT_HOST");
+    }
+    assertStringIncludes(setupMarkdown, "eu.mixpanel.com");
+    assertStringIncludes(setupMarkdown, "data-eu.mixpanel.com");
+  });
+
+  it("requires HTTPS termination for self-hosted Metabase and Qdrant", async () => {
+    const metabaseGuide = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/metabase/connector.json", import.meta.url)),
+    );
+    const qdrantGuide = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/qdrant/connector.json", import.meta.url)),
+    );
+
+    assertStringIncludes(metabaseGuide, "HTTPS reverse proxy");
+    assertStringIncludes(qdrantGuide, "native TLS or an HTTPS reverse proxy");
+  });
+
+  it("routes Pinecone data-plane tools through per-call hosts pinned to pinecone.io", () => {
+    for (
+      const [toolId, path] of [
+        ["query_vectors", "/query"],
+        ["upsert_vectors", "/vectors/upsert"],
+      ] as const
+    ) {
+      const tool = getTool("pinecone", toolId);
+      assertEquals(
+        tool.endpoint?.url,
+        `https://{indexHostPrefix}.pinecone.io${path}`,
+      );
+      assertEquals(tool.endpoint?.params?.indexHostPrefix?.in, "path");
+      assertEquals(tool.endpoint?.params?.indexHostPrefix?.required, true);
+    }
+
+    // Per-index routing works per call; the interim single-index environment
+    // variable is gone.
+    const pinecone = getConnector("pinecone");
+    assertEquals(
+      pinecone.envVars?.some((envVar) => envVar.name === "PINECONE_INDEX_HOST"),
+      false,
+    );
+  });
+
+  it("routes Algolia writes to the indexing host and reads to the DSN host", () => {
+    // Algolia reserves <appId>-dsn.algolia.net for distributed read traffic;
+    // indexing operations must target <appId>.algolia.net.
+    assertEquals(
+      getTool("algolia", "save_objects").endpoint?.url,
+      "https://{{env.ALGOLIA_APP_ID}}.algolia.net/1/indexes/{indexName}/batch",
+    );
+    for (const toolId of ["list_indices", "search_index", "browse_index", "get_object"]) {
+      const url = getTool("algolia", toolId).endpoint?.url ?? "";
+      assert(
+        url.startsWith("https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/"),
+        `Expected algolia:${toolId} to read from the DSN host, got ${url}`,
+      );
+    }
+  });
+
+  it("routes DocuSign account tools through per-call hosts pinned to docusign.net", () => {
+    // /oauth/userinfo pairs each account with its own base_uri, so account
+    // routing must stay per call instead of collapsing onto one configured
+    // host.
+    const docusign = getConnector("docusign");
+    assertEquals(
+      docusign.envVars?.some((envVar) => envVar.name === "DOCUSIGN_ACCOUNT_HOST"),
+      false,
+    );
+    for (const tool of docusign.tools) {
+      if (!tool.endpoint) continue;
+      if (tool.id === "docusign__get_user_info") {
+        assertEquals(tool.endpoint.url, "https://account.docusign.com/oauth/userinfo");
+        continue;
+      }
+      assert(
+        tool.endpoint.url.startsWith("https://{accountHostPrefix}.docusign.net/restapi/v2.1/"),
+        `Expected ${tool.id} to route via accountHostPrefix, got ${tool.endpoint.url}`,
+      );
+      assertEquals(tool.endpoint.params?.accountHostPrefix?.in, "path");
+      assertEquals(tool.endpoint.params?.accountHostPrefix?.required, true);
+    }
+  });
+
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
     const airtable = getConnector("airtable");
     const toolIds = getLocalToolIds("airtable", airtable.tools);
@@ -1815,8 +2017,6 @@ describe("integration endpoint specs", () => {
       "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
-      "Group.Read.All",
-      "Group-Conversation.Read.All",
       "offline_access",
     ]);
 
@@ -1862,9 +2062,6 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
-      "find_group_by_mail",
-      "list_group_threads",
-      "list_group_thread_posts",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -1945,16 +2142,10 @@ describe("integration endpoint specs", () => {
       "microsoft-graph-search",
     );
     assertEquals(
-      getTool("outlook", "find_group_by_mail").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_threads").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_thread_posts").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
+      connectors.find((connector) => connector.name === "outlook")?.tools.some(
+        (tool) => tool.id === "outlook__find_group_by_mail",
+      ),
+      false,
     );
     assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
       "@odata.type": {
@@ -2027,18 +2218,18 @@ describe("integration endpoint specs", () => {
     assertEquals(getTool("servicenow", "update_incident").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_interactions").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/interaction",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
     );
     assertEquals(getTool("servicenow", "create_interaction").requiresWrite, true);
     assertEquals(getTool("servicenow", "update_interaction").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_requests").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_request",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request",
     );
     assertEquals(getTool("servicenow", "create_request").requiresWrite, true);
     assertEquals(
       getTool("servicenow", "list_request_items").endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/sc_req_item",
+      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
     );
     assertEquals(getTool("servicenow", "create_request_item").requiresWrite, true);
   });

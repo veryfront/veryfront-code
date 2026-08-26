@@ -8,6 +8,7 @@
  */
 
 import type { IntegrationName } from "./schema.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const apply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -67,8 +68,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
-  const actualKeys = Object.keys(value).sort();
-  const sortedExpectedKeys = [...expectedKeys].sort();
+  const actualKeys = Object.keys(value).sort(compareStrings);
+  const sortedExpectedKeys = [...expectedKeys].sort(compareStrings);
   return actualKeys.length === sortedExpectedKeys.length &&
     actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
 }
@@ -119,12 +120,12 @@ function canonicalizeSourceIntegrationPolicyManifest(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (const integration of Object.keys(manifest.integrations).sort()) {
+  for (const integration of Object.keys(manifest.integrations).sort(compareStrings)) {
     const restriction = manifest.integrations[integration];
     if (!restriction) continue;
     const allowedToolIds = restriction.allowedToolIds === null
       ? null
-      : Object.freeze([...restriction.allowedToolIds].sort());
+      : Object.freeze([...restriction.allowedToolIds].sort(compareStrings));
     integrations[integration] = Object.freeze({ allowedToolIds });
   }
 
@@ -156,7 +157,7 @@ export function resolveSourceIntegrationPolicyManifest(
 }
 
 function uniqueSorted(values: readonly string[]): string[] {
-  return [...new Set(values)].sort();
+  return [...new Set(values)].sort(compareStrings);
 }
 
 /** Build a deterministic manifest from validated `veryfront.config.ts` input. */
@@ -212,7 +213,7 @@ export function intersectSourceIntegrationPolicies(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (const integration of Object.keys(left.integrations).sort()) {
+  for (const integration of Object.keys(left.integrations).sort(compareStrings)) {
     const leftRestriction = left.integrations[integration];
     const rightRestriction = right.integrations[integration];
     if (!leftRestriction || !rightRestriction) continue;

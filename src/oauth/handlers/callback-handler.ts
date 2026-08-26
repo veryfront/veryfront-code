@@ -327,12 +327,24 @@ function createOAuthCallbackRuntime(
         );
       }
 
+      const { scopeSource: _providerScopeSource, ...exchangedTokens } = result.tokens;
       const tokens = {
-        ...result.tokens,
+        ...exchangedTokens,
         ...(result.tokens.scope === undefined && storedState.scopes.length > 0
           ? { scope: storedState.scopes.join(" ") }
           : {}),
+        ...(storedState.scopeSource === undefined ? {} : { scopeSource: storedState.scopeSource }),
+        ...(storedState.scopeSource === "explicit"
+          ? { requestedScope: storedState.scopes.join(" ") }
+          : {}),
       };
+      if (service.isSupersededGrant(tokens)) {
+        return handleError(
+          "scope_mismatch",
+          serviceId,
+          "OAuth provider returned a permission that was not requested",
+        );
+      }
       await tokenStore.setTokens(serviceId, storedState.userId, { ...tokens });
 
       if (onSuccess) {

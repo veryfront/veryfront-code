@@ -26,9 +26,9 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name        | Description | Source                                                                                    |
 | ----------- | ----------- | ----------------------------------------------------------------------------------------- |
-| `counter`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L450) |
-| `gauge`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L478) |
-| `histogram` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L464) |
+| `counter`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L501) |
+| `gauge`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L529) |
+| `histogram` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L515) |
 
 ### Types
 
@@ -42,4 +42,4 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 | Name      | Description | Source                                                                                    |
 | --------- | ----------- | ----------------------------------------------------------------------------------------- |
-| `metrics` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L498) |
+| `metrics` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L549) |

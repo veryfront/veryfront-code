@@ -111,4 +111,9 @@ describe("veryfront/observability public export surface", () => {
       assertEquals(processGlobal in observability, false);
     }
   });
+
+  it("does not expose process-wide error-reporter mutators", () => {
+    assertEquals("initializeApplicationErrorReporter" in observability, false);
+    assertEquals("setApplicationErrorReporter" in observability, false);
+  });
 });

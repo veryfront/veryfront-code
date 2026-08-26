@@ -4,7 +4,7 @@ description: "Run Veryfront agents as separately deployed services."
 order: 19
 ---
 
-An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, or remote MCP tools. Use a normal in-app route for everything else.
+An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or deployment-owned service telemetry. Use a normal in-app route for everything else.
 
 Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
@@ -39,9 +39,16 @@ await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService();
 ```
 
-The public starter does not initialize process-wide Sentry or OpenTelemetry
-exporters. Compose service telemetry in the trusted process bootstrap before
-loading project code.
+`startNodeVeryfrontCloudAgentService()` starts the runtime from the environment
+that is already loaded. It does not load local `.env` files or initialize
+process-wide telemetry. Call `loadAgentServiceEnvFiles()` first when the
+standalone process uses Veryfront's `.env` conventions, as shown above.
+
+Initialize service-level OpenTelemetry in the trusted deployment wrapper before
+it loads `service.ts`. Do not let project code select process-wide exporters,
+trace hooks, or application-error reporters. The framework-owned
+`veryfront serve` runtime owns this setup on shared and managed dedicated
+servers.
 
 The service discovers the same project primitives as the app runtime:
 
@@ -208,13 +215,14 @@ immutable endpoints and preserve the guarded source for everything else:
 import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
+await loadAgentServiceEnvFiles();
+
 function requiredUrl(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 }
 
-await loadAgentServiceEnvFiles();
 const hostFetch = globalThis.fetch.bind(globalThis);
 const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
   trustedEndpoints: [
@@ -269,6 +277,7 @@ custom execution preparation, or custom infrastructure.
 
 | Helper                                             | Use                                                                                  |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `loadAgentServiceEnvFiles()`                       | Load standalone service `.env` files before resolving startup options.               |
 | `defineAgentService()`                             | Normalize one or more agents into a service registry contract.                       |
 | `startNodeAgentService()`                          | Start a Node service around a request-native runtime.                                |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |

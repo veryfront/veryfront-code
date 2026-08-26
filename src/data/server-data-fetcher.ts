@@ -23,6 +23,7 @@ import type { ProjectEnvSnapshot } from "#veryfront/platform/compat/process/proj
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -81,7 +82,7 @@ async function resolveDataWorkerAdmission(
   appendIdentityPart(semanticParts, sourceIntegrationPolicy.mode);
   appendIdentityPart(semanticParts, JSON.stringify(sourceIntegrationPolicy));
   if (projectEnv) {
-    for (const key of Object.keys(projectEnv).sort()) {
+    for (const key of Object.keys(projectEnv).sort(compareStrings)) {
       appendIdentityPart(semanticParts, key);
       appendIdentityPart(semanticParts, projectEnv[key]!);
     }

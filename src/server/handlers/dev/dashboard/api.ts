@@ -33,6 +33,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 import { errorResponse, jsonResponse } from "../http-helpers.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
 
@@ -184,7 +185,7 @@ function getDashboardRouteHandler(
 
 export function getDashboardApiRoutePaths(method: DashboardApiMethod): string[] {
   const routes = method === "GET" ? GET_DASHBOARD_API_ROUTES : POST_DASHBOARD_API_ROUTES;
-  return Object.keys(routes).sort();
+  return Object.keys(routes).sort(compareStrings);
 }
 
 export function handleDashboardAPI(

@@ -22,6 +22,7 @@ import {
   createEvalValidationError,
   stringifyEvalError,
 } from "../../validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Input payload for prepared live eval. */
 export interface PreparedLiveEvalInput {
@@ -312,7 +313,7 @@ function collectPreparedArtifactPaths(prepared: PreparedLiveEvalInput | null): s
         .filter(([key, value]) => key.toLowerCase().includes("path") && value.length > 0)
         .map(([, value]) => value),
     ),
-  ].sort();
+  ].sort(compareStrings);
 }
 
 function extractPreparedConversationId(prepared: PreparedLiveEvalInput | null): string | null {

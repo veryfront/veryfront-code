@@ -12,6 +12,7 @@ import { withEnv } from "#veryfront/testing";
 import {
   agent,
   createAgUiHandler,
+  loadAgentServiceEnvFiles,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
@@ -315,6 +316,7 @@ describe("Guide: concepts/webhook.md", () => {
 
 describe("Guide: agent-service-runtime.md", () => {
   it("uses public agent service helpers that exist and produce documented MCP configs", () => {
+    assertEquals(typeof loadAgentServiceEnvFiles, "function");
     assertEquals(typeof startNodeVeryfrontCloudAgentService, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertEquals(veryfrontApiMcpServer(), { kind: "veryfront-api" });

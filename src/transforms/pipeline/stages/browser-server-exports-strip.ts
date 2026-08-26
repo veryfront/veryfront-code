@@ -63,6 +63,7 @@ import { getLoaderFromPath, isGeneratedContentOutput } from "../../esm/transform
 import { isTypeScript } from "../context.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Exports that only ever execute on the server. */
 export const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
@@ -1672,7 +1673,7 @@ export const browserServerExportsStripInternals = Object.freeze({
         (name): name is string => Boolean(name),
       ),
       possibleNames: [...analysis.possibleNames],
-      hazards: [...analysis.hazards].sort(),
+      hazards: [...analysis.hazards].sort(compareStrings),
     };
   },
 });
