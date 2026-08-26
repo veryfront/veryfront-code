@@ -1641,11 +1641,23 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
-// A CSI introducer immediately followed by a path start. Removed before the
-// full CSI pass so that pass cannot consume the path's first characters; see
+// A CSI introducer, with any parameter and intermediate bytes it carries,
+// immediately followed by a path start. Removed before the full CSI pass so
+// that pass cannot consume the path's first characters; see
 // summarizeConfigLoadCause for why the path itself is not redacted here.
-// deno-lint-ignore no-control-regex
-const CSI_GLUED_PATH = /(?:\u001B\[|\u009B)(?=[\\/]|[A-Za-z]:[\\/])/g;
+//
+// The parameter and intermediate runs are part of the match, not just the bare
+// introducer: `ESC[31C:\\Users\\alice` is a legal CUF sequence whose final byte
+// is the drive letter, and `ESC[31/home/alice` is a legal sequence whose
+// intermediate is the leading `/` and whose final byte is the `h`. Matching only
+// the introducer left `:\\Users\\alice` and `ome/alice` behind, which no later
+// path pattern recognises.
+//
+// The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
+// 0x2F is `/` -- the first character of the path this pass exists to preserve.
+const CSI_GLUED_PATH =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/])/g;
 // The scheme needs at least two characters: `C://Users/alice` is a drive path
 // that Node normalises, not a URL with the one-letter scheme `C`, and matching it
 // here reintroduced the path-as-URL mislabel this PR exists to remove. No

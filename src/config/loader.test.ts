@@ -1272,6 +1272,56 @@ export default config as const;
         assertStringIncludes(drive.message, "[path]");
       });
 
+      it("keeps a path intact when CSI parameter or intermediate bytes precede it", async () => {
+        const drive = await loadFailure(
+          "vf-config-csi-param-drive-",
+          `throw new Error(String.fromCharCode(27) + "[31" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // `ESC[31C` is a legal cursor-forward sequence whose final byte is the
+        // drive letter itself. Removing only the bare introducer left `:\Users`
+        // behind, which WINDOWS_ABSOLUTE_PATH does not match -- so the parameter
+        // run has to be part of what the pre-pass removes.
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+
+        const posix = await loadFailure(
+          "vf-config-csi-param-posix-",
+          `throw new Error(String.fromCharCode(27) + "[31/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // Same sequence shape, POSIX side: `31` are parameter bytes, `/` an
+        // intermediate and `h` the final, so the CSI pass ate `ESC[31/h` and
+        // emitted `ome/alice/...`.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("ome/alice"), false);
+        assertStringIncludes(posix.message, "[path]");
+
+        const intermediate = await loadFailure(
+          "vf-config-csi-intermediate-posix-",
+          `throw new Error(String.fromCharCode(27) + "['/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // An intermediate byte can precede the path with no parameters at all
+        // (`'` is 0x27), which is why the pre-pass carries both runs.
+        assertEquals(intermediate.message.includes("alice"), false);
+        assertEquals(intermediate.message.includes("ome/alice"), false);
+        assertStringIncludes(intermediate.message, "[path]");
+
+        const colorized = await loadFailure(
+          "vf-config-csi-param-sgr-",
+          `throw new Error(String.fromCharCode(27) + "[38:2:255:0:0m/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // The widened pre-pass must not claim an ordinary colour sequence: its
+        // final byte `m` is not a path start, so the sequence still falls through
+        // to the full CSI pass and the path is redacted after de-colorization.
+        assertEquals(colorized.message.includes("alice"), false);
+        assertEquals(colorized.message.includes("38:2"), false);
+        assertStringIncludes(colorized.message, "[path]");
+      });
+
       it("classifies a drive path glued to diagnostic text as a path, not a URL", async () => {
         const drive = await loadFailure(
           "vf-config-glued-fwd-drive-",
