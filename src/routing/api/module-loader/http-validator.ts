@@ -1573,13 +1573,20 @@ export async function validateHTTPImports(
 
   const fallbackHasDynamicCodeGeneration = scan.hasDynamicCodeGeneration ||
     containsFallbackCapabilityName(source, [
-      "eval",
+      "Bun",
+      "Deno",
       "Function",
+      "Object",
+      "Reflect",
+      "Worker",
       "constructor",
+      "eval",
+      "global",
       "globalThis",
+      "process",
+      "require",
       "self",
       "window",
-      "Reflect",
     ]);
   if (analysis?.hasDynamicCodeGeneration ?? fallbackHasDynamicCodeGeneration) {
     throw toError(

@@ -10,7 +10,7 @@ import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
-import { rewriteImportMetaUrl } from "./source-capability-analyzer.ts";
+import { rewriteImportMetaLocations } from "./source-capability-analyzer.ts";
 import {
   type LocalWorkerSpecifier,
   restrictedRuntimeModuleReason,
@@ -1095,8 +1095,8 @@ export function lookupImportMapEntry(
 }
 
 function normalizeImportMapScopeReferrer(referrer: string): string {
-  if (REMOTE_URL_SPECIFIER.test(referrer)) return modulePathOfSpecifier(referrer);
-  if (/^file:/i.test(referrer)) return normalizeFileUrlSpecifier(referrer) ?? referrer;
+  const urlLikeReferrer = normalizeImportMapUrlLikeSpecifier(referrer);
+  if (urlLikeReferrer !== null) return urlLikeReferrer;
   try {
     return normalizeFileUrlSpecifier(pathHelper.toFileUrl(referrer).href) ?? referrer;
   } catch {
@@ -1109,7 +1109,7 @@ function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string)
     referrer === undefined ||
     (!specifier.startsWith("./") && !specifier.startsWith("../"))
   ) {
-    return specifier;
+    return normalizeImportMapUrlLikeSpecifier(specifier) ?? specifier;
   }
   if (REMOTE_URL_SPECIFIER.test(referrer)) {
     try {
@@ -1123,10 +1123,22 @@ function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string)
   if (REMOTE_URL_SPECIFIER.test(referrerModule)) {
     return new URL(modulePath, referrerModule).href + moduleSuffixOfSpecifier(specifier);
   }
+  const localReferrer = /^file:/i.test(referrerModule)
+    ? normalizeFileUrlSpecifier(referrerModule) ?? referrerModule
+    : referrerModule;
   const resolved = pathHelper.fromFileUrl(
-    new URL(modulePath, pathHelper.toFileUrl(referrerModule)),
+    new URL(modulePath, pathHelper.toFileUrl(localReferrer)),
   );
   return resolved + moduleSuffixOfSpecifier(specifier);
+}
+
+function normalizeImportMapUrlLikeSpecifier(specifier: string): string | null {
+  if (/^file:/i.test(specifier)) return normalizeFileUrlSpecifier(specifier);
+  try {
+    return new URL(specifier).href;
+  } catch {
+    return null;
+  }
 }
 
 function lookupSpecifierMapping(
@@ -1345,7 +1357,11 @@ function createNamespaceOnLoadHandler(options: {
 
       return {
         contents: executableModule
-          ? await rewriteBundledImportMetaUrl(contents, pathHelper.toFileUrl(filePath).href)
+          ? await rewriteBundledImportMetaUrl(
+            contents,
+            pathHelper.toFileUrl(filePath).href,
+            workerImportMap,
+          )
           : contents,
         loader: getLoaderForFile(filePath),
         resolveDir: pathHelper.dirname(filePath),
@@ -1358,12 +1374,39 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
-async function rewriteBundledImportMetaUrl(source: string, moduleUrl: string): Promise<string> {
-  const rewritten = await rewriteImportMetaUrl(source, moduleUrl);
+async function rewriteBundledImportMetaUrl(
+  source: string,
+  moduleUrl: string,
+  importMap: DenoImportMap | null,
+): Promise<string> {
+  const rewritten = await rewriteImportMetaLocations(
+    source,
+    moduleUrl,
+    (specifier, referrer) => resolveBundledImportMetaSpecifier(specifier, referrer, importMap),
+  );
   if (rewritten !== null) return rewritten;
   throw new TypeError(
-    "[API] handler build failed: import.meta.url cannot be preserved because the module source could not be parsed",
+    "[API] handler build failed: import.meta location cannot be preserved because the module source could not be parsed or its resolver is dynamic",
   );
+}
+
+function resolveBundledImportMetaSpecifier(
+  specifier: string,
+  moduleUrl: string,
+  importMap: DenoImportMap | null,
+): string | null {
+  const mapped = importMap === null ? null : lookupImportMapEntry(importMap, specifier, moduleUrl);
+  if (mapped === null && isBareModuleSpecifier(specifier)) return null;
+  const target = mapped ?? specifier;
+  const targetPath = modulePathOfSpecifier(target);
+  if (pathHelper.isAbsolute(targetPath)) {
+    return pathHelper.toFileUrl(targetPath).href + moduleSuffixOfSpecifier(target);
+  }
+  try {
+    return new URL(target, moduleUrl).href;
+  } catch {
+    return null;
+  }
 }
 
 function createRouteRuntimeShimPlugin(contents: string): Plugin {
@@ -1712,6 +1755,7 @@ function createProjectBoundaryPlugin(
               ? await rewriteBundledImportMetaUrl(
                 source.contents,
                 pathHelper.toFileUrl(source.logicalPath).href,
+                workerImportMap,
               )
               : source.contents,
             loader: getLoaderForFile(source.logicalPath),
@@ -1895,7 +1939,7 @@ function buildTranspiledModuleSource(
           ...userExternals,
         ],
         stdin: {
-          contents: await rewriteBundledImportMetaUrl(source, routeSourceUrl),
+          contents: await rewriteBundledImportMetaUrl(source, routeSourceUrl, denoImports),
           loader,
           resolveDir: pathHelper.dirname(resolvedPath),
           sourcefile: resolvedPath,
@@ -1925,7 +1969,12 @@ function buildTranspiledModuleSource(
             allowedHosts,
             workerImportMap,
           ),
-          createHTTPPlugin({ allowedHosts, projectDir }),
+          createHTTPPlugin({
+            allowedHosts,
+            projectDir,
+            resolveImportMetaSpecifier: (specifier, referrer) =>
+              resolveBundledImportMetaSpecifier(specifier, referrer, denoImports),
+          }),
           createProjectBoundaryPlugin(
             sourceSnapshot,
             projectDir,
