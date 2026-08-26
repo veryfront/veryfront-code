@@ -20,7 +20,7 @@ import {
   markNativeFileSystemAdapter,
 } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
-import { resolve } from "../../../compat/path/index.ts";
+import { posix, resolve } from "../../../compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError, FileSnapshotPathError } from "../../file-snapshot-error.ts";
 import {
@@ -44,6 +44,7 @@ const NativePromise = Promise;
 const promiseAll = NativePromise.all;
 const reflectApply = Reflect.apply;
 const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
+const stringStartsWith = String.prototype.startsWith;
 
 interface AwaitedPair<First, Second> {
   first: First;
@@ -76,6 +77,23 @@ async function awaitPair<First, Second>(
     [First, Second]
   >);
   return { first: values[0], second: values[1] };
+}
+
+function resolveSnapshotPath(platform: NativeSnapshotPlatform, path: string): string {
+  return platform === "posix" ? posix.resolve(path) : resolve(path);
+}
+
+function isSnapshotPathContainedBy(
+  platform: NativeSnapshotPlatform,
+  candidate: string,
+  root: string,
+): boolean {
+  if (platform === "windows") return isPathContainedBy(candidate, root);
+  const relation = posix.relative(root, candidate);
+  return relation === "" || relation === "." ||
+    (relation !== ".." &&
+      !(reflectApply(stringStartsWith, relation, ["../"]) as boolean) &&
+      !posix.isAbsolute(relation));
 }
 
 interface NodeFileSnapshotStat {
@@ -275,12 +293,12 @@ export async function readNodeFileSnapshotWithinLimit(
     }
     openFlags = nodeFsConstants.O_RDONLY | noFollow;
   }
-  const lexicalRoot = resolve(containmentRoot);
-  const candidate = resolve(path);
+  const lexicalRoot = resolveSnapshotPath(platform, containmentRoot);
+  const candidate = resolveSnapshotPath(platform, path);
   const canonicalRoot = await operations.realpath(lexicalRoot);
   if (
-    !isPathContainedBy(candidate, lexicalRoot) &&
-    !isPathContainedBy(candidate, canonicalRoot)
+    !isSnapshotPathContainedBy(platform, candidate, lexicalRoot) &&
+    !isSnapshotPathContainedBy(platform, candidate, canonicalRoot)
   ) {
     throw new FileSnapshotPathError("Snapshot path must be contained by the requested root");
   }
@@ -349,7 +367,7 @@ export async function readNodeFileSnapshotWithinLimit(
         pathnameOpened,
         "Stable native file identity is unavailable while verifying the snapshot",
       );
-      if (!isPathContainedBy(canonicalTarget, canonicalRoot)) {
+      if (!isSnapshotPathContainedBy(platform, canonicalTarget, canonicalRoot)) {
         throw new FileSnapshotPathError(
           "Snapshot target must be contained by the canonical root",
         );
@@ -416,7 +434,7 @@ export async function readNodeFileSnapshotWithinLimit(
         !sameGeneration(handleBefore, handleAfter) ||
         !sameGeneration(handleBefore, pathnameAfter) ||
         canonicalTargetAfter !== canonicalTarget ||
-        !isPathContainedBy(canonicalTargetAfter, canonicalRoot)
+        !isSnapshotPathContainedBy(platform, canonicalTargetAfter, canonicalRoot)
       ) {
         throw changed("File snapshot changed during the read");
       }

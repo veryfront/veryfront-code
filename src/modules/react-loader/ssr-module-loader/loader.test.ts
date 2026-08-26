@@ -1095,12 +1095,13 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
-  it("throws missing dependency error before dynamic import when local import is unavailable", async () => {
+  it("accumulates a parser failure before dynamic import through captured array authority", async () => {
     clearSSRModuleCache();
 
     const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-missing-dep-" });
     const componentsDir = join(projectDir, "components");
     const filePath = join(componentsDir, "NeedsMissingDependency.tsx");
+    const originalPush = Array.prototype.push;
 
     try {
       await mkdir(componentsDir, { recursive: true });
@@ -1123,6 +1124,14 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       });
 
       try {
+        Array.prototype.push = function (this: unknown[], ...values: unknown[]): number {
+          const first = values[0];
+          if (
+            typeof first === "object" && first !== null &&
+            "specifier" in first && "fromFile" in first && "reason" in first
+          ) return this.length;
+          return Reflect.apply(originalPush, this, values) as number;
+        };
         await loader.loadModule(filePath, source);
         assert(false, "Expected loadModule to throw for missing dependency");
       } catch (err) {
@@ -1134,6 +1143,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         );
       }
     } finally {
+      Array.prototype.push = originalPush;
       await remove(projectDir, { recursive: true });
     }
   });

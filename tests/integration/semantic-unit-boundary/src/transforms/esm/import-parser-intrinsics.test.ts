@@ -176,6 +176,42 @@ it("keeps containment when String prototype methods are poisoned", async () => {
   }
 });
 
+it("classifies MDX through the captured regexp intrinsic", async () => {
+  const stub = withStubContentProcessor();
+  const originalTest = RegExp.prototype.test;
+  try {
+    await withProject(
+      {
+        "pages/index.mdx": `import Child from "./Child.tsx";\n\n# Heading\n\n<Child />\n`,
+        "pages/Child.tsx": `export default () => null;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "pages/index.mdx");
+        const code = await Deno.readTextFile(filePath);
+
+        try {
+          RegExp.prototype.test = function (value: string): boolean {
+            if (value === filePath) return false;
+            return Reflect.apply(originalTest, this, [value]);
+          };
+
+          const result = await parseLocalImports(code, filePath, projectDir, adapter);
+          assertEquals(result.missing, []);
+          assertEquals(result.imports.length, 1);
+          assertEquals(result.imports[0]?.rewriteSpecifier?.startsWith("file://"), true);
+        } finally {
+          RegExp.prototype.test = originalTest;
+        }
+      },
+    );
+  } finally {
+    RegExp.prototype.test = originalTest;
+    stub.restore();
+    await stopEsbuild();
+  }
+});
+
 it("redacts malformed file URLs through captured string intrinsics", () => {
   const originalLastIndexOf = String.prototype.lastIndexOf;
   const originalSlice = String.prototype.slice;

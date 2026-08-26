@@ -11,6 +11,14 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+const reflectApply = Reflect.apply;
+const asyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const asyncLocalStorageRun = AsyncLocalStorage.prototype.run;
+const mapConstructor = Map;
+const mapForEach = Map.prototype.forEach;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+
 interface CSSCollectorStore {
   imports: Map<string, CSSImportReference>;
 }
@@ -25,6 +33,22 @@ export interface CSSImportReference {
 
 const cssStorage = new AsyncLocalStorage<CSSCollectorStore>();
 
+function getCollectorStore(): CSSCollectorStore | undefined {
+  return reflectApply(asyncLocalStorageGetStore, cssStorage, []) as
+    | CSSCollectorStore
+    | undefined;
+}
+
+function getCollectedReferences(imports: Map<string, CSSImportReference>): CSSImportReference[] {
+  const references: CSSImportReference[] = [];
+  reflectApply(mapForEach, imports, [
+    (reference: CSSImportReference) => {
+      references[references.length] = reference;
+    },
+  ]);
+  return references;
+}
+
 /**
  * Run a function with CSS import collection enabled.
  * Returns the function result and all collected CSS import paths.
@@ -32,9 +56,14 @@ const cssStorage = new AsyncLocalStorage<CSSCollectorStore>();
 export async function runWithCSSCollector<T>(
   fn: () => T | Promise<T>,
 ): Promise<{ result: T; cssImports: string[] }> {
-  const store: CSSCollectorStore = { imports: new Map() };
-  const result = await cssStorage.run(store, fn);
-  return { result, cssImports: getCSSImportsFromReferences(store.imports.values()) };
+  const store: CSSCollectorStore = { imports: new mapConstructor() };
+  const result = await (reflectApply(asyncLocalStorageRun, cssStorage, [store, fn]) as
+    | T
+    | Promise<T>);
+  return {
+    result,
+    cssImports: getCSSImportsFromReferences(getCollectedReferences(store.imports)),
+  };
 }
 
 /**
@@ -46,11 +75,14 @@ export function registerCSSImport(
   moduleKey = absolutePath,
   read?: () => Promise<string>,
 ): void {
-  const store = cssStorage.getStore();
+  const store = getCollectorStore();
   if (!store) return;
   const key = `${absolutePath.length}:${absolutePath}${moduleKey}`;
-  if (!store.imports.has(key)) {
-    store.imports.set(key, { readPath: absolutePath, moduleKey, ...(read ? { read } : {}) });
+  if (!(reflectApply(mapHas, store.imports, [key]) as boolean)) {
+    reflectApply(mapSet, store.imports, [
+      key,
+      { readPath: absolutePath, moduleKey, ...(read ? { read } : {}) },
+    ]);
   }
 }
 
@@ -64,13 +96,25 @@ export function getCSSImports(): string[] {
 
 /** Return canonical CSS read paths with their authored module keys. */
 export function getCSSImportReferences(): CSSImportReference[] {
-  const store = cssStorage.getStore();
+  const store = getCollectorStore();
   if (!store) return [];
-  return [...store.imports.values()];
+  return getCollectedReferences(store.imports);
 }
 
 function getCSSImportsFromReferences(
-  references: Iterable<CSSImportReference>,
+  references: readonly CSSImportReference[],
 ): string[] {
-  return [...new Set([...references].map(({ readPath }) => readPath))];
+  const paths: string[] = [];
+  for (let index = 0; index < references.length; index++) {
+    const readPath = references[index]!.readPath;
+    let seen = false;
+    for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
+      if (paths[pathIndex] === readPath) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen) paths[paths.length] = readPath;
+  }
+  return paths;
 }

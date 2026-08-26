@@ -186,7 +186,8 @@ export async function parseLocalImports(
   // always "no dependencies". Compiling one to learn that is pure cost on a
   // path that runs per render.
   if (
-    stringEndsWith(filePath, ".css") || stringEndsWith(filePath, ".json") || /\.md$/i.test(filePath)
+    stringEndsWith(filePath, ".css") || stringEndsWith(filePath, ".json") ||
+    regExpTest(/\.md$/i, filePath)
   ) {
     return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
@@ -197,7 +198,7 @@ export async function parseLocalImports(
   // content to JSX first, exactly as the transform pipeline's parse stage does,
   // then read the imports out of that.
   let parseSource = code;
-  if (/\.mdx$/i.test(filePath)) {
+  if (regExpTest(/\.mdx$/i, filePath)) {
     parseSource = await compileMdxForParsing(code, filePath, projectDir);
   }
 
