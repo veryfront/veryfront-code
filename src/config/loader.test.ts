@@ -2907,36 +2907,58 @@ export default config as const;
         }
       });
 
-      it("cannot keep prose that follows a redacted URL without a space", async () => {
-        // The trailing-punctuation rule needs a boundary -- whitespace, a quote,
-        // or end of line. A script that does not put spaces between sentences
-        // gives it none, so the punctuation run never terminates, the `)` is
-        // taken as URL, and the rest of the line goes with it.
-        //
-        // Asserted rather than left implicit, because the Unicode class above
-        // makes this look handled. `Failed (see .../x)。 Retry` passes, and it is
-        // the space doing that work, not the class. Remove the space and the
-        // whole remainder is redacted.
+      it("keeps prose that follows a redacted URL without a space", async () => {
+        // Keep the space-separated control next to the glued case. Both must
+        // preserve the sentence mark and following prose; the no-space input
+        // proves the URL token ends at characters that cannot appear unencoded
+        // in an RFC 3986 URI, not only at whitespace.
+        const spaced = await loadFailure(
+          "vf-config-paren-cjk-spaced-",
+          `throw new Error("Failed (see https://registry.internal/x)。 Retry");\n`,
+        );
+
+        assertStringIncludes(spaced.message, "Failed (see [url])。 Retry");
+
         const glued = await loadFailure(
           "vf-config-paren-cjk-glued-",
           `throw new Error("Failed (see https://registry.internal/x)。次を試してください");\n`,
         );
 
-        assertStringIncludes(glued.message, "Failed (see [url]");
-        assertEquals(glued.message.includes("次を試してください"), false);
+        assertStringIncludes(glued.message, "Failed (see [url])。次を試してください");
+        assertEquals(glued.message.includes("registry.internal"), false);
 
-        // Pre-existing, and not something the parenthesis branches introduced:
-        // origin/main redacts this identically, because the ordinary tail branch
-        // already eats CJK glued to a URL. The whole tail assumes an ASCII token
-        // delimited by whitespace. Closing it means redefining the boundary
-        // across every pattern here, which is a separate change.
+        // Cover the ordinary tail independently of the parenthesis branches.
+        // It must stop before the first non-ASCII prose character while still
+        // redacting the complete host and ASCII path.
         const noParen = await loadFailure(
           "vf-config-cjk-glued-",
           `throw new Error("Failed https://registry.internal/x次を試してください");\n`,
         );
 
         assertEquals(noParen.message.includes("registry.internal"), false);
-        assertEquals(noParen.message.includes("次を試してください"), false);
+        assertStringIncludes(noParen.message, "Failed [url]次を試してください");
+
+        // Percent-encoding keeps the complete URI in ASCII, so an encoded path
+        // and query remain inside the redacted token.
+        const encoded = await loadFailure(
+          "vf-config-cjk-percent-encoded-",
+          `throw new Error("Failed https://registry.internal/x%E6%AC%A1?t=SUPERSECRET");\n`,
+        );
+
+        assertEquals(encoded.message.includes("registry.internal"), false);
+        assertEquals(encoded.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(encoded.message, "Failed [url]");
+
+        // A non-ASCII authority has no completed ASCII host prefix to redact.
+        // Treat it as an IRI and fail closed on the whole token rather than
+        // exposing the hostname while trying to preserve following prose.
+        const iriHost = await loadFailure(
+          "vf-config-iri-host-",
+          `throw new Error("Failed https://例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(iriHost.message.includes("例え.internal"), false);
+        assertStringIncludes(iriHost.message, "Failed [url]");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

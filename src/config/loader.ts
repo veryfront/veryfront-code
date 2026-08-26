@@ -1962,12 +1962,44 @@ const CSI_GLUED_URL =
 // Keep this source shared by every URL shape. Apart from preventing the four
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
+//
+// An RFC 3986 URI is ASCII before percent-encoding. Defining the token from
+// that legal set makes any non-ASCII character after a completed ASCII prefix
+// a boundary, including scripts that do not put spaces between a URL and the
+// following sentence. A percent-encoded equivalent stays entirely inside the
+// token.
+//
+// Apostrophes are intentionally absent even though RFC 3986 lists them as a
+// sub-delimiter. The userinfo prefix handles them before `@`, while the tail
+// must leave the closing quote in `Cannot find module 'https://host/x'` intact.
+const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]`;
+const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|\(${URI_PAREN_INTERIOR_SOURCE}{0,512}\)|\((?=${URI_PAREN_INTERIOR_SOURCE})|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
+// The ASCII-tail rule above deliberately ends before raw IRI characters. If
+// the authority itself starts with one, however, there is no completed ASCII
+// host prefix for that rule to redact. Fail closed on the whitespace-delimited
+// token so an internationalized hostname cannot fall through to the path
+// passes and reach the diagnostic. This runs after the file-URL pass, which
+// keeps local file URLs classified as paths.
+//
+// An ASCII authority followed by Unicode does not match this fallback. The
+// normal rule handles that shape and preserves the following prose, which is
+// the no-space boundary this fallback must not undo.
+const NON_ASCII_AUTHORITY_URL = new RegExp(
+  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?[^\x00-\x7F][^\s"']*`,
+  "gu",
+);
+// Avoid a second generic scheme scan for ordinary ASCII diagnostics. Without
+// this gate, the long-alphabetic quadratic guard reached its unchanged 20x
+// limit even though the fallback could not match.
+// deno-lint-ignore no-control-regex
+const NON_ASCII_CHARACTER = /[^\x00-\x7F]/u;
+
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -2075,6 +2107,10 @@ function replaceMatchesWithCapturedExec(
   }
 }
 
+function containsNonAscii(value: string): boolean {
+  return ReflectApply(RegExpPrototypeExec, NON_ASCII_CHARACTER, [value]) !== null;
+}
+
 /**
  * Replace machine-identifying locations in a diagnostic with stable markers.
  *
@@ -2084,10 +2120,10 @@ function replaceMatchesWithCapturedExec(
  *
  * 1. the quoted forms, whose surrounding quotes bound the match precisely;
  * 2. `file:///`, which is a path wearing a URL and is reported as `[path]`;
- * 3. `SCHEME_URL`, then `MALFORMED_SCHEME_URL`, each reported as `[url]` --
- *    together these are also what keep `https:/` away from step 4, whose
- *    drive-letter alternative would otherwise match the `s:/` inside it and
- *    emit `http[path]`;
+ * 3. the non-ASCII-authority fallback, then `SCHEME_URL` and
+ *    `MALFORMED_SCHEME_URL`, each reported as `[url]` -- together these are
+ *    also what keep `https:/` away from step 4, whose drive-letter alternative
+ *    would otherwise match the `s:/` inside it and emit `http[path]`;
  * 4. unquoted Windows drive and UNC paths;
  * 5. unquoted POSIX paths.
  *
@@ -2105,6 +2141,9 @@ function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  if (containsNonAscii(redacted)) {
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_AUTHORITY_URL, "[url]");
+  }
   redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]");
