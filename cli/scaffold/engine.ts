@@ -362,6 +362,8 @@ async function writeGuardedMultiFilePlan(
     await assertRootIdentity(root, rootGuard, identity, realPath);
     await options.beforeOpen?.(file);
     await assertRootIdentity(root, rootGuard, identity, realPath);
+    const unsafe = await findUnsafeExistingPrefix(root, file.path);
+    if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
     const handle = await Deno.open(file.path, { write: true, createNew: true });
     let closed = false;
     try {
@@ -385,6 +387,7 @@ async function writeGuardedMultiFilePlan(
       }
       const content = new TextEncoder().encode(file.content);
       createdFiles.push(opened);
+      const ownedFileIndex = createdFiles.length - 1;
       let offset = 0;
       while (offset < content.byteLength) {
         const remainingBeforeFailure = options.failWriteAfterBytes === undefined
@@ -398,6 +401,14 @@ async function writeGuardedMultiFilePlan(
         const written = await handle.write(chunk);
         if (written === 0) throw new Error("filesystem write made no progress");
         offset += written;
+        createdFiles[ownedFileIndex] = await verifyOpenedTarget(
+          root,
+          rootGuard,
+          file.path,
+          handle,
+          identity,
+          realPath,
+        );
         if (options.failWriteAfterBytes !== undefined && offset >= options.failWriteAfterBytes) {
           throw new Error("simulated partial write failure");
         }
@@ -580,6 +591,12 @@ class UnsafeAuthTemplatePathError extends Error {}
 export type FileIdentity = {
   dev: number;
   ino: number;
+  kind: "directory" | "file" | "symlink" | "other";
+  mode?: number | null;
+  size?: number;
+  mtimeMs?: number | null;
+  birthtimeMs?: number | null;
+  ctimeMs?: number | null;
 } | null;
 
 interface RootGuard {
@@ -594,14 +611,43 @@ interface OwnedPath {
 
 function fileIdentity(info: Deno.FileInfo): FileIdentity {
   if (typeof info.dev === "number" && typeof info.ino === "number") {
-    return { dev: info.dev, ino: info.ino };
+    const kind = fileIdentityKind(info);
+    if (kind === "directory") return { dev: info.dev, ino: info.ino, kind };
+    return {
+      dev: info.dev,
+      ino: info.ino,
+      kind,
+      mode: typeof info.mode === "number" ? info.mode : null,
+      size: info.size,
+      mtimeMs: timeMs(info.mtime),
+      birthtimeMs: timeMs(info.birthtime),
+      ctimeMs: timeMs(info.ctime),
+    };
   }
   return null;
 }
 
 function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
   if (a === null || b === null) return false;
-  return a.dev === b.dev && a.ino === b.ino;
+  return a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.kind === b.kind &&
+    a.mode === b.mode &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs &&
+    a.birthtimeMs === b.birthtimeMs &&
+    a.ctimeMs === b.ctimeMs;
+}
+
+function fileIdentityKind(info: Deno.FileInfo): NonNullable<FileIdentity>["kind"] {
+  if (info.isDirectory) return "directory";
+  if (info.isFile) return "file";
+  if (info.isSymlink) return "symlink";
+  return "other";
+}
+
+function timeMs(value: Date | null | undefined): number | null {
+  return value instanceof Date ? value.getTime() : null;
 }
 
 async function assertRootIdentity(

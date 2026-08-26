@@ -10,7 +10,7 @@ export interface ExecutionContext {
 export interface Context {
   req: Request;
   request: Request;
-  identity: ApplicationIdentity | null;
+  identity?: ApplicationIdentity | null;
   applicationIdentity?: ApplicationIdentity | null;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;

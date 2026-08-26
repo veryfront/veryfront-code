@@ -209,8 +209,23 @@ describe("API Context Builder", () => {
       const context = createContext(request, createMatch("/api/users", "/api/users.ts"), mockFs);
       const exported: APIContext = context;
       const legacyAssignable: Omit<APIContext, "applicationIdentity"> = exported;
+      const legacyConstructed: APIContext = {
+        request,
+        req: request,
+        params: {},
+        query: new URLSearchParams(),
+        cookies: {},
+        headers: new Headers(),
+        url: new URL(request.url),
+        json: Response.json,
+        body: async <T = unknown>() => undefined as T,
+        text: (data: string, init?: ResponseInit) => new Response(data, init),
+        fs: mockFs,
+        env: {},
+      };
 
       assertEquals(legacyAssignable.identity, null);
+      assertEquals(legacyConstructed.identity, undefined);
       assertEquals(exported.applicationIdentity, null);
     });
 

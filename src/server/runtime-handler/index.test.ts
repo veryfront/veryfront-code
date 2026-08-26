@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import {
   __registerLogRecordEmitter,
@@ -723,6 +724,34 @@ describe("server/runtime-handler/index", () => {
 
     assertEquals(response.status, 200);
     assertEquals(middlewareCalls, 0);
+  });
+
+  it("admits authenticated requests on the gated monitoring fast path", async () => {
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } satisfies VeryfrontConfig,
+    });
+    const request = new Request("http://localhost/_health", {
+      headers: { "x-auth-subject": "monitor-user" },
+    });
+    recordRequestPeerFromTransport(request, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+
+    const response = await handler(request);
+
+    assertEquals(response.status, 200);
   });
 
   it("keeps signed control-plane verification separate from application OIDC sessions", async () => {

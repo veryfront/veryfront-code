@@ -11,7 +11,7 @@ export { parseCookies };
 export interface APIContext {
   request: Request;
   req: Request;
-  identity: ApplicationIdentity | null;
+  identity?: ApplicationIdentity | null;
   applicationIdentity?: ApplicationIdentity | null;
   params: Record<string, string | string[]>;
   query: URLSearchParams;

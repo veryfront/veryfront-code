@@ -16,6 +16,8 @@ import {
   type PreparedRouteExecutionOptions,
   resolvePreparedRouteMethods,
 } from "./route-executor.ts";
+import type { APIContext } from "./context-builder.ts";
+import type { AppRouteContext } from "./module-loader/types.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
@@ -341,7 +343,7 @@ describe("routing/api/route-executor", () => {
     it("passes admitted application identity to host app route context", async () => {
       const identity = createIdentity();
       const handler = {
-        GET: (_req: Request, ctx: { identity: ApplicationIdentity | null }) =>
+        GET: (_req: Request, ctx: AppRouteContext) =>
           Response.json({
             sameIdentity: ctx.identity === identity,
             subject: ctx.identity?.subject ?? null,
@@ -377,7 +379,7 @@ describe("routing/api/route-executor", () => {
     it("keeps explicit null anonymous and rejects malformed host app route identity options", async () => {
       let calls = 0;
       const handler = {
-        GET: (_req: Request, ctx: { identity: ApplicationIdentity | null }) => {
+        GET: (_req: Request, ctx: AppRouteContext) => {
           calls += 1;
           return Response.json({ identityIsNull: ctx.identity === null });
         },
@@ -707,18 +709,20 @@ describe("routing/api/route-executor", () => {
     it("passes admitted application identity to host pages route context", async () => {
       const identity = createIdentity();
       const handler = {
-        GET: (ctx: { identity: ApplicationIdentity | null }) =>
-          Response.json({
-            sameIdentity: ctx.identity === identity,
-            subject: ctx.identity?.subject ?? null,
-            rootFrozen: ctx.identity === null ? null : Object.isFrozen(ctx.identity),
-            rootProtoNull: ctx.identity === null
+        GET: (ctx: APIContext) => {
+          const ctxIdentity = ctx.identity ?? null;
+          return Response.json({
+            sameIdentity: ctxIdentity === identity,
+            subject: ctxIdentity?.subject ?? null,
+            rootFrozen: ctxIdentity === null ? null : Object.isFrozen(ctxIdentity),
+            rootProtoNull: ctxIdentity === null
               ? null
-              : Object.getPrototypeOf(ctx.identity) === null,
-            claimsProtoNull: ctx.identity === null
+              : Object.getPrototypeOf(ctxIdentity) === null,
+            claimsProtoNull: ctxIdentity === null
               ? null
-              : Object.getPrototypeOf(ctx.identity.claims) === null,
-          }),
+              : Object.getPrototypeOf(ctxIdentity.claims) === null,
+          });
+        },
       };
 
       const request = new Request("http://localhost/api/test", { method: "GET" });
@@ -744,7 +748,7 @@ describe("routing/api/route-executor", () => {
     it("keeps explicit null anonymous and rejects malformed host pages route identity options", async () => {
       let calls = 0;
       const handler = {
-        GET: (ctx: { identity: ApplicationIdentity | null }) => {
+        GET: (ctx: APIContext) => {
           calls += 1;
           return Response.json({ identityIsNull: ctx.identity === null });
         },

@@ -6,6 +6,7 @@ import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join, relative, resolve } from "#std/path.ts";
 import { filenameToId } from "#veryfront/discovery/discovery-utils.ts";
 import {
+  type FileIdentity,
   planAuthScaffold,
   planScaffold,
   scaffoldAuthFiles,
@@ -19,6 +20,27 @@ async function withTempProject(fn: (projectDir: string) => Promise<void>): Promi
   } finally {
     await Deno.remove(projectDir, { recursive: true });
   }
+}
+
+function forcedCollidingIdentity(info: Deno.FileInfo): FileIdentity {
+  const kind = info.isDirectory
+    ? "directory"
+    : info.isFile
+    ? "file"
+    : info.isSymlink
+    ? "symlink"
+    : "other";
+  if (kind === "directory") return { dev: 1, ino: 1, kind };
+  return {
+    dev: 2,
+    ino: 2,
+    kind,
+    mode: typeof info.mode === "number" ? info.mode : null,
+    size: info.size,
+    mtimeMs: info.mtime?.getTime() ?? null,
+    birthtimeMs: info.birthtime?.getTime() ?? null,
+    ctimeMs: info.ctime?.getTime() ?? null,
+  };
 }
 
 describe("scaffold engine", () => {
@@ -603,6 +625,31 @@ describe("scaffold engine", () => {
     });
   });
 
+  it("does not remove replacement paths when device and inode identities collide", async () => {
+    await withTempProject(async (projectDir) => {
+      const firstPath = join(projectDir, "first.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: firstPath, content: "first" },
+          { path: join(projectDir, "second.txt"), content: "second" },
+        ],
+        beforeWriteForTesting: async (file) => {
+          if (file.path.endsWith("second.txt")) {
+            await Deno.remove(firstPath);
+            await Deno.writeTextFile(firstPath, "replacement with different file metadata");
+            throw new Error("simulated write failure");
+          }
+        },
+        identityForTesting: forcedCollidingIdentity,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(await Deno.readTextFile(firstPath), "replacement with different file metadata");
+    });
+  });
+
   it("fails closed when the project root identity changes after opening a target", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-auth-root-race-" });
     const outside = await Deno.makeTempDir({ prefix: "vf-auth-root-race-outside-" });
@@ -652,6 +699,32 @@ describe("scaffold engine", () => {
     } finally {
       if (replacedRoot) await Deno.remove(projectDir);
       else await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(outside, { recursive: true });
+    }
+  });
+
+  it("writes no content when a target parent becomes a symlink during open", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-auth-parent-open-race-" });
+    const outside = await Deno.makeTempDir({ prefix: "vf-auth-parent-open-race-outside-" });
+    const parent = join(projectDir, "nested");
+    const outsideTarget = join(outside, "first.txt");
+    try {
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [{ path: join(parent, "first.txt"), content: "first" }],
+        beforeOpenForTesting: async () => {
+          await Deno.remove(parent, { recursive: true });
+          await Deno.symlink(outside, parent);
+        },
+        identityForTesting: () => null,
+      });
+
+      assertEquals(result.success, false);
+      assertStringIncludes(result.message, "Unsafe scaffold path: nested");
+      assertEquals(await exists(outsideTarget), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(outside, { recursive: true });
     }
   });

@@ -359,6 +359,8 @@ describe("APIRouteHandler", () => {
         export function GET(request, ctx) {
           return Response.json({
             subject: ctx.identity?.subject ?? null,
+            aliasSubject: ctx.applicationIdentity?.subject ?? null,
+            identityAliasSame: ctx.identity === ctx.applicationIdentity,
             identityIsNull: ctx.identity === null,
             forgedSubject: request.headers.get("x-auth-subject"),
             authorization: request.headers.get("authorization"),
@@ -395,6 +397,8 @@ describe("APIRouteHandler", () => {
       );
       assertEquals(await authenticated?.json(), {
         subject: "user-123",
+        aliasSubject: "user-123",
+        identityAliasSame: true,
         identityIsNull: false,
         forgedSubject: null,
         authorization: "Bearer application-token",
@@ -419,6 +423,8 @@ describe("APIRouteHandler", () => {
       );
       assertEquals(await anonymous?.json(), {
         subject: null,
+        aliasSubject: null,
+        identityAliasSame: true,
         identityIsNull: true,
         forgedSubject: null,
         authorization: null,
@@ -435,6 +441,8 @@ describe("APIRouteHandler", () => {
         export function GET(ctx) {
           return Response.json({
             subject: ctx.identity?.subject ?? null,
+            aliasSubject: ctx.applicationIdentity?.subject ?? null,
+            identityAliasSame: ctx.identity === ctx.applicationIdentity,
             identityIsNull: ctx.identity === null,
             forgedSubject: ctx.headers.get("x-auth-subject"),
             authorization: ctx.headers.get("authorization"),
@@ -471,6 +479,8 @@ describe("APIRouteHandler", () => {
       );
       assertEquals(await authenticated?.json(), {
         subject: "user-123",
+        aliasSubject: "user-123",
+        identityAliasSame: true,
         identityIsNull: false,
         forgedSubject: null,
         authorization: "Bearer application-token",
@@ -495,6 +505,8 @@ describe("APIRouteHandler", () => {
       );
       assertEquals(await anonymous?.json(), {
         subject: null,
+        aliasSubject: null,
+        identityAliasSame: true,
         identityIsNull: true,
         forgedSubject: null,
         authorization: null,

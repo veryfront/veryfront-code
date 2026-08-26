@@ -662,6 +662,51 @@ describe("security/application-auth OIDC runtime", () => {
     );
   });
 
+  it("form-encodes reserved Basic client credentials during token exchange", async () => {
+    const runtime = createRuntimeAt(NOW, {
+      APP_URL: APP_ORIGIN,
+      OIDC_ISSUER: ISSUER,
+      OIDC_CLIENT_ID: "client!id",
+      OIDC_CLIENT_SECRET: "secret'() value",
+      OIDC_SESSION_SECRET: SESSION_SECRET,
+    });
+    const { state, nonce, cookie } = await startTransaction(runtime);
+    const signed = await createSignedIdToken({
+      iss: ISSUER,
+      sub: "subject-123",
+      aud: "client!id",
+      nonce,
+      iat: NOW,
+      exp: NOW + 300,
+    });
+    let authorization: string | null = null;
+
+    const response = await withMockFetch(
+      (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/.well-known/openid-configuration")) return Promise.resolve(oidcMetadata());
+        if (url === `${ISSUER}/token`) {
+          authorization = new Headers(init?.headers).get("authorization");
+          return Promise.resolve(Response.json({ id_token: signed.token }));
+        }
+        if (url === `${ISSUER}/jwks`) {
+          return Promise.resolve(Response.json({ keys: [signed.jwk] }));
+        }
+        return Promise.reject(new Error("unexpected Basic credential fetch"));
+      },
+      () =>
+        runtime.handleAuthRoute(
+          new Request(`${APP_ORIGIN}/_veryfront/auth/callback?state=${state}&code=ok`, {
+            headers: { cookie },
+          }),
+        ),
+    );
+
+    assert(response);
+    assertEquals(response.status, 303);
+    assertEquals(authorization, `Basic ${btoa("client%21id:secret%27%28%29+value")}`);
+  });
+
   it("proves callback replay is local-cookie bounded and fails closed after clearing", async () => {
     const { runtime, state, nonce, cookie } = await startTransaction();
     const first = await successfulCallback(runtime, state, nonce, cookie, "one-time-code");

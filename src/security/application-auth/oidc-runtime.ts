@@ -651,7 +651,9 @@ function parseIdToken(response: JsonObject): string {
 }
 
 function formComponent(value: string): string {
-  return encodeURIComponent(value).replace(/%20/g, "+");
+  const params = new URLSearchParams();
+  params.set("value", value);
+  return params.toString().slice("value=".length);
 }
 
 function isJsonContentType(value: string | null): boolean {

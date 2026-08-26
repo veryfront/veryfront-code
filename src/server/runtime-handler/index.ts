@@ -33,6 +33,7 @@ import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
@@ -420,6 +421,17 @@ export function createVeryfrontHandler(
           isDebugEnabled(),
           config,
         );
+
+        if (
+          !isPlatformLivenessProbe(req.method, url.pathname) &&
+          !skipsApplicationAuth(req, url.pathname)
+        ) {
+          const authResult = await handleApplicationAuthRequest(req, minimalCtx);
+          if (authResult?.response) return authResult.response;
+          minimalCtx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+          minimalCtx.applicationIdentityHeaderNames =
+            authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+        }
 
         const response = await registry.execute(req, minimalCtx);
         return response ?? new Response("Not Found", { status: 404 });

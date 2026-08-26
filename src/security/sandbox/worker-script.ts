@@ -2652,6 +2652,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
             params: Record<string, string>;
             env: Readonly<Record<string, string>>;
             identity: ApplicationIdentity | null;
+            applicationIdentity: ApplicationIdentity | null;
           },
         ) => Promise<unknown> | unknown)
         | undefined;
@@ -2667,6 +2668,7 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
         params: req.params ?? {},
         env,
         identity: req.applicationIdentity,
+        applicationIdentity: req.applicationIdentity,
       });
       const response = isTrustedRouteResponsePromise(pendingResponse)
         ? await pendingResponse
@@ -2816,6 +2818,7 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
         fs: workerFs,
         env,
         identity: req.applicationIdentity,
+        applicationIdentity: req.applicationIdentity,
       };
 
       const pendingResponse = handlerFn(ctx);
