@@ -94,6 +94,8 @@ const UNIT_PARALLEL_EXCLUSIONS = new Set([
   ...UNIT_CWD_FILES,
   ...UNIT_CWD_EXCLUSION_FILES,
 ]);
+const SSR_PIPELINE_RUNTIME_FIXTURE =
+  "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
 const RUNTIME_PATTERNS = {
   node: [
     "src/**/*.test.ts",
@@ -103,6 +105,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
     "src/",
@@ -112,6 +115,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/kv-polyfill.test.ts",
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
+    SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;
 const RUNTIME_EXCLUSIONS = {

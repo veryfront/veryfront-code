@@ -19,20 +19,23 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { readTextFile } from "#veryfront/testing/deno-compat.ts";
+import { readTextFile, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import { runPipeline } from "#veryfront/transforms/pipeline/index.ts";
+import { TEST_REPOSITORY_ROOT } from "../../../../../../_helpers/constants.ts";
 
 /** Fixture inputs stay with the colocated unit tests; both suites read the same sources. */
-const FIXTURES_DIR = new URL(
-  "../../../../../../../src/transforms/pipeline/__fixtures__/",
-  import.meta.url,
-).pathname;
+const FIXTURES_DIR = join(
+  TEST_REPOSITORY_ROOT,
+  "src/transforms/pipeline/__fixtures__",
+);
 
 function readFixture(name: string, file: string): Promise<string> {
-  return readTextFile(`${FIXTURES_DIR}${name}/${file}`);
+  return readTextFile(join(FIXTURES_DIR, name, file));
 }
 
 const TEST_OPTIONS = {
@@ -73,6 +76,25 @@ const stubModuleFetch = ((input: string | URL | Request): Promise<Response> => {
   );
 }) as typeof fetch;
 
+function runHermeticSsrPipeline(input: string, filePath: string) {
+  return withTempDir(
+    (cacheDir) =>
+      runWithCacheDir(
+        cacheDir,
+        () =>
+          withMockFetch(
+            stubModuleFetch,
+            () =>
+              runPipeline(input, filePath, "/project", {
+                ...TEST_OPTIONS,
+                ssr: true,
+              }),
+          ),
+      ),
+    { prefix: "vf-ssr-pipeline-cache-" },
+  );
+}
+
 describe("transform pipeline SSR fixtures", () => {
   afterAll(async () => {
     await esbuild.stop();
@@ -81,13 +103,9 @@ describe("transform pipeline SSR fixtures", () => {
   it("resolves React for SSR (npm: on Deno, file:// on Node/Bun)", async () => {
     const input = await readFixture("react-only", "input.tsx");
 
-    const result = await withMockFetch(
-      stubModuleFetch,
-      () =>
-        runPipeline(input, "/project/components/Counter.tsx", "/project", {
-          ...TEST_OPTIONS,
-          ssr: true,
-        }),
+    const result = await runHermeticSsrPipeline(
+      input,
+      "/project/components/Counter.tsx",
     );
 
     assertStringIncludes(result.code, "jsx");
@@ -104,13 +122,9 @@ describe("transform pipeline SSR fixtures", () => {
     async () => {
       const input = await readFixture("react-query", "input.tsx");
 
-      const result = await withMockFetch(
-        stubModuleFetch,
-        () =>
-          runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
-            ...TEST_OPTIONS,
-            ssr: true,
-          }),
+      const result = await runHermeticSsrPipeline(
+        input,
+        "/project/components/UserProfile.tsx",
       );
 
       // SSR uses cached file:// paths for HTTP bundles
