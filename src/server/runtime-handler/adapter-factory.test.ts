@@ -773,7 +773,7 @@ describe("adapter-factory", () => {
       ]);
     });
 
-    it("refreshes mutable source before config for file-extension API candidates", async () => {
+    it("refreshes mutable source before config for SSR documents", async () => {
       let sourceFresh = false;
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
@@ -841,7 +841,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
-        pathname: "/feed.xml",
+        pathname: "/",
         isProxyMode: true,
         prepareHostedConfigContext: async () => ({
           sourceContext: { productionMode: false, branch: "main" },
@@ -883,7 +883,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
-        pathname: "/feed.xml",
+        pathname: "/",
         isProxyMode: true,
         allowHostProjectCodeExecution: false,
         prepareHostedConfigContext: async () => ({
@@ -903,7 +903,7 @@ describe("adapter-factory", () => {
       assertEquals(deniedResult.previewDocumentSourceSnapshot, undefined);
     });
 
-    it("keeps subresource config loads on the normal freshness lease", async () => {
+    it("keeps subresource and public asset config loads on the normal freshness lease", async () => {
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
@@ -939,34 +939,44 @@ describe("adapter-factory", () => {
       };
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
 
-      const result = await resolveAdapter({
-        projectDir: "/base/project",
-        adapter,
-        config: undefined,
-        projectSlug: "mutable-config-project",
-        projectId: "proj_mutable_config",
-        proxyToken: "tok-123",
-        releaseId: undefined,
-        proxyEnv: "preview",
-        branch: "main",
-        environmentName: undefined,
-        parsedDomain: {
-          slug: null,
-          branch: null,
-          environment: null,
-          isVeryfrontDomain: false,
-          isDraft: false,
-          allowIframeEmbed: false,
-        },
-        req: await makeReq(),
-        pathname: "/_vf_modules/app/page.js",
-        isProxyMode: true,
-        prepareHostedConfigContext: preparePreviewHostedConfigContext,
-      });
+      const results = await Promise.all(
+        ["/_vf_modules/app/page.js", "/favicon.ico"].map(async (pathname) =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "mutable-config-project",
+            projectId: "proj_mutable_config",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
+            branch: "main",
+            environmentName: undefined,
+            parsedDomain: {
+              slug: null,
+              branch: null,
+              environment: null,
+              isVeryfrontDomain: false,
+              isDraft: false,
+              allowIframeEmbed: false,
+            },
+            req: await makeReq(),
+            pathname,
+            isProxyMode: true,
+            prepareHostedConfigContext: preparePreviewHostedConfigContext,
+          })
+        ),
+      );
 
-      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
-      assertEquals(result.config?.router, "pages");
-      assertEquals(result.previewDocumentSourceSnapshot, undefined);
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "config-load", maxAgeMs: undefined },
+      ]);
+      assertEquals(results.map((result) => result.config?.router), ["pages", "pages"]);
+      assertEquals(
+        results.map((result) => result.previewDocumentSourceSnapshot),
+        [undefined, undefined],
+      );
     });
 
     it("rejects preview document config when the source generation changes during the read", async () => {

@@ -187,11 +187,11 @@ function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): bo
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return false;
-  const apiMayOwnFileExtensionPath = !pathname.startsWith("/_") &&
-    /\.[a-zA-Z0-9]+$/.test(pathname);
+  // StaticHandler precedes API discovery and owns ordinary extension paths,
+  // including missing-asset 404s. Only the extension paths that later render
+  // documents, such as standalone Markdown, need strict config binding here.
   return ssrOwnsDocumentPathname(pathname) ||
-    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname)) ||
-    apiMayOwnFileExtensionPath;
+    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
 }
 
 async function prepareProxyConfigLoad(
