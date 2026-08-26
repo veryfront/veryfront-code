@@ -317,6 +317,25 @@ describe("createImmutableFileCacheL1", () => {
     );
   });
 
+  it("expires an entry when the wall clock moves backward", () => {
+    let elapsedNow = 100;
+    let wallClockNow = 1_000;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      elapsedNow: () => elapsedNow,
+      wallClockNow: () => wallClockNow,
+    });
+    store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 1);
+
+    wallClockNow -= HOUR_MS;
+    elapsedNow += 2;
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "a backward wall-clock adjustment must not extend the authorization window",
+    );
+  });
+
   it("admits nothing when the TTL is zero", () => {
     const store = createImmutableFileCacheL1({ maxEntries: 8 });
     store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 0);
@@ -710,31 +729,31 @@ describe("createImmutableFileCacheL1", () => {
     // The TTL is the credential-revocation and publish-visibility bound, so a
     // wall clock stepped backward by NTP, a VM correction, or a manual
     // adjustment must not extend a held entry by the size of the step. The
-    // store measures lifetimes on its monotonic clock; here that clock is
-    // driven directly while admission happens under a wall clock an hour
-    // ahead, whose restoration IS the backward step.
-    let monotonicMs = 0;
+    // store measures lifetimes on its monotonic elapsed clock; here that
+    // clock is driven directly while admission happens under a wall clock an
+    // hour ahead, whose restoration IS the backward step.
+    let elapsedMs = 0;
     const store = createImmutableFileCacheL1({
       maxEntries: 8,
-      monotonicNowMs: () => monotonicMs,
+      elapsedNow: () => elapsedMs,
     });
     {
       using _time = new FakeTime(Date.now() + HOUR_MS);
       store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 5_000);
     }
 
-    monotonicMs = 4_999;
+    elapsedMs = 4_999;
     assertEquals(
       store.lookup("scope-a", RELEASE_KEY),
       "held",
       "a backward wall step must not stop the entry serving inside its TTL",
     );
 
-    monotonicMs = 5_000;
+    elapsedMs = 5_000;
     assertEquals(
       store.lookup("scope-a", RELEASE_KEY),
       null,
-      "the entry must expire on its monotonic schedule although the wall clock stepped back an hour, or the step would widen the revocation window by its own size",
+      "the entry must expire on its elapsed-time schedule although the wall clock stepped back an hour, or the step would widen the revocation window by its own size",
     );
   });
 
@@ -758,22 +777,22 @@ describe("createImmutableFileCacheL1", () => {
     );
   });
 
-  it("enforces a caller's maximum age on the monotonic clock", () => {
-    let monotonicMs = 0;
+  it("enforces a caller's maximum age on the monotonic elapsed clock", () => {
+    let elapsedMs = 0;
     const store = createImmutableFileCacheL1({
       maxEntries: 8,
-      monotonicNowMs: () => monotonicMs,
+      elapsedNow: () => elapsedMs,
     });
     {
       using _time = new FakeTime(Date.now() + HOUR_MS);
       store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), HOUR_MS);
     }
 
-    monotonicMs = 2_500;
+    elapsedMs = 2_500;
     assertEquals(
       store.lookup("scope-a", RELEASE_KEY, 1_000),
       null,
-      "a caller's own lifetime must be enforced on the monotonic clock, not on a wall clock now reading an hour before the admission",
+      "a caller's own lifetime must be enforced on the elapsed clock, not on a wall clock now reading an hour before the admission",
     );
     assertEquals(
       store.lookup("scope-a", RELEASE_KEY, 10_000),
@@ -782,17 +801,17 @@ describe("createImmutableFileCacheL1", () => {
     );
   });
 
-  it("counts in-flight time on the monotonic clock at admission", () => {
-    let monotonicMs = 0;
+  it("counts in-flight time on the elapsed clock at admission", () => {
+    let elapsedMs = 0;
     const store = createImmutableFileCacheL1({
       maxEntries: 8,
-      monotonicNowMs: () => monotonicMs,
+      elapsedNow: () => elapsedMs,
     });
-    // The wall clock stands still for the whole test; only the monotonic
+    // The wall clock stands still for the whole test; only the elapsed
     // clock records the read's five in-flight seconds.
     using _time = new FakeTime();
     const token = store.beginRead(RELEASE_KEY);
-    monotonicMs = 5_000;
+    elapsedMs = 5_000;
     store.admit("scope-a", RELEASE_KEY, "held", token, 5_000);
 
     assertEquals(

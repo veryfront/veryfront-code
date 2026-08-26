@@ -392,16 +392,16 @@ export class FileCache {
                   ? entry.backendTtlMs
                   : this.options.ttl;
                 // `entry.timestamp` is the WRITER's wall clock and
-                // `startedAtMs` this reader's, and the two hosts' clocks can
-                // skew. A reader whose clock runs behind the writer's would
-                // derive a remaining lifetime LONGER than the writer declared,
-                // so the derived value is clamped to `writerTtlMs`: whatever
-                // the clocks say, an entry is never held past the lifetime its
-                // writer recorded. `immutableL1Ttl` below, itself clamped to
-                // the security maximum, stays the outer bound.
+                // `startedAtWallClockMs` this reader's, and the two hosts'
+                // clocks can skew. A reader whose clock runs behind the
+                // writer's would derive a remaining lifetime LONGER than the
+                // writer declared, so the derived value is clamped to
+                // `writerTtlMs`: whatever the clocks say, an entry is never
+                // held past the lifetime its writer recorded. The L1 measures
+                // this derived lifetime on its separate monotonic clock.
                 const backendRemainingTtl = Math.min(
                   writerTtlMs,
-                  entry.timestamp + writerTtlMs - readToken.startedAtMs,
+                  entry.timestamp + writerTtlMs - readToken.startedAtWallClockMs,
                 );
                 l1.admit(
                   admissionScope,

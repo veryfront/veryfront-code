@@ -239,10 +239,10 @@ interface ImmutableL1Entry {
   bucketPrefix: string;
   value: string;
   valueBytes: number;
-  /** Read start on the store's monotonic clock; see `ImmutableL1ReadToken`. */
-  readStartedAtMonotonicMs: number;
-  /** Expiry on the store's monotonic clock. */
-  expiresAtMonotonicMs: number;
+  /** Read start on the store's monotonic elapsed clock; see `ImmutableL1ReadToken`. */
+  readStartedAtElapsedMs: number;
+  /** Expiry on the store's monotonic elapsed clock. */
+  expiresAtElapsedMs: number;
 }
 
 /**
@@ -251,23 +251,22 @@ interface ImmutableL1Entry {
  * unadmissible, so a read already in flight cannot reinstate what was just
  * invalidated.
  *
- * `startedAtMs` records when the backend read began. The TTL is a bound on how
- * stale a served value can be relative to a revocation or a publish, and both
- * can land while the read is still in flight, so the entry's lifetime is
- * measured from this moment rather than from when the response arrived. A read
- * slow enough to consume the whole TTL admits nothing.
- *
- * The moment is recorded on two clocks. `startedAtMs` is the wall clock, for
- * callers that must compare the read start against timestamps another host
- * wrote. `startedAtMonotonicMs` is the store's own monotonic clock, and it is
- * the one every lifetime comparison uses: the TTL is a security bound, and a
- * wall clock stepped backward by NTP or a manual adjustment must not widen it.
+ * `startedAtElapsedMs` records when the backend read began on a monotonic
+ * elapsed-time clock, and it is the moment every lifetime comparison is
+ * measured from. The TTL is a bound on how stale a served value can be
+ * relative to a revocation or a publish, and both can land while the read is
+ * still in flight, so the entry's lifetime is measured from this moment rather
+ * than from when the response arrived. A read slow enough to consume the whole
+ * TTL admits nothing. The TTL is a security bound, and a wall clock stepped
+ * backward by NTP or a manual adjustment must not widen it, so
+ * `startedAtWallClockMs` is retained separately, only for comparing the
+ * reader's time with a backend entry's Unix timestamp.
  */
 export interface ImmutableL1ReadToken {
   readonly key: number;
   readonly sweep: number;
-  readonly startedAtMs: number;
-  readonly startedAtMonotonicMs: number;
+  readonly startedAtElapsedMs: number;
+  readonly startedAtWallClockMs: number;
 }
 
 export interface ImmutableFileCacheL1 {
@@ -403,42 +402,10 @@ export interface ImmutableFileCacheL1Options {
   maxEntries?: number;
   maxValueBytes?: number;
   maxTotalBytes?: number;
-  /**
-   * Monotonic millisecond clock the store measures entry lifetimes with.
-   * Defaults to `createMonotonicClock()`. A test seam, like the `readEnv`
-   * parameters above: production callers never pass it, and the default is
-   * what keeps a stepped wall clock from widening the TTL's security window.
-   */
-  monotonicNowMs?: () => number;
-}
-
-/**
- * A millisecond clock that never moves backward.
- *
- * `performance.now()` is the base: it is monotonic, so a wall clock stepped
- * backward by NTP, a VM correction, or a manual adjustment cannot extend a
- * held entry by the size of the step, which a `Date.now()` expiry would allow.
- *
- * FORWARD wall-clock progress is honored too, by advancing on each reading by
- * the larger of the two clocks' deltas. Expiring entries on a forward step
- * fails closed (the tier refetches early, it never serves longer), and it
- * keeps the clock meaningful where wall time is virtualized, such as fake
- * timers in tests, which step `Date.now()` without `performance.now()` moving.
- */
-function createMonotonicClock(): () => number {
-  let lastWallMs = Date.now();
-  let lastPerfMs = performance.now();
-  let elapsedMs = 0;
-  return (): number => {
-    const wallMs = Date.now();
-    const perfMs = performance.now();
-    const wallDeltaMs = wallMs - lastWallMs;
-    const perfDeltaMs = perfMs - lastPerfMs;
-    lastWallMs = wallMs;
-    lastPerfMs = perfMs;
-    elapsedMs += Math.max(perfDeltaMs, wallDeltaMs, 0);
-    return elapsedMs;
-  };
+  /** Monotonic elapsed-time source, injectable for deterministic tests. */
+  elapsedNow?: () => number;
+  /** Unix millisecond source used only for backend timestamp comparison. */
+  wallClockNow?: () => number;
 }
 
 /**
@@ -461,6 +428,8 @@ function sanitizeCeiling(value: number | undefined, fallback: number): number {
 export function createImmutableFileCacheL1(
   options: ImmutableFileCacheL1Options = {},
 ): ImmutableFileCacheL1 {
+  const elapsedNow = options.elapsedNow ?? (() => performance.now());
+  const wallClockNow = options.wallClockNow ?? (() => Date.now());
   const maxEntries = sanitizeCeiling(options.maxEntries, resolveImmutableL1MaxEntries());
   const maxTotalBytes = sanitizeCeiling(options.maxTotalBytes, resolveImmutableL1MaxTotalBytes());
   // A value bigger than the whole store could ever hold is refused up front
@@ -471,14 +440,6 @@ export function createImmutableFileCacheL1(
     maxTotalBytes,
   );
 
-  // Every lifetime comparison in the store runs on this clock, never on bare
-  // `Date.now()`. The TTL is the credential-revocation and publish-visibility
-  // bound, and a wall clock stepped backward by NTP, a VM correction, or a
-  // manual adjustment would extend every held entry by the size of the step.
-  // A monotonic clock cannot step backward, so the bound holds whatever the
-  // host's wall clock does.
-  const monotonicNowMs = options.monotonicNowMs ?? createMonotonicClock();
-
   // Insertion order is the LRU order: a hit re-inserts, eviction takes the head.
   const entries = new Map<string, ImmutableL1Entry>();
   let retainedBytes = 0;
@@ -487,10 +448,11 @@ export function createImmutableFileCacheL1(
   // store. Every write path drops its key up to three times, so an O(store)
   // scan per drop would make a burst of N writes O(N x maxEntries).
   //
-  // `storeKeysByCacheKey`: the store keys holding a cache key, one per scope.
-  // `storeKeysByBucket`: store keys grouped by the key's prefix bucket, the
-  // release-qualified prefix invalidations are issued against. Index entries
-  // leave with their entries, so neither map outgrows the store.
+  // `storeKeysByCacheKey`: the store keys holding a cache key, one per
+  // authority scope. `storeKeysByBucket`: store keys grouped by the key's
+  // prefix bucket, the release-qualified shape prefix invalidations are
+  // issued against. Index entries leave with their entries, so neither map
+  // outgrows the store.
   const storeKeysByCacheKey = new Map<string, Set<string>>();
   const storeKeysByBucket = new Map<string, Set<string>>();
   // Per-key mutation counters, plus one counter for whole-store invalidations.
@@ -540,7 +502,7 @@ export function createImmutableFileCacheL1(
     if (held.size === 0) index.delete(indexKey);
   };
 
-  /** The single place an entry leaves the store, so the byte total cannot drift. */
+  /** The single place an entry leaves the store, so accounting cannot drift. */
   const removeEntry = (storeKey: string): void => {
     const entry = entries.get(storeKey);
     if (!entry) return;
@@ -554,10 +516,10 @@ export function createImmutableFileCacheL1(
   const sweepExpired = (): number => {
     if (entries.size === 0) return 0;
 
-    const now = monotonicNowMs();
+    const now = elapsedNow();
     let reclaimed = 0;
     for (const [storeKey, entry] of entries) {
-      if (now < entry.expiresAtMonotonicMs) continue;
+      if (now < entry.expiresAtElapsedMs) continue;
       removeEntry(storeKey);
       reclaimed += 1;
     }
@@ -586,8 +548,8 @@ export function createImmutableFileCacheL1(
       return {
         key: keyGenerations.get(cacheKey) ?? 0,
         sweep,
-        startedAtMs: Date.now(),
-        startedAtMonotonicMs: monotonicNowMs(),
+        startedAtElapsedMs: elapsedNow(),
+        startedAtWallClockMs: wallClockNow(),
       };
     },
     lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null {
@@ -595,8 +557,8 @@ export function createImmutableFileCacheL1(
       const entry = entries.get(storeKey);
       if (!entry) return null;
 
-      const now = monotonicNowMs();
-      if (now >= entry.expiresAtMonotonicMs) {
+      const now = elapsedNow();
+      if (now >= entry.expiresAtElapsedMs) {
         removeEntry(storeKey);
         return null;
       }
@@ -609,7 +571,7 @@ export function createImmutableFileCacheL1(
       // measured from the backend read start, like the expiry above.
       if (
         maxAgeMs !== undefined && Number.isFinite(maxAgeMs) &&
-        now - entry.readStartedAtMonotonicMs >= maxAgeMs
+        now - entry.readStartedAtElapsedMs >= maxAgeMs
       ) {
         return null;
       }
@@ -648,10 +610,11 @@ export function createImmutableFileCacheL1(
       // full timeout and then stamped with a fresh TTL would be servable for
       // timeout plus TTL after the revocation. A read that already consumed
       // the whole TTL admits nothing. All of it is measured on the store's
-      // monotonic clock, so a backward wall-clock step cannot stretch it.
-      const readStartedAtMonotonicMs = token.startedAtMonotonicMs;
-      const expiresAtMonotonicMs = readStartedAtMonotonicMs + ttlMs;
-      if (monotonicNowMs() >= expiresAtMonotonicMs) return;
+      // monotonic elapsed clock, so a backward wall-clock step cannot
+      // stretch it.
+      const readStartedAtElapsedMs = token.startedAtElapsedMs;
+      const expiresAtElapsedMs = readStartedAtElapsedMs + ttlMs;
+      if (elapsedNow() >= expiresAtElapsedMs) return;
 
       // Expired entries are reclaimed on every admission, so dead weight is
       // never charged against the ceilings while a live entry gets evicted,
@@ -667,8 +630,8 @@ export function createImmutableFileCacheL1(
         bucketPrefix,
         value,
         valueBytes,
-        readStartedAtMonotonicMs,
-        expiresAtMonotonicMs,
+        readStartedAtElapsedMs,
+        expiresAtElapsedMs,
       });
       retainedBytes += valueBytes;
       indexInsert(storeKeysByCacheKey, cacheKey, storeKey);
@@ -693,7 +656,7 @@ export function createImmutableFileCacheL1(
     },
     dropPrefix(prefix: string): void {
       sweep += 1;
-      if (entries.size === 0) return;
+      if (storeKeysByCacheKey.size === 0) return;
 
       // A bucket can only hold matching keys when the dropped prefix and the
       // bucket prefix are prefixes of one another: every key in a bucket
