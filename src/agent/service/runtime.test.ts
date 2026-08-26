@@ -130,6 +130,7 @@ describe("agent/agent-service-runtime", () => {
         instructions: "You are a test assistant.",
         skills: ["support-triage"],
         tools: ["search_knowledge", "get_file"],
+        deniedTools: ["load_skill"],
       }),
       logger: createLogger(),
       prepareExecution: async () => ({ ok: true }),
@@ -144,7 +145,7 @@ describe("agent/agent-service-runtime", () => {
     assert(tools && tools !== true);
     assertEquals(tools?.search_knowledge, true);
     assertEquals(tools?.get_file, true);
-    assertEquals(typeof tools?.load_skill, "object");
+    assertEquals(tools?.load_skill, false);
     assertEquals(typeof tools?.load_skill_reference, "object");
     assertEquals(typeof tools?.execute_skill_script, "object");
   });

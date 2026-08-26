@@ -455,6 +455,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions hides deferred skill tools fr
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is denied", async () => {
+  let visibleToolNames: string[] | undefined;
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest(),
     agentConfig: {
@@ -463,7 +464,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions hides skills when load_skill 
       description: "Hosted agent",
       instructions: "Base instructions",
       tools: ["get_agent"],
-      deniedTools: ["load_skill"],
+      deniedTools: ["load_skill", "tool_search"],
       skills: true,
     },
     projectId: "project-1",
@@ -480,7 +481,10 @@ Deno.test("prepareHostedChatRuntimeCreationOptions hides skills when load_skill 
           allowedTools: ["bash"],
         }],
       }),
-    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    buildInstructions: (input) => {
+      visibleToolNames = input.availableToolNames;
+      return buildVeryfrontCloudRuntimeInstructions(input);
+    },
   });
 
   const instructions = result.creationOptions.instructions;
@@ -489,6 +493,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions hides skills when load_skill 
     : instructions;
   assertEquals(system.includes("<available_skills>"), false);
   assertEquals(system.includes("Deploy the project"), false);
+  assertEquals(visibleToolNames?.includes("tool_search") ?? false, false);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {

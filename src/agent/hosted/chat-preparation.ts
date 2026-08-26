@@ -348,7 +348,7 @@ function resolveInitialModelVisibleToolNames(input: {
     return [
       ...(isHostAllowed("form_input") ? ["form_input"] : []),
       ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
-      TOOL_SEARCH_TOOL_NAME,
+      ...(isHostAllowed(TOOL_SEARCH_TOOL_NAME) ? [TOOL_SEARCH_TOOL_NAME] : []),
     ].sort(compareStrings);
   }
 

@@ -859,7 +859,8 @@ export async function createRuntimeAgentStreamResponse(
       getProviderNativeToolNames({ model: agent.config.model }),
     );
     const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
-      modelSupportedProviderToolNames.has(toolName)
+      modelSupportedProviderToolNames.has(toolName) &&
+      !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName)
     );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
@@ -924,7 +925,7 @@ export async function createRuntimeAgentStreamResponse(
         ...agent.config,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
-        ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
+        ...(Array.isArray(agent.config.providerTools) ? { providerTools: providerToolNames } : {}),
         ...(allowedRemoteToolNames !== undefined
           ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
           : {}),

@@ -483,7 +483,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? [
       ...bootstrapToolNames,
-      ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
+      ...(hasDeferredTools && !deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME)
+        ? [TOOL_SEARCH_TOOL_NAME]
+        : []),
     ].sort(compareStrings)
     : availableToolNames;
 

@@ -177,12 +177,21 @@ function defaultTrace<TResult>(
 
 function normalizeAgentServiceTools(
   tools: RuntimeAgentMarkdownDefinition["tools"],
+  deniedTools: RuntimeAgentMarkdownDefinition["deniedTools"],
 ): AgentConfig["tools"] {
-  if (tools === undefined || tools === true) {
-    return tools;
+  if (!deniedTools?.length) {
+    if (tools === undefined || tools === true) return tools;
+    return Object.fromEntries(tools.map((toolId) => [toolId, true]));
   }
-
-  return Object.fromEntries(tools.map((toolId) => [toolId, true]));
+  if (tools === true) {
+    // The public AgentConfig cannot express "all except". Fail closed rather
+    // than allowing an explicitly denied tool back into the service.
+    return Object.fromEntries(deniedTools.map((toolId) => [toolId, false]));
+  }
+  return {
+    ...Object.fromEntries((tools ?? []).map((toolId) => [toolId, true])),
+    ...Object.fromEntries(deniedTools.map((toolId) => [toolId, false])),
+  };
 }
 
 export function combineAgentServiceLifecycle(
@@ -270,7 +279,7 @@ export function createAgentServiceRuntime<
       maxSteps: agentConfig.maxSteps,
       providerTools: agentConfig.providerTools,
       skills: agentConfig.skills,
-      tools: normalizeAgentServiceTools(agentConfig.tools),
+      tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
     }),
     server: {
       port: config.PORT,

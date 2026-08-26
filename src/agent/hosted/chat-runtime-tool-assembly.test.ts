@@ -810,13 +810,13 @@ Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to prov
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
-    localTools: {},
+    localTools: { lookup: localTool("Look up project data") },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     allowedToolNames: null,
     allowedProviderToolNames: ["web_search"],
     sourceProviderToolNames: ["web_search"],
-    deniedToolNames: ["web_search"],
+    deniedToolNames: ["web_search", "tool_search"],
     createRemoteToolSource: remoteSourceFromConfig,
     preloadLatestConversationUserText: false,
   });
@@ -827,6 +827,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to prov
     "an explicit denial must remove the provider tool even when it is allowlisted",
   );
   assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
+  assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {

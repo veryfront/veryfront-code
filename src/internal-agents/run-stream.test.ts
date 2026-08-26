@@ -1715,7 +1715,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, []);
   });
 
-  it("caps providerTools to the toolAllowlist", async () => {
+  it("caps providerTools to the toolAllowlist and explicit denials", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedProviderTools: string[] | undefined;
 
@@ -1728,6 +1728,7 @@ describe("internal-agents/run-stream", () => {
         providerTools: ["web_search"],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
+          web_search: false,
         },
       },
     } as unknown as Agent;
@@ -1741,7 +1742,7 @@ describe("internal-agents/run-stream", () => {
       context: [],
       forwardedProps: {
         runtimeOverrides: {
-          toolAllowlist: ["read_baseline"],
+          toolAllowlist: ["read_baseline", "web_search"],
         },
       },
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
