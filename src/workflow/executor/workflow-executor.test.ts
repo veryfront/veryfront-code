@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertInstanceOf,
@@ -10,7 +11,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
+import { branch, dependsOn, step, waitForApproval, waitForEvent, workflow } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
@@ -673,6 +674,85 @@ describe("workflow/executor/workflow-executor", () => {
     );
   });
 
+  it("retires event waits excluded by an explicit checkpoint restore", async () => {
+    const backend = new MemoryBackend();
+    const resolved: Array<{ runId: string; waitId: string }> = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      onEventWaitResolved: (runId, waitId) => {
+        resolved.push({ runId, waitId });
+      },
+    });
+    let finishRuns = 0;
+    executor.register(
+      workflow({
+        id: "checkpoint-retire-event-wait",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(waitForEvent("gate", { eventName: "gate.ready" }), "prepare"),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishRuns++;
+                return { done: true };
+              }),
+            }),
+            "gate",
+          ),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("checkpoint-retire-event-wait"),
+      status: "waiting" as const,
+      context: { input: {}, prepare: { ready: true } },
+      nodeStates: {
+        prepare: { nodeId: "prepare", status: "completed" as const, attempt: 1 },
+        gate: {
+          nodeId: "gate",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "event", eventName: "gate.ready" },
+          _waitInstanceId: "wait-after-checkpoint",
+        },
+      },
+      currentNodes: ["gate"],
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "cp-prepare",
+      nodeId: "prepare",
+      timestamp: new Date(),
+      context: { input: {}, prepare: { ready: true } },
+      nodeStates: { prepare: { nodeId: "prepare", status: "completed", attempt: 1 } },
+    });
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-after-checkpoint",
+      runId: run.id,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+      waitInstanceId: "wait-after-checkpoint",
+    });
+
+    await executor.resume(run.id, "cp-prepare");
+
+    const pending = await backend.getPendingEventWaits(run.id);
+    assertEquals(pending.length, 0);
+    assertEquals(resolved, [{ runId: run.id, waitId: "evw-after-checkpoint" }]);
+    assertEquals(finishRuns, 0);
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "waiting");
+    assertEquals(restored?.nodeStates.gate?.status, "running");
+    assert(
+      restored?.nodeStates.gate?._waitInstanceId !== "wait-after-checkpoint",
+      "replayed wait must get a fresh instance identity instead of reusing the stale record",
+    );
+  });
+
   it("persists recovered running-node attempts before re-running side effects", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
@@ -725,17 +805,21 @@ describe("workflow/executor/workflow-executor", () => {
     await execution;
   });
 
-  it("releases a waiting run lock before its async callback settles", async () => {
+  it("releases a waiting run lock after wait persistence and before batch completion", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();
     const callbackStarted = Promise.withResolvers<void>();
     const releaseCallback = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
     const executor = new WorkflowExecutor({
       backend,
       heartbeatInterval: 5,
-      onWaiting: async () => {
+      onWaitingPersist: async () => {
         callbackStarted.resolve();
         await releaseCallback.promise;
+      },
+      onWaitingBatchComplete: async () => {
+        batchStarted.resolve();
       },
     });
     executor.register(
@@ -761,19 +845,19 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(settled, false);
     const pausedRun = await backend.getRun(run.id);
     assertEquals(pausedRun?.status, "waiting");
-    assertEquals(await backend.isLocked(run.id), false);
+    assertEquals(await backend.isLocked(run.id), true);
 
     await time.tickAsync(5);
     const heartbeatRun = await backend.getRun(run.id);
-    assertEquals(
-      heartbeatRun?.heartbeatAt?.getTime(),
-      pausedRun?.heartbeatAt?.getTime(),
+    assert(
+      (heartbeatRun?.heartbeatAt?.getTime() ?? 0) >= (pausedRun?.heartbeatAt?.getTime() ?? 0),
     );
     assertEquals(heartbeatRun?.workerId, run.workerId);
     assertEquals(settled, false);
 
     releaseCallback.resolve();
-    await time.tickAsync(0);
+    await batchStarted.promise;
+    assertEquals(await backend.isLocked(run.id), false);
     await execution;
     assertEquals(settled, true);
   });

@@ -117,6 +117,12 @@ export interface WorkflowExecutorConfig {
     nodeId: string,
     waitConfig?: WaitNodeConfig,
   ) => void | Promise<void>;
+  /** Callback when resume observes an already-live wait record. */
+  onLiveWaiting?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
   /** Callback after every wait in one settled DAG batch has been persisted. */
   onWaitingBatchComplete?: (run: WorkflowRun) => void | Promise<void>;
   /** Notify the owning wait manager after cancellation resolves a durable wait. */
@@ -687,6 +693,8 @@ export class WorkflowExecutor {
           this.config.onWaitingPersist?.(waitingRun, nodeId, waitConfig),
         onWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
+        onLiveWaiting: (waitingRun, nodeId, waitConfig) =>
+          this.config.onLiveWaiting?.(waitingRun, nodeId, waitConfig),
         onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),
       });
     }, {

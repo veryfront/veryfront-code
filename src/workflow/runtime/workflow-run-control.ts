@@ -97,6 +97,12 @@ export interface WorkflowRunControlExecuteInput {
     nodeId: string,
     waitConfig?: WaitNodeConfig,
   ): void | Promise<void>;
+  /** Notify observers when resume observes an already-live wait record. */
+  onLiveWaiting?(
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ): void | Promise<void>;
   onWaitingBatchComplete?(run: WorkflowRun): void | Promise<void>;
 }
 
@@ -1049,6 +1055,7 @@ export async function executeWorkflowRunControl(
       // exact runtime config retained by the DAG. A live first sibling must
       // not hide a later sibling whose process died before persisting it.
       const announcedWaits: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
+      const liveWaitingNodes: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
       for (const waiting of stalledWaitNodes) {
         if (
           await hasLiveNodeWait(
@@ -1057,7 +1064,10 @@ export async function executeWorkflowRunControl(
             waiting.nodeId,
             pausedRun.nodeStates[waiting.nodeId]?._waitInstanceId,
           )
-        ) continue;
+        ) {
+          liveWaitingNodes.push(waiting);
+          continue;
+        }
         if (pausedRun.nodeStates[waiting.nodeId]?.status !== "running") continue;
         await input.onWaitingPersist?.(pausedRun, waiting.nodeId, waiting.waitConfig);
         announcedWaits.push(waiting);
@@ -1074,6 +1084,9 @@ export async function executeWorkflowRunControl(
           status: releasedRun?.status === "cancelled" ? "cancelled" : "skipped",
           run: releasedRun ?? undefined,
         };
+      }
+      for (const waiting of liveWaitingNodes) {
+        await input.onLiveWaiting?.(releasedRun, waiting.nodeId, waiting.waitConfig);
       }
       for (const waiting of announcedWaits) {
         await input.onWaiting?.(releasedRun, waiting.nodeId, waiting.waitConfig);

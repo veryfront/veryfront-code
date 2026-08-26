@@ -150,6 +150,9 @@ export class WorkflowClient {
         }
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
+      onLiveWaiting: async () => {
+        await this.eventWaitManager.checkExpiredEventWaits();
+      },
       onWaitingBatchComplete: async (run) => {
         await this.eventWaitManager.drainPendingEvents(run.id);
         await userOnWaitingBatchComplete?.(run);

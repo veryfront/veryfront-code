@@ -5111,6 +5111,50 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("expires a live timed wait when resume observes it after restart", async () => {
+    const sharedBackend = new MemoryBackend();
+    const parked = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const recovering = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const definition = workflow({
+      id: "resume-expired-live-wait",
+      steps: [
+        waitForEvent("gate", { eventName: "gate.ready", timeout: 30 }),
+        step("after", { tool: createMockTool("after-resume-expiry-tool", { done: true }) }),
+      ],
+    });
+    try {
+      parked.register(definition);
+      recovering.register(definition);
+      const handle = await parked.start("resume-expired-live-wait", {});
+      await handle.settled();
+      const [wait] = await parked.getPendingEventWaits(handle.runId);
+      assertExists(wait?.expiresAt);
+
+      parked.getEventWaitManager().stop();
+      await waitFor(() => Date.now() > wait.expiresAt!.getTime(), {
+        message: "the deadline never passed",
+      });
+
+      await recovering.resume(handle.runId);
+
+      await waitFor(async () => (await recovering.getRun(handle.runId))?.status === "failed", {
+        message: "resume did not expire the already-overdue live wait",
+      });
+      assertEquals(await recovering.getPendingEventWaits(handle.runId), []);
+      const run = await recovering.getRun(handle.runId);
+      assertEquals(run?.nodeStates.after?.status ?? "pending", "pending");
+    } finally {
+      await parked.destroy();
+      await recovering.destroy();
+    }
+  });
+
   it("delivers buffered mail published before the deadline even when draining is late", async () => {
     client.register(workflow({
       id: "on-time-buffered-event",
