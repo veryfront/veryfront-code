@@ -76,13 +76,13 @@ export function csrfMutationHeadersFor(
     cookies[csrfNamesCookieName(facts.origin)],
     facts.origin,
   );
-  const { cookieName, headerName } = resolveCsrfNames({
-    cookieName: effectiveCsrfCookieNameForOrigin(
-      options.cookieName ?? advertised?.cookieName,
-      facts.origin,
-    ),
-    headerName: options.headerName ?? advertised?.headerName,
-  });
+  const configured = resolveCsrfNames(options);
+  const cookieName = options.cookieName === undefined && advertised
+    ? advertised.cookieName
+    : effectiveCsrfCookieNameForOrigin(configured.cookieName, facts.origin);
+  const headerName = options.headerName === undefined && advertised
+    ? advertised.headerName
+    : configured.headerName;
   if (headers.has(headerName)) return headers;
 
   try {

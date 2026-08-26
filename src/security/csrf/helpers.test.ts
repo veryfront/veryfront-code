@@ -159,6 +159,20 @@ describe("security/csrf/helpers", () => {
       );
     });
 
+    it("accepts a derived HTTP default when only the header name is customized", () => {
+      const origin = "http://example.test:3000";
+      const scopedName = csrfHttpTokenCookieName("vf_csrf", origin);
+      const req = new Request(`${origin}/api`, {
+        method: "POST",
+        headers: {
+          cookie: `${scopedName}=scoped-token`,
+          "x-project-csrf": "scoped-token",
+        },
+      });
+
+      assertEquals(validateCsrf(req, { headerName: "x-project-csrf" }), true);
+    });
+
     it("should return false when header token is empty string", () => {
       const req = new Request("http://localhost/submit", {
         method: "POST",

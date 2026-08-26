@@ -60,6 +60,26 @@ describe("csrfMutationHeadersFor", () => {
     );
   });
 
+  it("accepts an advertised origin-scoped HTTP token name", () => {
+    const origin = "http://192.168.1.20:3000";
+    const cookieName = csrfHttpTokenCookieName("vf_csrf", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${advertisedNames(origin, `${origin}:${cookieName}:x-project-csrf`)}; ` +
+          `${cookieName}=tok-http`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+    );
+
+    assertEquals(
+      headers.get("x-project-csrf"),
+      "tok-http",
+      "a validated internal name from server discovery must not be treated as caller config",
+    );
+  });
+
   it("round-trips percent characters from an encoded advertisement", () => {
     const headers = csrfMutationHeadersFor(
       "/api/cases",

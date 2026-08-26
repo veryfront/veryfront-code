@@ -130,14 +130,17 @@ export function validateCsrf(
   options?: CsrfNameOptions,
 ): boolean {
   try {
-    const { cookieName, headerName } = resolveCsrfNames(options);
+    const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
+    const { cookieName, headerName } = resolveCsrfNames({
+      cookieName: effectiveCsrfCookieNameForOrigin(options?.cookieName, browserOrigin),
+      headerName: options?.headerName,
+    });
     const cookies = parseCookiesFromHeaders(req.headers);
     const cookieTokens = [cookies[cookieName]];
     if (
       !cookieName.startsWith("__Host-") &&
       !cookieName.startsWith("__Secure-")
     ) {
-      const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
       if (new URL(browserOrigin).protocol === "http:") {
         cookieTokens.push(cookies[csrfHttpTokenCookieName(cookieName, browserOrigin)]);
       }

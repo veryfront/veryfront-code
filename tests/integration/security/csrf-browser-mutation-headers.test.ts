@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { validateCsrf } from "#veryfront/security/csrf/helpers.ts";
+import { applyCsrfCookie, validateCsrf } from "#veryfront/security/csrf/helpers.ts";
 import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
@@ -96,6 +96,40 @@ describe("security/csrf/browser-mutation-headers", () => {
         { cookieName: "vf_csrf" },
       ),
       true,
+    );
+  });
+
+  it("discovers a header-only HTTP configuration and completes the server round trip", () => {
+    const origin = "http://192.168.1.20:3000";
+    const csrf = { headerName: "x-project-csrf" };
+    const pageHeaders = new Headers();
+    applyCsrfCookie(
+      new Request(`${origin}/cases`, { headers: { accept: "text/html" } }),
+      pageHeaders,
+      csrf,
+    );
+    const documentCookie = pageHeaders.getSetCookie()
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+
+    const headers = withDocument(
+      {
+        baseURI: `${origin}/cases`,
+        cookie: documentCookie,
+        location: { origin },
+      } as Document,
+      () => csrfMutationHeaders("/api/cases"),
+    );
+    headers.set("cookie", documentCookie);
+
+    assertEquals(headers.get(csrf.headerName)?.length > 0, true);
+    assertEquals(
+      validateCsrf(
+        new Request(`${origin}/api/cases`, { method: "POST", headers }),
+        csrf,
+      ),
+      true,
+      "the zero-option browser helper must accept the server-advertised internal token name",
     );
   });
 
