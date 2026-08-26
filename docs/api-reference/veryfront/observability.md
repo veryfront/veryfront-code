@@ -162,10 +162,10 @@ const result = await withSpan("load-data", async () => {
 
 ### Constants
 
-| Name      | Description                                                                | Source                                                                                                     |
-| --------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/index.ts#L101)            |
-| `trace`   | Read-only tracing facade for the public `veryfront/observability` surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L640) |
+| Name      | Description                                                                | Source                                                                                                        |
+| --------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/index.ts#L78) |
+| `trace`   | Read-only tracing facade for the public `veryfront/observability` surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L588)    |
 
 ## Deep imports
 

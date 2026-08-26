@@ -5,12 +5,12 @@ import * as publicPlatform from "veryfront/platform";
 
 it("keeps host and trusted-snapshot readers outside veryfront/platform/env", () => {
   assertEquals(Object.keys(publicEnv).sort(), [
-    "env",
     "getEnv",
     "getEnvBoolean",
     "getEnvNumber",
     "getEnvString",
   ]);
+  assertEquals("env" in publicEnv, false);
   assertEquals("getHostEnv" in publicEnv, false);
   assertEquals("getTrustedProjectEnvSnapshot" in publicEnv, false);
   assertEquals("registerTrustedProjectEnvSnapshot" in publicEnv, false);

@@ -1,12 +1,52 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert";
+import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/diagnostic-policy.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import type { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   handleErrorWithFallback,
   handleErrorWithFallbackSync,
   retryWithBackoff,
 } from "./error-handlers.ts";
+
+/**
+ * Captures the warn calls made through the injectable `logger` parameter, which
+ * exists only so a swallowed error still leaves a trace.
+ */
+function createWarnRecorder(): {
+  logger: typeof serverLogger;
+  warnings: unknown[][];
+} {
+  const warnings: unknown[][] = [];
+  const logger = {
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
+    },
+  } as unknown as typeof serverLogger;
+  return { logger, warnings };
+}
+
+function assertSwallowedErrorIsLoggedAsDiagnostic(
+  warnings: unknown[][],
+  thrown: Error,
+): void {
+  assertEquals(warnings.length, 1, "the swallowed error must be logged once");
+  const diagnostic = warnings[0]?.[1];
+  assertInstanceOf(diagnostic, Error, "the warning must carry an Error diagnostic");
+  assertEquals(diagnostic === thrown, false, "the warning must not retain the thrown Error");
+  assertEquals(diagnostic.stack, undefined, "the warning diagnostic must not carry a stack");
+  assertEquals(
+    diagnostic.message.length <= ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
+    true,
+    "the warning diagnostic must remain bounded",
+  );
+  assertEquals(
+    diagnostic.message.includes("<TOKEN>"),
+    false,
+    "the warning diagnostic must redact credential values",
+  );
+}
 
 describe("error-handlers", () => {
   describe("handleErrorWithFallback", () => {
@@ -20,6 +60,22 @@ describe("error-handlers", () => {
         throw new Error("fail");
       }, "fallback");
       assertEquals(result, "fallback");
+    });
+
+    it("logs a bounded stackless diagnostic before returning the fallback", async () => {
+      const { logger, warnings } = createWarnRecorder();
+      const thrown = new Error(`https://example.test/?token=<TOKEN>${"x".repeat(3_000)}`);
+
+      const result = await handleErrorWithFallback(
+        () => {
+          throw thrown;
+        },
+        "fallback",
+        logger,
+      );
+
+      assertEquals(result, "fallback", "the fallback is still returned");
+      assertSwallowedErrorIsLoggedAsDiagnostic(warnings, thrown);
     });
 
     it("should handle async functions", async () => {
@@ -50,6 +106,22 @@ describe("error-handlers", () => {
         throw new Error("fail");
       }, "fallback");
       assertEquals(result, "fallback");
+    });
+
+    it("logs a bounded stackless diagnostic before returning the fallback", () => {
+      const { logger, warnings } = createWarnRecorder();
+      const thrown = new Error(`https://example.test/?token=<TOKEN>${"x".repeat(3_000)}`);
+
+      const result = handleErrorWithFallbackSync(
+        () => {
+          throw thrown;
+        },
+        "fallback",
+        logger,
+      );
+
+      assertEquals(result, "fallback", "the fallback is still returned");
+      assertSwallowedErrorIsLoggedAsDiagnostic(warnings, thrown);
     });
   });
 
@@ -290,6 +362,74 @@ describe("error-handlers", () => {
       assertEquals(attempts, 1);
     });
 
+    it("should not start an attempt for an already-aborted signal", async () => {
+      const controller = new AbortController();
+      controller.abort(new DOMException("cancelled", "AbortError"));
+      let attempts = 0;
+
+      const error = await assertRejects(
+        () =>
+          retryWithBackoff(async () => {
+            await Promise.resolve();
+            attempts += 1;
+            return "unreachable";
+          }, { abortSignal: controller.signal, maxAttempts: 3, initialDelay: 1 }),
+        "an already-aborted signal must reject instead of resolving",
+      );
+
+      assertInstanceOf(
+        error,
+        DOMException,
+        "the rejection must be the caller's own abort reason",
+      );
+      assertEquals(
+        error.name,
+        "AbortError",
+        "an already-aborted signal must reject with the caller's abort reason",
+      );
+      assertEquals(attempts, 0, "no attempt may start once the caller has aborted");
+    });
+
+    it("should give each attempt a signal that observes the caller and the timeout", async () => {
+      const controller = new AbortController();
+      let attemptSignal: AbortSignal | undefined;
+
+      const pending = retryWithBackoff((signal) => {
+        attemptSignal = signal;
+        return new Promise<never>((_, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }, {
+        abortSignal: controller.signal,
+        maxAttempts: 1,
+        timeoutMs: 60_000,
+      });
+
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      assertEquals(
+        attemptSignal?.aborted,
+        true,
+        "the caller's abort must reach the in-flight attempt even with a per-attempt timeout",
+      );
+      assertEquals(
+        (attemptSignal?.reason as DOMException | undefined)?.message,
+        "cancelled",
+        "the attempt signal must carry the caller's abort reason, not the timeout's",
+      );
+
+      const error = await assertRejects(
+        () => pending,
+        "aborting the caller must reject the pending retry",
+      );
+      assertInstanceOf(
+        error,
+        DOMException,
+        "the rejection must be the caller's own abort reason",
+      );
+      assertEquals(error.name, "AbortError", "the caller's abort reason is rethrown");
+    });
+
     it("should abort each attempt after timeoutMs and report isTimeout to onRetry", async () => {
       const retryErrorNames: string[] = [];
       const timeoutFlags: boolean[] = [];
@@ -473,6 +613,40 @@ describe("error-handlers", () => {
       assertEquals(thrown, original);
       assertEquals(thrown instanceof CustomError, true);
       assertEquals((thrown as CustomError).code, 42);
+    });
+
+    it("should detach a non-native throwable at the terminal throw", async () => {
+      let nameReads = 0;
+      const hostile = new Proxy(new Error("wrapped proxy"), {
+        get(target, property, receiver): unknown {
+          if (property === "name" && ++nameReads > 1) {
+            throw new Error("second read blocked");
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      const thrown = await assertRejects(
+        () =>
+          retryWithBackoff(async () => {
+            await Promise.resolve();
+            throw hostile;
+          }, { maxAttempts: 1 }),
+        "the hostile throwable must surface as a rejection",
+      );
+
+      assertEquals(
+        thrown === hostile,
+        false,
+        "a non-native throwable must not escape retryWithBackoff",
+      );
+      assertEquals((thrown as Error).name, "Error", "first name read");
+      assertEquals(
+        (thrown as Error).name,
+        "Error",
+        "a detached error stays readable on a second read",
+      );
+      assertEquals(nameReads, 0, "no project get trap runs at the boundary");
     });
   });
 });

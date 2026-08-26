@@ -1,7 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
-import type { FileInfo, ResolveFileOptions } from "../../base.ts";
+import type {
+  FileInfo,
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
@@ -29,9 +33,12 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 
 export class MultiProjectFSAdapter implements FSAdapter {
+  readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly symlinkSemantics = "none" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
+  private readonly sourceSnapshotAdapterGenerations = new WeakMap<VeryfrontFSAdapter, number>();
+  private nextSourceSnapshotAdapterGeneration = 1;
 
   constructor(config: FSAdapterConfig) {
     this.manager = new ProxyFSAdapterManager({
@@ -121,7 +128,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
   }
 
-  private async getAdapter(): Promise<VeryfrontFSAdapter> {
+  private async getAdapter(
+    onResolved?: (initializedNow: boolean) => void,
+  ): Promise<VeryfrontFSAdapter> {
     const startTime = performance.now();
     const context = asyncLocalStorage.getStore();
 
@@ -159,6 +168,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId,
       environmentName,
       context.branch,
+      onResolved,
     );
 
     logger.debug("getAdapter DONE", {
@@ -255,12 +265,18 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  async ensureSourceSnapshotFresh(reason?: string): Promise<void> {
-    const adapter = await this.getAdapter();
+  async ensureSourceSnapshotFresh(
+    reason?: string,
+    options?: SourceSnapshotFreshnessOptions,
+  ): Promise<void> {
+    let initializedByManager = false;
+    const adapter = await this.getAdapter((initializedNow) => {
+      initializedByManager = initializedNow;
+    });
     if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
 
     const previousVersion = await adapter.getSourceSnapshotVersion?.();
-    await adapter.ensureSourceSnapshotFresh(reason);
+    await adapter.ensureSourceSnapshotFresh(reason, options, initializedByManager);
     const currentVersion = await adapter.getSourceSnapshotVersion?.();
     const sourceMayHaveChanged = previousVersion === undefined ||
       currentVersion === undefined ||
@@ -283,6 +299,25 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return typeof adapter.getSourceSnapshotVersion === "function"
       ? await adapter.getSourceSnapshotVersion()
       : undefined;
+  }
+
+  async getSourceSnapshotIdentity(): Promise<string | undefined> {
+    const adapter = await this.getAdapter();
+    if (typeof adapter.getSourceSnapshotIdentity !== "function") return undefined;
+    const sourceIdentity = adapter.getSourceSnapshotIdentity();
+    if (sourceIdentity === undefined) return undefined;
+
+    // The manager selects concrete adapters by project, source context, and a
+    // credential-principal digest. The concrete source identity does not name
+    // that selection, so bind it to an opaque instance generation. A different
+    // credential or a recreated adapter must never reuse freshness established
+    // on the previous instance, and no credential material enters the result.
+    let generation = this.sourceSnapshotAdapterGenerations.get(adapter);
+    if (generation === undefined) {
+      generation = this.nextSourceSnapshotAdapterGeneration++;
+      this.sourceSnapshotAdapterGenerations.set(adapter, generation);
+    }
+    return `adapter:${generation}:${sourceIdentity}`;
   }
 
   dispose(): void {

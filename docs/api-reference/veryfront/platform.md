@@ -31,17 +31,17 @@ import {
 | `createMockAdapter`         |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/mock.ts#L133)               |
 | `cwd`                       | Return the current working directory.                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L26)     |
 | `enhanceAdapterWithFS`      |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/integration.ts#L64)      |
-| `env`                       | Read and write process environment variables.                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L57)           |
+| `env`                       | Read and write process environment variables.                                                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L62)           |
 | `execPath`                  | Get the executable path of the current runtime                                                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L332)    |
 | `exists`                    | Return false for a missing path and propagate every other filesystem error.                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L522)                   |
 | `getArgs`                   | Get command-line arguments (cross-runtime: Deno.args or process.argv).                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L10)     |
-| `getEnv`                    | Read an environment variable from the active project scope.                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L155)          |
+| `getEnv`                    | Read an environment variable from the active project scope.                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L229)          |
 | `getOsType`                 | Get the operating system type Returns: "darwin" (macOS), "linux", "windows", or the raw platform string                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L164)    |
 | `getRuntimeVersion`         | Get runtime version string                                                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L150)    |
 | `getStdinReader`            | Get a reader for stdin (for raw mode character reading) Returns an object with read() and releaseLock() methods                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/stdin.ts#L187)                |
 | `getStdout`                 | Get stdout stream for writing Returns null if not available (e.g., in browser/workers)                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L360)    |
 | `getTerminalSize`           | Get terminal size (columns and rows) Returns default fallback values if terminal size cannot be determined                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L124)    |
-| `isExtendedFSAdapter`       |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/wrapper.ts#L94)          |
+| `isExtendedFSAdapter`       |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/wrapper.ts#L119)         |
 | `isHostExit`                | Return whether a value is an exit raised by an in-memory host.                                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts#L95)  |
 | `isInteractive`             | Check if stdin is a TTY (terminal)                                                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L103)    |
 | `isNotFoundError`           |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210)      |
@@ -69,7 +69,7 @@ import {
 | `HostExit`           | Thrown by an in-memory host's `exit` so the calling code stops where the real process would have ended. Identify it with `isHostExit`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts#L83)          |
 | `MemoryKv`           |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/kv/memory-adapter.ts#L27)             |
 | `VeryfrontApiClient` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-client/client.ts#L38) |
-| `VeryfrontFSAdapter` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts#L117)       |
+| `VeryfrontFSAdapter` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts#L121)       |
 
 ### Types
 
@@ -98,27 +98,26 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/platform/env`
 
-Project-scoped environment helpers for cross-runtime applications. Host environment access and the trusted project-snapshot bridge remain internal framework controls and are not exported from this module.
+Public environment facade for the `veryfront/platform/env` subpath. Exposes only project-scoped readers. Privileged or mutating accessors (`getHostEnv`, `env`, `setEnv`, `deleteEnv`) stay internal so a tenant project cannot read or alter the host process environment through a supported package export.
 
 ```ts
-import { env, getEnv, getEnvBoolean } from "veryfront/platform/env";
+import { getEnv, getEnvBoolean, getEnvNumber } from "veryfront/platform/env";
 ```
 
 #### Functions
 
 | Name            | Description                                                 | Source                                                                                                  |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `env`           | Read and write process environment variables.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L57)  |
-| `getEnv`        | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L155) |
-| `getEnvBoolean` |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L209) |
-| `getEnvNumber`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L195) |
-| `getEnvString`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L187) |
+| `getEnv`        | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L229) |
+| `getEnvBoolean` |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L283) |
+| `getEnvNumber`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L269) |
+| `getEnvString`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L261) |
 
 #### Types
 
 | Name                | Description | Source                                                                                                  |
 | ------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
-| `EnvBooleanOptions` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L172) |
+| `EnvBooleanOptions` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L246) |
 
 ### `veryfront/platform/path`
 

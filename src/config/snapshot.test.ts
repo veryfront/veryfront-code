@@ -171,6 +171,24 @@ describe("canonicalizeConfigSnapshot", () => {
     );
   });
 
+  it("fails closed when proxy prototype inspection throws", () => {
+    const input = new Proxy({ a: 1 }, {
+      getPrototypeOf(): never {
+        throw new Error("prototype failed");
+      },
+    });
+
+    const error = assertSnapshotError(
+      () => canonicalizeConfigSnapshot(input),
+      "inspection-failed",
+    );
+    assertEquals(
+      error.path,
+      "$",
+      "root prototype inspection failure must be reported at the root path",
+    );
+  });
+
   it("fails closed when proxy property-key inspection throws", () => {
     let getterCalls = 0;
     const target = Object.create(null) as Record<string, unknown>;

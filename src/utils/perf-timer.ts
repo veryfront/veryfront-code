@@ -75,6 +75,10 @@ export function endRequest(requestId: string): void {
 
   const entries = timings.get(requestId);
   if (!entries?.length) {
+    // A request can end before any timer ran (for example when it is shed
+    // under memory pressure). Its empty entry must still be released, or
+    // every such request grows the map for the lifetime of the process.
+    timings.delete(requestId);
     currentRequestId = null;
     return;
   }
@@ -142,4 +146,20 @@ export function endRequest(requestId: string): void {
 /** Check whether request performance timing is enabled. */
 export function isEnabled(): boolean {
   return getEnabled();
+}
+
+/**
+ * Test-only: override the VERYFRONT_PERF gate and clear tracked state, so a
+ * test can prove a request path releases its timing entry. Pass `undefined`
+ * to restore lazy environment detection.
+ */
+export function __resetPerfTimerForTests(enabled?: boolean): void {
+  cachedEnabled = enabled;
+  timings.clear();
+  currentRequestId = null;
+}
+
+/** Test-only: ids of requests whose timing state was started but never ended. */
+export function __trackedRequestIdsForTests(): string[] {
+  return [...timings.keys()];
 }

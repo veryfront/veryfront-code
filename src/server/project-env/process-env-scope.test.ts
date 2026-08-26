@@ -95,6 +95,44 @@ describe("process.env under an active project env snapshot", () => {
     });
   });
 
+  it("scopes direct Deno.env access to the active project snapshot", () => {
+    const deno = Reflect.get(globalThis, "Deno") as
+      | {
+        env?: {
+          get(key: string): string | undefined;
+          set(key: string, value: string): void;
+          delete(key: string): void;
+          has(key: string): boolean;
+          toObject(): Record<string, string>;
+        };
+      }
+      | undefined;
+    if (!deno?.env) return;
+
+    const hostKey = "VF_SCOPE_PROBE_DENO_HOST";
+    const scopedKey = "VF_SCOPE_PROBE_DENO_WRITE";
+    withHostVar(hostKey, "host-value", () => {
+      try {
+        runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+          assertEquals(deno.env!.get(hostKey), undefined);
+          assertEquals(deno.env!.get("PROJECT_VAR"), "project-value");
+          assertEquals(deno.env!.has(hostKey), false);
+          assertEquals(deno.env!.toObject(), { PROJECT_VAR: "project-value" });
+
+          deno.env!.set(scopedKey, "scoped-value");
+          deno.env!.delete("PROJECT_VAR");
+          assertEquals(deno.env!.get(scopedKey), "scoped-value");
+          assertEquals(deno.env!.get("PROJECT_VAR"), undefined);
+        });
+
+        assertEquals(deno.env!.get(hostKey), "host-value");
+        assertEquals(deno.env!.get(scopedKey), undefined);
+      } finally {
+        deno.env!.delete(scopedKey);
+      }
+    });
+  });
+
   it("does not expose the host environment through inspection", () => {
     withHostVar("VF_SCOPE_PROBE_INSPECT_ONLY", "host-inspection-value", () => {
       runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {

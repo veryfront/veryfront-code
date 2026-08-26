@@ -218,7 +218,9 @@ async function buildToolAssembly(
           branchId: input.taskContext.branchId,
           environmentContext: liveProjectSteering.environmentContext,
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
-          skills: liveProjectSteering.initialSkills ?? [],
+          skills: modelVisibleToolNames.includes("load_skill")
+            ? liveProjectSteering.initialSkills ?? []
+            : [],
           availableToolNames: modelVisibleToolNames,
         }),
     }),
@@ -230,6 +232,9 @@ async function buildToolAssembly(
     mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
+    ...(input.options.deniedTools !== undefined
+      ? { deniedToolNames: input.options.deniedTools }
+      : {}),
     ...(input.options.serverResolvedIntegrationToolNames !== undefined
       ? {
         serverResolvedIntegrationToolNames: input.options.serverResolvedIntegrationToolNames,
@@ -310,7 +315,6 @@ function createRuntimeAgentConfig(input: {
     taskContext: input.taskContext,
     refreshSystem,
   });
-
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,

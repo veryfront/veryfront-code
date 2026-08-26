@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createPreparedDeclarativeConfigWorkerPayload,
   DeclarativeConfigEvaluationError,
@@ -567,6 +568,86 @@ Deno.test("declarative config worker cleans up a synchronous subscription failur
   assertEquals(postCount, 0);
   assertEquals(terminationCount, 1);
   assertEquals(unsubscribeCount, 1);
+});
+
+describe("declarative config worker terminal endpoint events", () => {
+  it("fails fast when the worker exits first", async () => {
+    const payload = await createPayload("export default { ready: true };");
+    let postCount = 0;
+    let terminationCount = 0;
+    let unsubscribeCount = 0;
+
+    const error = await assertRejects(
+      () =>
+        declarativeConfigWorkerRunnerInternals.evaluateWithEndpointFactory(
+          payload,
+          {},
+          async () => ({
+            postMessage() {
+              postCount += 1;
+            },
+            subscribe(listeners) {
+              listeners.onExit?.(1);
+              return () => {
+                unsubscribeCount += 1;
+              };
+            },
+            terminate() {
+              terminationCount += 1;
+            },
+          }),
+        ),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+
+    assertEquals(
+      error.reason,
+      "worker-unavailable",
+      "a worker that exits before responding must fail fast, not time out",
+    );
+    assertEquals(postCount, 0, "no payload is posted to an exited worker");
+    assertEquals(terminationCount, 1, "the exited endpoint is terminated once");
+    assertEquals(unsubscribeCount, 1, "the terminal event releases the subscription");
+  });
+
+  it("surfaces an undeserializable message as a protocol failure", async () => {
+    const payload = await createPayload("export default { ready: true };");
+    let postCount = 0;
+    let terminationCount = 0;
+    let unsubscribeCount = 0;
+
+    const error = await assertRejects(
+      () =>
+        declarativeConfigWorkerRunnerInternals.evaluateWithEndpointFactory(
+          payload,
+          {},
+          async () => ({
+            postMessage() {
+              postCount += 1;
+            },
+            subscribe(listeners) {
+              listeners.onMessageError();
+              return () => {
+                unsubscribeCount += 1;
+              };
+            },
+            terminate() {
+              terminationCount += 1;
+            },
+          }),
+        ),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+
+    assertEquals(
+      error.reason,
+      "worker-protocol",
+      "an undeserializable worker message must surface as a protocol failure",
+    );
+    assertEquals(postCount, 0, "no payload is posted after a protocol failure");
+    assertEquals(terminationCount, 1, "the failed endpoint is terminated once");
+    assertEquals(unsubscribeCount, 1, "the terminal event releases the subscription");
+  });
 });
 
 Deno.test("declarative config worker bounds active and queued evaluations", async () => {

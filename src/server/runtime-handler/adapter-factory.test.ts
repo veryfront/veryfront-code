@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { API_CLIENT_ERROR, VeryfrontError } from "#veryfront/errors";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -91,9 +91,10 @@ async function mintTrustedDispatchJws(): Promise<string> {
  *                            attaches an unverifiable header value to simulate
  *                            the direct-access spoofing attack. Omit/false for
  *                            an untrusted client.
+ * @param options.method      Optional HTTP method; defaults to GET.
  */
 async function makeReq(
-  options: { projectPath?: string; trusted?: boolean | "bogus" } = {},
+  options: { projectPath?: string; trusted?: boolean | "bogus"; method?: string } = {},
 ): Promise<Request> {
   const headers = new Headers();
   if (options.projectPath !== undefined) {
@@ -104,7 +105,7 @@ async function makeReq(
   } else if (options.trusted === "bogus") {
     headers.set("x-veryfront-dispatch-jws", "eyJhbGciOi.fake.value");
   }
-  return new Request("http://example.com/", { headers });
+  return new Request("http://example.com/", { headers, method: options.method });
 }
 
 function createMockAdapter(
@@ -164,6 +165,36 @@ function createMockAdapter(
       addr: { hostname: "127.0.0.1", port: 0 },
     }),
   };
+}
+
+async function resolveMutablePreviewAdapter(
+  adapter: RuntimeAdapter,
+  pathname: string,
+): Promise<Awaited<ReturnType<typeof resolveAdapter>>> {
+  return await resolveAdapter({
+    projectDir: "/base/project",
+    adapter,
+    config: undefined,
+    projectSlug: "mutable-config-project",
+    projectId: "proj_mutable_config",
+    proxyToken: "tok-123",
+    releaseId: undefined,
+    proxyEnv: "preview",
+    branch: "main",
+    environmentName: undefined,
+    parsedDomain: {
+      slug: null,
+      branch: null,
+      environment: null,
+      isVeryfrontDomain: false,
+      isDraft: false,
+      allowIframeEmbed: false,
+    },
+    req: await makeReq(),
+    pathname,
+    isProxyMode: true,
+    prepareHostedConfigContext: preparePreviewHostedConfigContext,
+  });
 }
 
 describe("adapter-factory", () => {
@@ -773,8 +804,9 @@ describe("adapter-factory", () => {
       ]);
     });
 
-    it("refreshes mutable source before loading proxy config", async () => {
+    it("refreshes mutable source before config for document and HEAD Markdown routes", async () => {
       let sourceFresh = false;
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
       });
@@ -783,6 +815,7 @@ describe("adapter-factory", () => {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
         runWithContext: (
           _slug: string,
           _token: string,
@@ -795,10 +828,13 @@ describe("adapter-factory", () => {
             environmentName?: string | null;
           },
         ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
-        ensureSourceSnapshotFresh: () => {
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
           sourceFresh = true;
           return Promise.resolve();
         },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 1,
         readFile: (path: string) => {
           if (path !== "/veryfront.config.ts") {
             return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
@@ -836,6 +872,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
+        pathname: "/",
         isProxyMode: true,
         prepareHostedConfigContext: async () => ({
           sourceContext: { productionMode: false, branch: "main" },
@@ -847,8 +884,658 @@ describe("adapter-factory", () => {
       });
 
       assertEquals(sourceFresh, true);
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
       assertEquals(result.config?.router, "pages");
       assertEquals(result.config?.title, "preview:tenant-value");
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
+
+      freshnessCalls.length = 0;
+      sourceFresh = false;
+      const headMarkdownResult = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq({ method: "HEAD" }),
+        pathname: "/notes.md",
+        isProxyMode: true,
+        prepareHostedConfigContext: async () => ({
+          sourceContext: { productionMode: false, branch: "main" },
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        }),
+      });
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+      assertEquals(headMarkdownResult.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
+
+      freshnessCalls.length = 0;
+      sourceFresh = false;
+      const deniedResult = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/",
+        isProxyMode: true,
+        allowHostProjectCodeExecution: false,
+        prepareHostedConfigContext: async () => ({
+          sourceContext: { productionMode: false, branch: "main" },
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        }),
+      });
+
+      assertEquals(
+        freshnessCalls,
+        [{ reason: "config-load", maxAgeMs: undefined }],
+        "a denied shared-runtime document keeps the normal config freshness lease",
+      );
+      assertEquals(deniedResult.previewDocumentSourceSnapshot, undefined);
+    });
+
+    it("keeps subresource and ordinary asset config loads on the normal freshness lease", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const results = await Promise.all(
+        ["/_vf_modules/app/page.js", "/favicon.ico"].map(async (pathname) =>
+          resolveAdapter({
+            projectDir: "/base/project",
+            adapter,
+            config: undefined,
+            projectSlug: "mutable-config-project",
+            projectId: "proj_mutable_config",
+            proxyToken: "tok-123",
+            releaseId: undefined,
+            proxyEnv: "preview",
+            branch: "main",
+            environmentName: undefined,
+            parsedDomain: {
+              slug: null,
+              branch: null,
+              environment: null,
+              isVeryfrontDomain: false,
+              isDraft: false,
+              allowIframeEmbed: false,
+            },
+            req: await makeReq(),
+            pathname,
+            isProxyMode: true,
+            prepareHostedConfigContext: preparePreviewHostedConfigContext,
+          })
+        ),
+      );
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "config-load", maxAgeMs: undefined },
+      ]);
+      assertEquals(results.map((result) => result.config?.router), ["pages", "pages"]);
+      assertEquals(
+        results.map((result) => result.previewDocumentSourceSnapshot),
+        [undefined, undefined],
+      );
+    });
+
+    it("fails closed for markerless remote static ownership", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/public/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        refreshSourceSnapshot: () => Promise.resolve(),
+        readFile: (path: string) =>
+          path === "/veryfront.config.ts"
+            ? Promise.resolve(`export default { router: "pages" };`)
+            : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const rejection = await assertRejects(() => resolveMutablePreviewAdapter(adapter, "/robots"));
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
+    it("probes relative and absolute in-project build output before strict freshness", async () => {
+      const probeConfiguredOutput = async (
+        outDir: string,
+        outputDirectory = "custom-output",
+      ) => {
+        const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+        const base = createMockAdapter({
+          "/veryfront.config.ts": { isDirectory: false, isFile: true },
+          [`/base/project/${outputDirectory}/robots`]: { isDirectory: false, isFile: true },
+        });
+        const extendedFs = {
+          ...base.fs,
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => false,
+          sourceSnapshotFreshnessOptionsVersion: 1 as const,
+          runWithContext: (
+            _slug: string,
+            _token: string,
+            fn: () => Promise<unknown>,
+            projectId?: string,
+            opts?: { branch?: string | null },
+          ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+          ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+            freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+            return Promise.resolve();
+          },
+          getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+          getSourceSnapshotVersion: () => 3,
+          readFile: (path: string) =>
+            path === "/veryfront.config.ts"
+              ? Promise.resolve(
+                `export default { router: "pages", build: { outDir: ${JSON.stringify(outDir)} } };`,
+              )
+              : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+        };
+        const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+        const result = await resolveMutablePreviewAdapter(adapter, "/robots");
+
+        assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+        assertEquals(result.previewDocumentSourceSnapshot, {
+          identity: "branch:mutable-config-project:main",
+          version: 3,
+        });
+      };
+
+      await probeConfiguredOutput("custom-output");
+      await probeConfiguredOutput("/base/project/custom-output");
+      await probeConfiguredOutput("", "dist");
+    });
+
+    it("captures a marker before provisional configured-output reads", async () => {
+      let sourceVersion = 1;
+      let versionReads = 0;
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => {
+          if (++versionReads === 2) sourceVersion++;
+          return sourceVersion;
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          sourceVersion++;
+          return Promise.resolve(
+            `export default { router: "pages", build: { outDir: "custom-output" } };`,
+          );
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const rejection = await assertRejects(() => resolveMutablePreviewAdapter(adapter, "/robots"));
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
+    it("rejects a default build hit excluded by the configured output root", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/dist/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 3,
+        readFile: (path: string) =>
+          path === "/veryfront.config.ts"
+            ? Promise.resolve(
+              `export default { router: "pages", build: { outDir: "custom-output" } };`,
+            )
+            : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveMutablePreviewAdapter(adapter, "/robots");
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 3,
+      });
+    });
+
+    it("keeps extensionless build-output files on the normal freshness lease", async () => {
+      let buildFileExists = false;
+      const freshnessCalls: Array<string | undefined> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/dist/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        refreshSourceSnapshot: (reason?: string) => {
+          freshnessCalls.push(reason);
+          buildFileExists = true;
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 1,
+        stat: (path: string) => {
+          if (path === "/base/project/dist/robots" && !buildFileExists) {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return base.fs.stat(path);
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/robots",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(freshnessCalls, ["config-load"]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
+    });
+
+    it("retains the generation used to classify public static ownership", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/public/robots": { isDirectory: false, isFile: true },
+        "/base/project/public/index.html": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 7,
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const resolvePathname = async (pathname: string) =>
+        await resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "mutable-config-project",
+          projectId: "proj_mutable_config",
+          proxyToken: "tok-123",
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: "main",
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req: await makeReq(),
+          pathname,
+          isProxyMode: true,
+          prepareHostedConfigContext: preparePreviewHostedConfigContext,
+        });
+
+      const result = await resolvePathname("/robots");
+
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 7,
+      });
+      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+
+      freshnessCalls.length = 0;
+      await resolvePathname("/");
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+    });
+
+    it("classifies public ownership after renewing the normal source lease", async () => {
+      let publicFileExists = true;
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          if (reason === "config-load") publicFileExists = false;
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 2,
+        stat: (path: string) => {
+          if (path === "/base/project/public/robots") {
+            return publicFileExists
+              ? Promise.resolve({ isDirectory: false, isFile: true })
+              : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return base.fs.stat(path);
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/robots",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 2,
+      });
+    });
+
+    it("rejects preview document config when the source generation changes during the read", async () => {
+      let sourceVersion = 1;
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => sourceVersion,
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          sourceVersion++;
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const req = await makeReq();
+
+      const rejection = await assertRejects(() =>
+        resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "mutable-config-project",
+          projectId: "proj_mutable_config",
+          proxyToken: "tok-123",
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: "main",
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req,
+          pathname: "/",
+          isProxyMode: true,
+          prepareHostedConfigContext: preparePreviewHostedConfigContext,
+        })
+      );
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
     });
 
     it("re-throws config loading errors in proxy mode", async () => {
@@ -1062,6 +1749,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
+        pathname: "/api/config-probe",
         isProxyMode: true,
         prepareHostedConfigContext: preparePreviewHostedConfigContext,
       });
@@ -1156,6 +1844,10 @@ describe("adapter-factory", () => {
     // A release with no config file gets a legitimate 404 from the API. It used
     // to be re-thrown, so every request for such a project returned 404.
     const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => 1;
     adapter.fs.readFile = () =>
       Promise.reject(
         API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
@@ -1190,6 +1882,10 @@ describe("adapter-factory", () => {
     // Downstream substitutes the process-wide security config for an absent
     // project config, so the reason it is absent has to survive the return.
     assertEquals(result.configOutcome, "hosted-absent");
+    assertEquals(result.previewDocumentSourceSnapshot, {
+      identity: "branch:noconfig:main",
+      version: 1,
+    });
   });
 
   it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
@@ -1199,6 +1895,10 @@ describe("adapter-factory", () => {
     // Reading only the outermost object made the fallback fire for one shape and
     // not the other, so this project 404'd while an identical one did not.
     const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => 1;
     adapter.fs.readFile = () =>
       Promise.reject(
         Object.assign(new Error("API request failed: 404 Not Found"), { status: 404 }),
@@ -1230,12 +1930,62 @@ describe("adapter-factory", () => {
 
     assertEquals(result.config, undefined);
     assertEquals(result.configOutcome, "hosted-absent");
+    assertEquals(result.previewDocumentSourceSnapshot, {
+      identity: "branch:noconfig:main",
+      version: 1,
+    });
+  });
+
+  it("rejects an absent config result when its source generation changes", async () => {
+    let sourceVersion = 1;
+    const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    adapter.fs.readFile = () => {
+      sourceVersion++;
+      return Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+    };
+    const req = await makeReq();
+
+    const rejection = await assertRejects(() =>
+      resolveAdapter({
+        req,
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "noconfig",
+        projectId: "proj_noconfig",
+        proxyToken: "token",
+        releaseId: "rel_1",
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "noconfig",
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: true,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      })
+    );
+
+    assertInstanceOf(rejection, VeryfrontError);
+    assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
   });
 
   it("still fails when a 404 comes from something other than the config read", async () => {
     // Only getHostedConfig's own 404 means "no config published". A 404 from the
     // snapshot refresh is a real failure and must not be read as absence.
     const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     (adapter.fs as unknown as Record<string, unknown>).ensureSourceSnapshotFresh = () =>
       Promise.reject(
         API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),

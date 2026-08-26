@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateLexicalPath } from "#veryfront/security";
 import { SnippetHandler } from "./snippet.handler.ts";
@@ -114,10 +114,9 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
 });
 
 describe("SnippetHandler host-execution capability", () => {
-  it("serves a shared runtime the host granted execution", async () => {
-    // The granted counterpart to the test above. Without it, a handler that
-    // simply denies every shared runtime, which is the pre-#366 behaviour,
-    // passes the whole suite.
+  it("keeps shared snippet execution denied despite a host grant", async () => {
+    // An entrypoint grant cannot override shared-runtime topology. Pin the
+    // source-read boundary so this does not regress to capability-only checks.
     let readPath: string | undefined;
     const fs = {
       symlinkSemantics: "none" as const,
@@ -156,12 +155,8 @@ describe("SnippetHandler host-execution capability", () => {
       ctx,
     );
 
-    assertNotEquals(
-      result.response?.status,
-      503,
-      "a granted shared executor must not return project-execution-unavailable",
-    );
-    assertNotEquals(readPath, undefined, "the granted path must reach the source read");
+    assertEquals(result.response?.status, 503);
+    assertEquals(readPath, undefined);
   });
 
   it("passes the canonical enriched release identity to snippet rendering", async () => {

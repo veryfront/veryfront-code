@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
+import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
 
 function createCtx(captured: { options?: Record<string, unknown> }): HandlerContext {
   return {
@@ -12,6 +13,8 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
         isMultiProjectMode: () => true,
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
+        getSourceSnapshotIdentity: () => "branch:test-project:feature-branch",
+        getSourceSnapshotVersion: () => 1,
         runWithContext: async (
           _slug: string,
           _token: string,
@@ -65,6 +68,34 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
+  it("propagates strict source freshness failures before downstream handlers run", async () => {
+    const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => Promise.reject(new Error("snapshot refresh failed"));
+
+    await assertRejects(
+      () =>
+        new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+          new Request("http://localhost/notes.md"),
+          ctx,
+        ),
+      Error,
+      "snapshot refresh failed",
+    );
+  });
+
   it("routes known pages without remote stat misses or full API discovery", async () => {
     let enteredProjectContext = false;
     let remoteStatMisses = 0;
@@ -73,6 +104,8 @@ describe("ApiHandlerWrapper", () => {
     let sourceSnapshotRefreshes = 0;
     let pageReads = 0;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
     const fs = ctx.adapter.fs as unknown as {
       runWithContext: (
         slug: string,
@@ -161,6 +194,8 @@ describe("ApiHandlerWrapper", () => {
   it("checks preview source freshness before resolving page ownership", async () => {
     const events: string[] = [];
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
     ctx.config = { router: "pages" };
@@ -220,13 +255,248 @@ describe("ApiHandlerWrapper", () => {
     const result = await handler.handle(new Request("http://localhost/review"), ctx);
 
     assertEquals(result, { continue: true });
-    assertEquals(events.slice(0, 2), ["source-fresh", "resolve-page"]);
-    assertEquals(events.includes("full-refresh"), false);
+    assertEquals(events.slice(0, 2), ["full-refresh", "resolve-page"]);
+    assertEquals(events.includes("source-fresh"), false);
+  });
+
+  it("refreshes page ownership before SSR can shed for memory pressure", async () => {
+    const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    ctx.config = { router: "pages" };
+    let refreshes = 0;
+    let pageClassifications = 0;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      pageClassifications++;
+      return Promise.resolve(
+        path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Review() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/review"),
+        ctx,
+      );
+      assertEquals(result, { continue: true });
+      assertEquals(refreshes, 1);
+      assertEquals(
+        pageClassifications > 0,
+        true,
+        "the shed decision must rest on current page ownership, not on a stale snapshot",
+      );
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("still refreshes an API candidate under critical memory pressure", async () => {
+    // An extensionless GET path can be owned by an API route
+    // (app/webhook/route.ts). SSR's shed response only ever covers pages, so
+    // deferring such a request to SSR would turn renderer overload into an
+    // outage for API routes that never render anything.
+    let refreshes = 0;
+    const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.projectSlug = "pressured-api-project";
+    ctx.config = { router: "pages" };
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      readFile: (path: string) => Promise<string>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = () => Promise.resolve(null);
+    fs.readFile = () => Promise.reject(new Error("File not found"));
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/new-webhook"),
+        ctx,
+      );
+
+      assertEquals(result, { continue: true });
+      assertEquals(
+        refreshes,
+        1,
+        "an executable API candidate keeps its leased freshness under pressure",
+      );
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("refreshes pressured route ownership before classifying a stale page snapshot", async () => {
+    const events: string[] = [];
+    let routeIsCurrent = false;
+    const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.projectSlug = "pressured-route-transition";
+    ctx.config = { router: "pages" };
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string) => Promise<Uint8Array>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.exists = () => Promise.resolve(false);
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      events.push(`classify:${routeIsCurrent ? "route" : "page"}`);
+      return Promise.resolve(
+        !routeIsCurrent && path === "/tmp/project/pages/new-webhook"
+          ? "/tmp/project/pages/new-webhook.tsx"
+          : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      if (path.endsWith("pages/new-webhook.tsx")) {
+        return Promise.resolve("export default function Page() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      if (path.endsWith("pages/new-webhook.tsx")) {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Page() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.refreshSourceSnapshot = () => {
+      events.push("refresh");
+      routeIsCurrent = true;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/new-webhook"),
+        ctx,
+      );
+
+      assertEquals(result, { continue: true });
+      assertEquals(events.slice(0, 2), ["refresh", "classify:route"]);
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
+  });
+
+  it("still refreshes a markdown preview document under critical memory pressure", async () => {
+    // SSR never renders or sheds GET /file.md: MarkdownPreviewHandler serves
+    // it even during overload, so the SSR shedding shortcut must not leave it
+    // without a current source snapshot.
+    const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    let refreshes = 0;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => {
+      refreshes++;
+      return Promise.resolve();
+    };
+    injectMemoryPressureDeps({ getHeapStats: () => ({ heapUsedPercent: 99 }) });
+
+    try {
+      await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+        new Request("http://localhost/notes.md"),
+        ctx,
+      );
+      assertEquals(
+        refreshes,
+        1,
+        "a markdown document is served regardless of pressure, so it must be refreshed",
+      );
+    } finally {
+      injectMemoryPressureDeps(null);
+    }
   });
 
   it("preserves fresh API discovery when no page owns a non-API path", async () => {
     let sourceSnapshotRefreshes = 0;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
+    ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "unmatched-preview-project";
     ctx.config = { router: "pages" };
     ctx.requestContext!.mode = "preview";
@@ -256,8 +526,7 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/new-webhook"), ctx);
 
-    assertEquals(result.response?.status, 503);
-    assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+    assertEquals(result, { continue: true });
     assertEquals(sourceSnapshotRefreshes, 1);
   });
 
@@ -293,6 +562,64 @@ describe("ApiHandlerWrapper", () => {
 
     assertEquals(result.response?.status, 503);
     assertEquals(sourceSnapshotRefreshes, 0);
+  });
+
+  it("denies shared extensionless requests before source refresh or ownership reads", async () => {
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      resolveFile: (path: string) => Promise<string | null>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.resolveFile = () => {
+      filesystemReads++;
+      return Promise.resolve(null);
+    };
+    fs.refreshSourceSnapshot = () => {
+      filesystemReads++;
+      return Promise.resolve();
+    };
+
+    const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+      new Request("http://localhost/review"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(projectContextEntries, 1);
+    assertEquals(filesystemReads, 0);
+  });
+
+  it("keeps denied shared-runtime HEAD document responses bodyless", async () => {
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+
+    const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+      new Request("http://localhost/review", { method: "HEAD" }),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(await result.response!.text(), "");
   });
 
   it("never starts shared-runtime API discovery or a same-process Worker", async () => {
@@ -337,9 +664,7 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
-  it("starts shared-runtime API discovery once the host grants execution", async () => {
-    // The granted counterpart of the fail-closed case above. Without this,
-    // nothing pins that the operator grant actually reaches this surface.
+  it("keeps shared-runtime API discovery denied despite a host grant", async () => {
     let projectContextEntries = 0;
     let filesystemReads = 0;
     const ctx = createCtx({});
@@ -372,16 +697,85 @@ describe("ApiHandlerWrapper", () => {
       ctx,
     );
 
-    assertNotEquals(
-      result.response?.status,
-      503,
-      "a granted shared executor must not return project-execution-unavailable",
-    );
+    assertEquals(result.response?.status, 503);
     assertEquals(projectContextEntries, 1);
+    assertEquals(filesystemReads, 0);
+  });
+
+  it("rejects a shared contextual adapter before mutating or reading it", async () => {
+    // A contextual adapter without runWithContext stores request state in
+    // process-global mutators. Reject it before branch A can be retargeted by
+    // a concurrent branch B request while classification or SSR is running.
+    let contextMutations = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    ctx.requestContext!.mode = "preview";
+    ctx.requestContext!.branch = "feature";
+    ctx.releaseId = undefined;
+    ctx.config = { router: "pages" };
+    ctx.parsedDomain = { branch: "feature" } as unknown as HandlerContext["parsedDomain"];
+    const fs = ctx.adapter.fs as unknown as {
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      setRequestToken: (token: string) => void;
+      setRequestBranch: (branch: string | null) => void;
+      setProductionMode: (enabled: boolean, releaseId?: string | null) => void;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+      resolveFile: (path: string) => Promise<string | null>;
+      symlinkSemantics: "none";
+      readFile: (path: string) => Promise<string>;
+      readFileBytesWithinLimit: (path: string, byteLimit: number) => Promise<Uint8Array>;
+      refreshSourceSnapshot: () => Promise<void>;
+    };
+    fs.isMultiProjectMode = () => false;
+    fs.isContextualMode = () => true;
+    fs.setRequestToken = () => contextMutations++;
+    fs.setRequestBranch = () => contextMutations++;
+    fs.setProductionMode = () => contextMutations++;
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(false);
+    };
+    fs.readDir = async function* () {};
+    fs.resolveFile = (path) => {
+      filesystemReads++;
+      return Promise.resolve(
+        path === "/tmp/project/pages/review" ? "/tmp/project/pages/review.tsx" : null,
+      );
+    };
+    fs.symlinkSemantics = "none";
+    fs.readFile = (path) => {
+      filesystemReads++;
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve("export default function Review() { return null; }");
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.readFileBytesWithinLimit = (path) => {
+      filesystemReads++;
+      if (path === "pages/review.tsx" || path === "/tmp/project/pages/review.tsx") {
+        return Promise.resolve(
+          new TextEncoder().encode("export default function Review() { return null; }"),
+        );
+      }
+      return Promise.reject(new Error("File not found"));
+    };
+    fs.refreshSourceSnapshot = () => {
+      filesystemReads++;
+      return Promise.resolve();
+    };
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+
+    const result = await handler.handle(new Request("http://localhost/review"), ctx);
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(contextMutations, 0);
+    assertEquals(filesystemReads, 0);
+    const problem = await result.response!.json();
     assertEquals(
-      filesystemReads > 0,
-      true,
-      "the request must reach source resolution instead of failing at the guard",
+      problem.type,
+      "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
     );
   });
 

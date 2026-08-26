@@ -148,6 +148,19 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
+/** Keep explicit project-tool denials authoritative over provider-native bindings. */
+function resolveProviderToolsConfiguration(
+  config: Pick<AgentConfig, "providerTools" | "tools">,
+): string[] | undefined {
+  const providerTools = config.providerTools;
+  const toolSelection = config.tools;
+  if (providerTools === undefined || toolSelection === undefined || toolSelection === true) {
+    return providerTools;
+  }
+
+  return providerTools.filter((toolName) => toolSelection[toolName] !== false);
+}
+
 /** Everything the public surface closes over, named so the closure is visible. */
 interface AgentInstanceDeps {
   id: string;
@@ -338,18 +351,18 @@ function resolveToolsConfiguration(input: {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (skillTools === "disable") {
-        delete configuredTools[registration.id];
-        continue;
-      }
-
-      if (skillTools === "omit") {
-        delete configuredTools[registration.id];
+      if (skillTools === "disable" || skillTools === "omit") {
+        if (configuredTools[registration.id] !== false) {
+          delete configuredTools[registration.id];
+        }
         continue;
       }
 
       const configuredTool = configuredTools[registration.id];
-      if (typeof configuredTool === "object" && configuredTool !== null) {
+      if (
+        configuredTool === false ||
+        (typeof configuredTool === "object" && configuredTool !== null)
+      ) {
         continue;
       }
 
@@ -369,14 +382,35 @@ function resolveToolsConfiguration(input: {
       });
     }
     if (delegates.length > 0) {
+      const delegateTools = buildAgentDelegateTools({ delegates, selfId: id });
+      for (const toolName of Object.keys(delegateTools)) {
+        if (merged?.[toolName] === false) {
+          delete delegateTools[toolName];
+        }
+      }
       merged = {
         ...(merged ?? {}),
-        ...buildAgentDelegateTools({ delegates, selfId: id }),
+        ...delegateTools,
       };
     }
   }
 
   return merged;
+}
+
+/**
+ * Whether the resolved tool selection actually exposes the skill loader.
+ *
+ * The skill catalog block instructs the model to call `load_skill`, so it must
+ * only be rendered when the effective tool configuration can honour that call.
+ * An explicit `load_skill: false` denial, or a selection the loader was never
+ * merged into, means the catalog would advertise an unusable tool.
+ */
+function isSkillLoaderExposed(tools: AgentConfig["tools"]): boolean {
+  if (tools === true) return true;
+  if (!tools) return false;
+  const loader = tools["load_skill"];
+  return loader !== undefined && loader !== false;
 }
 
 /**
@@ -388,9 +422,10 @@ function resolveToolsConfiguration(input: {
  */
 function createAugmentedSystem(input: {
   config: AgentConfig;
+  skillLoaderExposed: boolean;
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
 }): () => Promise<AgentSystem> {
-  const { config, resolveSkillSnapshot } = input;
+  const { config, skillLoaderExposed, resolveSkillSnapshot } = input;
   const originalSystem = config.system;
 
   const augmentSystem = (
@@ -410,7 +445,9 @@ function createAugmentedSystem(input: {
       resolveModelProviderOptionKey(resolveRuntimeModel(config.model));
 
     const contextInput = {
-      ...(preassembledSkillContext
+      // A denied or absent loader suppresses the catalog: advertising skills
+      // the agent cannot load would only steer the model into blocked calls.
+      ...(preassembledSkillContext || !skillLoaderExposed
         ? {}
         : { skills: snapshot.definitions.map(toRuntimeSkillDefinition) }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
@@ -499,6 +536,9 @@ function createAgent<TOutput = never>(
   const publicConfig: ResolvedAgentConfig = {
     ...config,
     ...(delegates === undefined ? {} : { delegates }),
+    ...(config.providerTools === undefined
+      ? {}
+      : { providerTools: resolveProviderToolsConfiguration(config) }),
     model: resolveConfiguredAgentModel(config.model),
   };
 
@@ -514,6 +554,7 @@ function createAgent<TOutput = never>(
 
   const augmentedSystem = createAugmentedSystem({
     config,
+    skillLoaderExposed: isSkillLoaderExposed(mergedToolsConfig),
     resolveSkillSnapshot,
   });
 

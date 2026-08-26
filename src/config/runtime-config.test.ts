@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { afterEach, beforeEach, describe, it } from "#std/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,
@@ -188,6 +189,22 @@ describe("RuntimeConfig", () => {
       expect(config.projectSlug).toBe("env-slug");
     });
 
+    it("env cache dir overrides file config", () => {
+      const config = createRuntimeConfig(
+        { cache: { dir: "/file-cache" } },
+        createTestEnvironmentConfig({ cacheDir: "/env-cache" }),
+      );
+
+      assertEquals(config.cache?.dir, "/env-cache");
+
+      const withoutEnv = createRuntimeConfig(
+        { cache: { dir: "/file-cache" } },
+        createTestEnvironmentConfig(),
+      );
+
+      assertEquals(withoutEnv.cache?.dir, "/file-cache");
+    });
+
     it("env can enable experimental.rsc", () => {
       const config = createRuntimeConfig(
         {},
@@ -237,6 +254,13 @@ describe("RuntimeConfig", () => {
               enabled: true,
               endpoint: "https://tenant-metrics.example/otlp",
             },
+            logging: {
+              file: {
+                enabled: true,
+                path: "/tmp/tenant.log",
+                format: "json",
+              },
+            },
           },
         },
         createTestEnvironmentConfig({
@@ -254,6 +278,7 @@ describe("RuntimeConfig", () => {
       expect(config.observability?.tracing?.serviceName).toBeUndefined();
       expect(config.observability?.metrics?.enabled).toBe(false);
       expect(config.observability?.metrics?.endpoint).toBeUndefined();
+      assertEquals(config.observability?.logging, undefined);
     });
 
     it("keeps host OTel routing while allowing project tracing service identity", () => {

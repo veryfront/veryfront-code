@@ -6,7 +6,10 @@ import type {
   HandlerResult,
 } from "../../types.ts";
 import { getApiHandler, withApiHandler } from "./pages-api-handler.ts";
-import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
+import {
+  ensurePreviewSourceSnapshotFresh,
+  preparePreviewDocumentSourceSnapshot,
+} from "../source-snapshot-freshness.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
@@ -19,6 +22,7 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
+  isContextualMode?: () => boolean;
   runWithContext?: <T>(
     slug: string,
     token: string,
@@ -85,6 +89,17 @@ export class ApiHandlerWrapper extends BaseHandler {
     const mustDenyProjectExecution = requiresIsolatedProjectRuntime(ctx);
 
     if (!isMultiProject) {
+      // Request-global token and branch mutators cannot keep classification
+      // and the later render on one context when requests overlap. Only an
+      // atomic runWithContext adapter may serve contextual project source.
+      if (fsWrapper.isContextualMode?.() === true) {
+        return this.projectExecutionUnavailable(
+          req,
+          ctx,
+          pathname,
+          "Contextual project filesystem access requires atomic request-scoped execution",
+        );
+      }
       return this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution);
     }
 
@@ -127,23 +142,34 @@ export class ApiHandlerWrapper extends BaseHandler {
     return withSpan(
       "api.handleWithContext",
       async () => {
-        try {
-          if (
-            mustDenyProjectExecution &&
-            (pathname === "/api" || pathname.startsWith("/api/"))
-          ) {
-            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
-          }
+        if (req.signal.aborted) throw req.signal.reason;
 
-          // WebSocket pokes update mutable previews immediately. This bounded,
-          // coalesced check is the fallback for missed pokes and establishes
-          // one source snapshot for route and primitive discovery.
+        if (mustDenyProjectExecution) {
+          // A shared runtime without an explicit execution grant cannot serve
+          // any project-owned route. Reject before refreshing or classifying
+          // tenant source that no downstream handler is allowed to execute.
+          return this.projectExecutionUnavailable(req, ctx, pathname);
+        }
+
+        const canResolveAsPage = pathname !== "/api" &&
+          !pathname.startsWith("/api/") &&
+          (req.method === "GET" || req.method === "HEAD");
+
+        // A document path can change ownership between App Router page and
+        // route.ts without changing the branch identity. Establish strict
+        // freshness before classifying it, then let SSR reuse that snapshot.
+        // This must stay outside the API-discovery catch: downstream document
+        // handlers must never serve an older snapshot after freshness fails.
+        if (canResolveAsPage) {
+          await preparePreviewDocumentSourceSnapshot(
+            ctx,
+            () => this.handleWithContext(req, ctx, pathname, mustDenyProjectExecution),
+          );
+        } else {
           await ensurePreviewSourceSnapshotFresh(ctx);
+        }
 
-          const canResolveAsPage = pathname !== "/api" &&
-            !pathname.startsWith("/api/") &&
-            (req.method === "GET" || req.method === "HEAD");
-
+        try {
           let isPageRequest = false;
           if (canResolveAsPage) {
             isPageRequest = await this.isPageRequest(pathname, ctx, req.signal);
@@ -151,10 +177,6 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           if (isPageRequest) {
             return this.continue();
-          }
-
-          if (mustDenyProjectExecution) {
-            return this.sharedRuntimeExecutionUnavailable(req, ctx, pathname);
           }
 
           // Lazy per-project primitive discovery (agents, tools) on first access.
@@ -213,16 +235,17 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
-  private sharedRuntimeExecutionUnavailable(
+  private projectExecutionUnavailable(
     req: Request,
     ctx: HandlerContext,
     pathname: string,
+    detail =
+      "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
   ): HandlerResult {
     const problem = createErrorResponseFromDefinition(
       PROJECT_EXECUTION_UNAVAILABLE,
       {
-        detail:
-          "Shared runtimes do not execute tenant API modules in the host process or same-process Workers",
+        detail,
         instance: pathname,
       },
     );
@@ -231,7 +254,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache("no-store")
       .withHeaders(problem.headers)
-      .build(problem.body, problem.status);
+      .build(req.method === "HEAD" ? null : problem.body, problem.status);
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 

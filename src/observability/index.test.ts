@@ -119,6 +119,7 @@ describe("veryfront/observability public export surface", () => {
   it("does not expose process-wide error-reporter mutators", () => {
     assertEquals("initializeApplicationErrorReporter" in observability, false);
     assertEquals("setApplicationErrorReporter" in observability, false);
+    assertEquals("getHostTelemetryEnv" in observability, false);
   });
 
   it("exposes a read-only tracing facade without global provider access", () => {
