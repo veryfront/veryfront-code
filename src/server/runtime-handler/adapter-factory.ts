@@ -16,7 +16,7 @@ import {
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
+import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import {
   getConfig,
   getHostedConfig,
@@ -203,13 +203,12 @@ async function hasPublishedStaticFile(
   // StaticFileService checks preview build output before public. Keep this
   // ownership probe in the same order for extensionless document candidates.
   const roots = new Set<string>();
-  if (!isAbsolute(buildOutDir)) {
-    const buildRoot = joinPath(projectDir, buildOutDir);
-    if (buildRoot !== projectDir && isWithinDirectory(projectDir, buildRoot)) {
-      roots.add(buildRoot);
-    }
+  const projectRoot = resolve(projectDir);
+  const buildRoot = resolve(projectRoot, buildOutDir);
+  if (buildRoot !== projectRoot && isWithinDirectory(projectRoot, buildRoot)) {
+    roots.add(buildRoot);
   }
-  roots.add(joinPath(projectDir, "public"));
+  roots.add(joinPath(projectRoot, "public"));
   const relativePath = pathname.replace(/^\/+/, "");
   const candidates = relativePath.length === 0
     ? ["index.html"]

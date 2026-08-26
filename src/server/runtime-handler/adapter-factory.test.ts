@@ -1086,47 +1086,52 @@ describe("adapter-factory", () => {
       assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
     });
 
-    it("probes the configured build output before selecting strict freshness", async () => {
-      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
-      const base = createMockAdapter({
-        "/veryfront.config.ts": { isDirectory: false, isFile: true },
-        "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
-      });
-      const extendedFs = {
-        ...base.fs,
-        isVeryfrontAdapter: () => true,
-        getUnderlyingAdapter: () => ({}),
-        isMultiProjectMode: () => false,
-        sourceSnapshotFreshnessOptionsVersion: 1 as const,
-        runWithContext: (
-          _slug: string,
-          _token: string,
-          fn: () => Promise<unknown>,
-          projectId?: string,
-          opts?: { branch?: string | null },
-        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
-        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
-          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
-          return Promise.resolve();
-        },
-        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
-        getSourceSnapshotVersion: () => 3,
-        readFile: (path: string) =>
-          path === "/veryfront.config.ts"
-            ? Promise.resolve(
-              `export default { router: "pages", build: { outDir: "custom-output" } };`,
-            )
-            : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+    it("probes relative and absolute in-project build output before strict freshness", async () => {
+      const probeConfiguredOutput = async (outDir: string) => {
+        const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+        const base = createMockAdapter({
+          "/veryfront.config.ts": { isDirectory: false, isFile: true },
+          "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
+        });
+        const extendedFs = {
+          ...base.fs,
+          isVeryfrontAdapter: () => true,
+          getUnderlyingAdapter: () => ({}),
+          isMultiProjectMode: () => false,
+          sourceSnapshotFreshnessOptionsVersion: 1 as const,
+          runWithContext: (
+            _slug: string,
+            _token: string,
+            fn: () => Promise<unknown>,
+            projectId?: string,
+            opts?: { branch?: string | null },
+          ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+          ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+            freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+            return Promise.resolve();
+          },
+          getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+          getSourceSnapshotVersion: () => 3,
+          readFile: (path: string) =>
+            path === "/veryfront.config.ts"
+              ? Promise.resolve(
+                `export default { router: "pages", build: { outDir: ${JSON.stringify(outDir)} } };`,
+              )
+              : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+        };
+        const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+        const result = await resolveMutablePreviewAdapter(adapter, "/robots");
+
+        assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+        assertEquals(result.previewDocumentSourceSnapshot, {
+          identity: "branch:mutable-config-project:main",
+          version: 3,
+        });
       };
-      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
 
-      const result = await resolveMutablePreviewAdapter(adapter, "/robots");
-
-      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
-      assertEquals(result.previewDocumentSourceSnapshot, {
-        identity: "branch:mutable-config-project:main",
-        version: 3,
-      });
+      await probeConfiguredOutput("custom-output");
+      await probeConfiguredOutput("/base/project/custom-output");
     });
 
     it("keeps extensionless build-output files on the normal freshness lease", async () => {
