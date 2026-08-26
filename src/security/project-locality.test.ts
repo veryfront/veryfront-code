@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isSharedProjectRuntime, requiresIsolatedProjectRuntime } from "./project-locality.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
+import {
+  isExplicitHostProjectCodeExecutionAllowed,
+  isHostProjectCodeExecutionAllowed,
+  isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
+} from "./project-locality.ts";
 
 describe("security/project-locality shared runtime topology", () => {
   it("recognizes hosted-config and multi-project runtime boundaries", () => {
@@ -116,6 +122,24 @@ describe("security/project-locality isolated runtime requirement", () => {
       requiresIsolatedProjectRuntime(dedicatedRuntime),
       false,
       "a non-shared runtime was never denied",
+    );
+  });
+
+  it("keeps the host capability usable in dedicated Bun runtimes", () => {
+    if (!isBun) return;
+    const capableDedicatedRuntime = {
+      ...dedicatedRuntime,
+      allowHostProjectCodeExecution: true,
+    };
+    assertEquals(isExplicitHostProjectCodeExecutionAllowed(capableDedicatedRuntime), true);
+    assertEquals(isHostProjectCodeExecutionAllowed(capableDedicatedRuntime), true);
+    assertEquals(
+      isHostProjectCodeExecutionAllowed({
+        ...sharedRuntime,
+        allowHostProjectCodeExecution: true,
+      }),
+      false,
+      "the topology-aware boundary must still deny shared Bun execution",
     );
   });
 

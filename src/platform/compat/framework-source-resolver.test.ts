@@ -315,6 +315,11 @@ describe("framework-source-resolver public entry keys", () => {
   it("accepts public export targets and rejects internal wrappers", () => {
     assertEquals(isPublicFrameworkSourceKey("platform/env.js"), true);
     assertEquals(isPublicFrameworkSourceKey("react/runtime/core.ts"), true);
+    assertEquals(
+      isPublicFrameworkSourceKey("workflow/react/index.js"),
+      true,
+      "the supported veryfront/workflow SSR override must remain loadable",
+    );
     assertEquals(isPublicFrameworkSourceKey("config/index.ts"), false);
     assertEquals(isPublicFrameworkSourceKey("platform/compat/process/env-public.js"), false);
     assertEquals(isPublicFrameworkSourceKey("observability/tracing/telemetry-env.ts"), false);

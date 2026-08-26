@@ -53,12 +53,22 @@ const publicExportSpecifiers = new Set(
     specifier === "." ? "veryfront" : `veryfront/${specifier.replace(/^\.\//, "")}`
   ),
 );
+const supportedFrameworkOverrideSpecifiers = [
+  ["veryfront", "veryfront/index.client"],
+  ["veryfront/workflow", "veryfront/workflow/react"],
+] as const;
 const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
   [
     ...Object.values(publicConfig.exports ?? {}),
     ...Object.entries(publicConfig.imports ?? {})
       .filter(([specifier]) => publicExportSpecifiers.has(specifier))
       .map(([, target]) => target),
+    ...supportedFrameworkOverrideSpecifiers
+      .filter(([specifier]) => publicExportSpecifiers.has(specifier))
+      .flatMap(([, targetSpecifier]) => {
+        const target = publicConfig.imports?.[targetSpecifier];
+        return target === undefined ? [] : [target];
+      }),
   ]
     .filter((target) => target.startsWith("./src/"))
     .map(normalizeFrameworkSourceKey),

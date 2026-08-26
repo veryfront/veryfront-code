@@ -1,5 +1,3 @@
-import { isBun as IS_BUN } from "#veryfront/platform/compat/runtime.ts";
-
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
@@ -119,7 +117,7 @@ export function isHostProjectCodeExecutionAllowed(value: unknown): boolean {
 export function isExplicitHostProjectCodeExecutionAllowed(
   value: unknown,
 ): boolean {
-  return !IS_BUN && readOwnDataProperty(value, "allowHostProjectCodeExecution") === true;
+  return readOwnDataProperty(value, "allowHostProjectCodeExecution") === true;
 }
 
 /**
