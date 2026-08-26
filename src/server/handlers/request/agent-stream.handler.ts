@@ -25,6 +25,7 @@ import {
   type AgentServiceVeryfrontStudioMcpServerConfig,
   createAgentServiceRemoteMcpConfig,
 } from "#veryfront/agent/service/mcp-server-config.ts";
+import { createMcpToolPolicyGate } from "#veryfront/agent/mcp-tool-policy.ts";
 import {
   clientAllowsStudioMcp,
   resolveRuntimeClientProfile,
@@ -527,9 +528,18 @@ function withExplicitVeryfrontStudioRemoteTools(input: {
   projectId?: string | null;
   forwardedProps?: Record<string, unknown>;
   conversationId?: string;
+  availableToolNames?: string[];
 }): Agent {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0 || !input.token) return input.agent;
+
+  const requestedStudioToolNames = getRequestedUnresolvedBooleanToolNames({
+    tools: input.agent.config.tools,
+    agentId: input.agent.id,
+    availableToolNames: input.availableToolNames,
+  }).filter((toolName) =>
+    configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
+  );
 
   const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
@@ -559,10 +569,21 @@ function withExplicitVeryfrontStudioRemoteTools(input: {
   }
   if (studioRemoteToolSources.length === 0) return input.agent;
 
+  const shouldSetAllowedRemoteTools = requestedStudioToolNames.length > 0 ||
+    runtimeConfig.__vfAllowedRemoteTools !== undefined;
+
   return {
     ...input.agent,
     config: {
       ...input.agent.config,
+      ...(shouldSetAllowedRemoteTools
+        ? {
+          __vfAllowedRemoteTools: mergeAllowedRemoteTools(
+            runtimeConfig.__vfAllowedRemoteTools,
+            requestedStudioToolNames,
+          ),
+        }
+        : {}),
       __vfRemoteToolSources: [...remoteTools, ...studioRemoteToolSources],
     } as Agent["config"],
   };
@@ -868,6 +889,7 @@ export class AgentStreamHandler extends BaseHandler {
                   projectId: sourceScopedContext.projectId ?? null,
                   forwardedProps: runtimeInput.forwardedProps,
                   conversationId: runtimeInput.threadId,
+                  availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                 });
 
                 // Source-defined MCP tool headers resolve these via

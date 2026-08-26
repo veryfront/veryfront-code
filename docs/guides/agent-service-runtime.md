@@ -33,7 +33,11 @@ service runtime:
 
 ```ts
 // service.ts
-import { startAgentService } from "veryfront/agent";
+import {
+  startAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
+} from "veryfront/agent";
 
 await startAgentService();
 ```
@@ -216,6 +220,10 @@ const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
 
 await startAgentService({
   createRemoteToolSource,
+  mcpServers: [
+    veryfrontApiMcpServer(),
+    veryfrontStudioMcpServer(),
+  ],
 });
 ```
 

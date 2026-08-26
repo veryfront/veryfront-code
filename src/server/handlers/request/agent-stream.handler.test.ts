@@ -1402,6 +1402,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("injects the trusted Studio source for explicit Studio MCP configuration", async () => {
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
     let capturedRemoteToolNames: string[] = [];
+    let capturedAllowedRemoteTools: string[] | undefined;
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
     installMockFetch(
       ((url, init) => {
@@ -1446,6 +1447,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
         sessionManager: new AgentRunSessionManager(),
         createRuntime: (runtimeAgent) => ({
           stream: async (_messages, _context, callbacks) => {
+            capturedAllowedRemoteTools = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfAllowedRemoteTools;
             const studioSource = getRuntimeRemoteToolSources(runtimeAgent.config)?.find(
               (source) => source.id === "studio-mcp",
             );
@@ -1473,7 +1476,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
           veryfront: {
             client: { id: "veryfront-studio", type: "web", platform: "browser" },
           },
-          runtimeOverrides: { allowedTools: ["studio_todo_write"] },
         },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1495,6 +1497,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertExists(result.response);
       assertEquals(result.response.status, 200, await result.response.clone().text());
       assertEquals(capturedRemoteToolNames, ["studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
