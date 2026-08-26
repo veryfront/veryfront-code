@@ -2452,7 +2452,8 @@ function keepsConfigImportSpecifier(specifier: string): boolean {
     ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
 }
 
-async function rewriteProjectConfigImports(
+/** @internal Rewrite staged imports with a resolver bound to their original project. */
+export async function rewriteProjectConfigImports(
   source: string,
   resolveSpecifier: ProjectConfigImportResolver,
 ): Promise<string> {

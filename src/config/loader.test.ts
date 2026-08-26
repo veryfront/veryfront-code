@@ -9,8 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, realPath, writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { toFileUrl } from "#veryfront/compat/path/index.ts";
+import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
@@ -32,7 +31,7 @@ import {
   getHostedConfig,
   mergeConfigs,
   rewriteBareVeryfrontConfigImports,
-  rewriteProjectConfigImportsFromProject,
+  rewriteProjectConfigImports,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -316,35 +315,28 @@ export default config as const;
       assertEquals(module.default.title, "scoped-value");
     });
 
-    it("keeps staged config imports rooted at the original project", async () => {
-      await withTempDir(async (projectDir) => {
-        const packageDir = `${projectDir}/node_modules/config-stage-dependency`;
-        const localPath = `${projectDir}/local.js`;
-        await mkdir(packageDir, { recursive: true });
-        await writeTextFile(
-          `${packageDir}/package.json`,
-          JSON.stringify({
-            name: "config-stage-dependency",
-            type: "module",
-            exports: "./index.js",
-          }),
-        );
-        await writeTextFile(`${packageDir}/index.js`, 'export default "package";\n');
-        await writeTextFile(localPath, 'export default "local";\n');
+    it("rewrites staged imports through the original project resolver", async () => {
+      const resolved: string[] = [];
+      const rewritten = await rewriteProjectConfigImports(
+        'import dependency from "config-stage-dependency";\n' +
+          'import local from "./local.js";\n' +
+          'import { defineConfig } from "veryfront";\n' +
+          "export default defineConfig({ dependency, local });\n",
+        (specifier) => {
+          resolved.push(specifier);
+          return specifier === "config-stage-dependency"
+            ? "file:///project/node_modules/config-stage-dependency/index.js"
+            : "file:///project/local.js";
+        },
+      );
 
-        const rewritten = await rewriteProjectConfigImportsFromProject(
-          'import dependency from "config-stage-dependency";\n' +
-            'import local from "./local.js";\n' +
-            "export default { dependency, local };\n",
-          `${projectDir}/veryfront.config.ts`,
-        );
-
-        assertStringIncludes(
-          rewritten,
-          toFileUrl(await realPath(`${packageDir}/index.js`)).href,
-        );
-        assertStringIncludes(rewritten, toFileUrl(await realPath(localPath)).href);
-      });
+      assertEquals(resolved, ["./local.js", "config-stage-dependency"]);
+      assertStringIncludes(
+        rewritten,
+        'from "file:///project/node_modules/config-stage-dependency/index.js"',
+      );
+      assertStringIncludes(rewritten, 'from "file:///project/local.js"');
+      assertEquals(rewritten.includes('from "veryfront"'), false);
     });
   });
 
