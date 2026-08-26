@@ -29,6 +29,15 @@ interface Binding {
   processExecveImport: boolean;
 }
 
+interface PropertyInitializerContext {
+  readonly propertyName: string | null;
+  readonly value: ASTNode;
+  readonly nodeScopes: WeakMap<ASTNode, Scope>;
+  readonly definitelyAssigned: boolean;
+  readonly position: number | null;
+  readonly executionScope: Scope;
+}
+
 interface Scope {
   readonly parent: Scope | null;
   readonly kind: "program" | "function" | "block" | "catch" | "class";
@@ -207,11 +216,12 @@ export async function rewriteImportMetaLocations(
     ) {
       const args = callArguments(node);
       const specifier = args.length === 1 ? staticString(args[0]) : null;
-      const resolved = specifier === null
-        ? null
-        : resolveSpecifier
-        ? resolveSpecifier(specifier, moduleUrl)
-        : resolveImportMetaUrlSpecifier(specifier, moduleUrl);
+      let resolved: string | null = null;
+      if (specifier !== null) {
+        resolved = resolveSpecifier
+          ? resolveSpecifier(specifier, moduleUrl)
+          : resolveImportMetaUrlSpecifier(specifier, moduleUrl);
+      }
       if (resolved === null || !hasSourceRange(node, source.length)) {
         unsupportedResolve = true;
       } else {
@@ -641,13 +651,16 @@ function collectAssignments(
       } else if (isMemberExpressionWithObject(node.left)) {
         recordPropertyInitializer(
           node.left.object,
-          memberPropertyName(node.left),
-          node.right,
           scope,
-          nodeScopes,
-          node.operator === "=" && isDefinitelySequencedMutation(node, parents),
-          nodePosition(node),
-          scope,
+          {
+            propertyName: memberPropertyName(node.left),
+            value: node.right,
+            nodeScopes,
+            definitelyAssigned: node.operator === "=" &&
+              isDefinitelySequencedMutation(node, parents),
+            position: nodePosition(node),
+            executionScope: scope,
+          },
         );
       }
     }
@@ -790,13 +803,15 @@ function recordObjectPropertyCopies(
   for (const value of descriptorDefinedValues(definePropertyArgs[2], scope, nodeScopes)) {
     recordPropertyInitializer(
       definePropertyArgs[0],
-      propertyName,
-      value,
       scope,
-      nodeScopes,
-      isDefinitelySequencedMutation(node, parents),
-      nodePosition(node),
-      scope,
+      {
+        propertyName,
+        value,
+        nodeScopes,
+        definitelyAssigned: isDefinitelySequencedMutation(node, parents),
+        position: nodePosition(node),
+        executionScope: scope,
+      },
     );
   }
 }
@@ -858,13 +873,8 @@ function recordPropertySource(
 
 function recordPropertyInitializer(
   target: ASTNode,
-  propertyName: string | null,
-  value: ASTNode,
   scope: Scope,
-  nodeScopes: WeakMap<ASTNode, Scope>,
-  definitelyAssigned: boolean,
-  position: number | null,
-  executionScope: Scope,
+  context: PropertyInitializerContext,
   seen = new Set<Binding>(),
 ): void {
   const expression = unwrapExpression(target);
@@ -873,22 +883,17 @@ function recordPropertyInitializer(
     if (binding === null || seen.has(binding)) return;
     seen.add(binding);
     binding.propertyInitializers.push({
-      propertyName,
-      value,
-      executionScope,
-      definitelyAssigned,
-      position,
+      propertyName: context.propertyName,
+      value: context.value,
+      executionScope: context.executionScope,
+      definitelyAssigned: context.definitelyAssigned,
+      position: context.position,
     });
     for (const initializer of binding.initializers) {
       recordPropertyInitializer(
         initializer,
-        propertyName,
-        value,
-        nodeScopes.get(initializer) ?? binding.scope,
-        nodeScopes,
-        definitelyAssigned,
-        position,
-        executionScope,
+        context.nodeScopes.get(initializer) ?? binding.scope,
+        context,
         seen,
       );
     }
@@ -897,13 +902,8 @@ function recordPropertyInitializer(
   if (isAliasAssignmentExpression(expression)) {
     recordPropertyInitializer(
       expression.right,
-      propertyName,
-      value,
       scope,
-      nodeScopes,
-      definitelyAssigned,
-      position,
-      executionScope,
+      context,
       seen,
     );
     return;
@@ -912,24 +912,14 @@ function recordPropertyInitializer(
   if (branches === null) return;
   recordPropertyInitializer(
     branches[0],
-    propertyName,
-    value,
     scope,
-    nodeScopes,
-    definitelyAssigned,
-    position,
-    executionScope,
+    context,
     new Set(seen),
   );
   recordPropertyInitializer(
     branches[1],
-    propertyName,
-    value,
     scope,
-    nodeScopes,
-    definitelyAssigned,
-    position,
-    executionScope,
+    context,
     new Set(seen),
   );
 }
@@ -1865,6 +1855,37 @@ function classMemberPropertyValues(
   const nextSeenClasses = new Set(seenClasses);
   nextSeenClasses.add(classValue);
   const members = classValue.body.body.filter(isNode);
+  const { matchedMembers, values, shadowsInheritedProperty } = collectOwnClassMemberPropertyValues(
+    members,
+    propertyName,
+    access,
+  );
+  values.push(...referencedPrivateClassMemberValues(members, matchedMembers));
+  const inheritedProperties = inheritedClassPropertyNames(
+    propertyName,
+    matchedMembers,
+    shadowsInheritedProperty,
+  );
+  values.push(...inheritedClassPropertyValues(
+    classValue,
+    inheritedProperties,
+    access,
+    scope,
+    nodeScopes,
+    nextSeenClasses,
+  ));
+  return values;
+}
+
+function collectOwnClassMemberPropertyValues(
+  members: readonly ASTNode[],
+  propertyName: string | null,
+  access: LocalClassObject["access"],
+): {
+  matchedMembers: ASTNode[];
+  values: ASTNode[];
+  shadowsInheritedProperty: boolean;
+} {
   const matchedMembers: ASTNode[] = [];
   const values: ASTNode[] = [];
   let shadowsInheritedProperty = false;
@@ -1879,7 +1900,14 @@ function classMemberPropertyValues(
     matchedMembers.push(member);
     values.push(...classMemberValues(member));
   }
-  values.push(...referencedPrivateClassMemberValues(members, matchedMembers));
+  return { matchedMembers, values, shadowsInheritedProperty };
+}
+
+function inheritedClassPropertyNames(
+  propertyName: string | null,
+  matchedMembers: readonly ASTNode[],
+  shadowsInheritedProperty: boolean,
+): Set<string | null> {
   const inheritedProperties = new Set<string | null>();
   if (!shadowsInheritedProperty) inheritedProperties.add(propertyName);
   for (const member of matchedMembers) {
@@ -1887,28 +1915,37 @@ function classMemberPropertyValues(
       inheritedProperties.add(referencedName);
     }
   }
+  return inheritedProperties;
+}
 
-  if (inheritedProperties.size > 0 && isNode(classValue.superClass)) {
-    const superScope = nodeScopes.get(classValue.superClass) ?? scope;
-    for (
-      const parentClass of localClassObjects(
-        classValue.superClass,
-        superScope,
+function inheritedClassPropertyValues(
+  classValue: ASTNode,
+  inheritedProperties: ReadonlySet<string | null>,
+  access: LocalClassObject["access"],
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seenClasses: Set<ASTNode>,
+): ASTNode[] {
+  if (inheritedProperties.size === 0 || !isNode(classValue.superClass)) return [];
+  const values: ASTNode[] = [];
+  const superScope = nodeScopes.get(classValue.superClass) ?? scope;
+  const parentClasses = localClassObjects(
+    classValue.superClass,
+    superScope,
+    nodeScopes,
+    new Set(),
+  );
+  for (const parentClass of parentClasses) {
+    if (parentClass.access !== "static") continue;
+    for (const inheritedProperty of inheritedProperties) {
+      values.push(...classMemberPropertyValues(
+        parentClass.classValue,
+        inheritedProperty,
+        access,
+        nodeScopes.get(parentClass.classValue) ?? superScope,
         nodeScopes,
-        new Set(),
-      )
-    ) {
-      if (parentClass.access !== "static") continue;
-      for (const inheritedProperty of inheritedProperties) {
-        values.push(...classMemberPropertyValues(
-          parentClass.classValue,
-          inheritedProperty,
-          access,
-          nodeScopes.get(parentClass.classValue) ?? superScope,
-          nodeScopes,
-          nextSeenClasses,
-        ));
-      }
+        seenClasses,
+      ));
     }
   }
   return values;
@@ -2064,34 +2101,60 @@ function objectLiteralPropertyValues(
   const properties = Array.isArray(expression.properties) ? expression.properties : [];
   for (const property of properties) {
     if (!isNode(property)) continue;
-    if (property.type === "SpreadElement" && isNode(property.argument)) {
-      values.push(...objectPropertyValues(
+    const contribution = objectLiteralPropertyContribution(
+      property,
+      propertyName,
+      scope,
+      nodeScopes,
+      seen,
+    );
+    if (contribution === null) continue;
+    if (contribution.shadowsNamedProperty) values.length = 0;
+    values.push(...contribution.values);
+  }
+  return values;
+}
+
+function objectLiteralPropertyContribution(
+  property: ASTNode,
+  propertyName: string | null,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen: Set<Binding>,
+): { values: ASTNode[]; shadowsNamedProperty: boolean } | null {
+  if (property.type === "SpreadElement" && isNode(property.argument)) {
+    return {
+      values: objectPropertyValues(
         property.argument,
         propertyName,
         nodeScopes.get(property.argument) ?? scope,
         nodeScopes,
         new Set(seen),
-      ));
-      continue;
-    }
-    if (property.type === "ObjectMethod") {
-      const key = staticPropertyKey(property);
-      if (propertyName !== null && key !== null && key !== propertyName) continue;
-      if (propertyName !== null && key === propertyName) values.length = 0;
-      if (property.kind === "get") {
-        values.push(...functionReturnExpressions(property));
-      } else if (property.kind !== "set") {
-        values.push(property);
-      }
-      continue;
-    }
-    if (property.type !== "ObjectProperty" || !isNode(property.value)) continue;
-    const key = staticPropertyKey(property);
-    if (propertyName !== null && key !== null && key !== propertyName) continue;
-    if (propertyName !== null && key === propertyName) values.length = 0;
-    values.push(property.value);
+      ),
+      shadowsNamedProperty: false,
+    };
   }
-  return values;
+  if (property.type === "ObjectMethod") {
+    const key = staticPropertyKey(property);
+    if (propertyName !== null && key !== null && key !== propertyName) return null;
+    return {
+      values: objectMethodValues(property),
+      shadowsNamedProperty: propertyName !== null && key === propertyName,
+    };
+  }
+  if (property.type !== "ObjectProperty" || !isNode(property.value)) return null;
+  const key = staticPropertyKey(property);
+  if (propertyName !== null && key !== null && key !== propertyName) return null;
+  return {
+    values: [property.value],
+    shadowsNamedProperty: propertyName !== null && key === propertyName,
+  };
+}
+
+function objectMethodValues(property: ASTNode): ASTNode[] {
+  if (property.kind === "get") return functionReturnExpressions(property);
+  if (property.kind === "set") return [];
+  return [property];
 }
 
 function bindingPropertyValues(
@@ -3926,34 +3989,49 @@ function applyInheritedClassCapability(
     .filter((parentClass) => parentClass.access === "static");
   for (const member of node.body.body) {
     if (!isNode(member)) continue;
-    const referencedNames = referencedSuperPropertyNames(member);
-    if (referencedNames.size === 0) continue;
-    const access = member.static === true ? "static" : "instance";
-    for (const parentClass of parentClasses) {
-      for (const referencedName of referencedNames) {
-        const inheritedValues = classMemberPropertyValues(
-          parentClass.classValue,
-          referencedName,
-          access,
-          nodeScopes.get(parentClass.classValue) ?? superScope,
-          nodeScopes,
-          new Set([node]),
-        );
-        if (
-          inheritedValues.some((value) =>
-            isCrossModuleCapabilityAlias(
-              value,
-              nodeScopes.get(value) ?? superScope,
-              nodeScopes,
-            )
-          )
-        ) {
-          analysis.hasDynamicCodeGeneration = true;
-          return;
-        }
-      }
+    if (
+      memberReferencesInheritedCapability(
+        member,
+        parentClasses,
+        node,
+        superScope,
+        nodeScopes,
+      )
+    ) {
+      analysis.hasDynamicCodeGeneration = true;
+      return;
     }
   }
+}
+
+function memberReferencesInheritedCapability(
+  member: ASTNode,
+  parentClasses: readonly LocalClassObject[],
+  blockedClass: ASTNode,
+  superScope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  const referencedNames = referencedSuperPropertyNames(member);
+  if (referencedNames.size === 0) return false;
+  const access = member.static === true ? "static" : "instance";
+  return parentClasses.some((parentClass) =>
+    [...referencedNames].some((referencedName) =>
+      classMemberPropertyValues(
+        parentClass.classValue,
+        referencedName,
+        access,
+        nodeScopes.get(parentClass.classValue) ?? superScope,
+        nodeScopes,
+        new Set([blockedClass]),
+      ).some((value) =>
+        isCrossModuleCapabilityAlias(
+          value,
+          nodeScopes.get(value) ?? superScope,
+          nodeScopes,
+        )
+      )
+    )
+  );
 }
 
 function isCrossModuleCapabilityAlias(
