@@ -151,7 +151,13 @@ describe(
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
     });
 
-    it("keeps shared primitive discovery denied despite a host grant", async () => {
+    it("honours a host grant for shared primitive discovery", async () => {
+      // An explicit operator grant from the host-owned entrypoint reaches this
+      // surface (veryfront-issue-inbox#848): discovery reads project source and
+      // registers its primitives instead of failing closed like the ungranted
+      // shared runtime above.
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       const ctx = createHandlerContext("/granted-project", "granted", "preview");
       ctx.isLocalProject = false;
       // Present marks a shared multi-project runtime, as veryfront-server is.
@@ -181,12 +187,19 @@ describe(
         return readFile(path);
       };
 
-      await assertRejects(
-        () => ensureProjectDiscovery(ctx),
-        Error,
-        "isolated project runtime",
+      const result = await ensureProjectDiscovery(ctx);
+
+      assertEquals(
+        reads > 0,
+        true,
+        "the grant must reach project source reads",
       );
-      assertEquals(reads, 0);
+      assertEquals(result.errors.length, 0, "granted discovery must complete cleanly");
+      assertEquals(
+        toolRegistry.has("granted_tool"),
+        true,
+        "granted discovery must register the project tool",
+      );
     });
 
     afterAll(async () => {

@@ -264,6 +264,28 @@ export function startProductionServer(
         });
         const { allowHostProjectCodeExecution } = executionPosture;
 
+        if (executionPosture.overrideIgnored) {
+          logger.warn("Host project execution override is ignored", {
+            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+            reason: "dedicated runtimes already allow project execution",
+          });
+        } else if (sharedRuntime && executionPosture.allowHostProjectCodeExecution) {
+          // The grant is active, not merely present. Say so at startup: an operator
+          // upgrading into this build can have a formerly stale setting silently become
+          // effective, and the absence of an "ignored" warning must not be the only
+          // signal that same-process tenant execution is switched on.
+          //
+          // Emitted before startup discovery on purpose: discovery below receives the
+          // grant and may import or evaluate project primitives, so the operator-facing
+          // security signal must land before the first tenant side effect -- and before
+          // any discovery path that hangs or exits could swallow it.
+          logger.warn("Shared runtime is executing tenant project code by operator grant", {
+            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+            reason:
+              "tenant code runs in this shared process; per-request separation is source scoping, not a tenant boundary",
+          });
+        }
+
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
           try {
@@ -297,23 +319,6 @@ export function startProductionServer(
         // switch that enables no surface) lands in the startup log where an
         // operator looks for it.
         getIsolationPosture();
-
-        if (executionPosture.overrideIgnored) {
-          logger.warn("Host project execution override is ignored", {
-            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-            reason: "dedicated runtimes already allow project execution",
-          });
-        } else if (sharedRuntime && executionPosture.allowHostProjectCodeExecution) {
-          // The grant is active, not merely present. Say so at startup: an operator
-          // upgrading into this build can have a formerly stale setting silently become
-          // effective, and the absence of an "ignored" warning must not be the only
-          // signal that same-process tenant execution is switched on.
-          logger.warn("Shared runtime is executing tenant project code by operator grant", {
-            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-            reason:
-              "tenant code runs in this shared process; per-request separation is source scoping, not a tenant boundary",
-          });
-        }
 
         const baseHandler = createVeryfrontHandler(projectDir, adapter, {
           projectDir,

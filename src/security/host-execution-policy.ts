@@ -1,14 +1,18 @@
 /**
- * Deprecated operator-owned host execution override.
+ * Operator-owned host execution grant.
  *
- * A shared multi-project runtime denies tenant code execution by default, and
- * routes the request to a dedicated isolated project runtime instead. Dedicated
- * single-project runtimes already carry the host execution capability. The
- * former override therefore grants no additional topology and is retained only
- * so startup can identify and report stale operator configuration.
+ * A shared multi-project runtime denies tenant code execution by default and
+ * fails closed with the typed `project-execution-unavailable` 503 response. An
+ * operator can grant host execution to a shared runtime with
+ * `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`; granting it is a deliberate
+ * reduction in isolation, because tenant code then runs in the shared process
+ * where per-request separation is source scoping and not a tenant boundary
+ * (see security/README.md, "Shared execution grant"). Dedicated single-project
+ * runtimes already carry the capability, so there the setting changes nothing
+ * and is reported as ignored so startup can surface stale configuration.
  *
  * `getHostEnv` bypasses the project env overlay, so a project variable of the
- * same name cannot manufacture the diagnostic.
+ * same name cannot manufacture the grant.
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -16,8 +20,9 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 export const HOST_PROJECT_EXECUTION_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION";
 
 /**
- * Detect the deprecated operator override. Absent and unrecognized values are
- * treated as unconfigured.
+ * Detect the operator grant. Only `1`, `true`, `yes`, and `on` (after trimming
+ * and case folding) configure it; absent and unrecognized values are treated
+ * as unconfigured and fail closed.
  */
 export function isHostProjectExecutionOverrideConfigured(
   value: string | undefined = getHostEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV),

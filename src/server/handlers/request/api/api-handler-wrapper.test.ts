@@ -664,7 +664,12 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
-  it("keeps shared-runtime API discovery denied despite a host grant", async () => {
+  it("honours a host grant for shared-runtime API execution", async () => {
+    // An explicit operator grant from the host-owned entrypoint reaches this
+    // surface (veryfront-issue-inbox#848): the request enters the project
+    // context, discovery reads project source, and the route resolves against
+    // it (404 here, since the fixture has no routes) instead of failing closed
+    // with the 503 the ungranted shared runtime returns above.
     let projectContextEntries = 0;
     let filesystemReads = 0;
     const ctx = createCtx({});
@@ -697,9 +702,13 @@ describe("ApiHandlerWrapper", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.status, 404);
     assertEquals(projectContextEntries, 1);
-    assertEquals(filesystemReads, 0);
+    assertEquals(
+      filesystemReads > 0,
+      true,
+      "the grant must reach project source discovery",
+    );
   });
 
   it("rejects a shared contextual adapter before mutating or reading it", async () => {

@@ -51,7 +51,11 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
   SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
-import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
+import { isSSRIsolationEnabled } from "#veryfront/security/sandbox/worker-pool.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
   ensurePreviewDocumentSourceSnapshot,
@@ -62,6 +66,15 @@ import {
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
 
 const logger = serverLogger.component("ssr");
+
+// The worker-pool probe resolves host-owned env flags once per process, which
+// tests cannot toggle portably across Deno, Node, and Bun. Test-only seam.
+let ssrIsolationRequested: () => boolean = isSSRIsolationEnabled;
+
+/** Test-only: replace the SSR isolation probe. Pass undefined to restore. */
+export function __setSSRIsolationProbeForTests(probe?: () => boolean): void {
+  ssrIsolationRequested = probe ?? isSSRIsolationEnabled;
+}
 const MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS = 3;
 
 /**
@@ -110,21 +123,31 @@ export class SSRHandler extends BaseHandler {
     }
 
     if (requiresIsolatedProjectRuntime(ctx)) {
-      const problem = createErrorResponseFromDefinition(
-        PROJECT_EXECUTION_UNAVAILABLE,
-        {
-          detail:
-            "Shared runtimes require a dedicated isolated project runtime for server rendering",
-          instance: pathname,
-        },
-      );
-      const body = req.method === "HEAD" ? null : problem.body;
-      const response = this.createResponseBuilder(ctx, generateNonce())
-        .withSecurity(ctx.securityConfig ?? undefined, req)
-        .withCache("no-store")
-        .withHeaders(problem.headers)
-        .build(body, problem.status);
-      return Promise.resolve(this.respond(response));
+      return Promise.resolve(this.respond(
+        this.buildExecutionUnavailableResponse(
+          req,
+          ctx,
+          "Shared runtimes require a dedicated isolated project runtime for server rendering",
+          pathname,
+        ),
+      ));
+    }
+
+    // An explicit SSR isolation request outranks the broad host-execution
+    // grant. With WORKER_ISOLATION_ENABLED=1 and WORKER_ISOLATION_SSR=1 the
+    // operator asked renders to leave the host realm, and this surface has no
+    // isolated renderer path wired to it, so honouring the grant here would
+    // silently downgrade that request to host execution. Fail closed instead
+    // of rendering in the host process.
+    if (ssrIsolationRequested() && isSharedProjectRuntime(ctx)) {
+      return Promise.resolve(this.respond(
+        this.buildExecutionUnavailableResponse(
+          req,
+          ctx,
+          "SSR isolation is enabled; the shared-runtime host execution grant does not downgrade rendering into the host realm",
+          pathname,
+        ),
+      ));
     }
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
@@ -139,6 +162,25 @@ export class SSRHandler extends BaseHandler {
       endRequest(requestId);
       throw error;
     });
+  }
+
+  /** The typed fail-closed response for a render this runtime must not host. */
+  private buildExecutionUnavailableResponse(
+    req: Request,
+    ctx: HandlerContext,
+    detail: string,
+    pathname: string,
+  ): Response {
+    const problem = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      { detail, instance: pathname },
+    );
+    const body = req.method === "HEAD" ? null : problem.body;
+    return this.createResponseBuilder(ctx, generateNonce())
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-store")
+      .withHeaders(problem.headers)
+      .build(body, problem.status);
   }
 
   private setupContextAndRender(

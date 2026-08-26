@@ -33,7 +33,11 @@ describe("server API app-router compatibility handler", () => {
     assertEquals(filesystemCalls, 0);
   });
 
-  it("keeps shared route discovery denied despite a host grant", async () => {
+  it("honours a host grant for shared route discovery", async () => {
+    // An explicit operator grant from the host-owned entrypoint reaches this
+    // surface (veryfront-issue-inbox#848): route discovery runs against project
+    // source instead of failing closed with the ungranted 503 above. No route
+    // exists in the fixture, so the handler yields to the next one.
     let filesystemCalls = 0;
     const ctx = {
       projectDir: "/remote/project",
@@ -56,7 +60,11 @@ describe("server API app-router compatibility handler", () => {
       ctx,
     );
 
-    assertEquals(response?.status, 503);
-    assertEquals(filesystemCalls, 0);
+    assertEquals(response, null);
+    assertEquals(
+      filesystemCalls > 0,
+      true,
+      "the grant must reach route discovery",
+    );
   });
 });

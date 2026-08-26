@@ -102,7 +102,10 @@ it("MarkdownPreviewHandler fails closed before shared source reads", async () =>
 });
 
 describe("MarkdownPreviewHandler host-execution capability", () => {
-  it("keeps shared preview execution denied despite a host grant", async () => {
+  it("honours a host grant for shared preview execution", async () => {
+    // An explicit operator grant from the host-owned entrypoint reaches this
+    // surface (veryfront-issue-inbox#848): the markdown source is read and the
+    // preview renders instead of failing closed with the ungranted 503 above.
     let reads = 0;
     const ctx = {
       projectDir: "/remote/project",
@@ -144,8 +147,12 @@ describe("MarkdownPreviewHandler host-execution capability", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 503);
-    assertEquals(reads, 0);
+    assertEquals(result.response?.status, 200);
+    assertEquals(
+      reads > 0,
+      true,
+      "the grant must reach the markdown source read",
+    );
   });
 });
 

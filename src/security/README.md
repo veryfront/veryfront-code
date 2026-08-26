@@ -419,8 +419,8 @@ A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
 (`security/sandbox/isolation-capability.ts`), so `WORKER_ISOLATION_API=1` in a
 compiled deployment keeps the requested isolation posture and API ownership
-returns the typed `project-execution-unavailable` 503 naming it. The deprecated
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` setting does not override the
+returns the typed `project-execution-unavailable` 503 naming it. The
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grant does not override the
 API-specific isolation flag.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
@@ -438,10 +438,20 @@ evaluating tenant modules.
 ## Shared execution grant
 
 `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grants host execution to a shared
-runtime. Without it a shared runtime rejects same-process tenant execution and
-routes to a dedicated isolated project runtime. A dedicated single-project
-runtime already has the capability, so there the setting changes no supported
-topology and is reported as ignored.
+runtime. Without it a shared runtime rejects same-process tenant execution:
+preview rendering and tenant `/api/*` return the typed
+`project-execution-unavailable` 503 response until routing to a genuinely
+external or dedicated isolated project runtime exists. A dedicated
+single-project runtime already has the capability, so there the setting changes
+no supported topology and is reported as ignored.
+
+Only the affirmative values `1`, `true`, `yes`, and `on` (trimmed,
+case-insensitive) enable the grant; every other value is treated as
+unconfigured and fails closed. The grant does not override requested worker
+isolation: with `WORKER_ISOLATION_API=1`, API execution keeps the isolation
+posture — in a compiled deployment, which cannot prepare isolated API route
+source, API ownership still returns the documented
+`project-execution-unavailable` 503 despite the grant.
 
 **Granting it is a deliberate reduction in isolation.** Tenant code then runs in
 the shared process, where per-request separation is source scoping and not a
@@ -467,7 +477,9 @@ is no host-rendering or remote-import fallback. The current HTTP renderer does
 not yet produce a generation-owned isolated page and layout graph, so remote
 SSR and server-executing RSC endpoints return `503 Service Unavailable` before
 resolving a renderer. API and data workers do not resolve or receive the
-renderer contract.
+renderer contract. On a shared runtime, requested SSR isolation also outranks
+the shared execution grant: the SSR handler fails closed with the typed 503
+rather than silently downgrading an isolation request into host rendering.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
 not a hard per-worker memory or CPU boundary. They are therefore limited to

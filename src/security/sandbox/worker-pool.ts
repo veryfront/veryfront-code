@@ -1256,8 +1256,8 @@ export interface IsolationSurfacePosture {
  * The resolved isolation configuration, as an operator would need to read it.
  *
  * `requested` and `effective` are separate fields so posture remains explicit
- * if a runtime capability changes. The deprecated host-execution override never
- * makes requested API isolation ineffective: unsupported runtimes keep the gate
+ * if a runtime capability changes. The host-execution grant never makes
+ * requested API isolation ineffective: unsupported runtimes keep the gate
  * enabled and fail closed. `inForce` answers whether any surface is isolated.
  */
 export interface IsolationPosture {
@@ -1291,7 +1291,8 @@ export interface IsolationPosture {
  * Resolve the host-owned isolation flags once per process.
  *
  * A build that cannot honour `WORKER_ISOLATION_API` must fail closed. The
- * deprecated host-execution override does not alter an API-specific posture.
+ * host-execution grant does not alter an API-specific posture: requested
+ * worker isolation takes precedence over host-realm execution.
  */
 function resolveFlags(): void {
   if (_flagsResolved) return;

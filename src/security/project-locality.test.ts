@@ -145,8 +145,8 @@ describe("security/project-locality isolated runtime requirement", () => {
         ...sharedRuntime,
         allowHostProjectCodeExecution: true,
       }),
-      false,
-      "the topology-aware boundary must still deny shared Bun execution",
+      true,
+      "an explicit operator grant reaches shared Bun execution too",
     );
   });
 

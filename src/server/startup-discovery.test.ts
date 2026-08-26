@@ -145,7 +145,11 @@ describe("server/startup-discovery", () => {
     assertEquals(calls[0]?.allowHostProjectCodeExecution, true);
   });
 
-  it("denies host execution for unscoped discovery in a shared runtime", async () => {
+  it("forwards the deployment grant to unscoped discovery in a shared runtime", async () => {
+    // The entrypoint's posture already honoured the operator grant
+    // (veryfront-issue-inbox#848), and the topology re-check here must not
+    // discard it a second time: startup discovery and request handling share
+    // one computed value.
     const { calls, discoverAll } = recorder();
     const runtimeAdapter = {
       fs: { isMultiProjectMode: () => true },
@@ -160,7 +164,29 @@ describe("server/startup-discovery", () => {
     });
 
     assertEquals(calls.length, 1);
-    assertEquals(calls[0]?.allowHostProjectCodeExecution, false);
+    assertEquals(calls[0]?.allowHostProjectCodeExecution, true);
+  });
+
+  it("denies host execution for ungranted unscoped discovery in a shared runtime", async () => {
+    const { calls, discoverAll } = recorder();
+    const runtimeAdapter = {
+      fs: { isMultiProjectMode: () => true },
+    } as unknown as RuntimeAdapter;
+
+    await runStartupDiscovery({
+      config: { baseDir: PROJECT_DIR },
+      runtimeAdapter,
+      allowHostProjectCodeExecution: false,
+      discoverAll,
+      isExtendedFSAdapter: noExtendedAdapters,
+    });
+
+    assertEquals(calls.length, 1);
+    assertEquals(
+      calls[0]?.allowHostProjectCodeExecution,
+      false,
+      "a shared runtime without a grant must stay fail-closed at startup",
+    );
   });
 
   it("skips the scoped multi-project path rather than calling discovery ungranted", async () => {

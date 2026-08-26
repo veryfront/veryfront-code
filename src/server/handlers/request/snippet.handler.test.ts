@@ -114,9 +114,10 @@ Deno.test("SnippetHandler rejects shared rendering before proxy context or sourc
 });
 
 describe("SnippetHandler host-execution capability", () => {
-  it("keeps shared snippet execution denied despite a host grant", async () => {
-    // An entrypoint grant cannot override shared-runtime topology. Pin the
-    // source-read boundary so this does not regress to capability-only checks.
+  it("honours a host grant for shared snippet execution", async () => {
+    // An explicit operator grant from the host-owned entrypoint reaches this
+    // surface (veryfront-issue-inbox#848): the component source is read and the
+    // snippet renders instead of failing closed with the ungranted 503 above.
     let readPath: string | undefined;
     const fs = {
       symlinkSemantics: "none" as const,
@@ -155,8 +156,12 @@ describe("SnippetHandler host-execution capability", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 503);
-    assertEquals(readPath, undefined);
+    assertEquals(result.response?.status, 200);
+    assertEquals(
+      readPath !== undefined,
+      true,
+      "the grant must reach the component source read",
+    );
   });
 
   it("passes the canonical enriched release identity to snippet rendering", async () => {

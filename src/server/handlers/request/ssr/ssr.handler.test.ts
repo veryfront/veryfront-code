@@ -8,7 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { SSRHandler } from "./ssr.handler.ts";
+import { __setSSRIsolationProbeForTests, SSRHandler } from "./ssr.handler.ts";
 import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
 import {
   __injectProjectReactForTests,
@@ -843,7 +843,10 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(renderCalls, 0);
     });
 
-    it("keeps shared rendering denied despite a host grant", async () => {
+    it("honours a host grant for shared rendering", async () => {
+      // An explicit operator grant from the host-owned entrypoint reaches this
+      // surface (veryfront-issue-inbox#848): the shared runtime renders instead
+      // of failing closed with the ungranted 503 above.
       let renderCalls = 0;
       const handler = new SSRHandler(createMockSSRService({
         renderPage: () => {
@@ -866,8 +869,78 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         } as Partial<HandlerContext>),
       );
 
-      assertEquals(result.response?.status, 503);
-      assertEquals(renderCalls, 0);
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderCalls, 1, "the grant must reach the renderer");
+    });
+
+    it("preserves an explicit SSR isolation request over the shared execution grant", async () => {
+      // WORKER_ISOLATION_SSR asks renders to leave the host realm. The broad
+      // host-execution grant must not silently downgrade that request into
+      // host rendering; with no isolated renderer path wired to this surface,
+      // the request fails closed instead.
+      __setSSRIsolationProbeForTests(() => true);
+      try {
+        let renderCalls = 0;
+        const handler = new SSRHandler(createMockSSRService({
+          renderPage: () => {
+            renderCalls++;
+            return Promise.resolve({
+              status: 200,
+              html: "<html>must not host-render</html>",
+              isStreaming: false,
+              cacheStrategy: "short" as const,
+              slug: "private-page",
+            });
+          },
+        }));
+        const result = await handler.handle(
+          new Request("https://tenant.example/private-page"),
+          makeCtx({
+            isLocalProject: false,
+            allowHostProjectCodeExecution: true,
+            prepareHostedConfigContext: (() => {}) as HandlerContext["prepareHostedConfigContext"],
+          } as Partial<HandlerContext>),
+        );
+
+        assertEquals(result.response?.status, 503);
+        assertEquals(
+          (await result.response?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/code/guides/errors#project-execution-unavailable",
+        );
+        assertEquals(
+          renderCalls,
+          0,
+          "requested SSR isolation must not downgrade to host rendering",
+        );
+      } finally {
+        __setSSRIsolationProbeForTests(undefined);
+      }
+    });
+
+    it("keeps dedicated-runtime rendering unaffected by the SSR isolation gate", async () => {
+      // The gate is scoped to shared runtimes, where the grant is what lets
+      // the request through; a dedicated runtime keeps its existing behaviour.
+      __setSSRIsolationProbeForTests(() => true);
+      try {
+        const handler = new SSRHandler(createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 200,
+              html: "<html>dedicated</html>",
+              isStreaming: false,
+              cacheStrategy: "short" as const,
+              slug: "about",
+            }),
+        }));
+        const result = await handler.handle(
+          new Request("http://localhost/about"),
+          makeCtx(),
+        );
+
+        assertEquals(result.response?.status, 200);
+      } finally {
+        __setSSRIsolationProbeForTests(undefined);
+      }
     });
 
     it("returns response from renderPage result", async () => {
