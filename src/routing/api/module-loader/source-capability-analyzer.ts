@@ -1120,7 +1120,8 @@ function resolvesToPrototypeMutator(
       resolvesToGlobalIntrinsic(expression.object, "Reflect", scope, nodeScopes);
   }
   if (isAliasAssignmentExpression(expression)) {
-    const leftMayRemain = expression.operator !== "=" && isNode(expression.left) &&
+    const leftMayRemain = logicalAssignmentMayRetainTruthyLeft(expression) &&
+      isNode(expression.left) &&
       resolvesToPrototypeMutator(expression.left, scope, nodeScopes, new Set(seen));
     return leftMayRemain ||
       resolvesToPrototypeMutator(expression.right, scope, nodeScopes, new Set(seen));
@@ -1652,7 +1653,8 @@ function resolvesToGlobalIntrinsicMember(
     )
   ) return true;
   if (isAliasAssignmentExpression(expression)) {
-    const leftMayRemain = expression.operator !== "=" && isNode(expression.left) &&
+    const leftMayRemain = logicalAssignmentMayRetainTruthyLeft(expression) &&
+      isNode(expression.left) &&
       resolvesToGlobalIntrinsicMember(
         expression.left,
         objectName,
@@ -2899,6 +2901,10 @@ function isAliasAssignmentExpression(
     ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right);
 }
 
+function logicalAssignmentMayRetainTruthyLeft(expression: ASTNode): boolean {
+  return expression.operator === "||=" || expression.operator === "??=";
+}
+
 function isReflectGetGlobalWorker(
   expression: ASTNode,
   scope: Scope,
@@ -3202,10 +3208,7 @@ function isAliasInitializerUse(
 ): boolean {
   let current = node;
   let link = parents.get(current);
-  while (
-    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
-    link.key === "expression"
-  ) {
+  while (link && isInertInspectionValueFlow(link)) {
     current = link.parent;
     link = parents.get(current);
   }
@@ -3279,9 +3282,11 @@ function isInertCapabilityInspection(
   }
   if (!link) return false;
   if (
-    link.parent.type === "UnaryExpression" && link.parent.operator === "typeof" &&
+    link.parent.type === "UnaryExpression" &&
+    (link.parent.operator === "typeof" || link.parent.operator === "!") &&
     link.key === "argument"
   ) return true;
+  if (isBooleanTestUse(link)) return true;
   return link.parent.type === "BinaryExpression" &&
     (link.parent.operator === "===" || link.parent.operator === "!==") &&
     (link.key === "left" || link.key === "right");
@@ -3295,6 +3300,52 @@ function isInertInspectionValueFlow(link: ParentLink): boolean {
   ) return true;
   return link.parent.type === "LogicalExpression" &&
     (link.key === "left" || link.key === "right");
+}
+
+function isBooleanTestUse(link: ParentLink): boolean {
+  return link.key === "test" &&
+    (link.parent.type === "IfStatement" ||
+      link.parent.type === "ConditionalExpression" ||
+      link.parent.type === "WhileStatement" ||
+      link.parent.type === "DoWhileStatement" ||
+      link.parent.type === "ForStatement");
+}
+
+function isTrackedPrototypeMutatorInvocationUse(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  if (!link) return false;
+  if (
+    isCallExpression(link.parent) && link.key === "arguments" &&
+    borrowedPrototypeMutatorCallTargets(link.parent, scope, nodeScopes).length > 0
+  ) return true;
+  if (
+    !isMemberExpressionWithObject(link.parent) || link.key !== "object" ||
+    (memberPropertyName(link.parent) !== "call" && memberPropertyName(link.parent) !== "apply")
+  ) return false;
+  current = link.parent;
+  link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  return link !== undefined && isCallExpression(link.parent) && link.key === "callee" &&
+    borrowedPrototypeMutatorCallTargets(link.parent, scope, nodeScopes).length > 0;
 }
 
 function isMemberObjectUse(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
@@ -4207,6 +4258,7 @@ function applyPrototypeMutatorReferenceCapability(
   if (
     resolvesToPrototypeMutator(node, scope, nodeScopes) &&
     !isCallExpressionCallee(node, parents) &&
+    !isTrackedPrototypeMutatorInvocationUse(node, scope, nodeScopes, parents) &&
     !isInertCapabilityInspection(node, parents) &&
     !isAliasInitializerUse(node, parents) &&
     !isBindingIdentifier(node, parents) &&

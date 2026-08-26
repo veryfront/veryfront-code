@@ -1215,10 +1215,33 @@ describe("routing/api/module-loader/http-validator", () => {
         [],
       );
       await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` const supported = !!setProto;` +
+          ` const status = setProto ? "supported" : "unsupported";` +
+          ` if (setProto) { exportSupport(supported); }` +
+          ` function exportSupport(_supported: boolean) {}` +
+          ` export { status, supported };`,
+        [],
+      );
+      await validateHTTPImports(
         `const flag = true;` +
           ` const objectSupport = typeof (Object.setPrototypeOf ?? undefined) === "function";` +
           ` const reflectSupport = (flag ? Reflect.setPrototypeOf : undefined) !== undefined;` +
           ` export const GET = () => Response.json({ objectSupport, reflectSupport });`,
+        [],
+      );
+      await validateHTTPImports(
+        `const flag = true; const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const mutate = flag ? Object.setPrototypeOf : safeMutate;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const mutate = Object.setPrototypeOf ?? safeMutate;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
         [],
       );
       for (
@@ -1237,6 +1260,18 @@ describe("routing/api/module-loader/http-validator", () => {
     });
 
     it("should allow a tracked prototype-mutator alias assigned as a statement", async () => {
+      await validateHTTPImports(
+        `const holder = {}; Object.setPrototypeOf.call(null, holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const first = {}; Reflect.setPrototypeOf.apply(null, [first, null]);` +
+          ` const second = {}; Reflect.apply(Object.setPrototypeOf, null, [second, null]);` +
+          ` export const GET = () => new Response(String(` +
+          ` Object.getPrototypeOf(first) === Object.getPrototypeOf(second)));`,
+        [],
+      );
       await validateHTTPImports(
         `let mutate; mutate = Object.setPrototypeOf;` +
           ` const holder = {}; mutate(holder, null);` +
@@ -1258,6 +1293,14 @@ describe("routing/api/module-loader/http-validator", () => {
     });
 
     it("should retain prototype-mutator capability through logical assignments", async () => {
+      await validateHTTPImports(
+        `let mutate = Object.setPrototypeOf;` +
+          ` const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const holder = {}; (mutate &&= safeMutate)(holder, null);` +
+          ` const make = holder.constructor;` +
+          ` export const GET = () => new Response(String(make));`,
+        [],
+      );
       await assertRejects(
         async () =>
           await validateHTTPImports(
@@ -1963,6 +2006,19 @@ describe("routing/api/module-loader/http-validator", () => {
       await validateHTTPImports(
         `const flag = true;` +
           ` export const supported = typeof (flag ? Deno.Command : undefined) === "function";`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` const supported = !!Command;` +
+          ` if (Command) { exportSupport(supported); }` +
+          ` function exportSupport(_supported: boolean) {}` +
+          ` export { supported };`,
+        [],
+      );
+      await validateHTTPImports(
+        `let Command = Deno.Command; const Safe = class {};` +
+          ` export const instance = new (Command &&= Safe)();`,
         [],
       );
       await assertRejects(
