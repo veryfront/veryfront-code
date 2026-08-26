@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 
 // The examples are TS/TSX source, so directive placement can only be judged on
@@ -97,7 +98,13 @@ const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")$/;
 
 function invalidUseClientIndexes(block: string): number[] {
   const statements = statementsOf(block);
-  return useClientIndexes(block).filter((index) =>
+  const indexes = useClientIndexes(block);
+  // Use the runtime classifier as the source of truth for whether a leading
+  // string is actually a directive. In particular, a semicolonless string
+  // followed by an ASI continuation token is one expression, not a directive.
+  if (indexes.length > 0 && !hasUseClientDirective(block)) return indexes;
+
+  return indexes.filter((index) =>
     statements.slice(0, index).some((statement) => !stringLiteralStatement.test(statement))
   );
 }
@@ -311,6 +318,19 @@ describe("ERROR_SOLUTIONS", () => {
           invalidUseClientIndexes(block),
           [],
           "another string-literal directive may precede use client",
+        );
+      });
+
+      it("rejects a semicolonless directive continued by ASI", () => {
+        const block = [
+          "'use client'",
+          "(function () {})()",
+        ].join("\n");
+
+        assertEquals(
+          invalidUseClientIndexes(block),
+          [0],
+          "a continued string expression is not a directive statement",
         );
       });
 
