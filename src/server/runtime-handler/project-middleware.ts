@@ -60,6 +60,35 @@ function resolvedBranch(ctx: HandlerContext): string | null {
   return ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
 }
 
+/** Run one request phase inside the filesystem's authenticated tenant context. */
+export async function runInProjectFilesystemContext<T>(
+  ctx: HandlerContext,
+  isSharedProxy: boolean,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const fs = ctx.adapter.fs;
+  const effectiveProxyToken = ctx.proxyToken ?? ctx.requestContext?.token;
+  if (
+    !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !effectiveProxyToken ||
+    !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
+  ) {
+    return await operation();
+  }
+
+  return await fs.runWithContext(
+    ctx.projectSlug,
+    effectiveProxyToken,
+    operation,
+    ctx.projectId,
+    {
+      productionMode: resolvedEnvironment(ctx) === "production",
+      releaseId: ctx.releaseId ?? null,
+      branch: resolvedBranch(ctx),
+      environmentName: ctx.environmentName ?? null,
+    },
+  );
+}
+
 /** Request-scoped root middleware loader for every project runtime. */
 export class ProjectMiddlewareRuntime {
   readonly #cache: LRUCache<string, Promise<readonly MiddlewareFunction[]>>;
@@ -221,26 +250,10 @@ export class ProjectMiddlewareRuntime {
     const executeWithPreparedSnapshot = () =>
       runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware);
 
-    const fs = ctx.adapter.fs;
-    const effectiveProxyToken = ctx.proxyToken ?? ctx.requestContext?.token;
-    if (
-      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !effectiveProxyToken ||
-      !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
-    ) {
-      return await executeWithPreparedSnapshot();
-    }
-
-    return fs.runWithContext(
-      ctx.projectSlug,
-      effectiveProxyToken,
+    return await runInProjectFilesystemContext(
+      ctx,
+      isSharedProxy,
       executeWithPreparedSnapshot,
-      ctx.projectId,
-      {
-        productionMode: environment === "production",
-        releaseId: ctx.releaseId ?? null,
-        branch,
-        environmentName: ctx.environmentName ?? null,
-      },
     );
   }
 

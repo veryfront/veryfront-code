@@ -27,6 +27,10 @@ import {
   type Meter,
   setGlobalMetricsAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -434,10 +438,28 @@ describe("server/runtime-handler/index", () => {
     let sourceVersion = 1;
     const baseAdapter = createHostedOidcAdapter();
     Object.assign(baseAdapter.fs, {
+      getUnderlyingAdapter: () => baseAdapter.fs,
+      getAdapterType: () => "MultiProjectFSAdapter",
+      isVeryfrontAdapter: () => true,
+      isMultiProjectMode: () => true,
+      isContextualMode: () => true,
+      runWithContext: <T>(
+        projectSlug: string,
+        token: string,
+        operation: () => Promise<T>,
+        projectId?: string,
+        options?: { branch?: string | null },
+      ) => runWithRequestContext({ projectSlug, token, projectId, ...options }, operation),
       sourceSnapshotFreshnessOptionsVersion: 1,
       ensureSourceSnapshotFresh: () => Promise.resolve(),
-      getSourceSnapshotIdentity: () => "branch:snapshot-project:main",
-      getSourceSnapshotVersion: () => sourceVersion,
+      getSourceSnapshotIdentity: () => {
+        if (!getCurrentRequestContext()) throw new Error("missing tenant source context");
+        return "branch:snapshot-project:main";
+      },
+      getSourceSnapshotVersion: () => {
+        if (!getCurrentRequestContext()) throw new Error("missing tenant source context");
+        return sourceVersion;
+      },
     });
     const adapter = {
       ...baseAdapter,

@@ -131,7 +131,7 @@ import {
   runWithProjectEnv,
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
-import { projectMiddlewareRuntime } from "./project-middleware.ts";
+import { projectMiddlewareRuntime, runInProjectFilesystemContext } from "./project-middleware.ts";
 import {
   prepareProjectRequest,
   resolveProjectIdentity,
@@ -671,26 +671,31 @@ export function createVeryfrontHandler(
           await incrementRequestMetrics();
 
           if (!skipsApplicationAuth(request, url.pathname)) {
-            const authResult = await runWithRetainedPreviewDocumentSourceSnapshot(
+            const authResult = await runInProjectFilesystemContext(
               ctx,
-              async () => {
-                const result = await runInRequestProjectEnv(() =>
-                  handleApplicationAuthRequest(request, ctx)
-                );
-                if (result?.response) {
-                  const terminalResponse = result.response;
-                  const response = await runInRequestProjectEnv(() =>
-                    applyCORSHeaders({
-                      request,
-                      response: terminalResponse,
-                      config: ctx.securityConfig?.cors,
-                    })
-                  );
-                  return response ?? terminalResponse;
-                }
-                return result;
-              },
-              { retainAfterOperation: (result) => !(result instanceof Response) },
+              isProxyMode,
+              () =>
+                runWithRetainedPreviewDocumentSourceSnapshot(
+                  ctx,
+                  async () => {
+                    const result = await runInRequestProjectEnv(() =>
+                      handleApplicationAuthRequest(request, ctx)
+                    );
+                    if (result?.response) {
+                      const terminalResponse = result.response;
+                      const response = await runInRequestProjectEnv(() =>
+                        applyCORSHeaders({
+                          request,
+                          response: terminalResponse,
+                          config: ctx.securityConfig?.cors,
+                        })
+                      );
+                      return response ?? terminalResponse;
+                    }
+                    return result;
+                  },
+                  { retainAfterOperation: (result) => !(result instanceof Response) },
+                ),
             );
             if (authResult instanceof Response) return authResult;
             ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
