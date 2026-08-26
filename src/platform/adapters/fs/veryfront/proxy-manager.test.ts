@@ -806,6 +806,39 @@ describe("ProxyFSAdapterManager", () => {
       manager.dispose();
     });
 
+    it("reports whether adapter selection waited for materialization", async () => {
+      const manager = createManager({
+        adapterFactory: createRecordingAdapterFactory([]),
+      });
+      const initializedNow: boolean[] = [];
+      try {
+        await manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => initializedNow.push(initialized),
+        );
+        await manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => initializedNow.push(initialized),
+        );
+
+        assertEquals(initializedNow, [true, false]);
+      } finally {
+        manager.dispose();
+      }
+    });
+
     it("should remove all adapters on dispose", async () => {
       const disposedSlugs: string[] = [];
       const manager = createManager({

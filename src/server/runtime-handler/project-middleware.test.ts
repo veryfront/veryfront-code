@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -15,6 +15,11 @@ import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
 } from "./project-middleware.ts";
+import {
+  finishPreviewDocumentSourceSnapshot,
+  preparePreviewDocumentSourceSnapshot,
+  seedPreviewDocumentSourceSnapshot,
+} from "../handlers/request/source-snapshot-freshness.ts";
 
 interface ActiveFsContext {
   projectSlug: string;
@@ -241,6 +246,330 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(runtime.invalidateProject("project-a"), 0);
     await execute(runtime, previewContext("feature-b"));
     assertEquals(loadCount, 4);
+  });
+
+  it("rejects a preview middleware response from a newer source generation", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          () => {
+            sourceVersion++;
+            return new Response("new-generation middleware");
+          },
+        ]),
+    });
+
+    const rejection = await assertRejects(() => execute(runtime, context));
+
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
+  });
+
+  it("rejects a source change before loading preview middleware", async () => {
+    let sourceVersion = 1;
+    let loadCount = 0;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    sourceVersion++;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCount++;
+        return Promise.resolve([]);
+      },
+    });
+
+    await assertRejects(
+      () => execute(runtime, context),
+      Error,
+      "changed after request configuration was derived",
+    );
+    assertEquals(loadCount, 0);
+  });
+
+  it("retains the config marker after a downstream document handler releases it", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    await assertRejects(
+      () =>
+        execute(runtime, context, undefined, async () => {
+          await finishPreviewDocumentSourceSnapshot(context);
+          sourceVersion++;
+          return new Response("stale route response");
+        }),
+      Error,
+      "changed after request configuration was derived",
+    );
+  });
+
+  it("validates the config marker before forwarding a streamed response chunk", async () => {
+    let sourceVersion = 1;
+    let releaseBody!: () => void;
+    const bodyGate = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const response = await execute(
+      runtime,
+      context,
+      undefined,
+      () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              async pull(controller) {
+                await bodyGate;
+                sourceVersion++;
+                controller.enqueue(new TextEncoder().encode("new-generation body"));
+                controller.close();
+              },
+            }),
+          ),
+        ),
+    );
+
+    const reader = response!.body!.getReader();
+    releaseBody();
+    const rejection = await assertRejects(() => reader.read());
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
+  });
+
+  it("validates the config marker when a streamed response body is canceled", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const response = await execute(
+      runtime,
+      context,
+      undefined,
+      () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              pull() {
+                return new Promise<void>(() => {});
+              },
+            }),
+          ),
+        ),
+    );
+
+    sourceVersion++;
+    const rejection = await assertRejects(() => response!.body!.cancel());
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
+  });
+
+  it("validates deferred host-token streams inside the effective tenant context", async () => {
+    const adapter = createAdapter();
+    let activeContextDepth = 0;
+    const contextualFs = adapter.fs as typeof adapter.fs & {
+      runWithContext<T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+      ): Promise<T>;
+    };
+    contextualFs.runWithContext = async <T>(
+      _projectSlug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      activeContextDepth++;
+      try {
+        return await fn();
+      } finally {
+        activeContextDepth--;
+      }
+    };
+    const requireContext = () => {
+      if (activeContextDepth === 0) throw new Error("[test] No request context available");
+    };
+    adapter.fs.getSourceSnapshotIdentity = () => {
+      requireContext();
+      return "branch:trusted-project:main";
+    };
+    adapter.fs.getSourceSnapshotVersion = () => {
+      requireContext();
+      return 1;
+    };
+    const context = createContext(adapter, {
+      proxyToken: undefined,
+      releaseId: undefined,
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "host-authorized-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    let chunk = 0;
+    const response = await execute(runtime, context, undefined, () => {
+      seedPreviewDocumentSourceSnapshot(context, {
+        identity: "branch:trusted-project:main",
+        version: 1,
+      });
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new TextEncoder().encode(chunk++ === 0 ? "route-" : "body"));
+              if (chunk === 2) controller.close();
+            },
+          }),
+        ),
+      );
+    });
+
+    assertEquals(await response?.text(), "route-body");
+    assertEquals(activeContextDepth, 0);
+  });
+
+  it("rejects a route response when snapshot finalization requests reclassification", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const rejection = await assertRejects(async () => {
+      const response = await execute(runtime, context, undefined, async () => {
+        await preparePreviewDocumentSourceSnapshot(
+          context,
+          () => Promise.resolve({ response: new Response("reclassified") }),
+        );
+        sourceVersion++;
+        return new Response("stale");
+      });
+      await response!.text();
+    });
+
+    assertInstanceOf(rejection, Error);
+    assertEquals(rejection.message.includes("changed during handler dispatch"), true);
   });
 
   it("evicts cached production middleware for the invalidated project", async () => {
