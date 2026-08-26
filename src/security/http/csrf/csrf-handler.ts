@@ -53,6 +53,9 @@ import { INTERNAL_ENDPOINTS } from "#veryfront/utils/constants/server.ts";
 import { BaseHandler } from "../base-handler.ts";
 import { browserFacingOrigin, validateCsrf } from "../../csrf/helpers.ts";
 import {
+  csrfHttpsTokenCookieName,
+  csrfNamesCookieName,
+  decodeCsrfNamesAdvertisement,
   defaultCsrfCookieNameForOrigin,
   effectiveCsrfCookieNameForOrigin,
   effectiveCsrfTokenCookieNameForOrigin,
@@ -150,6 +153,20 @@ function localDevelopmentCsrfBody(csrfConfig: CsrfSetting, req: Request): string
       configured.origin,
       Boolean(cookies[cookieName]),
     );
+    if (
+      new URL(configured.origin).protocol === "https:" &&
+      !cookieName.startsWith("__Host-") &&
+      !cookieName.startsWith("__Secure-")
+    ) {
+      const isolatedCookieName = csrfHttpsTokenCookieName(cookieName, configured.origin);
+      const advertised = decodeCsrfNamesAdvertisement(
+        cookies[csrfNamesCookieName(configured.origin)],
+        configured.origin,
+      );
+      if (cookies[isolatedCookieName] || advertised?.cookieName === isolatedCookieName) {
+        cookieName = isolatedCookieName;
+      }
+    }
   } catch {
     // Unusable names are a configuration error, not something to describe back.
     return CSRF_FORBIDDEN_BODY;

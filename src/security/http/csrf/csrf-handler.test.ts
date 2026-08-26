@@ -7,7 +7,12 @@ import { deriveSecurityContext } from "../config.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
-import { csrfHttpTokenCookieName } from "#veryfront/security/csrf/names.ts";
+import {
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
+  csrfNamesCookieName,
+  encodeCsrfNamesAdvertisement,
+} from "#veryfront/security/csrf/names.ts";
 
 function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
   return {
@@ -32,8 +37,12 @@ function localCtx(): HandlerContext {
 }
 
 /** A mutating request with the transport-authenticated loopback peer recorded. */
-function loopbackRequest(path: string, headers: HeadersInit = {}): Request {
-  const url = new URL(`http://localhost:8000${path}`);
+function loopbackRequest(
+  path: string,
+  headers: HeadersInit = {},
+  origin = "http://localhost:8000",
+): Request {
+  const url = new URL(path, origin);
   const finalHeaders = new Headers(headers);
   finalHeaders.set("host", url.host);
   const request = new Request(url, { method: "POST", headers: finalHeaders });
@@ -518,6 +527,41 @@ describe("security/http/csrf/csrf-handler", () => {
 
       assertStringIncludes(body, "my_csrf", "the diagnostic must match retained legacy issuance");
       assertEquals(body.includes("vf_csrf_http_"), false);
+    });
+
+    it("names the isolated HTTPS cookie selected by migration state", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const origin = "https://localhost:8000";
+      const isolatedCookieName = csrfHttpsTokenCookieName("my_csrf", origin);
+      const advertisement = encodeCsrfNamesAdvertisement(
+        isolatedCookieName,
+        "x-my-csrf",
+        origin,
+      );
+      const cookieHeaders = [
+        `${isolatedCookieName}=isolated-token`,
+        `${csrfNamesCookieName(origin)}=${advertisement}`,
+      ];
+
+      for (const cookie of cookieHeaders) {
+        const result = await handler.handle(
+          loopbackRequest("/api/cases", { cookie }, origin),
+          ctx,
+        );
+        const body = await result.response!.text();
+
+        assertStringIncludes(
+          body,
+          isolatedCookieName,
+          "the diagnostic must match the physical cookie used by HTTPS migration",
+        );
+      }
     });
 
     it("names the default cookie and header when the project configures neither", async () => {

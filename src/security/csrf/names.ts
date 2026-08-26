@@ -188,10 +188,38 @@ function isDerivedCsrfTokenCookieName(
   }
 }
 
+function isDerivedCsrfNamesCookieName(cookieName: string): boolean {
+  const prefix = `${CSRF_NAMES_COOKIE_NAME}_`;
+  if (!cookieName.startsWith(prefix)) return false;
+  // Match the derived-token check above: an unknown runtime without atob must
+  // preserve the collision-safe behavior rather than admit an internal name.
+  if (typeof nativeAtob !== "function") return true;
+
+  const encoded = cookieName.slice(prefix.length);
+  if (!encoded || encoded.length % 4 === 1) return false;
+  const padding = "=".repeat((4 - encoded.length % 4) % 4);
+  let origin: string;
+  try {
+    origin = nativeAtob(encoded.replaceAll("-", "+").replaceAll("_", "/") + padding);
+  } catch {
+    return false;
+  }
+  // Only the canonical spelling emitted by csrfNamesCookieName is reserved.
+  if (base64urlEncode(origin) !== encoded) return false;
+
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Reports whether a cookie name belongs to an internal CSRF cookie namespace. */
 export function isReservedCsrfCookieName(cookieName: string): boolean {
   return cookieName === CSRF_NAMES_COOKIE_NAME ||
-    cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`) ||
+    isDerivedCsrfNamesCookieName(cookieName) ||
     isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTP_TOKEN_COOKIE_PREFIX, "http:") ||
     isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTPS_TOKEN_COOKIE_PREFIX, "https:");
 }

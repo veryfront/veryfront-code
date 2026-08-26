@@ -301,12 +301,23 @@ describe("csrfMutationHeadersFor", () => {
     assertThrows(
       () =>
         csrfMutationHeadersFor("/api/cases", facts(""), {
-          cookieName: "vf_csrf_names_forbidden",
+          cookieName: csrfNamesCookieName(ORIGIN),
         }),
       TypeError,
       "reserved",
       "an explicit browser override must obey the same reservation as server configuration",
     );
+  });
+
+  it("accepts a non-derived cookie name that only shares the advertisement prefix", () => {
+    const cookieName = "vf_csrf_names_forbidden";
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(`${cookieName}=matching-token`),
+      { cookieName },
+    );
+
+    assertEquals(headers.get(DEFAULT_CSRF_HEADER_NAME), "matching-token");
   });
 
   it("ignores an advertisement written by a sibling app on another port", () => {

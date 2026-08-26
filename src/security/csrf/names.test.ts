@@ -166,6 +166,11 @@ describe("security/csrf/names advertisement", () => {
       "reserved",
       "a configured token must not collide with an origin-specific advertisement cookie",
     );
+    assertEquals(
+      requireNonReservedCsrfCookieName("vf_csrf_names_forbidden"),
+      "vf_csrf_names_forbidden",
+      "a pre-existing name that cannot decode as an origin must stay compatible",
+    );
   });
 
   it("rejects malformed advertisements instead of half-applying them", () => {

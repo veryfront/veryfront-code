@@ -58,12 +58,12 @@ describe("security/csrf/helpers", () => {
       assertEquals(result.setCookie.startsWith("my_csrf="), true);
     });
 
-    it("rejects cookie names reserved for configured-name discovery", () => {
-      assertThrows(
-        () => generateCsrfToken({ cookieName: "vf_csrf_names_forbidden" }),
-        TypeError,
-        "reserved",
-        "public token generation must not mint a cookie inside the advertisement namespace",
+    it("keeps non-derived names that share the advertisement prefix compatible", () => {
+      const result = generateCsrfToken({ cookieName: "vf_csrf_names_forbidden" });
+      assertEquals(
+        result.setCookie.startsWith("vf_csrf_names_forbidden="),
+        true,
+        "a public token name is reserved only when it is an actual derived advertisement name",
       );
     });
 
@@ -219,7 +219,7 @@ describe("security/csrf/helpers", () => {
       );
     });
 
-    it("fails closed for a cookie name reserved for configured-name discovery", () => {
+    it("accepts a non-derived cookie name that shares the discovery prefix", () => {
       const reservedName = "vf_csrf_names_forbidden";
       const req = new Request("https://example.com/api", {
         method: "POST",
@@ -231,8 +231,8 @@ describe("security/csrf/helpers", () => {
 
       assertEquals(
         validateCsrf(req, { cookieName: reservedName }),
-        false,
-        "reserved names must not become valid merely because their values match",
+        true,
+        "pre-existing configured names must not be rejected solely for sharing a prefix",
       );
     });
   });
