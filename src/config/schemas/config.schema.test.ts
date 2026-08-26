@@ -15,6 +15,8 @@ import {
   MAX_REMOTE_HOST_COUNT,
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
+import { SESSION_COOKIE_NAME } from "#veryfront/security/application-auth/cookies.ts";
+import { DEFAULT_CSRF_COOKIE_NAME } from "#veryfront/security/csrf/names.ts";
 import {
   MAX_FILE_LOG_FILES,
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
@@ -1077,6 +1079,78 @@ describe("configSchema", () => {
       prefixedCompatibilityConfig,
       "a pre-existing public prefix name remains valid when it cannot collide with a derived token",
     );
+  });
+
+  it("rejects OIDC session cookie names that collide with effective CSRF cookies", () => {
+    for (
+      const security of [
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+          csrf: true,
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+          csrf: {},
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: "__Host-project_auth" } },
+          csrf: { cookieName: "__Host-project_auth" },
+        },
+        {
+          auth: { oidc: VALID_OIDC_AUTH.oidc },
+          csrf: { cookieName: SESSION_COOKIE_NAME },
+        },
+        {
+          auth: { oidc: VALID_OIDC_AUTH.oidc },
+          csrf: { cookieName: `${SESSION_COOKIE_NAME}_127_0_0_1_8787` },
+        },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security }),
+        Error,
+        "Invalid veryfront.config at security.auth.oidc.cookieName",
+      );
+    }
+
+    const disabled = validateVeryfrontConfig({
+      security: {
+        auth: {
+          oidc: {
+            ...VALID_OIDC_AUTH.oidc,
+            cookieName: DEFAULT_CSRF_COOKIE_NAME,
+          },
+        },
+        csrf: false,
+      },
+    });
+
+    assertEquals(disabled.security?.auth?.oidc?.cookieName, DEFAULT_CSRF_COOKIE_NAME);
+
+    const explicit = validateVeryfrontConfig({
+      security: {
+        auth: {
+          oidc: {
+            ...VALID_OIDC_AUTH.oidc,
+            cookieName: "__Host-project_auth",
+          },
+        },
+        csrf: { cookieName: `${SESSION_COOKIE_NAME}_127_0_0_1_8787` },
+      },
+    });
+    assertEquals(explicit.security?.auth?.oidc?.cookieName, "__Host-project_auth");
+  });
+
+  it("does not apply OIDC cookie collision rules to other auth modes", () => {
+    const security = {
+      auth: { basic: { username: "user", password: "password" } },
+      csrf: { cookieName: SESSION_COOKIE_NAME },
+    };
+
+    assertEquals(validateVeryfrontConfig({ security }).security, security);
   });
 
   it("rejects CSRF names and exclusion paths that are unsafe or non-canonical", () => {

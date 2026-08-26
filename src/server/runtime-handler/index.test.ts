@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -19,6 +19,14 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
+import { metrics } from "#veryfront/observability";
+import { resetMetrics } from "#veryfront/observability/simple-metrics/metrics-state.ts";
+import { resetOtelInstruments } from "#veryfront/observability/simple-metrics/otel-instruments.ts";
+import {
+  _resetShimForTests,
+  type Meter,
+  setGlobalMetricsAPI,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -153,12 +161,45 @@ function withTrustedPeer(request: Request): Request {
   return request;
 }
 
+function captureOtelHttpRequestCount(): { count: () => number } {
+  let count = 0;
+  const meter = {
+    createCounter(name) {
+      return {
+        add(value) {
+          if (name === "veryfront.http.requests") count += value;
+        },
+      };
+    },
+    createHistogram() {
+      return { record() {} };
+    },
+    createObservableGauge() {
+      return { addCallback() {} };
+    },
+    createUpDownCounter() {
+      return { add() {} };
+    },
+  } satisfies Meter;
+  setGlobalMetricsAPI({ getMeter: () => meter });
+  return { count: () => count };
+}
+
 describe("server/runtime-handler/index", () => {
+  beforeEach(() => {
+    resetMetrics();
+    resetOtelInstruments();
+    _resetShimForTests();
+  });
+
   afterEach(() => {
     injectIsolationDepsForTests(null);
     HMRHandler.shutdown();
     requestTracker.shutdown();
     Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    resetMetrics();
+    resetOtelInstruments();
+    _resetShimForTests();
   });
 
   it("preserves debug flags supplied by binding-backed runtime adapters", () => {
@@ -464,6 +505,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("short-circuits OIDC auth route terminal responses before project middleware", async () => {
+    const otelRequests = captureOtelHttpRequestCount();
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
       projectDir: "/tmp/test-project",
@@ -505,6 +547,50 @@ describe("server/runtime-handler/index", () => {
     }
 
     assertEquals(middlewareCalls, 0);
+    assertEquals(metrics.snapshot().requests, 3);
+    assertEquals(otelRequests.count(), 3);
+  });
+
+  it("counts terminal application auth and normal requests without counting monitoring fast paths", async () => {
+    const otelRequests = captureOtelHttpRequestCount();
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("ok");
+            },
+          ],
+        },
+      } satisfies VeryfrontConfig,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const terminal = await handler(new Request("http://localhost/dashboard"));
+    const normal = await handler(withTrustedPeer(
+      new Request("http://localhost/dashboard", {
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+    const monitoring = await handler(new Request("http://localhost/healthz"));
+
+    assertEquals(terminal.status, 401);
+    assertEquals(normal.status, 200);
+    assertEquals(monitoring.status, 200);
+    assertEquals(middlewareCalls, 1);
+    assertEquals(metrics.snapshot().requests, 2);
+    assertEquals(otelRequests.count(), 2);
   });
 
   it("isolates concurrent shared-runtime OIDC admission under each project environment", async () => {

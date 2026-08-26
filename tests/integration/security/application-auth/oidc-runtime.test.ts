@@ -254,9 +254,13 @@ async function assertGenericFailure(response: Response, forbidden: readonly stri
 }
 
 function loopbackRequest(path: string, init: RequestInit = {}): Request {
+  return loopbackRequestAt(8787, path, init);
+}
+
+function loopbackRequestAt(port: number, path: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
-  headers.set("host", "127.0.0.1:8787");
-  const request = new Request(`http://127.0.0.1:8787${path}`, {
+  headers.set("host", `127.0.0.1:${port}`);
+  const request = new Request(`http://127.0.0.1:${port}${path}`, {
     ...init,
     headers,
   });
@@ -684,7 +688,9 @@ describe("security/application-auth OIDC runtime", () => {
     const response = await withMockFetch(
       (input, init) => {
         const url = String(input);
-        if (url.endsWith("/.well-known/openid-configuration")) return Promise.resolve(oidcMetadata());
+        if (url.endsWith("/.well-known/openid-configuration")) {
+          return Promise.resolve(oidcMetadata());
+        }
         if (url === `${ISSUER}/token`) {
           authorization = new Headers(init?.headers).get("authorization");
           return Promise.resolve(Response.json({ id_token: signed.token }));
@@ -1331,6 +1337,35 @@ describe("security/application-auth OIDC runtime", () => {
     );
     assert(loopbackCallback);
     assertEquals(loopbackCallback.status, 303);
+    const loopbackSessionName = "__Host-vf_session_127_0_0_1_8787";
+    const loopbackSession = cookiePair(
+      loopbackCallback.headers.get("Set-Cookie") ?? "",
+      loopbackSessionName,
+    );
+    assertEquals(
+      (loopbackCallback.headers.get("Set-Cookie") ?? "").includes("__Host-vf_session="),
+      false,
+    );
+    const loopbackAdmitted = await loopbackRuntime.admitRequest(
+      loopbackRequest("/dashboard", { headers: { cookie: loopbackSession } }),
+    );
+    assert(!(loopbackAdmitted instanceof Response));
+    assertEquals(loopbackAdmitted.subject, "loopback-subject");
+    const neighboringPort = await loopbackRuntime.admitRequest(
+      loopbackRequestAt(8788, "/dashboard", { headers: { cookie: loopbackSession } }),
+    );
+    assert(neighboringPort instanceof Response);
+    assertEquals(neighboringPort.status, 401);
+    assertEquals(
+      (neighboringPort.headers.get("Set-Cookie") ?? "").startsWith(
+        "__Host-vf_session_127_0_0_1_8788=;",
+      ),
+      true,
+    );
+    assertEquals(
+      (neighboringPort.headers.get("Set-Cookie") ?? "").includes(`${loopbackSessionName}=;`),
+      false,
+    );
 
     const trustedHttpsOrigin = "https://127.0.0.1:8788";
     const internalHttpsRuntime = createRuntimeAt(

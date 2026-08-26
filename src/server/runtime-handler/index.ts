@@ -659,6 +659,8 @@ export function createVeryfrontHandler(
               ? operation()
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
+          await incrementRequestMetrics();
+
           if (!skipsApplicationAuth(request, url.pathname)) {
             const authResult = await runInRequestProjectEnv(() =>
               handleApplicationAuthRequest(request, ctx)
@@ -678,8 +680,6 @@ export function createVeryfrontHandler(
             ctx.applicationIdentityHeaderNames =
               authResult?.metadata?.applicationIdentityHeaderNames ?? [];
           }
-
-          await incrementRequestMetrics();
 
           const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
           const executeProjectRoute = () =>

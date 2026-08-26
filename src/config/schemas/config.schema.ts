@@ -9,11 +9,15 @@ import {
   MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
 } from "#veryfront/integrations/limits.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
+import { SESSION_COOKIE_NAME } from "#veryfront/security/application-auth/cookies.ts";
 import {
   EXAMPLE_CSP_DIRECTIVES,
   isCspDirectiveName,
 } from "#veryfront/security/http/csp-directives.ts";
-import { isReservedCsrfCookieName } from "#veryfront/security/csrf/names.ts";
+import {
+  DEFAULT_CSRF_COOKIE_NAME,
+  isReservedCsrfCookieName,
+} from "#veryfront/security/csrf/names.ts";
 import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
@@ -464,6 +468,37 @@ const getTrustedProxyAuthSchema = defineSchema((v) =>
   }).strict()
 );
 
+type SecurityObjectForCookieCollisionCheck = {
+  readonly auth?: {
+    readonly oidc?: {
+      readonly cookieName?: string;
+    };
+  };
+  readonly csrf?: boolean | {
+    readonly cookieName?: string;
+  };
+};
+
+function effectiveConfiguredCsrfCookieName(
+  csrf: SecurityObjectForCookieCollisionCheck["csrf"],
+): string | null {
+  if (csrf === false) return null;
+  if (typeof csrf === "object" && csrf.cookieName !== undefined) return csrf.cookieName;
+  return DEFAULT_CSRF_COOKIE_NAME;
+}
+
+function hasNoOidcCsrfCookieCollision(
+  security: SecurityObjectForCookieCollisionCheck,
+): boolean {
+  const oidc = security.auth?.oidc;
+  if (oidc === undefined) return true;
+  const csrfCookieName = effectiveConfiguredCsrfCookieName(security.csrf);
+  if (csrfCookieName === null) return true;
+  if (oidc.cookieName !== undefined) return oidc.cookieName !== csrfCookieName;
+  return csrfCookieName !== SESSION_COOKIE_NAME &&
+    !csrfCookieName.startsWith(`${SESSION_COOKIE_NAME}_`);
+}
+
 function hasExactlyOneAuthMode(
   auth: Partial<Record<"basic" | "bearer" | "oidc" | "trustedProxy", unknown>>,
 ): boolean {
@@ -857,6 +892,13 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         })
         .partial()
         .strict()
+        .superRefine((security, ctx) => {
+          if (hasNoOidcCsrfCookieCollision(security)) return;
+          ctx.addIssue({
+            message: "OIDC auth cookieName must not match the effective CSRF cookie name",
+            path: ["auth", "oidc", "cookieName"],
+          });
+        })
         .optional(),
       middleware: v
         .object({
