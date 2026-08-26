@@ -36,6 +36,7 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 import {
   getCachedWithBatching,
   getRequestCacheContext,
+  getRequestCacheStats,
   runWithCacheBatching,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
@@ -211,8 +212,10 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         Object.getOwnPropertyDescriptor(Map.prototype, key)!,
       ] as const
     );
+    const sizeDescriptor = Object.getOwnPropertyDescriptor(Map.prototype, "size")!;
     let poisonedCalls = 0;
     let result: string | null | undefined;
+    let stored: number | undefined;
     for (const key of keys) {
       Object.defineProperty(Map.prototype, key, {
         configurable: true,
@@ -222,6 +225,13 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         },
       });
     }
+    Object.defineProperty(Map.prototype, "size", {
+      configurable: true,
+      get: () => {
+        poisonedCalls += 1;
+        throw new Error("project Map.size hook must not run");
+      },
+    });
 
     try {
       await runWithRequestContext(
@@ -229,7 +239,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         async () => {
           result = await runWithCacheBatching(async () => {
             setInRequestCache("source-key", "source-value");
-            return await getCachedWithBatching(
+            const value = await getCachedWithBatching(
               {
                 type: "memory",
                 get: () => Promise.resolve("backend-value"),
@@ -238,6 +248,8 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
               },
               "source-key",
             );
+            stored = getRequestCacheStats()?.stored;
+            return value;
           });
         },
       );
@@ -245,8 +257,10 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       for (const [key, descriptor] of descriptors) {
         Object.defineProperty(Map.prototype, key, descriptor);
       }
+      Object.defineProperty(Map.prototype, "size", sizeDescriptor);
     }
     assertEquals(result, "source-value");
+    assertEquals(stored, 1);
     assertEquals(poisonedCalls, 0);
   });
 
@@ -531,6 +545,71 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       adapter.dispose();
     }
 
+    assertEquals(poisonedCalls, 0);
+  });
+
+  it("keeps credential-bearing manager lookup independent of mutable collections", async () => {
+    const originalPromiseResolve = Object.getOwnPropertyDescriptor(Promise, "resolve")!;
+    const mapKeys = ["delete", "get", "has", "set"] as const;
+    const mapDescriptors = mapKeys.map((key) =>
+      [
+        key,
+        Object.getOwnPropertyDescriptor(Map.prototype, key)!,
+      ] as const
+    );
+    const mapSizeDescriptor = Object.getOwnPropertyDescriptor(Map.prototype, "size")!;
+    const intrinsicPromiseResolve = originalPromiseResolve.value as typeof Promise.resolve;
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project collection hook must not run");
+    };
+    const manager = new ProxyFSAdapterManager({
+      baseConfig: {
+        veryfront: { ...baseConfig.veryfront, proxyMode: true },
+      },
+      adapterFactory: (config) => {
+        const selectedAdapter = new VeryfrontFSAdapter(config);
+        selectedAdapter.initialize = () =>
+          Reflect.apply(intrinsicPromiseResolve, Promise, [undefined]);
+        return selectedAdapter;
+      },
+    });
+    let selectedAdapter: VeryfrontFSAdapter | undefined;
+
+    for (const key of mapKeys) {
+      Object.defineProperty(Map.prototype, key, {
+        configurable: true,
+        value: poison,
+      });
+    }
+    Object.defineProperty(Map.prototype, "size", {
+      configurable: true,
+      get: poison,
+    });
+    Object.defineProperty(Promise, "resolve", {
+      configurable: true,
+      value: poison,
+    });
+    try {
+      selectedAdapter = await manager.getAdapter(
+        "trusted-project",
+        "signed-user-token",
+        "trusted-project-id",
+        false,
+        null,
+        null,
+        "main",
+      );
+    } finally {
+      for (const [key, descriptor] of mapDescriptors) {
+        Object.defineProperty(Map.prototype, key, descriptor);
+      }
+      Object.defineProperty(Map.prototype, "size", mapSizeDescriptor);
+      Object.defineProperty(Promise, "resolve", originalPromiseResolve);
+      manager.dispose();
+    }
+    assertEquals(selectedAdapter instanceof VeryfrontFSAdapter, true);
     assertEquals(poisonedCalls, 0);
   });
 

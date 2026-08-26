@@ -73,6 +73,10 @@ const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicMap = Map;
 const IntrinsicUint8Array = Uint8Array;
 const IntrinsicPromise = Promise;
+const PromiseAll = IntrinsicPromise.all;
+const PromisePrototypeCatch = IntrinsicPromise.prototype.catch;
+const PromisePrototypeThen = IntrinsicPromise.prototype.then;
+const PromiseResolve = IntrinsicPromise.resolve;
 const IntrinsicSetTimeout = globalThis.setTimeout;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
@@ -99,6 +103,10 @@ function performanceNow(): number {
 
 function formatDuration(durationMs: number): string {
   return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
+function ignorePromiseRejection(promise: Promise<unknown>): void {
+  IntrinsicReflectApply(PromisePrototypeCatch, promise, [() => undefined]);
 }
 
 function nextSourceSnapshotGeneration(): number {
@@ -433,7 +441,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | { version: number; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
-  private sourceSnapshotMutationTail: Promise<void> = IntrinsicPromise.resolve();
+  private sourceSnapshotMutationTail: Promise<void> = IntrinsicReflectApply(
+    PromiseResolve,
+    IntrinsicPromise,
+    [],
+  ) as Promise<void>;
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -886,9 +898,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         fileSummary.sourceFilesWithContent > 0 &&
         this.shouldBackgroundPregenerateStyles()
       ) {
-        this.triggerCSSPregeneration(files).catch(() => {
-          // Error already logged in triggerCSSPregeneration
-        });
+        ignorePromiseRejection(this.triggerCSSPregeneration(files));
       }
 
       this.initialized = true;
@@ -1160,9 +1170,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const fileSummary = summarizeFileList(files);
 
         if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
-          this.triggerCSSPregeneration(files).catch(() => {
-            // Error already logged in triggerCSSPregeneration
-          });
+          ignorePromiseRejection(this.triggerCSSPregeneration(files));
         }
 
         logger.debug("File list warmup complete", {
@@ -1192,7 +1200,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = warmupPromise;
     this.fileListWarmupKey = effectiveCacheKey;
     // That collaborator only needs completion, not the payload.
-    this.readOps.setFileListReadyPromise(warmupPromise.then(() => {}));
+    this.readOps.setFileListReadyPromise(
+      IntrinsicReflectApply(PromisePrototypeThen, warmupPromise, [() => undefined]) as Promise<
+        void
+      >,
+    );
   }
 
   /**
@@ -1227,13 +1239,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const mutation = this.sourceSnapshotMutationTail
-      .catch(() => undefined)
-      .then(operation);
-    this.sourceSnapshotMutationTail = mutation.then(
-      () => undefined,
-      () => undefined,
-    );
+    const recovered = IntrinsicReflectApply(
+      PromisePrototypeCatch,
+      this.sourceSnapshotMutationTail,
+      [() => undefined],
+    ) as Promise<void>;
+    const mutation = IntrinsicReflectApply(PromisePrototypeThen, recovered, [operation]) as Promise<
+      T
+    >;
+    this.sourceSnapshotMutationTail = IntrinsicReflectApply(
+      PromisePrototypeThen,
+      mutation,
+      [() => undefined, () => undefined],
+    ) as Promise<void>;
     return mutation;
   }
 
@@ -1310,7 +1328,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       (invalidation): invalidation is Promise<void> => invalidation !== undefined,
     );
     if (pendingInvalidations.length > 0) {
-      await Promise.all(pendingInvalidations);
+      await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [pendingInvalidations]);
     }
   }
 
@@ -1349,12 +1367,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.statOps.clearIndex();
         this.dirOps.clearTree();
 
-        await Promise.all([
+        await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
           this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
           this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
           this.cache.deleteAsync(cacheKey),
-        ]);
+        ]]);
         if (isSnapshotSuperseded()) {
           return { applied: false, sourceChanged: false };
         }
@@ -1413,9 +1431,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       fileSummary.sourceFilesWithContent > 0 &&
       this.shouldBackgroundPregenerateStyles()
     ) {
-      this.triggerCSSPregeneration(files).catch(() => {
-        // Error already logged in triggerCSSPregeneration
-      });
+      ignorePromiseRejection(this.triggerCSSPregeneration(files));
     }
 
     logger.info("Refreshed source snapshot", {
@@ -1507,7 +1523,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getSourceSnapshotFingerprint(): Promise<string | undefined> {
     const files = this.sourceSnapshotFiles;
-    if (!files) return IntrinsicPromise.resolve(undefined);
+    if (!files) {
+      return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [undefined]) as Promise<
+        undefined
+      >;
+    }
 
     const version = this.sourceSnapshotVersion;
     if (this.sourceSnapshotFingerprint?.version === version) {

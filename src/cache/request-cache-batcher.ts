@@ -33,6 +33,7 @@ const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeHas = Map.prototype.has;
 const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const PromiseAll = IntrinsicPromise.all;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
@@ -98,6 +99,10 @@ function mapHas<K, V>(map: Map<K, V>, key: K): boolean {
 
 function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
   IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapSize<K, V>(map: Map<K, V>): number {
+  return IntrinsicReflectApply(MapSizeGetter, map, []) as number;
 }
 
 function pushArray<T>(values: T[], value: T): void {
@@ -249,5 +254,5 @@ export function getRequestCacheStats(): { hits: number; stored: number } | null 
   const ctx = getRequestCacheContextStore();
   if (!ctx) return null;
 
-  return { hits: 0, stored: ctx.cache.size };
+  return { hits: 0, stored: mapSize(ctx.cache) };
 }

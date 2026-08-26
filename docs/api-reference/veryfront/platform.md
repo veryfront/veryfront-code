@@ -78,7 +78,7 @@ import {
 | `HostExit`           | Thrown by an in-memory host's `exit` so the calling code stops where the real process would have ended. Identify it with `isHostExit`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts#L83)          |
 | `MemoryKv`           |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/kv/memory-adapter.ts#L27)             |
 | `VeryfrontApiClient` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/veryfront-api-client/client.ts#L38) |
-| `VeryfrontFSAdapter` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts#L378)       |
+| `VeryfrontFSAdapter` |                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/veryfront/adapter.ts#L386)       |
 
 ### Types
 

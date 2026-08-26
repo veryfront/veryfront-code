@@ -32,12 +32,17 @@ const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicPromise = Promise;
+const PromiseResolve = IntrinsicPromise.resolve;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
+const IntrinsicWeakMap = WeakMap;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
 const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
 const ProxyFSAdapterManagerDispose = ProxyFSAdapterManagerPrototype.dispose;
@@ -63,6 +68,14 @@ function performanceNow(): number {
 
 function formatDuration(durationMs: number): string {
   return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
+function weakMapGet<K extends WeakKey, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function weakMapSet<K extends WeakKey, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(WeakMapPrototypeSet, map, [key, value]);
 }
 
 function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
@@ -174,7 +187,10 @@ export class MultiProjectFSAdapter implements FSAdapter {
   #managerDispose: ProxyFSAdapterManager["dispose"];
   #managerGetStats: ProxyFSAdapterManager["getStats"];
   private defaultAdapter?: VeryfrontFSAdapter;
-  private readonly sourceSnapshotAdapterGenerations = new WeakMap<VeryfrontFSAdapter, number>();
+  private readonly sourceSnapshotAdapterGenerations = new IntrinsicWeakMap<
+    VeryfrontFSAdapter,
+    number
+  >();
   private nextSourceSnapshotAdapterGeneration = 1;
 
   constructor(config: FSAdapterConfig, manager?: ProxyFSAdapterManager) {
@@ -346,7 +362,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   initialize(): Promise<void> {
     logger.debug("Initialized (lazy per-project initialization)");
-    return Promise.resolve();
+    return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, []) as Promise<void>;
   }
 
   async readFile(path: string): Promise<string> {
@@ -570,10 +586,10 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // that selection, so bind it to an opaque instance generation. A different
     // credential or a recreated adapter must never reuse freshness established
     // on the previous instance, and no credential material enters the result.
-    let generation = this.sourceSnapshotAdapterGenerations.get(adapter);
+    let generation = weakMapGet(this.sourceSnapshotAdapterGenerations, adapter);
     if (generation === undefined) {
       generation = this.nextSourceSnapshotAdapterGeneration++;
-      this.sourceSnapshotAdapterGenerations.set(adapter, generation);
+      weakMapSet(this.sourceSnapshotAdapterGenerations, adapter, generation);
     }
     return `adapter:${generation}:${sourceIdentity}`;
   }
