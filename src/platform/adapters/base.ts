@@ -315,18 +315,38 @@ export interface FileSystemAdapter {
    * Confirm that a mutable remote source snapshot is within its freshness
    * lease, coalescing the network check across concurrent requests.
    */
-  ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
+  ensureSourceSnapshotFresh?(
+    reason?: string,
+    options?: SourceSnapshotFreshnessOptions,
+  ): Promise<void>;
+  /**
+   * Contract version for `ensureSourceSnapshotFresh` options. Version 1 means
+   * the adapter honors `maxAgeMs`, including zero as an unconditional refresh.
+   * Omission preserves compatibility with legacy one-argument implementations.
+   * Define this as an own, non-accessor data property, for example
+   * `readonly sourceSnapshotFreshnessOptionsVersion = 1 as const`.
+   * `FSAdapterWrapper` rejects inherited and accessor markers without invoking
+   * them, so a strict document render fails closed rather than trusting a
+   * dynamically computed capability.
+   */
+  readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   /**
    * Monotonic generation for the active source snapshot. Consumers can retain
    * derived state while this value is unchanged.
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
-  /**
-   * Stable content identity for the active source snapshot. Multi-project
-   * adapters that verify source across credential scopes must publish this
-   * together with a freshness method.
-   */
+  /** Stable content digest for the active source snapshot. */
   getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
+  /**
+   * Stable name for the source context the snapshot currently targets, such
+   * as the bound project/branch, environment, or release. Per-request context
+   * changes on a reused adapter (for example `setRequestBranch`) change this
+   * value, so a caller that established freshness earlier in the request can
+   * detect that the establishment no longer describes the context it is about
+   * to read from. `undefined` means the adapter cannot name its context, and
+   * callers must not carry freshness across a possible context change.
+   */
+  getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
 }
 
 /** A filesystem adapter that advertises genuine bounded byte reads. */
@@ -341,6 +361,27 @@ export type ExactBoundedFileSystemAdapter =
 
 export interface ResolveFileOptions {
   allowPagesPrefix?: boolean;
+}
+
+/** How current the caller needs a mutable source snapshot to be. */
+export interface SourceSnapshotFreshnessOptions {
+  /**
+   * Oldest freshness check the caller will accept, in milliseconds. The
+   * adapter re-establishes the snapshot from the source authority when its
+   * last check is older than this. `0` (like any non-positive value) refuses
+   * every existing lease and always re-establishes, which is what a document
+   * render needs, because the snapshot it serves is the one hydration compares
+   * against. Callers that omit it accept the adapter's default lease, which
+   * keeps sub-resource requests inside a single page load from each re-listing
+   * the source tree.
+   *
+   * `0` is not an absolute read-your-writes guarantee. Re-establishment is
+   * singleflighted, so a strict caller arriving while a refresh is already in
+   * flight joins it and observes the listing that refresh issued, which can
+   * predate an edit made after that refresh started. The exposure is one
+   * source round trip rather than the whole default lease.
+   */
+  maxAgeMs?: number;
 }
 
 export interface DirEntry {

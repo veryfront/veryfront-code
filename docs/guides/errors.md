@@ -527,7 +527,7 @@ RAG store file is unavailable.
 Source snapshot freshness cannot be established.
 
 - **HTTP status:** 503
-- **What to do:** Implement ensureSourceSnapshotFresh() or refreshSourceSnapshot(), plus getSourceSnapshotFingerprint(), on the filesystem adapter that serves this mutable source
+- **What to do:** Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1. Strict preview configuration also requires stable getSourceSnapshotIdentity() and concrete getSourceSnapshotVersion(); agent execution also requires getSourceSnapshotFingerprint().
 
 ## Server and client boundary
 

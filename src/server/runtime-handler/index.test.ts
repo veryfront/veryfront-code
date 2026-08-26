@@ -1,3 +1,5 @@
+// Deno-only end-to-end runtime-handler coverage. Node and Bun planners
+// intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -27,6 +29,10 @@ import {
   type Meter,
   setGlobalMetricsAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  getCurrentRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -38,6 +44,10 @@ function createMockAdapter(
     capabilities: {},
     fs: {
       exists: () => Promise.resolve(false),
+      sourceSnapshotFreshnessOptionsVersion: 1,
+      ensureSourceSnapshotFresh: () => Promise.resolve(),
+      getSourceSnapshotIdentity: () => "branch:test-project:main",
+      getSourceSnapshotVersion: () => 1,
     } as unknown as RuntimeAdapter["fs"],
     env: {
       get: (key: string) => envValues[key],
@@ -420,6 +430,102 @@ describe("server/runtime-handler/index", () => {
     assertEquals(denied.status, 401);
     assertEquals(denied.headers.get("Access-Control-Allow-Origin"), null);
     assertEquals(denied.headers.get("Access-Control-Allow-Credentials"), null);
+  });
+
+  it("rejects terminal hosted auth when the config snapshot changes during admission", async () => {
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalTrustedProxy = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test/api");
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    let sourceVersion = 1;
+    const baseAdapter = createHostedOidcAdapter();
+    Object.assign(baseAdapter.fs, {
+      getUnderlyingAdapter: () => baseAdapter.fs,
+      getAdapterType: () => "MultiProjectFSAdapter",
+      isVeryfrontAdapter: () => true,
+      isMultiProjectMode: () => true,
+      isContextualMode: () => true,
+      runWithContext: <T>(
+        projectSlug: string,
+        token: string,
+        operation: () => Promise<T>,
+        projectId?: string,
+        options?: { branch?: string | null },
+      ) => runWithRequestContext({ projectSlug, token, projectId, ...options }, operation),
+      sourceSnapshotFreshnessOptionsVersion: 1,
+      ensureSourceSnapshotFresh: () => Promise.resolve(),
+      getSourceSnapshotIdentity: () => {
+        if (!getCurrentRequestContext()) throw new Error("missing tenant source context");
+        return "branch:snapshot-project:main";
+      },
+      getSourceSnapshotVersion: () => {
+        if (!getCurrentRequestContext()) throw new Error("missing tenant source context");
+        return sourceVersion;
+      },
+    });
+    const adapter = {
+      ...baseAdapter,
+      env: {
+        ...baseAdapter.env,
+        get(key: string) {
+          if (key === "OIDC_ISSUER" && sourceVersion === 1) sourceVersion++;
+          return baseAdapter.env.get(key);
+        },
+      },
+    } as RuntimeAdapter;
+    const handler = createVeryfrontHandler("/tmp/test-project", adapter, {
+      projectDir: "/tmp/test-project",
+      config: { fs: { veryfront: { proxyMode: true } } } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    try {
+      const response = await withMockFetch(
+        (input) => {
+          const url = new URL(String(input));
+          if (url.origin === "https://api.example.test") {
+            return Promise.resolve(Response.json({
+              data: [
+                { key: "APP_URL", value: "https://snapshot-app.example.test" },
+                { key: "OIDC_ISSUER", value: "https://snapshot-idp.example.test" },
+                { key: "OIDC_CLIENT_ID", value: "snapshot-client" },
+                { key: "OIDC_CLIENT_SECRET", value: "snapshot-client-secret" },
+                { key: "OIDC_SESSION_SECRET", value: "s".repeat(32) },
+              ],
+            }));
+          }
+          return Promise.reject(new Error(`Unexpected request: ${url}`));
+        },
+        () =>
+          handler(
+            new Request("https://snapshot-app.example.test/dashboard", {
+              headers: {
+                "x-project-slug": "snapshot-project",
+                "x-project-id": "project-snapshot",
+                "x-token": "snapshot-token",
+                "x-environment-id": "environment-snapshot",
+                "x-environment-name": "Preview",
+                "x-environment": "preview",
+              },
+            }),
+          ),
+      );
+
+      assertEquals(response.status, 503);
+      assertEquals(sourceVersion, 2);
+      assertEquals(
+        (await response.json()).type,
+        "https://veryfront.com/docs/code/guides/errors#source-snapshot-freshness-unavailable",
+      );
+    } finally {
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalTrustedProxy === undefined) {
+        Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      } else {
+        Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", originalTrustedProxy);
+      }
+    }
   });
 
   it("keeps CORS preflight ahead of application auth admission", async () => {
@@ -1158,13 +1264,10 @@ describe("server/runtime-handler/index", () => {
         1,
         "admission must start the request rather than short-circuit at the proxy guard",
       );
-      // The fixture project has no loadable config, so the first failure past
-      // the proxy guard is config loading. Reaching it proves admission.
-      assertEquals(
-        body.includes("config-parse-error"),
-        true,
-        "a trusted proxy request must be admitted through to project runtime resolution",
-      );
+      // Reaching isolation proves admission into the project runtime pipeline.
+      // Do not assert the later config error shape here: hosted-config tests
+      // install evaluator hooks in the parallel unit suite, and this test only
+      // owns the proxy-admission boundary.
     } finally {
       Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
     }

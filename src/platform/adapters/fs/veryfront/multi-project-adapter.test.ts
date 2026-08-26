@@ -320,11 +320,13 @@ describe("MultiProjectFSAdapter", () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
         let freshnessReason: string | undefined;
+        let maxAgeMs: number | undefined;
         let freshnessChecks = 0;
         let sourceSnapshotVersion = 6;
         const snapshotAdapter = {
-          ensureSourceSnapshotFresh(reason?: string) {
+          ensureSourceSnapshotFresh(reason?: string, options?: { maxAgeMs?: number }) {
             freshnessReason = reason;
+            maxAgeMs = options?.maxAgeMs;
             freshnessChecks++;
             if (freshnessChecks === 1) sourceSnapshotVersion++;
             return Promise.resolve();
@@ -351,13 +353,13 @@ describe("MultiProjectFSAdapter", () => {
             "test-token",
             async () => {
               setRequestScopedFile("file:pages/index.mdx", "stale-content");
-              await adapter.ensureSourceSnapshotFresh("page-routing");
+              await adapter.ensureSourceSnapshotFresh("page-routing", { maxAgeMs: 0 });
               assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
               assertEquals(await adapter.getSourceSnapshotVersion(), 7);
               assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
 
               setRequestScopedFile("file:pages/index.mdx", "current-content");
-              await adapter.ensureSourceSnapshotFresh("page-routing");
+              await adapter.ensureSourceSnapshotFresh("page-routing", { maxAgeMs: 0 });
               assertEquals(getRequestScopedFile("file:pages/index.mdx"), "current-content");
             },
             "project-id-a",
@@ -368,6 +370,223 @@ describe("MultiProjectFSAdapter", () => {
         }
 
         assertEquals(freshnessReason, "page-routing");
+        assertEquals(
+          maxAgeMs,
+          0,
+          "the multi-project adapter must forward snapshot freshness options to the project adapter",
+        );
+      });
+    });
+
+    it("reuses manager initialization for the first strict freshness check", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let authorityListings = 1;
+        let selections = 0;
+        const selectedAdapter = {
+          ensureSourceSnapshotFresh(
+            _reason?: string,
+            _options?: { maxAgeMs?: number },
+            initializedByManager = false,
+          ) {
+            if (!initializedByManager) authorityListings++;
+            return Promise.resolve();
+          },
+          getSourceSnapshotVersion: () => 1,
+        };
+
+        (adapter as any).manager = {
+          getAdapter(
+            _projectSlug: string,
+            _token: string,
+            _projectId?: string,
+            _productionMode?: boolean,
+            _releaseId?: string | null,
+            _environmentName?: string | null,
+            _branch?: string | null,
+            onResolved?: (initializedNow: boolean) => void,
+          ) {
+            onResolved?.(selections++ === 0);
+            return Promise.resolve(selectedAdapter);
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "token-a",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("first-document", { maxAgeMs: 0 });
+              assertEquals(
+                authorityListings,
+                1,
+                "materialization already fetched the first document's complete listing",
+              );
+
+              await adapter.ensureSourceSnapshotFresh("later-document", { maxAgeMs: 0 });
+              assertEquals(authorityListings, 2, "later zero-age checks must refresh normally");
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("forwards strict freshness only to each selected project adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const projectACalls: Array<{ reason: string | undefined; maxAgeMs: number | undefined }> =
+          [];
+        const projectBCalls: Array<{ reason: string | undefined; maxAgeMs: number | undefined }> =
+          [];
+        const projectAAdapter = {
+          ensureSourceSnapshotFresh(reason?: string, options?: { maxAgeMs?: number }) {
+            projectACalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+            return Promise.resolve();
+          },
+        };
+        const projectBAdapter = {
+          ensureSourceSnapshotFresh(reason?: string, options?: { maxAgeMs?: number }) {
+            projectBCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+            return Promise.resolve();
+          },
+        };
+
+        (adapter as any).manager = {
+          getAdapter(projectSlug: string) {
+            if (projectSlug === "project-a") return Promise.resolve(projectAAdapter);
+            if (projectSlug === "project-b") return Promise.resolve(projectBAdapter);
+            return Promise.reject(new Error(`unexpected project: ${projectSlug}`));
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "token-a",
+            () => adapter.ensureSourceSnapshotFresh("project-a-document", { maxAgeMs: 0 }),
+            "project-id-a",
+            { branch: "branch-a" },
+          );
+          await adapter.runWithContext(
+            "project-b",
+            "token-b",
+            () => adapter.ensureSourceSnapshotFresh("project-b-document", { maxAgeMs: 0 }),
+            "project-id-b",
+            { branch: "branch-b" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+
+        assertEquals(projectACalls, [{ reason: "project-a-document", maxAgeMs: 0 }]);
+        assertEquals(projectBCalls, [{ reason: "project-b-document", maxAgeMs: 0 }]);
+      });
+    });
+
+    it("reports the selected project adapter's snapshot identity", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+
+        (adapter as any).manager = {
+          getAdapter(projectSlug: string) {
+            if (projectSlug === "project-a") {
+              return Promise.resolve({
+                getSourceSnapshotIdentity: () => "branch:project-a:branch-a",
+              });
+            }
+            if (projectSlug === "project-b") return Promise.resolve({});
+            return Promise.reject(new Error(`unexpected project: ${projectSlug}`));
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "token-a",
+            async () => {
+              assertEquals(
+                (await adapter.getSourceSnapshotIdentity())?.endsWith(
+                  ":branch:project-a:branch-a",
+                ),
+                true,
+                "the identity must come from the context's selected project adapter",
+              );
+            },
+            "project-id-a",
+            { branch: "branch-a" },
+          );
+          await adapter.runWithContext(
+            "project-b",
+            "token-b",
+            async () => {
+              assertEquals(
+                await adapter.getSourceSnapshotIdentity(),
+                undefined,
+                "a project adapter that cannot name its context reports no identity",
+              );
+            },
+            "project-id-b",
+            { branch: "branch-b" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("binds snapshot identity to the credential-selected adapter generation", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const tokenAAdapter = {
+          getSourceSnapshotIdentity: () => "branch:shared-project:main",
+        };
+        const tokenBAdapter = {
+          getSourceSnapshotIdentity: () => "branch:shared-project:main",
+        };
+
+        (adapter as any).manager = {
+          getAdapter(_projectSlug: string, token: string) {
+            return Promise.resolve(token === "credential-a" ? tokenAAdapter : tokenBAdapter);
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        const identityFor = (token: string) =>
+          adapter.runWithContext(
+            "shared-project",
+            token,
+            () => adapter.getSourceSnapshotIdentity(),
+            "shared-project-id",
+            { branch: "main" },
+          );
+
+        try {
+          const firstIdentity = await identityFor("credential-a");
+          const reusedIdentity = await identityFor("credential-a");
+          const otherCredentialIdentity = await identityFor("credential-b");
+
+          assertEquals(reusedIdentity, firstIdentity);
+          assertEquals(
+            otherCredentialIdentity === firstIdentity,
+            false,
+            "the same source context on another credential adapter cannot reuse freshness",
+          );
+          assertEquals(firstIdentity?.includes("credential-a"), false);
+          assertEquals(otherCredentialIdentity?.includes("credential-b"), false);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
       });
     });
 
