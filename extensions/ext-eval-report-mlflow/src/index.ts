@@ -531,11 +531,18 @@ function resolveExporterConfig(
   // own credentials so host secrets never cross that trust boundary.
   const allowEnvironmentCredentials = config.trackingUri === undefined &&
     config.fetch === undefined && !configuredOAuthTokenUrl;
+  // Ambient artifact endpoints describe the environment-selected tracking
+  // deployment. A configured trackingUri targets a different deployment, so it
+  // must not inherit MLFLOW_ARTIFACTS_URI or MLFLOW_ARTIFACTS_PORT from the
+  // host environment; supply artifact settings in the same configuration.
+  const allowEnvironmentArtifactEndpoints = config.trackingUri === undefined;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
-    artifactsPort: config.artifactsPort ?? readEnv(ENV_ARTIFACTS_PORT),
-    artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
+    artifactsPort: config.artifactsPort ??
+      (allowEnvironmentArtifactEndpoints ? readEnv(ENV_ARTIFACTS_PORT) : undefined),
+    artifactsUri: config.artifactsUri ??
+      (allowEnvironmentArtifactEndpoints ? readEnv(ENV_ARTIFACTS_URI) : undefined),
     experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
     runName: config.runName ?? readEnv(ENV_RUN_NAME),
     trackingToken: config.trackingToken ??

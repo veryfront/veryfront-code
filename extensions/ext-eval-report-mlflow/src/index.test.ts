@@ -506,6 +506,56 @@ describe("ext-eval-report-mlflow", () => {
     );
   });
 
+  it("does not inherit ambient host artifact endpoints for a configured tracking URI", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_ARTIFACTS_URI", "https://operator-artifacts.test");
+    Deno.env.set("MLFLOW_ARTIFACTS_PORT", "5600");
+    const registry = createEvalReportExporterRegistry();
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactUri: "mlflow-artifacts:/exp-1/run-1/artifacts",
+    });
+    const extension = factory({
+      trackingUri: "https://tenant-mlflow.test",
+      fetch: fetchImpl,
+    });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {});
+
+    assertEquals(results[0]?.ok, true);
+    assertEquals(
+      requests.filter((request) => request.method === "PUT").map((request) => request.url),
+      [
+        "https://tenant-mlflow.test/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/report.json",
+        "https://tenant-mlflow.test/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/summary.json",
+        "https://tenant-mlflow.test/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/results.jsonl",
+      ],
+    );
+  });
+
+  it("keeps environment artifact endpoints for environment-activated exporters", async () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
+    Deno.env.set("MLFLOW_ARTIFACTS_URI", "https://artifacts-proxy.test");
+    const registry = createEvalReportExporterRegistry();
+    const { requests, fetchImpl } = createMlflowFetchRecorder({
+      artifactUri: "mlflow-artifacts:/exp-1/run-1/artifacts",
+    });
+    const extension = factory({ fetch: fetchImpl });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {});
+
+    assertEquals(results[0]?.ok, true);
+    assertEquals(
+      requests
+        .filter((request) => request.method === "PUT")
+        .every((request) => request.url.startsWith("https://artifacts-proxy.test/")),
+      true,
+    );
+    assertEquals(requests.some((request) => request.method === "PUT"), true);
+  });
+
   it("does not combine a configured OAuth endpoint with host credentials", () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://operator-mlflow.test");

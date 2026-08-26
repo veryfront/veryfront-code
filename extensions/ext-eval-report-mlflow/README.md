@@ -59,8 +59,8 @@ veryfront eval eval:service-now-classification
 | `MLFLOW_TRACKING_URI`                           | See note | MLflow Tracking server URI for environment-based activation. Required unless the extension configuration supplies `trackingUri`, which activates the exporter directly; the exporter is not registered when both are unset. |
 | `MLFLOW_EXPERIMENT_NAME`                        | No       | Experiment name. Defaults from project/eval context, then `veryfront-evals`.                                                                                                                                                |
 | `MLFLOW_RUN_NAME`                               | No       | Run name. Defaults to `<eval-id>-<run-id>`.                                                                                                                                                                                 |
-| `MLFLOW_ARTIFACTS_URI`                          | No       | HTTP(S) MLflow artifact proxy endpoint used when the run artifact root is not directly writable as HTTP(S).                                                                                                                 |
-| `MLFLOW_ARTIFACTS_PORT`                         | No       | Local convenience port used to derive the artifact proxy URI from `MLFLOW_TRACKING_URI` when `MLFLOW_ARTIFACTS_URI` is unset.                                                                                               |
+| `MLFLOW_ARTIFACTS_URI`                          | No       | HTTP(S) MLflow artifact proxy endpoint used when the run artifact root is not directly writable as HTTP(S). Applies only to environment-based activation; a configured `trackingUri` must set `artifactsUri` in config.     |
+| `MLFLOW_ARTIFACTS_PORT`                         | No       | Local convenience port used to derive the artifact proxy URI from `MLFLOW_TRACKING_URI` when `MLFLOW_ARTIFACTS_URI` is unset. Applies only to environment-based activation, like `MLFLOW_ARTIFACTS_URI`.                    |
 | `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.                                                                                                       |
 | `MLFLOW_TRACKING_USERNAME`                      | No       | Username for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_PASSWORD`.                                                                                                                             |
 | `MLFLOW_TRACKING_PASSWORD`                      | No       | Password for basic auth to MLflow Tracking REST endpoints. Use with `MLFLOW_TRACKING_USERNAME`.                                                                                                                             |
@@ -87,7 +87,10 @@ credentials are not persisted in eval report export receipts.
 
 Programmatic transport overrides (`trackingUri`, `fetch`, or `oauthTokenUrl`)
 do not inherit authentication credentials from the host environment. Supply
-the matching credential fields in the same extension configuration. Existing
+the matching credential fields in the same extension configuration. A
+configured `trackingUri` likewise does not inherit `MLFLOW_ARTIFACTS_URI` or
+`MLFLOW_ARTIFACTS_PORT`: set `artifactsUri` (or `artifactsPort`) in the same
+configuration when that deployment needs an explicit artifact proxy. Existing
 configurations that previously combined a configured endpoint with
 `MLFLOW_TRACKING_TOKEN` must migrate the token explicitly:
 
