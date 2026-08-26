@@ -313,7 +313,10 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
 
 describe("framework-source-resolver public entry keys", () => {
   it("accepts public export targets and rejects internal wrappers", () => {
-    assertEquals(isPublicFrameworkSourceKey("platform/compat/process/env-public.js"), true);
+    assertEquals(isPublicFrameworkSourceKey("platform/env.js"), true);
+    assertEquals(isPublicFrameworkSourceKey("react/runtime/core.ts"), true);
+    assertEquals(isPublicFrameworkSourceKey("config/index.ts"), false);
+    assertEquals(isPublicFrameworkSourceKey("platform/compat/process/env-public.js"), false);
     assertEquals(isPublicFrameworkSourceKey("observability/tracing/telemetry-env.ts"), false);
     assertEquals(isPublicFrameworkSourceKey("platform/cloud/resolver.ts"), false);
   });

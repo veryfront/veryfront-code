@@ -108,23 +108,20 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/platform/env`
 
-Project-scoped environment helpers for cross-runtime applications. Host environment access and the trusted project-snapshot bridge remain internal framework controls and are not exported from this module.
+Public environment facade for the `veryfront/platform/env` subpath. Exposes only project-scoped readers. Privileged or mutating accessors (`getHostEnv`, `env`, `setEnv`, `deleteEnv`) stay internal so a tenant project cannot read or alter the host process environment through a supported package export.
 
 ```ts
-import { deleteEnv, env, getEnv } from "veryfront/platform/env";
+import { getEnv, getEnvBoolean, getEnvNumber } from "veryfront/platform/env";
 ```
 
 #### Functions
 
 | Name            | Description                                                 | Source                                                                                                  |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `deleteEnv`     | Delete a process environment variable.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L334) |
-| `env`           | Read and write process environment variables.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L62)  |
 | `getEnv`        | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L225) |
 | `getEnvBoolean` |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L279) |
 | `getEnvNumber`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L265) |
 | `getEnvString`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L257) |
-| `setEnv`        | Sets env.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L305) |
 
 #### Types
 

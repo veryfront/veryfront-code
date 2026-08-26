@@ -49,6 +49,7 @@ type ScopedWrites = Map<string, string | null>;
 const ObjectKeys = Object.keys;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectFreeze = Object.freeze;
 const ReflectApply = Reflect.apply;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectDefineProperty = Reflect.defineProperty;
@@ -151,7 +152,7 @@ export function createProjectScopedDenoEnvView(
   const hostHas = hostEnv.has;
   const hostToObject = hostEnv.toObject;
 
-  return {
+  const view: DenoEnvView = {
     get(key) {
       const snapshot = getSnapshot();
       return snapshot === undefined
@@ -187,6 +188,7 @@ export function createProjectScopedDenoEnvView(
         : projectScopedEnvRecord(snapshot);
     },
   };
+  return ObjectFreeze(view);
 }
 
 /** The scoped view as a plain record, for the bulk accessor. */

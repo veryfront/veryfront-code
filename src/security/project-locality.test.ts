@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { isSharedProjectRuntime, requiresIsolatedProjectRuntime } from "./project-locality.ts";
 
 describe("security/project-locality shared runtime topology", () => {
@@ -96,13 +95,11 @@ describe("security/project-locality isolated runtime requirement", () => {
     );
   });
 
-  it("allows execution once the host-owned entrypoint grants the capability", () => {
+  it("denies shared host execution even when the entrypoint grants the capability", () => {
     assertEquals(
       requiresIsolatedProjectRuntime({ ...sharedRuntime, allowHostProjectCodeExecution: true }),
-      isBun,
-      isBun
-        ? "Bun.env cannot be scoped, so a shared Bun host must remain isolated"
-        : "an operator-granted shared executor may run project code",
+      true,
+      "ambient runtime channels keep shared host execution unsafe",
     );
   });
 

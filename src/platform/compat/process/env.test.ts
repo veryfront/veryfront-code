@@ -1,12 +1,31 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import { registerTrustedProjectEnvSnapshot } from "./env.ts";
+import { createProjectScopedDenoEnvView } from "./scoped-process-env.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("host environment access", () => {
+  it("creates an immutable scoped Deno environment facade", () => {
+    const view = createProjectScopedDenoEnvView({
+      get: () => undefined,
+      set: () => {},
+      delete: () => {},
+      has: () => false,
+      toObject: () => ({}),
+    }, () => undefined);
+
+    assertEquals(Object.isFrozen(view), true);
+    for (const method of ["get", "set", "delete", "has", "toObject"] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(view, method);
+      assertEquals(descriptor?.writable, false);
+      assertEquals(descriptor?.configurable, false);
+    }
+    assertThrows(() => Object.defineProperty(view, "get", { value: () => "intercepted" }));
+  });
+
   denoOnlyIt("passes only the active project environment to direct subprocesses", async () => {
     const hostKey = "VF_SCOPE_SUBPROCESS_HOST_ONLY";
     const projectKey = "VF_SCOPE_SUBPROCESS_PROJECT_ONLY";

@@ -154,16 +154,14 @@ describe("resolveFrameworkFile", () => {
       FRAMEWORK_ROOT,
       "src",
       "platform",
-      "compat",
-      "process",
-      "env-public.ts",
+      "env.ts",
     );
     const files: Record<string, string> = {
       [sourcePath]: 'export { getEnv } from "./env.ts";',
     };
     const fs = createMockFs(files);
     const result = await resolveFrameworkFile(
-      "/_vf_modules/_veryfront/platform/compat/process/env-public.js?ssr=true",
+      "/_vf_modules/_veryfront/platform/env.js?ssr=true",
       fs,
       createExistsFn(files),
     );

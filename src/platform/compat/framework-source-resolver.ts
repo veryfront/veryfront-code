@@ -48,11 +48,16 @@ const publicConfig = denoConfig as {
   exports?: Record<string, string>;
   imports?: Record<string, string>;
 };
+const publicExportSpecifiers = new Set(
+  Object.keys(publicConfig.exports ?? {}).map((specifier) =>
+    specifier === "." ? "veryfront" : `veryfront/${specifier.replace(/^\.\//, "")}`
+  ),
+);
 const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
   [
     ...Object.values(publicConfig.exports ?? {}),
     ...Object.entries(publicConfig.imports ?? {})
-      .filter(([specifier]) => specifier === "veryfront" || specifier.startsWith("veryfront/"))
+      .filter(([specifier]) => publicExportSpecifiers.has(specifier))
       .map(([, target]) => target),
   ]
     .filter((target) => target.startsWith("./src/"))
