@@ -1,12 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchWithTimeout,
   pollUrlReady,
@@ -292,31 +296,31 @@ async function requestPageAndApi(port: number): Promise<void> {
 describe(
   "veryfront dev output",
   () => {
-    it("releases page responses when reading fails and retries", async () => {
-      let attempts = 0;
-      const bodies: ReadableStream<Uint8Array>[] = [];
-
-      await withMockFetch(
-        () => {
-          attempts++;
-          const response = attempts === 1
-            ? new Response(
-              new ReadableStream<Uint8Array>({
-                pull(controller) {
-                  controller.error(new DOMException("Body read aborted", "AbortError"));
-                },
-              }),
-            )
-            : new Response("updated dev logs page");
-          if (response.body !== null) bodies.push(response.body);
-          return Promise.resolve(response);
-        },
-        () => waitForPageContent(30_010, "updated dev logs page", 250),
+    it("releases page response readers after successful and failed reads", async () => {
+      const failedResponse = new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new DOMException("Body read aborted", "AbortError"));
+          },
+        }),
       );
+      const successfulResponse = new Response("updated dev logs page");
+      const failedBody = failedResponse.body;
+      const successfulBody = successfulResponse.body;
+      assert(failedBody !== null);
+      assert(successfulBody !== null);
 
-      assertEquals(attempts, 2);
-      assertEquals(bodies.length, 2);
-      assert(bodies.every((body) => !body.locked));
+      await assertRejects(
+        () => readResponseTextAndRelease(failedResponse),
+        DOMException,
+        "Body read aborted",
+      );
+      assertEquals(
+        await readResponseTextAndRelease(successfulResponse),
+        "updated dev logs page",
+      );
+      assert(!failedBody.locked);
+      assert(!successfulBody.locked);
     });
 
     it(
