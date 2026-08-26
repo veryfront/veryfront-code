@@ -131,6 +131,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private statOps: StatOperations;
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
+  private initializationGeneration = 0;
   private exactReadInitializationPromise: Promise<void> | null = null;
   private exactReadInitializationGeneration = 0;
 
@@ -477,11 +478,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const initialization = this.performInitialization();
+    const initializationGeneration = ++this.initializationGeneration;
     this.initializationPromise = initialization;
     try {
       await initialization;
     } finally {
-      if (this.initializationPromise === initialization) {
+      if (this.initializationGeneration === initializationGeneration) {
         this.initializationPromise = null;
       }
     }
@@ -1330,6 +1332,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.initializationGeneration++;
     this.initializationPromise = null;
     this.exactReadInitializationPromise = null;
     this.exactReadInitializationGeneration++;
