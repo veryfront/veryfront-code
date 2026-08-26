@@ -1376,6 +1376,66 @@ export default config as const;
         assertEquals(prose.message.includes("mError"), false);
       });
 
+      it("keeps a boundary when a completed CSI sequence sits before a path", async () => {
+        const posix = await loadFailure(
+          "vf-config-csi-final-byte-posix-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `ESC[3~` is a complete, legal CSI whose final byte is `~`. Removing it
+        // during de-colorization joined `at` to the path, and POSIX_ABSOLUTE_PATH's
+        // lookbehind refuses a slash after an alphanumeric -- so the whole local
+        // path reached the caller-visible error.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("at/home"), false);
+        assertStringIncludes(posix.message, "[path]");
+
+        const drive = await loadFailure(
+          "vf-config-csi-final-byte-drive-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~C:\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+
+        const url = await loadFailure(
+          "vf-config-csi-final-byte-url-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~https:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(url.message.includes("registry.internal"), false);
+        assertStringIncludes(url.message, "[url]");
+
+        const credential = await loadFailure(
+          "vf-config-csi-final-byte-credential-",
+          `throw new Error("Using token sk-" + String.fromCharCode(27) + "[0mABCD1234EFGH5678");\n`,
+        );
+
+        // The counterpart that pins why this is a pre-pass and not a change to
+        // de-colorization itself. That pass must keep replacing with nothing: a
+        // sequence inside a credential only rejoins into a contiguous secret if
+        // removal leaves no gap, and the sanitiser after it matches nothing
+        // otherwise. Emitting a space there would fix the path boundary above and
+        // reopen this.
+        assertEquals(credential.message.includes("ABCD1234EFGH5678"), false);
+      });
+
+      it("reports a CSI-glued file URL as a path, not a remote URL", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-glued-file-url-",
+          `throw new Error(String.fromCharCode(27) + "[file:///home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `f` is a legal CSI final byte, so the pass consumed `ESC[f` and SCHEME_URL
+        // read the remaining `ile:///home/alice/...` as a remote URL. Nothing leaked,
+        // but a local path was reported as `[url]` -- the path-as-URL mislabel this
+        // change exists to remove, arrived at from the other direction.
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message.includes("[url]"), false);
+        assertStringIncludes(error.message, "[path]");
+      });
+
       it("classifies a drive path glued to diagnostic text as a path, not a URL", async () => {
         const drive = await loadFailure(
           "vf-config-glued-fwd-drive-",

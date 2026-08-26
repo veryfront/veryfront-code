@@ -1655,9 +1655,22 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 //
 // The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
 // 0x2F is `/` -- the first character of the path this pass exists to preserve.
+//
+// The final byte is optional so a *completed* sequence is covered too, not only
+// an introducer. `Failed at` + `ESC[3~` + `/home/alice/x` is a legal CSI whose
+// final byte is `~`; removing it during de-colorization joined `at` to the path,
+// POSIX_ABSOLUTE_PATH's lookbehind then refused the slash, and the path reached
+// the caller. Optional rather than required, because `ESC[/home` has no final
+// byte before the path at all.
+//
+// The sequence is taken here rather than by making de-colorization emit a space
+// instead of nothing. That pass must keep emitting nothing: `sk-` + `ESC[0m` +
+// `ABCD1234EFGH5678` only rejoins into a contiguous credential if the removal
+// leaves no gap, and the sanitiser that runs after it matches nothing otherwise.
+// Fixing a path boundary must not reopen that.
 const CSI_GLUED_PATH =
   // deno-lint-ignore no-control-regex
-  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/])/g;
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=[\\/]|[A-Za-z]:[\\/])/g;
 // The same pre-pass for a special-scheme URL start, which the CSI grammar eats
 // exactly as it eats a path. In `ESC[https:registry.internal/x`, `h` is a legal
 // final byte, so the CSI pass left `ttps:registry.internal/x`:
@@ -1675,8 +1688,12 @@ const CSI_GLUED_PATH =
 // earlier in this PR, when `REMOTE_URL` became SCHEME_URL and
 // MALFORMED_SCHEME_URL. Each pass reads as one rule.
 //
-// Only the special schemes are listed, matching MALFORMED_SCHEME_URL and
-// ZERO_SLASH_SCHEME_URL -- keep the three in sync. A generic
+// The list is every scheme the redactor itself recognises: the special schemes
+// of MALFORMED_SCHEME_URL and ZERO_SLASH_SCHEME_URL, plus `file`, which
+// FILE_URL_ABSOLUTE_PATH claims. `file` is here because `f` is a legal final
+// byte, so `ESC[file:///home/alice/x` lost `ESC[f` and SCHEME_URL read the
+// remaining `ile:///home/alice/x` as a remote URL -- reporting `[url]` for a
+// local path. Keep this list in sync with those three. A generic
 // `[A-Za-z][A-Za-z0-9+.-]*:` lookahead cannot be used: it matches the prose in
 // `ESC[0mError: cannot find module`, which would strip `ESC[0` and leave a
 // stray `m` in an ordinary diagnostic. A generic `scheme://` needs no help
@@ -1686,7 +1703,7 @@ const CSI_GLUED_PATH =
 // both cases (`[A-Za-z]`) or contains no letters at all.
 const CSI_GLUED_URL =
   // deno-lint-ignore no-control-regex
-  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=(?:https?|wss?|ftp):)/gi;
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=(?:https?|wss?|ftp|file):)/gi;
 // The scheme needs at least two characters: `C://Users/alice` is a drive path
 // that Node normalises, not a URL with the one-letter scheme `C`, and matching it
 // here reintroduced the path-as-URL mislabel this PR exists to remove. No
