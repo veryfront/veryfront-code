@@ -198,6 +198,68 @@ describe("SSRDependencyValidator", () => {
     }
   });
 
+  it("falls back to adapter readFile when snapshot reads are unsupported", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-" });
+    const projectDir = join(tempDir, "project");
+    const dependencyPath = join(projectDir, "child.tsx");
+    const adapterReads: string[] = [];
+    const transformedSources: Array<string | undefined> = [];
+    const adapter = {
+      fs: {
+        readFile(path: string) {
+          adapterReads.push(path);
+          return Promise.resolve('export const child = "from-adapter";');
+        },
+        lstat(path: string) {
+          return Promise.resolve({
+            isFile: path === dependencyPath,
+            isDirectory: false,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        },
+        realPath(path: string) {
+          return Promise.resolve(path);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (_filePath, source) => {
+        transformedSources.push(source);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      projectDir,
+    );
+
+    try {
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(dependencyPath, 'export const child = "from-disk";');
+
+      const importPaths = await validator.processLocalImports(
+        [{
+          absolutePath: dependencyPath,
+          specifier: "./child.tsx",
+          rewriteSpecifier: `file://${dependencyPath}`,
+          projectContained: true,
+        }],
+        join(projectDir, "page.tsx"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(adapterReads, [dependencyPath]);
+      assertEquals(transformedSources, ['export const child = "from-adapter";']);
+      assertEquals(importPaths.get("./child.tsx"), "/tmp/child.js");
+      assertEquals(validator.missingDependencies, []);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("does not dispatch local dependency batches through mutable array methods", async () => {
     const transformedPaths: string[] = [];
     const adapter = {
@@ -356,7 +418,7 @@ describe("SSRDependencyValidator", () => {
     }
   });
 
-  it("fails closed without a bound reader for a contained project import", async () => {
+  it("uses the compatibility read path without a bound reader for a contained project import", async () => {
     let directReads = 0;
     let transforms = 0;
     const adapter = {
@@ -391,9 +453,9 @@ describe("SSRDependencyValidator", () => {
       createDependencyHashCache(),
     );
 
-    assertEquals(directReads, 0);
-    assertEquals(transforms, 0);
-    assertEquals(validator.missingDependencies.length, 1);
+    assertEquals(directReads, 1);
+    assertEquals(transforms, 1);
+    assertEquals(validator.missingDependencies, []);
   });
 
   it("decodes malformed contained source bytes like ordinary text reads", async () => {

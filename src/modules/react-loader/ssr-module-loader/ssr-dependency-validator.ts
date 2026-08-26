@@ -538,7 +538,7 @@ export class SSRDependencyValidator {
       );
       return decodeDependencySource(bytes);
     }
-    throw new Error("Contained project imports require a bound snapshot reader");
+    return await this.adapter.fs.readFile(path);
   }
 
   /**

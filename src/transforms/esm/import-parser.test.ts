@@ -358,6 +358,38 @@ describe("transforms/esm/import-parser", () => {
     );
   });
 
+  it("allows drive-shaped directory names on POSIX during containment", () => {
+    if (Deno.build.os === "windows") return;
+    assertEquals(
+      importParserInternals.isPathWithinProject("/project/C:/Child.tsx", "/project"),
+      true,
+    );
+  });
+
+  it("preserves POSIX backslashes while normalizing the project root", async () => {
+    if (Deno.build.os === "windows") return;
+    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-backslash-root-" });
+    const projectDir = `${rootDir}/proj\\name`;
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/Child.tsx`,
+        "export default function Child() { return null; }",
+      );
+
+      const result = await parseLocalImports(
+        'import Child from "@/Child.tsx"; export default Child;',
+        `${projectDir}/page.tsx`,
+        projectDir,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(result.imports[0]?.absolutePath, await Deno.realPath(`${projectDir}/Child.tsx`));
+    } finally {
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("rejects encoded separators in compiled file URLs", () => {
     assertEquals(importParserInternals.fileUrlToPath("file:///project/a%2Fb.tsx"), null);
   });
@@ -394,6 +426,28 @@ describe("transforms/esm/import-parser", () => {
       ),
       "C:/project/Grandchild.tsx",
     );
+  });
+
+  it("preserves POSIX backslashes when resolving recursive relative imports", async () => {
+    if (Deno.build.os === "windows") return;
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-import-parser-relative-backslash-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/a\\b.tsx`,
+        "export default function Child() { return null; }",
+      );
+
+      const result = await parseLocalImports(
+        'import Child from "./a\\\\b.tsx"; export default Child;',
+        `${projectDir}/page.tsx`,
+        projectDir,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(result.imports[0]?.absolutePath, `${projectDir}/a\\b.tsx`);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+    }
   });
 
   // Regression: symlinkSemantics was read as an inherited property, so a

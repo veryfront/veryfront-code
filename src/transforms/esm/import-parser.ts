@@ -124,6 +124,24 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
 }
 
+function isDriveRootedPath(path: string): boolean {
+  const first = path[0];
+  return path[1] === ":" && path[2] === "/" &&
+    ((first !== undefined && first >= "A" && first <= "Z") ||
+      (first !== undefined && first >= "a" && first <= "z"));
+}
+
+function normalizeProjectRoot(projectDir: string): string {
+  if (projectDir === "") return "/";
+  return windowsHost || isDriveRootedPath(projectDir)
+    ? normalize(projectDir)
+    : posix.normalize(projectDir);
+}
+
+function joinProjectPath(root: string, path: string): string {
+  return windowsHost || isDriveRootedPath(root) ? join(root, path) : posix.join(root, path);
+}
+
 function isFileUrlSpecifier(value: string): boolean {
   return stringStartsWith(value, "file://");
 }
@@ -340,7 +358,8 @@ function isPathWithinProject(path: string, projectDir: string): boolean {
     ? stringReplaceAll(relative(projectDir, path), "\\", "/")
     : posix.relative(projectDir, path);
   const first = projectRelativePath[0];
-  const driveQualified = projectRelativePath[1] === ":" && projectRelativePath[2] === "/" &&
+  const driveQualified = windowsHost && projectRelativePath[1] === ":" &&
+    projectRelativePath[2] === "/" &&
     ((first !== undefined && first >= "A" && first <= "Z") ||
       (first !== undefined && first >= "a" && first <= "z"));
   return projectRelativePath !== ".." &&
@@ -376,11 +395,11 @@ function createContainmentContext(
   projectDir: string,
   adapter?: RuntimeAdapter,
 ): ContainmentContext {
-  // Strip trailing separators but preserve filesystem roots: "/" must not
-  // become "" (which realPath rejects) and a portable Windows drive root such
-  // as "C:/" must not become the drive-relative "C:". The path facade's
-  // normalize implements exactly that contract on captured intrinsics.
-  const normalizedProjectDir = projectDir === "" ? "/" : normalize(projectDir);
+  // Strip trailing separators but preserve filesystem roots without changing
+  // path flavor: "/" must not become "" (which realPath rejects), a portable
+  // Windows drive root such as "C:/" must not become the drive-relative "C:",
+  // and a POSIX root containing "\" must keep that filename character.
+  const normalizedProjectDir = normalizeProjectRoot(projectDir);
   const fs = adapter?.fs;
   // Symlink-free semantics are authority, so only an own data property
   // counts, exactly as FSAdapterWrapper captures it: an inherited value (for
@@ -613,7 +632,7 @@ async function resolveAliasImportPath(
   containment: ContainmentContext,
 ): Promise<ContainedImportPath | null> {
   const normalizedPath = stringReplace(basePath, /^\/+/, "");
-  const lexicalPath = join(containment.projectDir, normalizedPath);
+  const lexicalPath = joinProjectPath(containment.projectDir, normalizedPath);
   if (!isPathWithinProject(lexicalPath, containment.projectDir)) return null;
 
   const adapter = containment.adapter;
@@ -641,13 +660,16 @@ async function resolveAliasImportPath(
   for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
     arrayPush(
       candidates,
-      join(containment.projectDir, normalizedPath + EXTENSIONS[extensionIndex]!),
+      joinProjectPath(containment.projectDir, normalizedPath + EXTENSIONS[extensionIndex]!),
     );
   }
   for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
     arrayPush(
       candidates,
-      join(containment.projectDir, normalizedPath, "index" + EXTENSIONS[extensionIndex]!),
+      joinProjectPath(
+        joinProjectPath(containment.projectDir, normalizedPath),
+        "index" + EXTENSIONS[extensionIndex]!,
+      ),
     );
   }
 
@@ -686,5 +708,7 @@ async function findFirstExistingFile(
 }
 
 function resolveRelative(fromDir: string, importPath: string): string {
-  return resolve(fromDir, importPath);
+  return windowsHost || isDriveRootedPath(fromDir)
+    ? resolve(fromDir, importPath)
+    : posix.resolve(fromDir, importPath);
 }
