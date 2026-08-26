@@ -1028,6 +1028,23 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
+      it("summarizes a very long cause without quadratic rescanning", async () => {
+        const start = Date.now();
+        const error = await loadFailure(
+          "vf-config-long-cause-",
+          `throw new Error("a".repeat(100000));\n`,
+        );
+        const elapsed = Date.now() - start;
+
+        // REMOTE_URL is unanchored and runs over the whole message before the
+        // 200-character cap applies. With an unbounded scheme prefix it rescans
+        // to the end of the input at every letter, which measured ~17.9s for
+        // this input; bounding the scheme brings it to ~35ms. The threshold is
+        // deliberately loose -- it only has to separate those two orders.
+        assertEquals(elapsed < 5000, true, `summarize took ${elapsed}ms`);
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
       it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(

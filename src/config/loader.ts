@@ -1653,7 +1653,14 @@ const ANSI_CSI_SEQUENCE = /\u001B\[[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007
 // to the Windows pattern. A single-slash form requires a scheme of at least two
 // characters, which catches malformed `https:/host/x` without misclassifying
 // the genuine Windows path `C:/Users/...` as a URL.
-const REMOTE_URL = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[A-Za-z][A-Za-z0-9+.-]+:\/(?!\/))[^\s"'()]+/g;
+// The scheme length is bounded because this pattern is unanchored and runs
+// over the whole message before the 200-character cap applies. Unbounded, the
+// greedy scheme prefix rescans to the end of the input at every position that
+// starts with a letter, so an ordinary long alphabetic message with no colon
+// costs O(n^2): 100k characters measured at ~17.9s, versus ~32ms bounded.
+// Real schemes are short -- 31 characters is well past every registered one.
+const REMOTE_URL =
+  /(?:[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/|[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/))[^\s"'()]+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
