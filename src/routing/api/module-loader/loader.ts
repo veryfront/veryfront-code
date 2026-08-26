@@ -595,7 +595,7 @@ async function inspectDirectGraphModule(options: {
   if (!enqueueDirectWorkerEntries(scan.localWorkerSpecifiers, projectRoot, filePath, pending)) {
     return "reject";
   }
-  return inspectDirectModuleSpecifiers({
+  const specifierResult = inspectDirectModuleSpecifiers({
     specifiers: scan.specifiers,
     importMap,
     filePath,
@@ -603,6 +603,11 @@ async function inspectDirectGraphModule(options: {
     allowedHosts,
     pending,
   });
+  if (specifierResult === "reject") return "reject";
+  // A local Worker loads its entry after this graph walk completes. Force the
+  // route through the bundled path, which rejects mutable Worker files after
+  // validating their graph, instead of handing the original path to Deno.
+  return scan.localWorkerSpecifiers.length > 0 ? "bundle" : specifierResult;
 }
 
 async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<string | null> {
@@ -995,7 +1000,13 @@ function normalizeImportMapTarget(target: string, baseDir: string): string | nul
 
 function normalizeImportMapKey(key: string, baseDir: string): string | null {
   if (/^file:/i.test(key)) return normalizeFileUrlSpecifier(key);
-  if (!key.startsWith("./") && !key.startsWith("../")) return key;
+  if (!key.startsWith("./") && !key.startsWith("../")) {
+    try {
+      return new URL(key).href;
+    } catch {
+      return key;
+    }
+  }
   const modulePath = modulePathOfSpecifier(key);
   const resolved = resolveImportMapRelativePath(modulePath, baseDir);
   const normalizedPath = modulePath.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
@@ -1365,6 +1376,15 @@ async function validateBundledLocalWorkerEntries(options: {
       visited,
     });
   }
+  if (scan.localWorkerSpecifiers.length > 0) {
+    throw toError(
+      createError({
+        type: "api",
+        message:
+          "[API] handler build failed: local Worker modules are mutable after validation and cannot be started safely from an API route.",
+      }),
+    );
+  }
 }
 
 async function validateBundledLocalWorkerGraph(options: {
@@ -1439,6 +1459,7 @@ function bundledWorkerImportTarget(options: {
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     return resolveContainedLocalModule(projectDir, filePath, specifier);
   }
+  if (specifier.startsWith("#")) return rejectUnvalidatedWorkerImport(specifier);
   if (canDirectImportSpecifier(specifier)) return null;
   if (isBareModuleSpecifier(specifier)) {
     return null;

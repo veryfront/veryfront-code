@@ -48,7 +48,7 @@ const COMMENT_KEYS = new Set([
   "innerComments",
 ]);
 const METADATA_KEYS = new Set(["loc", "start", "end", "extra", "errors", "tokens"]);
-const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "self", "window"]);
+const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "self", "window", "global"]);
 const WELL_KNOWN_SYMBOL_NAMES = new Set([
   "asyncDispose",
   "asyncIterator",

@@ -106,6 +106,30 @@ describe("readDenoImportMap", () => {
     );
   });
 
+  it("canonicalizes URL-like import-map keys before matching", async () => {
+    const projectDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(projectDir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "HTTPS://EXAMPLE.COM/pkg/../dep.js": "https://blocked.example/mod.js",
+        },
+      }),
+    );
+
+    const importMap = await readDenoImportMap(fs, projectDir);
+    assertNotEquals(importMap, null);
+    assertEquals(
+      lookupImportMapEntry(
+        importMap!,
+        "https://example.com/dep.js",
+        join(projectDir, "route.ts"),
+      ),
+      "https://blocked.example/mod.js",
+      "scheme, host, and path normalization must match the key Deno applies at runtime",
+    );
+  });
+
   it("preserves an import-map entry named __proto__ as data", async () => {
     const projectDir = await makeTempDir();
     await fs.writeTextFile(
@@ -3507,6 +3531,40 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("uses canonical URL-like import-map keys in the bundled graph", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "HTTPS://EXAMPLE.COM/pkg/../dep.js": "./helper.ts",
+        },
+      }),
+    );
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export const value = "mapped";`);
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "https://example.com/dep.js";`,
+        `const marker = /x/;`,
+        `export const GET = () => new Response(value + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: { security: { remoteHosts: ["https://example.com"] } },
+    });
+    assertEquals(
+      await getText(route),
+      "mappedx",
+      "the bundler must match the same canonical key as the runtime import map",
+    );
+  });
+
   denoIt("bundles encoded delimiter filenames after an import-map remap", async () => {
     for (
       const { target, actualFile, decoyFile } of [
@@ -3623,40 +3681,38 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  denoIt("keeps a validated local Worker URL at its source location", async () => {
+  denoIt("rejects a mutable local Worker entry before route evaluation", async () => {
     const tmpDir = await makeTempDir();
+    const workerPath = join(tmpDir, "worker.ts");
+    const originalWorker = `postMessage("ready"); close();`;
     await fs.writeTextFile(
-      join(tmpDir, "worker.ts"),
-      `postMessage("ready"); close();`,
+      workerPath,
+      originalWorker,
     );
     const modulePath = join(tmpDir, "worker-route.ts");
     await fs.writeTextFile(
       modulePath,
       [
-        `const marker = 8 / 2;`,
-        `export const GET = async () => {`,
+        `Deno.writeTextFileSync(new URL("./worker.ts", import.meta.url),` +
+        ` 'import "https://blocked.example/mod.js";');`,
+        `export const GET = () => {`,
         `  const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });`,
-        `  try {`,
-        `    const value = await new Promise<string>((resolve, reject) => {`,
-        `      worker.onmessage = (event) => resolve(String(event.data));`,
-        `      worker.onerror = (event) => reject(new Error(event.message));`,
-        `    });`,
-        `    return new Response(String(marker) + value);`,
-        `  } finally { worker.terminate(); }`,
+        `  worker.terminate();`,
+        `  return new Response("unreachable");`,
         `};`,
       ].join("\n"),
     );
 
-    const route = await loadHandlerModule({
-      projectDir: tmpDir,
-      modulePath,
-      adapter,
-      config: undefined,
-    });
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "mutable after validation",
+      "the route must not receive a chance to replace a validated Worker before startup",
+    );
     assertEquals(
-      await getText(route),
-      "4ready",
-      "bundling must not relocate a validated Worker URL away from its project module",
+      await fs.readTextFile(workerPath),
+      originalWorker,
+      "rejecting during the build must happen before attacker-controlled module evaluation",
     );
   });
 
@@ -3756,7 +3812,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  denoIt("keeps local Worker entries resolvable when the route must bundle", async () => {
+  denoIt("rejects mutable local Worker entries when the route must bundle", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(
       join(tmpDir, "worker.ts"),
@@ -3776,16 +3832,43 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ].join("\n"),
     );
 
-    const route = await loadHandlerModule({
-      projectDir: tmpDir,
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "mutable after validation",
+      "bundling must not hand a validated but mutable path to the Worker runtime",
+    );
+  });
+
+  it("rejects package import aliases inside bundled Worker graphs", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "package.json"),
+      JSON.stringify({ imports: { "#helper": "./worker-helper.ts" } }),
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "#helper"; self.postMessage("unreachable");`,
+    );
+    await fs.writeTextFile(join(tmpDir, "worker-helper.ts"), `export const value = "helper";`);
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
       modulePath,
-      adapter,
-      config: undefined,
-    });
-    assertEquals(
-      await getText(route),
-      "worker-x",
-      "bundling must not leave local Worker specifiers relative to the temporary bundle",
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response(marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "Worker import cannot be validated",
+      "a package imports alias must not escape the Worker graph walk",
     );
   });
 
@@ -3906,7 +3989,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   denoIt(
-    "runs bundled helper Worker entries against the route-relative execution base",
+    "rejects mutable Worker entries reached through bundled helpers",
     async () => {
       const tmpDir = await makeTempDir();
       await fs.mkdir(join(tmpDir, "helpers"), { recursive: true });
@@ -3943,16 +4026,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         ].join("\n"),
       );
 
-      const route = await loadHandlerModule({
-        projectDir: tmpDir,
-        modulePath,
-        adapter,
-        config: undefined,
-      });
-      assertEquals(
-        await getText(route),
-        "route-relative-safex",
-        "bundled helper Worker specifiers must execute relative to the route, not the helper module",
+      await assertRejects(
+        () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+        Error,
+        "mutable after validation",
+        "a helper must not retain a mutable Worker path after the graph walk",
       );
     },
   );
