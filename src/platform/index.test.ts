@@ -32,7 +32,9 @@ describe("platform/index.ts exports", () => {
       assertExists(VeryfrontApiClient);
       assertEquals(typeof VeryfrontApiClient, "function");
       assertEquals(Object.isFrozen(VeryfrontApiClient.prototype), true);
-      assertEquals(Reflect.set(VeryfrontApiClient.prototype, "setProjectSlug", () => {}), false);
+      const setProjectSlug = VeryfrontApiClient.prototype.setProjectSlug;
+      Reflect.set(VeryfrontApiClient.prototype, "setProjectSlug", () => {});
+      assertEquals(VeryfrontApiClient.prototype.setProjectSlug, setProjectSlug);
     });
   });
 

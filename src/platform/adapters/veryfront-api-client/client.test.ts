@@ -30,6 +30,19 @@ describe("VeryfrontApiClient", () => {
     assertEquals(Reflect.set(Object.getPrototypeOf(operations), "getToken", () => "stolen"), false);
   });
 
+  it("keeps instance method overrides isolated from the shared prototype", async () => {
+    const first = createClient();
+    const second = createClient();
+    const initialize = VeryfrontApiClient.prototype.initialize;
+
+    first.initialize = () => Promise.resolve();
+
+    await first.initialize();
+    assertEquals(Object.hasOwn(first, "initialize"), true);
+    assertEquals(second.initialize, initialize);
+    assertEquals(VeryfrontApiClient.prototype.initialize, initialize);
+  });
+
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();
