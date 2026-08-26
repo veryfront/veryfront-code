@@ -1645,10 +1645,10 @@ function replaceMatchesWithCapturedExec(
  * prefix in a status-400 detail.
  */
 function summarizeConfigLoadCause(error: unknown): string | undefined {
-  const message = error instanceof Error
-    ? error.message
-    : typeof error === "string"
+  const message = typeof error === "string"
     ? error
+    : isIntrinsicError(error)
+    ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
   const redacted = sanitizeUrlCredentials(message);
@@ -1805,7 +1805,7 @@ function isIntrinsicError(value: unknown): value is Error {
 }
 
 function readOwnDataString(
-  value: RuntimeReflectionRecord,
+  value: object,
   key: PropertyKey,
 ): string | undefined {
   let descriptor: PropertyDescriptor | undefined;

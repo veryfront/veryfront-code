@@ -877,6 +877,34 @@ export default config as const;
         assertStringIncludes(error.message, "left-pad");
       });
 
+      it("contains a parse failure after the config replaces globalThis.Error", async () => {
+        const originalError = globalThis.Error;
+        let caught: unknown;
+        try {
+          const adapter = setup();
+          await withTempDir(async (projectDir) => {
+            const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
+            const source = 'const failure = new Error("ordinary config failure");\n' +
+              "globalThis.Error = {};\n" +
+              "throw failure;\n";
+            await writeTextFile(configPath, source);
+            adapter.fs.files.set(configPath, source);
+            try {
+              await getConfig(projectDir, adapter);
+            } catch (error) {
+              caught = error;
+            }
+          }, { prefix: "vf-config-poisoned-error-fallback-" });
+        } finally {
+          globalThis.Error = originalError;
+        }
+
+        assertInstanceOf(caught, VeryfrontError);
+        const error = caught as VeryfrontError;
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(error.message, "ordinary config failure");
+      });
+
       it("contains a config that poisons RegExp Symbol.replace", async () => {
         const originalReplace = RegExp.prototype[Symbol.replace];
         for (
