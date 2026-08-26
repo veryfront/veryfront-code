@@ -95,9 +95,18 @@ export async function getIntegrationTemplate(
   return getSortedFiles(entry);
 }
 
+export async function getAuthTemplate(
+  presetName: string,
+): Promise<TemplateFile[] | null> {
+  const entry = (await getManifest()).templates[`auth:${presetName}`];
+  if (!entry) return null;
+
+  return getSortedFiles(entry);
+}
+
 export async function listTemplates(): Promise<string[]> {
   return Object.keys((await getManifest()).templates).filter(
-    (name) => !name.startsWith("integration:"),
+    (name) => !name.startsWith("integration:") && !name.startsWith("auth:"),
   );
 }
 
@@ -105,4 +114,11 @@ export async function listIntegrations(): Promise<string[]> {
   return Object.keys((await getManifest()).templates)
     .filter((name) => name.startsWith("integration:"))
     .map((name) => name.replace("integration:", ""));
+}
+
+export async function listAuthTemplates(): Promise<string[]> {
+  return Object.keys((await getManifest()).templates)
+    .filter((name) => name.startsWith("auth:"))
+    .map((name) => name.replace("auth:", ""))
+    .sort((a, b) => a.localeCompare(b));
 }

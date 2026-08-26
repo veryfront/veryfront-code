@@ -10,6 +10,7 @@
 
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { SERVER_FUNCTION_DEFAULT_TIMEOUT_MS } from "#veryfront/utils/constants/index.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -92,6 +93,8 @@ export interface RscActionAuthorizationHeaders {
 export interface RscActionAuthorizationRequest {
   readonly url: string;
   readonly method: string;
+  /** Detached authenticated application identity, when application auth admitted the request. */
+  readonly identity?: ApplicationIdentity;
   /** Lowercase header names mapped to their normalized combined values. */
   readonly headers: Readonly<RscActionAuthorizationHeaders>;
   /**

@@ -6,7 +6,7 @@ import {
   formatUserError,
   sanitizeUserFacingStackFrameForTesting,
 } from "./error-formatter.ts";
-import { CONFIG_NOT_FOUND } from "../error-registry.ts";
+import { CONFIG_NOT_FOUND, DEPENDENCY_MISSING } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
 
 describe("formatErrorBox", () => {
@@ -118,6 +118,18 @@ describe("formatUserError", () => {
 
     assert(result.includes("How to fix:"));
     assert(result.includes("veryfront.config.ts"));
+  });
+
+  it("should give arbitrary missing packages install guidance", () => {
+    const result = formatUserError(DEPENDENCY_MISSING.create({
+      detail: 'veryfront.config.ts imports "some-telemetry-sdk", which is not installed',
+    }));
+
+    assert(result.includes("Install the package named in the error"));
+    assertEquals(result.includes("deno add"), false);
+    assertEquals(result.includes("example-package"), false);
+    assertEquals(result.includes("<PACKAGE_SPECIFIER>"), false);
+    assertEquals(result.includes("React is in your import map"), false);
   });
 
   it("should fail closed for proxy errors and redact free-form credentials", () => {

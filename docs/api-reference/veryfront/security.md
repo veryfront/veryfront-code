@@ -1,7 +1,7 @@
 ---
 title: "veryfront/security"
-description: "Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access."
-order: 34
+description: "Security layer for input validation with size limits, application authentication, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access."
+order: 35
 ---
 
 ## Import
@@ -94,7 +94,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 
 | Name                   | Description | Source                                                                                                      |
 | ---------------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| `AuthHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/auth.ts#L161)              |
+| `AuthHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/auth.ts#L183)              |
 | `BaseHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L45)       |
 | `CsrfHandler`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/csrf/csrf-handler.ts#L185) |
 | `ResponseBuilder`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/builder.ts#L9)    |
@@ -103,36 +103,46 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 
 ### Types
 
-| Name                           | Description                                                             | Source                                                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `CacheStrategy`                |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L11)      |
-| `CORSConfig`                   |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L1)     |
-| `CORSHeaderOptions`            |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L34)          |
-| `CORSOptions`                  | CORS policy accepted by asynchronous middleware and preflight APIs.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L7)           |
-| `CORSPreflightOptions`         |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L27)          |
-| `CORSValidationResult`         |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L21)          |
-| `CSPDirectives`                |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L10)    |
-| `CsrfConfig`                   |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L35)             |
-| `CsrfTokenOptions`             |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L42)             |
-| `HandlerHelpers`               |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L19)        |
-| `LexicalPathValidationOptions` | Options for lexical containment checks that never inspect a filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L33)    |
-| `OriginValidator`              |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L2)           |
-| `ParseFormOptions`             |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L39)   |
-| `ParseJsonOptions`             |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L28)   |
-| `ParseQueryOptions`            |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L43)   |
-| `PathValidationPolicyOptions`  | Filesystem-independent policy fields shared by physical path presets.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L18)    |
-| `RequestLimits`                |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L8)    |
-| `ResponseBuilderConfig`        |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L27)      |
-| `SecureFsConfig`               |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L56)                |
-| `SecurityConfig`               |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/server.ts#L9)                       |
-| `SecurityContext`              |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L39)                |
-| `SecurityEvent`                |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L65)                |
-| `SyncCORSConfig`               | CORS policy accepted by synchronous response-building APIs.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L17)          |
-| `SyncCORSHeaderOptions`        | Header options accepted by synchronous CORS response helpers.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L42)          |
-| `SyncOriginValidator`          |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L1)           |
-| `ValidatedData`                |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L47)   |
-| `ValidatedHandlerConfig`       | Configuration for `createValidatedHandler()`.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L11) |
-| `ValidatedHandlerFunction`     | Handler signature that receives validated request data.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L18) |
-| `ValidationLevel`              |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L8)     |
-| `ValidationOptions`            | Options for physical filesystem admission.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L28)    |
-| `ValidationResult`             |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L10)    |
+| Name                            | Description                                                                          | Source                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `ApplicationIdentity`           | Authenticated application user context exposed during a request.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/application-auth/types.ts#L14)   |
+| `AuthClaimPrimitive`            | A scalar value retained from authenticated provider claims.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/application-auth/types.ts#L2)    |
+| `AuthClaimValue`                | A JSON-safe value retained from authenticated provider claims.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/application-auth/types.ts#L5)    |
+| `AuthConfig`                    | Application authentication. Runtime validation requires exactly one configured mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L65)    |
+| `BasicAuthConfig`               |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L12)    |
+| `BearerAuthConfig`              |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L18)    |
+| `CacheStrategy`                 |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L11)      |
+| `CORSConfig`                    |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L1)     |
+| `CORSHeaderOptions`             |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L34)          |
+| `CORSOptions`                   | CORS policy accepted by asynchronous middleware and preflight APIs.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L7)           |
+| `CORSPreflightOptions`          |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L27)          |
+| `CORSValidationResult`          |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L21)          |
+| `CSPDirectives`                 |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L10)    |
+| `CsrfConfig`                    |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L35)             |
+| `CsrfTokenOptions`              |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L42)             |
+| `HandlerHelpers`                |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L19)        |
+| `LexicalPathValidationOptions`  | Options for lexical containment checks that never inspect a filesystem.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L33)    |
+| `OidcAuthConfig`                | OpenID Connect authentication configured through environment-backed credentials.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L23)    |
+| `OriginValidator`               |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L2)           |
+| `ParseFormOptions`              |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L39)   |
+| `ParseJsonOptions`              |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L28)   |
+| `ParseQueryOptions`             |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L43)   |
+| `PathValidationPolicyOptions`   | Filesystem-independent policy fields shared by physical path presets.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L18)    |
+| `RequestLimits`                 |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L8)    |
+| `ResponseBuilderConfig`         |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L27)      |
+| `SecureFsConfig`                |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L56)                |
+| `SecurityConfig`                |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/server.ts#L11)                      |
+| `SecurityContext`               |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L39)                |
+| `SecurityEvent`                 |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L65)                |
+| `SerializedApplicationIdentity` | Serializable authenticated application user context.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/application-auth/types.ts#L26)   |
+| `SerializedAuthClaims`          | An immutable snapshot of authenticated provider claims.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/application-auth/types.ts#L11)   |
+| `SyncCORSConfig`                | CORS policy accepted by synchronous response-building APIs.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L17)          |
+| `SyncCORSHeaderOptions`         | Header options accepted by synchronous CORS response helpers.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L42)          |
+| `SyncOriginValidator`           |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L1)           |
+| `TrustedProxyAuthConfig`        | Identity headers accepted from explicitly trusted reverse-proxy peers.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/types.ts#L53)    |
+| `ValidatedData`                 |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L47)   |
+| `ValidatedHandlerConfig`        | Configuration for `createValidatedHandler()`.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L11) |
+| `ValidatedHandlerFunction`      | Handler signature that receives validated request data.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L18) |
+| `ValidationLevel`               |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L8)     |
+| `ValidationOptions`             | Options for physical filesystem admission.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L28)    |
+| `ValidationResult`              |                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L10)    |

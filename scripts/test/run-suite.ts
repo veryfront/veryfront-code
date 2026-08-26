@@ -276,6 +276,7 @@ async function selectProfileFiles(
     case "coverage:integration":
       return candidates.filter((path) =>
         path.startsWith("tests/") && isDenoDiscoveredTest(path) &&
+        !path.startsWith("tests/bun/") &&
         !path.startsWith("tests/e2e/") &&
         path !== "tests/integration/compiled-binary-e2e.test.ts"
       );

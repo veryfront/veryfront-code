@@ -163,6 +163,14 @@ not retry only because a shared proxy acknowledgment is delayed.
 
 ## Verify it worked
 
+If the app uses [Application authentication](./application-auth.md), configure
+`APP_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and
+`VERYFRONT_AUTH_SESSION_SECRET` in the deployment environment. Store the client
+secret and session secret as deployment secrets. Every horizontally scaled
+instance for the same environment must receive the same values. Rotate the
+session secret as a coordinated deployment because old sessions are rejected
+after rotation.
+
 Use the environment URL that Deploy printed and repeat the check from
 development and preview. Validate the status or behavior that the selected
 route normally returns.

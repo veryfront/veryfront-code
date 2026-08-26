@@ -52,10 +52,16 @@ describe("errors/catalog/module-errors", () => {
       assertEquals(solution?.example?.includes("importMap"), true);
     });
 
-    it("dependency-missing should have an example", () => {
+    it("dependency-missing should give package-neutral recovery guidance", () => {
       const solution = MODULE_ERROR_CATALOG["dependency-missing"];
-      assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example?.includes("react"), true);
+      assertEquals(solution?.example, undefined);
+      assertEquals(
+        solution?.steps?.some((step) => step.includes("project package manager")),
+        true,
+      );
+      assertEquals(JSON.stringify(solution).toLowerCase().includes("react"), false);
+      assertEquals(JSON.stringify(solution).includes("<PACKAGE_SPECIFIER>"), false);
+      assertEquals(JSON.stringify(solution).includes("deno add"), false);
     });
 
     it("lockfile recovery guidance should use the supported clear command", () => {

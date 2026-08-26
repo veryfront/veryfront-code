@@ -138,6 +138,18 @@ describe("ERROR_SOLUTIONS", () => {
     });
   });
 
+  describe("missing-deps", () => {
+    it("should keep recovery guidance package-manager neutral", () => {
+      const sol = ERROR_SOLUTIONS["missing-deps"];
+      assertExists(sol);
+
+      assertEquals(sol.example, undefined);
+      assert(sol.steps?.some((step) => step.includes("project package manager")));
+      assertEquals(JSON.stringify(sol).includes("<PACKAGE_SPECIFIER>"), false);
+      assertEquals(JSON.stringify(sol).includes("deno add"), false);
+    });
+  });
+
   it("should expose immutable solution definitions", () => {
     const missingConfig = ERROR_SOLUTIONS["missing-config"];
     assertExists(missingConfig);
