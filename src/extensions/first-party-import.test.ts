@@ -214,6 +214,62 @@ describe("first-party extension imports", () => {
       );
     });
 
+    it("parses Deno packed source probes without hiding transitive failures", () => {
+      const expectedSource =
+        "/app/node_modules/veryfront/esm/extensions/ext-bundler-esbuild/src/index.ts";
+      const missingWorkspaceSource = Object.assign(
+        new Error(
+          `Unable to load ${expectedSource}\n  Caused by:\n    No such file or directory (os error 2)`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingWorkspaceSource, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
+      const quotedImporterSourceMiss = Object.assign(
+        new Error(
+          `[ERR_MODULE_NOT_FOUND] Cannot find module 'file://${expectedSource}' imported from 'file:///app/node_modules/veryfront/esm/src/extensions/first-party-import.js'`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(quotedImporterSourceMiss, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
+      const missingTransitiveDependency = Object.assign(
+        new Error(
+          "Unable to load /app/node_modules/missing-helper/index.ts\n  Caused by:\n    No such file or directory (os error 2)",
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingTransitiveDependency, [
+          `file://${expectedSource}`,
+        ]),
+        false,
+      );
+
+      const quotedTransitiveDependency = Object.assign(
+        new Error(
+          "[ERR_MODULE_NOT_FOUND] Cannot find package 'missing-helper' imported from 'file:///app/node_modules/@veryfront/ext-bundler-esbuild/esm/src/index.js'",
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(quotedTransitiveDependency, [
+          "@veryfront/ext-bundler-esbuild",
+        ]),
+        false,
+      );
+    });
+
     it("does not misread a broken transitive dependency as a missing extension", () => {
       const transitiveError = new Error(
         "Cannot find package 'jose' imported from /app/node_modules/@veryfront/ext-auth-jwt/esm/src/index.js",
