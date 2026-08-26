@@ -7,6 +7,9 @@ describe("observability/tracing/span-names", () => {
   it("should be a frozen-like constant object", () => {
     assertEquals(typeof SpanNames, "object");
     assertEquals(Array.isArray(SpanNames), false);
+    assertEquals(Object.isFrozen(SpanNames), true);
+    assertEquals(Reflect.set(SpanNames, "HTTP_CLIENT_FETCH", "tenant.override"), false);
+    assertEquals(SpanNames.HTTP_CLIENT_FETCH, "http.client.fetch");
   });
 
   it("should have expected span names", () => {

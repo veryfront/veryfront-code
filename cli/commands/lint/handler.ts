@@ -1,6 +1,6 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess, logSuccess } from "#cli/utils";
-import { runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { parseLintJsonOutput } from "./command.ts";
 

@@ -129,7 +129,8 @@ export async function getStaticProps(
 
 ```typescript
 import { DataFetcher } from "#data";
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const adapter = await runtime.get();
 const fetcher = new DataFetcher({

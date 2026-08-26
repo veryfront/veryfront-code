@@ -8,7 +8,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import type { Tool } from "#veryfront/tool";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";

@@ -114,3 +114,4 @@ export const SpanNames = {
 
   SHARED_SERVICES_INIT: "shared.services.init",
 } as const;
+Object.freeze(SpanNames);

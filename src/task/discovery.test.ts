@@ -8,7 +8,7 @@ import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
 import {
   deriveTaskId,

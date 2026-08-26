@@ -3,7 +3,7 @@
  */
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
-import { onSignal as registerSignalHandler } from "veryfront/platform";
+import { onSignal as registerSignalHandler } from "#cli/process-lifecycle";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 

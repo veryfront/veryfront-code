@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
-import { isNotFoundError, runtime, type RuntimeAdapter } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
+import { isNotFoundError, type RuntimeAdapter } from "veryfront/platform";
 import { getConfig, type VeryfrontConfig } from "veryfront/config";
 import { CONFIG_INVALID } from "veryfront/errors";
 import { buildProduction } from "veryfront/build";
@@ -363,7 +364,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
             error: error instanceof Error ? error.message : String(error),
           });
           await releaseExtensions();
-          const { exit } = await import("veryfront/platform");
+          const { exit } = await import("#cli/process-lifecycle");
           exit(1);
           return;
         }

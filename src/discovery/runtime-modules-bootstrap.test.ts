@@ -49,4 +49,15 @@ describe("compiled discovery runtime modules", () => {
       );
     }
   });
+
+  it("registers only the public metrics facade", () => {
+    const metricsModule = getDiscoveryRuntimeModules()["veryfront/metrics"] as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals("__resetForTests" in metricsModule, false);
+    assertEquals("__flushForTests" in metricsModule, false);
+    assertEquals(Object.isFrozen(metricsModule.metrics), true);
+  });
 });

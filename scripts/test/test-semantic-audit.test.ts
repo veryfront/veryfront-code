@@ -494,6 +494,28 @@ cwd();
     );
   });
 
+  it("classifies the CLI process environment alias", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
+import { exit } from "#cli/process-lifecycle";
+getEnv("MODE");
+setEnv("MODE", "test");
+deleteEnv("MODE");
+exit(1);
+`,
+        "cli/process-env-alias.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "getEnv"],
+        ["process", "setEnv"],
+        ["process", "deleteEnv"],
+        ["process", "exit"],
+      ],
+    );
+  });
+
   it("classifies process wrappers imported from the public platform barrel", () => {
     assertEquals(
       collectSemanticMarkers(

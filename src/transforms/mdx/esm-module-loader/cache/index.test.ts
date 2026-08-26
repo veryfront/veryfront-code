@@ -24,7 +24,7 @@ import { exists, readTextFile, remove, writeTextFile } from "#veryfront/compat/f
 import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { getCycleManifestGeneration } from "../cycle-manifest-lifecycle.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
-import { rendererLogger as log } from "#veryfront/utils";
+import { rendererLogger as log } from "#veryfront/utils/logger/logger.ts";
 import {
   buildMdxEsmModuleFileName,
   buildMdxEsmPathCacheKey,

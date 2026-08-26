@@ -1,5 +1,5 @@
 import { join, relative } from "veryfront/platform/path";
-import { runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { ApiRouteMatcher, discoverAppRoutes, discoverPagesRoutes } from "veryfront/routing";

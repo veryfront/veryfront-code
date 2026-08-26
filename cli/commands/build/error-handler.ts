@@ -1,7 +1,8 @@
 import { brand, dim } from "#cli/ui";
 import { cliLogger, isVerbose, logError } from "#cli/utils";
+import { exit } from "#cli/process-lifecycle";
 import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
-import { exit, getStdout } from "veryfront/platform";
+import { getStdout } from "veryfront/platform";
 
 const STACK_FRAME_WITH_PARENS =
   /^(\s*at\s+.*\()(file:\/\/\/[^)\r\n]+|\/[^)\r\n]+|[A-Za-z]:[\\/][^)\r\n]+)(:\d+:\d+\).*)$/;

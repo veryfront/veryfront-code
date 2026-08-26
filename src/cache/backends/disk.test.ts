@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
-import { logger } from "#veryfront/utils";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import { DiskCacheBackend } from "./disk.ts";
 import { CacheValueTooLargeError } from "../bounded-read.ts";
 import {

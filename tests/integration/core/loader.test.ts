@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { getAdapter } from "#veryfront/platform";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "#veryfront/config";
 import { VeryfrontError } from "#veryfront/errors";
 import { remove, writeTextFile } from "#veryfront/testing/deno-compat";
