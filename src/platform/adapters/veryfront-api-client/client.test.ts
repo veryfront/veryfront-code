@@ -21,6 +21,15 @@ type ResolvedRetryConfig = {
 };
 
 describe("VeryfrontApiClient", () => {
+  it("seals every shared API client prototype reachable from a public instance", () => {
+    const client = createClient();
+    const operations = (client as unknown as { operations: object }).operations;
+
+    assertEquals(Object.isFrozen(VeryfrontApiClient.prototype), true);
+    assertEquals(Object.isFrozen(Object.getPrototypeOf(operations)), true);
+    assertEquals(Reflect.set(Object.getPrototypeOf(operations), "getToken", () => "stolen"), false);
+  });
+
   describe("token priority", () => {
     it("uses config token when no request token set", () => {
       const client = createClient();
@@ -144,10 +153,12 @@ describe("VeryfrontApiClient", () => {
       const mutable = client as unknown as {
         operations: { getProject: (projectRef: string) => Promise<{ id: string }> };
       };
-      mutable.operations.getProject = () => {
-        getProjectCalls++;
-        return Promise.resolve({ id: "11111111-2222-3333-4444-555555555555" });
-      };
+      Object.defineProperty(mutable.operations, "getProject", {
+        value: () => {
+          getProjectCalls++;
+          return Promise.resolve({ id: "11111111-2222-3333-4444-555555555555" });
+        },
+      });
 
       await Promise.all([client.initialize(), client.initialize()]);
 
@@ -211,16 +222,25 @@ describe("VeryfrontApiClient", () => {
           getBranchFile: () => Promise<never>;
         };
       };
-      mutable.operations.listBranchFiles = (_projectRef, _branchRef, options) => {
-        listed.push(options);
-        return Promise.resolve({
-          files: [{ path: "components/Button.tsx", content: "export default Button;" }],
-        });
-      };
-      mutable.operations.getBranchFile = () => {
-        perFileReads++;
-        return Promise.reject(new Error("unexpected per-file read"));
-      };
+      Object.defineProperties(mutable.operations, {
+        listBranchFiles: {
+          value: (_projectRef: string, _branchRef: string, options: {
+            limit?: number;
+            pattern?: string;
+          }) => {
+            listed.push(options);
+            return Promise.resolve({
+              files: [{ path: "components/Button.tsx", content: "export default Button;" }],
+            });
+          },
+        },
+        getBranchFile: {
+          value: () => {
+            perFileReads++;
+            return Promise.reject(new Error("unexpected per-file read"));
+          },
+        },
+      });
 
       assertEquals(
         await client.searchFilesWithContent("components/Button.*"),
@@ -414,26 +434,32 @@ describe("VeryfrontApiClient", () => {
           ) => Promise<Uint8Array>;
         };
       };
-      mutable.operations.getBranchFileContentBytesWithinLimit = (
-        projectRef,
-        branchRef,
-        path,
-        maximumBytes,
-        options,
-      ) => {
-        calls.push([projectRef, branchRef, path, maximumBytes, options?.expectedMissing]);
-        return Promise.resolve(new Uint8Array([1]));
-      };
-      mutable.operations.getReleaseFileContentBytesWithinLimit = (
-        projectRef,
-        releaseId,
-        path,
-        maximumBytes,
-        options,
-      ) => {
-        calls.push([projectRef, releaseId, path, maximumBytes, options?.expectedMissing]);
-        return Promise.resolve(new Uint8Array([2]));
-      };
+      Object.defineProperties(mutable.operations, {
+        getBranchFileContentBytesWithinLimit: {
+          value: (
+            projectRef: string,
+            branchRef: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => {
+            calls.push([projectRef, branchRef, path, maximumBytes, options?.expectedMissing]);
+            return Promise.resolve(new Uint8Array([1]));
+          },
+        },
+        getReleaseFileContentBytesWithinLimit: {
+          value: (
+            projectRef: string,
+            releaseId: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => {
+            calls.push([projectRef, releaseId, path, maximumBytes, options?.expectedMissing]);
+            return Promise.resolve(new Uint8Array([2]));
+          },
+        },
+      });
 
       assertEquals(
         [

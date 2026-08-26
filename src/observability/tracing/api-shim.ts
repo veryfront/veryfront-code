@@ -639,6 +639,8 @@ export const trace = {
 
 const publicSpanFacades = new IntrinsicWeakMap<object, Span>();
 const publicSpanTargets = new IntrinsicWeakMap<object, Span>();
+const publicContextFacades = new IntrinsicWeakMap<object, Context>();
+const publicContextTargets = new IntrinsicWeakMap<object, Context>();
 
 function weakMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
   return IntrinsicReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
@@ -706,6 +708,62 @@ export function unwrapPublicSpan(span: Span): Span {
   return weakMapGet(publicSpanTargets, span) ?? span;
 }
 
+function isWeakMapKey(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function exposeKnownProviderValue(value: unknown): unknown {
+  if (!isWeakMapKey(value)) return value;
+  return weakMapGet(publicSpanFacades, value) ??
+    weakMapGet(publicContextFacades, value) ??
+    value;
+}
+
+function restoreKnownProviderValue(value: unknown): unknown {
+  if (!isWeakMapKey(value)) return value;
+  return weakMapGet(publicSpanTargets, value) ??
+    weakMapGet(publicContextTargets, value) ??
+    value;
+}
+
+/** @internal Wrap a provider-owned context before returning it to project code. */
+export function createPublicContext(providerContext: Context): Context {
+  const existing = weakMapGet(publicContextFacades, providerContext);
+  if (existing) return existing;
+
+  const getValue = providerContext.getValue;
+  const setValue = providerContext.setValue;
+  const deleteValue = providerContext.deleteValue;
+  const facade: Context = IntrinsicObjectFreeze({
+    getValue(key: symbol): unknown {
+      const value = IntrinsicReflectApply(getValue, providerContext, [key]);
+      if (key === ACTIVE_SPAN_CONTEXT_KEY && isWeakMapKey(value)) {
+        return createPublicSpan(value as Span);
+      }
+      return exposeKnownProviderValue(value);
+    },
+    setValue(key: symbol, value: unknown): Context {
+      const next = IntrinsicReflectApply(setValue, providerContext, [
+        key,
+        restoreKnownProviderValue(value),
+      ]) as Context;
+      return createPublicContext(next);
+    },
+    deleteValue(key: symbol): Context {
+      const next = IntrinsicReflectApply(deleteValue, providerContext, [key]) as Context;
+      return createPublicContext(next);
+    },
+  });
+  weakMapSet(publicContextFacades, providerContext, facade);
+  weakMapSet(publicContextTargets, facade, providerContext);
+  return facade;
+}
+
+/** @internal Restore a provider-owned context at an internal tracing boundary. */
+export function unwrapPublicContext<T extends object>(ctx: T): T | Context {
+  return weakMapGet(publicContextTargets, ctx) ?? ctx;
+}
+
 /**
  * Read-only tracing facade for the public `veryfront/observability` surface.
  *
@@ -730,7 +788,7 @@ export const publicTrace: Readonly<
         return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
           spanName,
           second,
-          third,
+          unwrapPublicContext(third as Context),
           (span: Span) => callback(createPublicSpan(span)),
         ]);
       }
@@ -755,7 +813,7 @@ export const publicTrace: Readonly<
           IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
             spanName,
             options,
-            activeContext,
+            activeContext ? unwrapPublicContext(activeContext) : activeContext,
           ]) as Span,
         );
       },
@@ -763,10 +821,12 @@ export const publicTrace: Readonly<
     });
   },
   setSpan(ctx: Context, span: Span): Context {
-    return trace.setSpan(ctx, unwrapPublicSpan(span));
+    return createPublicContext(
+      trace.setSpan(unwrapPublicContext(ctx), unwrapPublicSpan(span)),
+    );
   },
   getSpan(ctx: Context): Span | undefined {
-    const span = trace.getSpan(ctx);
+    const span = trace.getSpan(unwrapPublicContext(ctx));
     return span ? createPublicSpan(span) : undefined;
   },
   getActiveSpan(): Span | undefined {

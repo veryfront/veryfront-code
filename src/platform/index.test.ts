@@ -31,10 +31,17 @@ describe("platform/index.ts exports", () => {
       const { VeryfrontApiClient } = await importIndex();
       assertExists(VeryfrontApiClient);
       assertEquals(typeof VeryfrontApiClient, "function");
+      assertEquals(Object.isFrozen(VeryfrontApiClient.prototype), true);
+      assertEquals(Reflect.set(VeryfrontApiClient.prototype, "setProjectSlug", () => {}), false);
     });
   });
 
   describe("compat re-exports", () => {
+    it("does not expose host command execution", async () => {
+      const publicPlatform = await importIndex();
+      assertEquals("runCommand" in publicPlatform, false);
+    });
+
     it("should export the host runtime seam", async () => {
       const publicPlatform = await importIndex();
       const { createInMemoryHostRuntime, isHostExit } = publicPlatform;

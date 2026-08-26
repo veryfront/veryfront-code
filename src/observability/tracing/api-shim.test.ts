@@ -108,7 +108,26 @@ describe("observability/tracing/api-shim", () => {
 
     it("wraps provider-owned tracers and spans returned by the public facade", () => {
       const spanPrototype = {};
+      const contextPrototype = {};
       const calls: string[] = [];
+      const contextValues = new Map<symbol, unknown>();
+      const providerContext = Object.assign(Object.create(contextPrototype), {
+        getValue(this: unknown, key: symbol) {
+          assertStrictEquals(this, providerContext);
+          return contextValues.get(key);
+        },
+        setValue(this: unknown, key: symbol, value: unknown) {
+          assertStrictEquals(this, providerContext);
+          contextValues.set(key, value);
+          return providerContext;
+        },
+        deleteValue(this: unknown, key: symbol) {
+          assertStrictEquals(this, providerContext);
+          contextValues.delete(key);
+          return providerContext;
+        },
+      }) as Context;
+      const receivedContexts: Array<Context | undefined> = [];
       const span = Object.assign(Object.create(spanPrototype), {
         setAttribute(this: unknown) {
           assertStrictEquals(this, span);
@@ -149,12 +168,14 @@ describe("observability/tracing/api-shim", () => {
         },
       }) as Span;
       const providerTracer = {
-        startSpan(this: unknown) {
+        startSpan(this: unknown, _name: string, _options: unknown, activeContext?: Context) {
           assertStrictEquals(this, providerTracer);
+          receivedContexts.push(activeContext);
           return span;
         },
         startActiveSpan(this: unknown, _name: string, ...args: unknown[]) {
           assertStrictEquals(this, providerTracer);
+          if (args.length === 3) receivedContexts.push(args[1] as Context);
           const callback = args[args.length - 1] as (span: Span) => unknown;
           return callback(span);
         },
@@ -197,23 +218,51 @@ describe("observability/tracing/api-shim", () => {
         publicTracer.startActiveSpan(
           "request",
           { kind: SpanKind.SERVER },
-          context.active(),
+          providerContext,
           (activeSpan) => activeSpan,
         ),
         publicSpan,
       );
       setGlobalActiveSpanAccessor({
         getActiveSpan: () => span,
-        getSpan: () => span,
+        getSpan(ctx) {
+          assertStrictEquals(ctx, providerContext);
+          return span;
+        },
         setSpan(ctx, activeSpan) {
+          assertStrictEquals(ctx, providerContext);
           assertStrictEquals(activeSpan, span);
           return ctx;
         },
       });
-      const activeContext = context.active();
+      const activeContext = publicTrace.setSpan(providerContext, publicSpan);
+      assertNotStrictEquals(activeContext, providerContext);
+      assertNotStrictEquals(Object.getPrototypeOf(activeContext), contextPrototype);
+      assertEquals(Object.isFrozen(activeContext), true);
+      assertEquals(Reflect.set(activeContext, "getValue", () => undefined), false);
+      const projectContextKey = Symbol("project-context");
+      assertStrictEquals(activeContext.setValue(projectContextKey, "value"), activeContext);
+      assertEquals(activeContext.getValue(projectContextKey), "value");
+      assertStrictEquals(activeContext.deleteValue(projectContextKey), activeContext);
+      assertEquals(activeContext.getValue(projectContextKey), undefined);
+      assertStrictEquals(
+        publicTracer.startSpan("scoped", undefined, activeContext),
+        publicSpan,
+      );
+      assertStrictEquals(
+        publicTracer.startActiveSpan(
+          "request",
+          { kind: SpanKind.SERVER },
+          activeContext,
+          (activeSpan) => activeSpan,
+        ),
+        publicSpan,
+      );
       assertStrictEquals(publicTrace.getActiveSpan(), publicSpan);
       assertStrictEquals(publicTrace.getSpan(activeContext), publicSpan);
       assertStrictEquals(publicTrace.setSpan(activeContext, publicSpan), activeContext);
+      assertStrictEquals(receivedContexts[1], providerContext);
+      assertStrictEquals(receivedContexts[2], providerContext);
       assertEquals(calls, [
         "setAttribute",
         "setAttributes",
@@ -223,6 +272,7 @@ describe("observability/tracing/api-shim", () => {
         "updateName",
         "spanContext",
         "end",
+        "spanContext",
         "spanContext",
       ]);
     });

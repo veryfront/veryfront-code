@@ -402,6 +402,7 @@ describe("observability/tracing/otlp-setup", () => {
     // With the api-shim, extractContext always returns a context object (noop when no provider).
     const ctx = extractContext(new Headers());
     assertExists(ctx);
+    assertEquals(Object.isFrozen(ctx), true);
   });
 
   it("injectContext should leave headers unchanged when APIs are unavailable", async () => {
@@ -469,7 +470,9 @@ describe("observability/tracing/otlp-setup", () => {
   });
 
   it("span helpers reuse the resolved tracer until the provider changes", async () => {
-    const { startServerSpan, withSpan, withSpanSync } = await import("./otlp-setup.ts");
+    const { startServerSpan, withContext, withSpan, withSpanSync } = await import(
+      "./otlp-setup.ts"
+    );
 
     let getTracerCalls = 0;
     const spanContext: SpanContext = {
@@ -541,6 +544,8 @@ describe("observability/tracing/otlp-setup", () => {
     assertExists(serverSpan);
     assertNotStrictEquals(serverSpan.span, span);
     assertEquals(Object.isFrozen(serverSpan.span), true);
+    assertEquals(Object.isFrozen(serverSpan.context), true);
+    assertEquals(await withContext(serverSpan.context, async () => "scoped"), "scoped");
     assertEquals(getTracerCalls, 1);
 
     setGlobalTracerProvider({

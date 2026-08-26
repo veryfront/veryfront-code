@@ -24,7 +24,6 @@ export {
   isStdoutTTY,
   promptSync,
   readStdinByteSync,
-  runCommand,
   writeStdout,
   writeStdoutAsync,
 } from "./compat/process.ts";

@@ -655,9 +655,32 @@ describe("Tracing Module", () => {
     it("wraps spans returned by every top-level public helper", async () => {
       const started: StartedSpanRecord[] = [];
       const tracer = createRecordingTracer(started);
-      const owner = installGlobalTelemetryAPI({ tracerProvider: { getTracer: () => tracer } });
+      const providerContextPrototype = { providerContextMethod(): void {} };
+      const providerContextValues = new Map<symbol, unknown>();
+      const providerContext = Object.assign(Object.create(providerContextPrototype), {
+        getValue: (key: symbol) => providerContextValues.get(key),
+        setValue: (key: symbol, value: unknown) => {
+          providerContextValues.set(key, value);
+          return providerContext;
+        },
+        deleteValue: (key: symbol) => {
+          providerContextValues.delete(key);
+          return providerContext;
+        },
+      }) as Context;
+      const owner = installGlobalTelemetryAPI({
+        tracerProvider: { getTracer: () => tracer },
+        contextAccessor: {
+          active: () => providerContext,
+          with: (ctx, fn) => {
+            assertStrictEquals(ctx, providerContext);
+            return fn();
+          },
+        },
+      });
       const {
         createChildSpan,
+        getActiveContext,
         initTracing,
         shutdownTracing,
         startSpan,
@@ -673,6 +696,12 @@ describe("Tracing Module", () => {
         assertNotStrictEquals(parent, started[0]?.span);
         assertNotStrictEquals(Object.getPrototypeOf(parent), recordingSpanPrototype);
         assertEquals(Object.isFrozen(parent), true);
+
+        const publicContext = getActiveContext();
+        assertExists(publicContext);
+        assertNotStrictEquals(publicContext, providerContext);
+        assertNotStrictEquals(Object.getPrototypeOf(publicContext), providerContextPrototype);
+        assertEquals(Object.isFrozen(publicContext), true);
 
         const child = createChildSpan(parent, "child");
         assertExists(child);
@@ -699,6 +728,9 @@ describe("Tracing Module", () => {
         assertExists(syncSpan);
         assertNotStrictEquals(syncSpan, started[3]?.span);
         assertEquals(Object.isFrozen(syncSpan), true);
+
+        startSpan("context-parent", { parent: publicContext });
+        assertStrictEquals(started[4]?.parentContext, providerContext);
       } finally {
         shutdownTracing();
         owner.dispose();

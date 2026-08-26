@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { exitProcess, logSuccess } from "#cli/utils";
-import { runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,

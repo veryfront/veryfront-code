@@ -122,6 +122,21 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("getHostTelemetryEnv" in observability, false);
   });
 
+  it("seals diagnostic prototypes shared with host collectors", () => {
+    assertEquals(Object.isFrozen(observability.ErrorCollector.prototype), true);
+    assertEquals(Object.isFrozen(observability.FileLogSubscriber.prototype), true);
+    assertEquals(Object.isFrozen(observability.LogBuffer.prototype), true);
+    assertEquals(
+      Reflect.set(observability.ErrorCollector.prototype, "addRuntimeError", () => {}),
+      false,
+    );
+    assertEquals(
+      Reflect.set(observability.FileLogSubscriber.prototype, "getSubscriber", () => () => {}),
+      false,
+    );
+    assertEquals(Reflect.set(observability.LogBuffer.prototype, "append", () => {}), false);
+  });
+
   it("freezes the shared span kind and status registries", () => {
     assertEquals(Object.isFrozen(observability.SpanKind), true);
     assertEquals(Object.isFrozen(observability.SpanStatusCode), true);

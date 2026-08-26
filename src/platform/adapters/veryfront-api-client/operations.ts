@@ -883,3 +883,5 @@ export class VeryfrontAPIOperations {
     );
   }
 }
+
+Object.freeze(VeryfrontAPIOperations.prototype);

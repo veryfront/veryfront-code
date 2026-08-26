@@ -4,7 +4,7 @@
  */
 
 import { env } from "#cli/process-env";
-import { runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import { cliLogger as logger } from "#cli/utils";
 
 /**

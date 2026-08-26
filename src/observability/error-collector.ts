@@ -400,6 +400,8 @@ export class ErrorCollector {
   }
 }
 
+Object.freeze(ErrorCollector.prototype);
+
 let globalCollector: ErrorCollector | null = null;
 
 /** Return error collector. */

@@ -689,3 +689,5 @@ export class VeryfrontApiClient {
     });
   }
 }
+
+Object.freeze(VeryfrontApiClient.prototype);

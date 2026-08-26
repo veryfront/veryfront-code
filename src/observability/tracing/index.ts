@@ -5,7 +5,12 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createPublicSpan, unwrapPublicSpan } from "./api-shim.ts";
+import {
+  createPublicContext,
+  createPublicSpan,
+  unwrapPublicContext,
+  unwrapPublicSpan,
+} from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -57,9 +62,20 @@ function restoreSpan(span: Span | null): Span | null {
   return span ? unwrapPublicSpan(span) : null;
 }
 
+function exposeContext(ctx: Context | undefined): Context | undefined {
+  return ctx ? createPublicContext(ctx) : undefined;
+}
+
+function restoreContext(ctx: Context): Context {
+  return unwrapPublicContext(ctx);
+}
+
 function restoreSpanOptions(options: SpanOptions): SpanOptions {
   if (!options.parent) return options;
-  const parent = unwrapPublicSpan(options.parent as Span);
+  const spanParent = unwrapPublicSpan(options.parent as Span);
+  const parent = spanParent === options.parent
+    ? unwrapPublicContext(options.parent)
+    : spanParent;
   return parent === options.parent ? options : { ...options, parent };
 }
 
@@ -107,17 +123,17 @@ export function createChildSpan(
 
 /** Context for extract. */
 export function extractContext(headers: Headers): Context | undefined {
-  return getContextProp()?.extractContext(headers);
+  return exposeContext(getContextProp()?.extractContext(headers));
 }
 
 /** Context for inject. */
 export function injectContext(context: Context, headers: Headers): void {
-  getContextProp()?.injectContext(context, headers);
+  getContextProp()?.injectContext(restoreContext(context), headers);
 }
 
 /** Context for get active. */
 export function getActiveContext(): Context | undefined {
-  return getContextProp()?.getActiveContext();
+  return exposeContext(getContextProp()?.getActiveContext());
 }
 
 /** Applies active span. */

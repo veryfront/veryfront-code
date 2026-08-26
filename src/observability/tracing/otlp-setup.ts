@@ -20,6 +20,7 @@ import {
   type AttributeValue,
   type Context,
   context as shimContext,
+  createPublicContext,
   createPublicSpan,
   defaultTextMapGetter,
   defaultTextMapSetter,
@@ -32,6 +33,7 @@ import {
   SpanStatusCode,
   trace as shimTrace,
   type Tracer,
+  unwrapPublicContext,
   unwrapPublicSpan,
 } from "./api-shim.ts";
 import { formatTraceparent, parseTraceparent } from "./traceparent.ts";
@@ -429,7 +431,9 @@ export function extractContext(headers: Headers): Context | undefined {
   try {
     const carrier: Record<string, string> = {};
     for (const [k, v] of headers) carrier[k.toLowerCase()] = v;
-    return shimPropagation.extract(getActiveContextSafely(), carrier, defaultTextMapGetter);
+    return createPublicContext(
+      shimPropagation.extract(getActiveContextSafely(), carrier, defaultTextMapGetter),
+    );
   } catch (error) {
     reportTelemetryFailure("Failed to extract tracing context", error);
     return undefined;
@@ -457,7 +461,7 @@ export function startServerSpan(
   let spanPath: string;
   let span: Span;
   try {
-    ctx = (parentContext ?? getActiveContextSafely()) as Context;
+    ctx = unwrapPublicContext((parentContext ?? getActiveContextSafely()) as Context);
     spanPath = sanitizeUrlForSpan(path);
     const candidate = getTracingRuntime().tracer.startSpan(
       sanitizeTelemetryText(`${method} ${spanPath}`, MAX_SPAN_NAME_LENGTH),
@@ -490,7 +494,10 @@ export function startServerSpan(
   } catch (error) {
     reportTelemetryFailure("Failed to associate server span with context", error);
   }
-  return { span: createPublicSpan(span), context: spanContext };
+  return {
+    span: createPublicSpan(span),
+    context: createPublicContext(spanContext),
+  };
 }
 
 /** End an active server tracing span. */
@@ -602,7 +609,7 @@ export function setActiveSpanErrorStatus(error: unknown): void {
 /** Context for with. */
 export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
   return await runAsyncWithContextFallback(
-    (callback) => shimContext.with(spanContext as Context, callback),
+    (callback) => shimContext.with(unwrapPublicContext(spanContext as Context), callback),
     fn,
     (error) => logger.debug("Failed to activate explicit span context", error),
   );
