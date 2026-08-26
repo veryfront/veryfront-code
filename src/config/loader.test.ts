@@ -1028,20 +1028,36 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
-      it("summarizes a very long cause without quadratic rescanning", async () => {
-        const start = Date.now();
-        const error = await loadFailure(
-          "vf-config-long-cause-",
-          `throw new Error("a".repeat(100000));\n`,
-        );
-        const elapsed = Date.now() - start;
+      it("summarizes a very long cause in time proportional to its length", async () => {
+        // A wall-clock bound would couple this to runner speed, and a partial
+        // reintroduction of backtracking that stayed under it would pass
+        // silently. Instead time two inputs of the SAME length on the SAME
+        // machine, differing only in whether the pathological retry can start:
+        // digits cannot begin a scheme, letters can. Both measurements pay the
+        // same fixed overhead, so the ratio isolates the backtracking cost.
+        const size = 100000;
 
-        // REMOTE_URL is unanchored and runs over the whole message before the
-        // 200-character cap applies. With an unbounded scheme prefix it rescans
-        // to the end of the input at every letter, which measured ~17.9s for
-        // this input; bounding the scheme brings it to ~35ms. The threshold is
-        // deliberately loose -- it only has to separate those two orders.
-        assertEquals(elapsed < 5000, true, `summarize took ${elapsed}ms`);
+        const controlStart = Date.now();
+        await loadFailure(
+          "vf-config-long-control-",
+          `throw new Error("1".repeat(${size}));\n`,
+        );
+        const controlMs = Math.max(1, Date.now() - controlStart);
+
+        const probeStart = Date.now();
+        const error = await loadFailure(
+          "vf-config-long-probe-",
+          `throw new Error("a".repeat(${size}));\n`,
+        );
+        const probeMs = Date.now() - probeStart;
+
+        // Bounded, the two are within noise of each other. Unbounded, the probe
+        // measured ~17.9s against an unchanged control.
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
