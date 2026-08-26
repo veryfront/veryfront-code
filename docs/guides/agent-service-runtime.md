@@ -221,6 +221,8 @@ immutable endpoints and preserve the guarded source for everything else:
 import {
   loadAgentServiceEnvFiles,
   startNodeVeryfrontCloudAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
 } from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
@@ -243,6 +245,10 @@ const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
 
 await startNodeVeryfrontCloudAgentService({
   createRemoteToolSource,
+  mcpServers: [
+    veryfrontApiMcpServer(),
+    veryfrontStudioMcpServer(),
+  ],
 });
 ```
 

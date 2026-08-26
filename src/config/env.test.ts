@@ -255,13 +255,27 @@ describe("config/env", () => {
     it("should return api key when set", () => {
       setEnv("GOOGLE_API_KEY", "AIza-test");
       const config = getGoogleGenAIEnvConfig();
-      assertEquals(config.apiKey, "AIza-test");
+      assertEquals(config.apiKey, "AIza-test", "GOOGLE_API_KEY supplies the credential");
     });
 
     it("should fall back to GOOGLE_GENERATIVE_AI_API_KEY", () => {
       setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
       const config = getGoogleGenAIEnvConfig();
-      assertEquals(config.apiKey, "AIza-fallback");
+      assertEquals(
+        config.apiKey,
+        "AIza-fallback",
+        "GOOGLE_GENERATIVE_AI_API_KEY supplies the credential when GOOGLE_API_KEY is unset",
+      );
+    });
+
+    it("prefers GOOGLE_API_KEY over the fallback variable", () => {
+      setEnv("GOOGLE_API_KEY", "AIza-primary");
+      setEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-fallback");
+      assertEquals(
+        getGoogleGenAIEnvConfig().apiKey,
+        "AIza-primary",
+        "GOOGLE_API_KEY must take precedence over GOOGLE_GENERATIVE_AI_API_KEY",
+      );
     });
 
     it("should return a custom base URL from GOOGLE_GEMINI_BASE_URL", () => {

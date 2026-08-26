@@ -10,7 +10,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
 const CONFIG_FILE_NAME = "veryfront.config.js";
@@ -444,7 +444,7 @@ export default config as const;
 
     it("reports file provenance even when a present config matches default values", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({
+      const projectDir = await makeTempDir({
         prefix: "vf-config-provenance-",
       });
       const configPath = `${projectDir}/veryfront.config.js`;
@@ -627,20 +627,46 @@ export default config as const;
 
     it("should cache separately for different project directories", async () => {
       const adapter = setup();
+      const dirA = await makeTempDir({ prefix: "vf-config-project-a-" });
+      const dirB = await makeTempDir({ prefix: "vf-config-project-b-" });
+      const sourceA = 'export default { title: "A" };';
+      const sourceB = 'export default { title: "B" };';
 
-      const configA = await getConfig("/project-a", adapter);
-      const configB = await getConfig("/project-b", adapter);
+      try {
+        await Deno.writeTextFile(`${dirA}/veryfront.config.js`, sourceA);
+        adapter.fs.files.set(`${dirA}/veryfront.config.js`, sourceA);
+        await Deno.writeTextFile(`${dirB}/veryfront.config.js`, sourceB);
+        adapter.fs.files.set(`${dirB}/veryfront.config.js`, sourceB);
 
-      assert(configA !== null);
-      assert(configB !== null);
-      assertEquals(configA.title, "Veryfront App");
-      assertEquals(configB.title, "Veryfront App");
+        const configA = await getConfig(dirA, adapter);
+        const configB = await getConfig(dirB, adapter);
+
+        assertEquals(configA.title, "A", "project A keeps its own config");
+        assertEquals(
+          configB.title,
+          "B",
+          "project B must not read project A's cached config",
+        );
+        assertStrictEquals(
+          getCachedConfigSync(dirA),
+          configA,
+          "the sync cache serves project A the config it loaded",
+        );
+        assertStrictEquals(
+          getCachedConfigSync(dirB),
+          configB,
+          "the sync cache serves project B the config it loaded",
+        );
+      } finally {
+        await Deno.remove(dirA, { recursive: true });
+        await Deno.remove(dirB, { recursive: true });
+      }
     });
 
     describe("trusted config single-flight", () => {
       it("executes one exact concurrent config module once and shares its identity", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-single-flight-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -679,7 +705,7 @@ export default config as const;
 
       it("evicts rejected flights so a later request can retry", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-single-flight-retry-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -734,7 +760,7 @@ export default config as const;
         // checking syntax that was never the problem. `cause` is attached but
         // nothing on the way to the terminal reads it, at any log level.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-load-cause-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1502,7 +1528,7 @@ export default config as const;
 
       it("carries a thrown config's own message through to the reader", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-throw-cause-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1531,7 +1557,7 @@ export default config as const;
         // must not become a paste surface for an arbitrarily long, arbitrarily
         // formatted string, so the summary is one line and bounded.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-cause-bound-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1574,7 +1600,7 @@ export default config as const;
         // 190 and the `@` sits at 209, so an unredacted cut keeps nine
         // characters of the secret and loses the marker that identifies it.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-cause-credential-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1641,7 +1667,7 @@ export default config as const;
 
     it("should load and validate a JS config file", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-js-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-js-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { title: "JS Project" };';
 
@@ -1658,7 +1684,7 @@ export default config as const;
 
     it("loads config paths containing URL-significant characters", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf config #project-" });
+      const projectDir = await makeTempDir({ prefix: "vf config #project-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { title: "Encoded Path Project" };';
 
@@ -2672,23 +2698,31 @@ export default config as const;
         },
       });
 
-      await assertRejects(() =>
-        runWithRequestContext(
-          {
-            projectSlug: "demo",
-            projectId: "project-1",
-            token: "token",
-            branch: "feature/missing-hosted-context",
-          },
-          () =>
-            getConfig("/missing-hosted-context", adapter, {
-              cacheKey: "project-1",
-              sourceContext: {
-                productionMode: false,
-                branch: "feature/missing-hosted-context",
-              },
-            }),
-        )
+      const error = await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo",
+              projectId: "project-1",
+              token: "token",
+              branch: "feature/missing-hosted-context",
+            },
+            () =>
+              getConfig("/missing-hosted-context", adapter, {
+                cacheKey: "project-1",
+                sourceContext: {
+                  productionMode: false,
+                  branch: "feature/missing-hosted-context",
+                },
+              }),
+          ),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(
+        error.slug,
+        "cache-invariant-violation",
+        "hosted multi-project getConfig without context must fail as a cache invariant violation",
       );
       assertEquals(existsCalls, 0);
       assertEquals(readCalls, 0);
@@ -4987,7 +5021,7 @@ export default config as const;
 
     it("should try multiple config file names", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-mjs-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-mjs-" });
       const configPath = `${projectDir}/veryfront.config.mjs`;
       const source = 'export default { title: "MJS Project" };';
 
@@ -5018,7 +5052,7 @@ export default config as const;
 
     it("preserves schema validation errors instead of relabeling them as parse failures", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-invalid-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-invalid-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { dev: { port: "not-a-port" } };';
 

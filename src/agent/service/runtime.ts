@@ -177,12 +177,31 @@ function defaultTrace<TResult>(
 
 function normalizeAgentServiceTools(
   tools: RuntimeAgentMarkdownDefinition["tools"],
+  deniedTools: RuntimeAgentMarkdownDefinition["deniedTools"],
 ): AgentConfig["tools"] {
-  if (tools === undefined || tools === true) {
-    return tools;
+  if (!deniedTools?.length) {
+    if (tools === undefined || tools === true) return tools;
+    return Object.fromEntries(tools.map((toolId) => [toolId, true]));
   }
+  if (tools === true) {
+    // The public AgentConfig cannot express "all except". Fail closed rather
+    // than allowing an explicitly denied tool back into the service.
+    return Object.fromEntries(deniedTools.map((toolId) => [toolId, false]));
+  }
+  return {
+    ...Object.fromEntries((tools ?? []).map((toolId) => [toolId, true])),
+    ...Object.fromEntries(deniedTools.map((toolId) => [toolId, false])),
+  };
+}
 
-  return Object.fromEntries(tools.map((toolId) => [toolId, true]));
+function normalizeAgentServiceProviderTools(
+  providerTools: RuntimeAgentMarkdownDefinition["providerTools"],
+  deniedTools: RuntimeAgentMarkdownDefinition["deniedTools"],
+): string[] | undefined {
+  if (!providerTools) return undefined;
+  if (!deniedTools?.length) return providerTools;
+  const denied = new Set(deniedTools);
+  return providerTools.filter((toolId) => !denied.has(toolId));
 }
 
 export function combineAgentServiceLifecycle(
@@ -260,6 +279,14 @@ export function createAgentServiceRuntime<
     logger: options.logger,
   });
   const agentConfig = options.getAgentConfig();
+  const deniedToolCount = agentConfig.deniedTools?.length ?? 0;
+  const failClosedUnrestrictedSelector = agentConfig.tools === true && deniedToolCount > 0;
+  if (failClosedUnrestrictedSelector) {
+    options.logger.warn?.("Agent tool selection failed closed", {
+      agent_id: agentConfig.id,
+      denied_tool_count: deniedToolCount,
+    });
+  }
   const service = defineAgentService({
     serviceName: options.serviceName,
     agent: agent({
@@ -268,9 +295,12 @@ export function createAgentServiceRuntime<
       model: agentConfig.model,
       temperature: agentConfig.temperature,
       maxSteps: agentConfig.maxSteps,
-      providerTools: agentConfig.providerTools,
-      skills: agentConfig.skills,
-      tools: normalizeAgentServiceTools(agentConfig.tools),
+      providerTools: normalizeAgentServiceProviderTools(
+        agentConfig.providerTools,
+        agentConfig.deniedTools,
+      ),
+      skills: failClosedUnrestrictedSelector ? false : agentConfig.skills,
+      tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
     }),
     server: {
       port: config.PORT,

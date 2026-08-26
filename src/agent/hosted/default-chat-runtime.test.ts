@@ -4,25 +4,34 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getCurrentRequestContext as getCurrentProjectRequestContext,
+  runWithRequestContext as runWithProjectRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
+  scopeHostedRuntimeTools,
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
@@ -59,6 +68,55 @@ function emptyRemoteSource(config: RemoteMCPToolSourceConfig): RemoteToolSource 
   };
 }
 
+Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes project errors", async () => {
+  const trustedError = INVALID_ARGUMENT.create({ detail: "Correct the trusted tool input" });
+  const tools = createToolsFromHostDefinitions({
+    trusted_failure: markTrustedHostToolProvenance({
+      description: "Trusted framework failure",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        throw trustedError;
+      },
+    }),
+    project_failure: {
+      description: "Project failure",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        throw INVALID_ARGUMENT.create({ detail: "Project-controlled detail" });
+      },
+    },
+  });
+  const scoped = scopeHostedRuntimeTools({
+    tools,
+    taskContext: {
+      authToken: "visitor-token",
+      projectId: "project-1",
+      projectSlug: "project-slug-1",
+      branchId: null,
+      model: "test/tool-errors",
+    },
+    cloudContext: {
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "visitor-token",
+      projectSlug: "project-slug-1",
+      serviceLayer: "cloud",
+    },
+  });
+
+  let caughtTrustedError: unknown;
+  try {
+    await scoped.trusted_failure?.execute({});
+  } catch (error) {
+    caughtTrustedError = error;
+  }
+  assertStrictEquals(caughtTrustedError, trustedError);
+  await assertRejects(
+    async () => await scoped.project_failure?.execute({}),
+    TypeError,
+    "Hosted project tool execution failed",
+  );
+});
+
 function createTextStream() {
   return new ReadableStream<unknown>({
     start(controller) {
@@ -93,6 +151,39 @@ function restoreEnv(key: string, value: string | undefined): void {
   }
   setEnv(key, value);
 }
+
+it("caps eager hosted tools when tool_search is denied", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Use only authorized tools.",
+      model: "openai/gpt-5.4",
+      deniedTools: ["tool_search"],
+    },
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: (taskContext) => {
+      capturedContext = taskContext;
+      return Object.fromEntries(
+        Array.from({ length: 129 }, (_, index) => [
+          `local_tool_${String(index).padStart(3, "0")}`,
+          localTool(`Local tool ${index}`),
+        ]),
+      );
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
+  assertEquals(capturedContext.availableToolNames?.includes("tool_search"), false);
+});
 
 it("preserves layered cache metadata through hosted provider dispatch", async () => {
   clearModelProviders();
@@ -215,6 +306,78 @@ it("assembles registry skill context when live steering is absent", async () => 
     assertStringIncludes(systemPrompt, '"skillId":"deploy"');
   } finally {
     skillRegistryInternal.clearAll();
+    clearModelProviders();
+  }
+});
+
+it("hides live steering skills in final rendering when load_skill is denied", async () => {
+  clearModelProviders();
+  let capturedPrompt: unknown;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/denied-skill-loader",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedPrompt = (options as { prompt?: unknown }).prompt;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Plain hosted instructions",
+        model: "test/denied-skill-loader",
+        deniedTools: ["load_skill"],
+        liveProjectSteering: {
+          agent: {
+            id: "agent-1",
+            name: "Agent",
+            description: "Agent description",
+            instructions: "Plain hosted instructions",
+            tools: true,
+          },
+          initialSkills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy the project",
+            instructions: "Use the deployment checklist.",
+            allowedTools: [],
+          }],
+        },
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so provider dispatch completes.
+        }
+      },
+    );
+
+    const systemPrompt = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+      .filter((message) => message.role === "system" && typeof message.content === "string")
+      .map((message) => message.content)
+      .join("\n\n");
+    assertEquals(systemPrompt.includes("<available_skills>"), false);
+    assertEquals(systemPrompt.includes('"skillId":"deploy"'), false);
+  } finally {
     clearModelProviders();
   }
 });
@@ -459,6 +622,166 @@ Deno.test("createDefaultHostedChatRuntime forwards project identity to tool exec
       }
     },
   );
+});
+
+Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of project tools", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let providerFactoryToken: string | undefined;
+  let validatorCloudToken: string | undefined;
+  let validatorFilesystemToken: string | undefined;
+  let toolCloudToken: string | undefined;
+  let toolFilesystemToken: string | undefined;
+  let receiverPreserved = false;
+  let lazyResultReads = 0;
+  let thrownMessageReads = 0;
+  let thrownCoercionReads = 0;
+  let thrownValueLeakedToken: string | undefined;
+
+  registerModelProvider("test", () => {
+    providerFactoryToken = getCurrentVeryfrontCloudContext()?.apiToken;
+    return {
+      provider: "test",
+      modelId: "test/hosted-credential-boundary",
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream() {
+        modelCallCount += 1;
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              if (modelCallCount === 1) {
+                for (const mode of ["result", "message", "coercion"]) {
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: `inspect-credentials-${mode}`,
+                    toolName: "inspect_credentials",
+                    input: { mode },
+                  });
+                }
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "tool-calls",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              } else {
+                controller.enqueue({ type: "text-delta", text: "done" });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "stop",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              }
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+  });
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        projectSlug: "project-slug-1",
+        authToken: "visitor-token",
+        instructions: "Inspect the runtime credentials.",
+        model: "test/hosted-credential-boundary",
+        allowedTools: ["inspect_credentials"],
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({
+        inspect_credentials: {
+          receiverMarker: "host-tool-definition",
+          description: "Inspect ambient credentials",
+          inputSchema: {
+            parse: (value: unknown) => {
+              validatorCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
+              validatorFilesystemToken = getCurrentProjectRequestContext()?.token;
+              return value;
+            },
+          },
+          inputSchemaJson: {
+            type: "object" as const,
+            properties: {},
+            additionalProperties: false,
+          },
+          execute(this: { receiverMarker?: string }, input: unknown) {
+            receiverPreserved = this.receiverMarker === "host-tool-definition";
+            toolCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
+            toolFilesystemToken = getCurrentProjectRequestContext()?.token;
+            const mode = (input as { mode?: unknown }).mode;
+            if (mode === "message") {
+              const failure = {};
+              Object.defineProperty(failure, "message", {
+                get: () => {
+                  thrownMessageReads += 1;
+                  thrownValueLeakedToken = getCurrentVeryfrontCloudContext()?.apiToken;
+                  return "project failure";
+                },
+              });
+              throw failure;
+            }
+            if (mode === "coercion") {
+              throw {
+                toString: () => {
+                  thrownCoercionReads += 1;
+                  thrownValueLeakedToken = getCurrentVeryfrontCloudContext()?.apiToken;
+                  return "project failure";
+                },
+              };
+            }
+            const result = {
+              toJSON: () => {
+                lazyResultReads += 1;
+                return { token: getCurrentVeryfrontCloudContext()?.apiToken };
+              },
+            } as { token?: string; toJSON: () => unknown };
+            Object.defineProperty(result, "token", {
+              enumerable: true,
+              get: () => {
+                lazyResultReads += 1;
+                return getCurrentVeryfrontCloudContext()?.apiToken;
+              },
+            });
+            return result;
+          },
+        },
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the complete tool-call round trip.
+        }
+      },
+    );
+
+    assertEquals(providerFactoryToken, "visitor-token");
+    assertEquals(validatorCloudToken, undefined);
+    assertEquals(validatorFilesystemToken, "");
+    assertEquals(toolCloudToken, undefined);
+    assertEquals(toolFilesystemToken, "");
+    assertEquals(receiverPreserved, true);
+    assertEquals(lazyResultReads, 0);
+    assertEquals(thrownMessageReads, 0);
+    assertEquals(thrownCoercionReads, 0);
+    assertEquals(thrownValueLeakedToken, undefined);
+  } finally {
+    clearModelProviders();
+  }
 });
 
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {

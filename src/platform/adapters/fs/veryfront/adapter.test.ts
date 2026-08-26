@@ -783,6 +783,30 @@ describe("VeryfrontFSAdapter", () => {
       adapter.setRequestBranch(null);
       assertEquals(adapter.getRequestBranch(), null);
     });
+
+    it("names the snapshot identity after the per-request branch", () => {
+      const adapter = createAdapter();
+      assertEquals(
+        adapter.getSourceSnapshotIdentity(),
+        undefined,
+        "without a content context there is no identity to name",
+      );
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
+
+      // A request-scoped branch override retargets the snapshot, so freshness
+      // established for the previous identity must be detectable as stale.
+      adapter.setRequestBranch("feature");
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:feature");
+
+      adapter.clearRequestBranch();
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
+    });
   });
 
   describe("dispose", () => {
@@ -1238,6 +1262,331 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(listAllFilesCalls, 3);
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
+    });
+
+    it("does not reuse a freshness lease when the draft content changed", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v1",
+        "initialization must load the draft that existed at startup",
+      );
+
+      // The author edits the draft. The branch identity is unchanged, so the
+      // lease clock is the only thing between that edit and the next render.
+      draftContent = "v2";
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "a strict freshness check must consult the source authority instead of reusing the lease",
+      );
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v2",
+        "a strict freshness check must expose the edited draft, not the pre-edit snapshot",
+      );
+    });
+
+    it("uses cold initialization as the zero-age source snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "the listing fetched during cold initialization already satisfies this zero-age check",
+      );
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
+
+      draftContent = "v2";
+      (adapter as unknown as {
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      }).wsManager.deps.clearMemoryCaches();
+      await adapter.ensureSourceSnapshotFresh(
+        "invalidated-cold-document",
+        { maxAgeMs: 0 },
+        true,
+      );
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "an invalidation must prevent the cold-initialization shortcut from accepting old authority",
+      );
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
+    });
+
+    it("singleflights concurrent cold strict initialization", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      const listingStarted = Promise.withResolvers<void>();
+      const releaseListing = Promise.withResolvers<void>();
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = async () => {
+        listAllFilesCalls++;
+        const observedContent = draftContent;
+        if (listAllFilesCalls === 1) {
+          listingStarted.resolve();
+          await releaseListing.promise;
+        }
+        return [{
+          path: "pages/index.tsx",
+          version_id: observedContent,
+          content: observedContent,
+        }];
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      const first = adapter.ensureSourceSnapshotFresh("first-cold-document", { maxAgeMs: 0 });
+      const second = adapter.ensureSourceSnapshotFresh("second-cold-document", { maxAgeMs: 0 });
+      await listingStarted.promise;
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "concurrent cold documents must join one initialization authority request",
+      );
+
+      releaseListing.resolve();
+      await Promise.all([first, second]);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
+
+      draftContent = "v2";
+      await adapter.ensureSourceSnapshotFresh("later-strict-document", { maxAgeMs: 0 });
+      assertEquals(listAllFilesCalls, 2, "only joined cold callers may reuse initialization");
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
+    });
+
+    it("reuses a fresh lease when the caller accepts the default snapshot age", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: "v1",
+          content: "v1",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      // Sub-resource requests inside one page load must not fan out into a
+      // fresh listing each: the default lease still absorbs them.
+      await adapter.ensureSourceSnapshotFresh("preview-request-routing");
+      await adapter.ensureSourceSnapshotFresh("preview-request-routing");
+
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "default-strictness callers must reuse the lease rather than re-list the source tree",
+      );
+    });
+
+    it("refuses the lease under a zero age budget even when the clock steps backward", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      // A backward wall-clock step (NTP correction, host suspend) leaves the
+      // recorded check in the future, so the measured lease age is negative.
+      // A negative age is below every budget, so an age comparison alone would
+      // hand a zero-budget caller the lease it refused.
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt =
+        Date.now() + 60_000;
+      draftContent = "v2";
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "a zero age budget must bypass the lease unconditionally, not by comparing ages",
+      );
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v2",
+        "a backward clock step must not let a strict caller serve the pre-edit snapshot",
+      );
     });
 
     it("discards an in-flight refresh when the request branch changes", async () => {

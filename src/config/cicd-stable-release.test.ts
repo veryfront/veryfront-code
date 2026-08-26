@@ -136,6 +136,66 @@ describe("stable release intent", () => {
     }
   });
 
+  it("requests publication when the version bump is not in the final commit", async () => {
+    const repository = await createRepository();
+    try {
+      await Deno.writeTextFile(
+        `${repository.cwd}/deno.json`,
+        JSON.stringify({ version: "1.0.1" }),
+      );
+      await commitAll(repository.cwd, "bump version");
+      await Deno.writeTextFile(`${repository.cwd}/follow-up.txt`, "follow-up");
+      await commitAll(repository.cwd, "follow-up commit");
+
+      const result = await detectRelease(
+        repository.cwd,
+        repository.scriptPath,
+        "push",
+        "1.0.1",
+        repository.before,
+      );
+
+      assertEquals(result.code, 0, "the detection script must exit cleanly");
+      assertEquals(
+        result.stdout,
+        "true",
+        "a multi-commit push must compare against the pushed BEFORE revision, not HEAD~1",
+      );
+      assertEquals(result.stderr, "", "the detection script must not warn");
+    } finally {
+      await Deno.remove(repository.cwd, { recursive: true });
+    }
+  });
+
+  it("skips publication when deno.json changes without a version bump", async () => {
+    const repository = await createRepository();
+    try {
+      await Deno.writeTextFile(
+        `${repository.cwd}/deno.json`,
+        JSON.stringify({ version: "1.0.0", imports: {} }),
+      );
+      await commitAll(repository.cwd, "add an import map");
+
+      const result = await detectRelease(
+        repository.cwd,
+        repository.scriptPath,
+        "push",
+        "1.0.0",
+        repository.before,
+      );
+
+      assertEquals(result.code, 0, "the detection script must exit cleanly");
+      assertEquals(
+        result.stdout,
+        "false",
+        "only the .version field decides release intent",
+      );
+      assertEquals(result.stderr, "", "the detection script must not warn");
+    } finally {
+      await Deno.remove(repository.cwd, { recursive: true });
+    }
+  });
+
   it("treats manual dispatch as explicit release intent", async () => {
     const repository = await createRepository();
     try {

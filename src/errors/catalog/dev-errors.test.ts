@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildErrorDocsUrl } from "../diagnostic-policy.ts";
 import { DEV_ERROR_CATALOG } from "./dev-errors.ts";
 
 describe("errors/catalog/dev-errors", () => {
@@ -24,7 +25,11 @@ describe("errors/catalog/dev-errors", () => {
         assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
         assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
         assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
-        assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
+        assertEquals(
+          solution.docs,
+          buildErrorDocsUrl(slug),
+          `docs URL must be the canonical errors anchor for ${slug}`,
+        );
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
         assertEquals(
           (solution.steps?.length ?? 0) > 0,
@@ -32,6 +37,14 @@ describe("errors/catalog/dev-errors", () => {
           `steps should not be empty for ${slug}`,
         );
       }
+    });
+
+    it("should be frozen so the exported catalog cannot be mutated", () => {
+      assertEquals(
+        Object.isFrozen(DEV_ERROR_CATALOG),
+        true,
+        "DEV_ERROR_CATALOG must be frozen shared state",
+      );
     });
 
     it("should have 5 entries", () => {

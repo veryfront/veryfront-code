@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DiscoveryConfig, DiscoveryResult } from "#veryfront/discovery/types.ts";
-import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ExtendedFileSystemAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { runStartupDiscovery } from "./startup-discovery.ts";
 
@@ -35,6 +35,7 @@ function recorder() {
 
 /** Placeholder base dir: recorder() never touches the filesystem. */
 const PROJECT_DIR = "<PROJECT_DIR>";
+const dedicatedRuntimeAdapter = {} as RuntimeAdapter;
 
 /** No adapter is extended, so discovery takes the unscoped branch. */
 const noExtendedAdapters = (_fs: FileSystemAdapter): _fs is ExtendedFileSystemAdapter => false;
@@ -48,6 +49,7 @@ describe("server/startup-discovery", () => {
 
     await runStartupDiscovery({
       config: { baseDir: PROJECT_DIR },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: false,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
@@ -68,6 +70,7 @@ describe("server/startup-discovery", () => {
 
     await runStartupDiscovery({
       config: { baseDir: PROJECT_DIR, fsAdapter, verbose: true },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: false,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
@@ -91,6 +94,7 @@ describe("server/startup-discovery", () => {
 
     await runStartupDiscovery({
       config: { baseDir: PROJECT_DIR },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: false,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
@@ -108,6 +112,7 @@ describe("server/startup-discovery", () => {
 
     const outcome = await runStartupDiscovery({
       config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: true,
       discoverAll,
       isExtendedFSAdapter: allExtendedAdapters,
@@ -131,12 +136,31 @@ describe("server/startup-discovery", () => {
 
     await runStartupDiscovery({
       config: { baseDir: PROJECT_DIR },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: true,
       discoverAll,
       isExtendedFSAdapter: noExtendedAdapters,
     });
 
     assertEquals(calls[0]?.allowHostProjectCodeExecution, true);
+  });
+
+  it("denies host execution for unscoped discovery in a shared runtime", async () => {
+    const { calls, discoverAll } = recorder();
+    const runtimeAdapter = {
+      fs: { isMultiProjectMode: () => true },
+    } as unknown as RuntimeAdapter;
+
+    await runStartupDiscovery({
+      config: { baseDir: PROJECT_DIR },
+      runtimeAdapter,
+      allowHostProjectCodeExecution: true,
+      discoverAll,
+      isExtendedFSAdapter: noExtendedAdapters,
+    });
+
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0]?.allowHostProjectCodeExecution, false);
   });
 
   it("skips the scoped multi-project path rather than calling discovery ungranted", async () => {
@@ -150,6 +174,7 @@ describe("server/startup-discovery", () => {
       // Even with the deployment granting, the scoped branch must not pass it:
       // that path evaluates tenant source under a project context.
       config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
+      runtimeAdapter: dedicatedRuntimeAdapter,
       allowHostProjectCodeExecution: true,
       discoverAll,
       isExtendedFSAdapter: allExtendedAdapters,
@@ -182,6 +207,7 @@ describe("server/startup-discovery", () => {
     assertEquals(
       await runStartupDiscovery({
         config: { baseDir: PROJECT_DIR, projectSlug: "p", apiToken: "t", fsAdapter },
+        runtimeAdapter: dedicatedRuntimeAdapter,
         allowHostProjectCodeExecution: true,
         discoverAll: enforcing,
         isExtendedFSAdapter: allExtendedAdapters,
@@ -193,6 +219,7 @@ describe("server/startup-discovery", () => {
     assertEquals(
       await runStartupDiscovery({
         config: { baseDir: PROJECT_DIR },
+        runtimeAdapter: dedicatedRuntimeAdapter,
         allowHostProjectCodeExecution: true,
         discoverAll: enforcing,
         isExtendedFSAdapter: noExtendedAdapters,

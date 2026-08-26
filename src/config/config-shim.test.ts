@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createConfigShimModule,
@@ -21,10 +26,26 @@ describe("config shim", () => {
   it("matches the documented named root config exports", async () => {
     const module = await import(VERYFRONT_CONFIG_SHIM_URL);
 
-    assertEquals(typeof module.defineConfig, "function");
-    assertEquals(typeof module.defineConfigWithEnv, "function");
-    assertEquals(typeof module.getEnv, "function");
-    assertEquals(typeof module.mergeConfigs, "function");
+    assertStrictEquals(
+      module.defineConfig,
+      defineConfig,
+      "shim defineConfig must be the real defineConfig",
+    );
+    assertStrictEquals(
+      module.defineConfigWithEnv,
+      defineConfigWithEnv,
+      "shim defineConfigWithEnv must be the real defineConfigWithEnv",
+    );
+    assertStrictEquals(
+      module.getEnv,
+      getEnv,
+      "shim getEnv must be the real process getEnv",
+    );
+    assertStrictEquals(
+      module.mergeConfigs,
+      mergeConfigs,
+      "shim mergeConfigs must be the real mergeConfigs",
+    );
     assertEquals(module.default, undefined);
     assertEquals("source" in module, false);
     assertEquals("url" in module, false);

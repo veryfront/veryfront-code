@@ -4,7 +4,7 @@
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
-#      and activates the parser extension under Node
+#      and activates first-party extensions under Node and Deno
 #   2. the @huggingface/transformers optional peer is declared
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
@@ -183,6 +183,18 @@ const ast = await codeParser.parse({
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root deferred builtin did not register a working CodeParser"
+
+echo "== 1b. root install: workspace-source fallback loads under Deno"
+deno eval --node-modules-dir=auto "
+const loader = await import('./node_modules/veryfront/esm/src/extensions/first-party-import.js');
+const extension = await loader.importFirstPartyExtensionModule(
+  'ext-bundler-esbuild',
+  '@veryfront/ext-bundler-esbuild',
+);
+if (typeof extension.EsbuildBundler !== 'function') {
+  throw new Error('Deno could not load the packed bundler extension');
+}
+" || fail "Deno could not load the packed bundler extension"
 
 echo "== 2. root install: transformers optional peer declared"
 node -e "

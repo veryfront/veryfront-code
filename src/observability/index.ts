@@ -96,10 +96,7 @@ export type {
 } from "./tracing/api-shim.ts";
 
 // Shared-runtime telemetry environment helpers
-export {
-  getHostTelemetryEnv,
-  isReservedSharedRuntimeTelemetryEnvKey,
-} from "./tracing/telemetry-env.ts";
+export { isReservedSharedRuntimeTelemetryEnvKey } from "./tracing/telemetry-env.ts";
 
 // Per-request profiling
 export {
