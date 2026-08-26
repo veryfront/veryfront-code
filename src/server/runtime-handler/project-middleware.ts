@@ -24,6 +24,7 @@ import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import { runWithRetainedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -57,6 +58,35 @@ function resolvedEnvironment(ctx: HandlerContext): "production" | "preview" {
 
 function resolvedBranch(ctx: HandlerContext): string | null {
   return ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
+}
+
+/** Run one request phase inside the filesystem's authenticated tenant context. */
+export async function runInProjectFilesystemContext<T>(
+  ctx: HandlerContext,
+  isSharedProxy: boolean,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const fs = ctx.adapter.fs;
+  const effectiveProxyToken = ctx.proxyToken ?? ctx.requestContext?.token;
+  if (
+    !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !effectiveProxyToken ||
+    !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
+  ) {
+    return await operation();
+  }
+
+  return await fs.runWithContext(
+    ctx.projectSlug,
+    effectiveProxyToken,
+    operation,
+    ctx.projectId,
+    {
+      productionMode: resolvedEnvironment(ctx) === "production",
+      releaseId: ctx.releaseId ?? null,
+      branch: resolvedBranch(ctx),
+      environmentName: ctx.environmentName ?? null,
+    },
+  );
 }
 
 /** Request-scoped root middleware loader for every project runtime. */
@@ -208,32 +238,23 @@ export class ProjectMiddlewareRuntime {
 
       const composed = pipeline.compose();
       const middlewareContext = new MiddlewareContext(
-        createApplicationRequest(request),
+        createApplicationRequest(request, {
+          denyHeaders: ctx.applicationIdentityHeaderNames,
+        }),
         getProjectEnvSnapshot() ?? {},
+        undefined,
+        ctx.applicationIdentity ?? null,
       );
       return await composed(middlewareContext, next);
     };
+    const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+      runInProjectFilesystemContext(ctx, isSharedProxy, operation);
+    const executeWithPreparedSnapshot = () =>
+      runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware, {
+        runDeferredOperation: runInFilesystemContext,
+      });
 
-    const fs = ctx.adapter.fs;
-    if (
-      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !ctx.proxyToken ||
-      !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
-    ) {
-      return await executeMiddleware();
-    }
-
-    return fs.runWithContext(
-      ctx.projectSlug,
-      ctx.proxyToken,
-      executeMiddleware,
-      ctx.projectId,
-      {
-        productionMode: environment === "production",
-        releaseId: ctx.releaseId ?? null,
-        branch,
-        environmentName: ctx.environmentName ?? null,
-      },
-    );
+    return await runInFilesystemContext(executeWithPreparedSnapshot);
   }
 
   async #getMiddleware(

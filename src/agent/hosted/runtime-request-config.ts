@@ -28,8 +28,10 @@ export type HostedRuntimeRequestConfigAgent = Pick<
   | "temperature"
   | "maxSteps"
   | "tools"
+  | "deniedTools"
   | "providerTools"
   | "delegates"
+  | "skills"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -54,6 +56,8 @@ export type ResolvedHostedRuntimeRequestConfig = {
   requestedAllowedTools: string[] | undefined;
   requestedAllowedProviderTools: string[];
   includeRuntimeEssentialToolsWhenEmpty: boolean;
+  /** Tool names the agent config denied explicitly; never re-added downstream. */
+  deniedToolNames: string[] | undefined;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -142,10 +146,13 @@ export function resolveHostedRuntimeThinkingOverride(input: {
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
+  configuredDeniedTools?: RuntimeAgentMarkdownDefinition["deniedTools"];
   configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
+  configuredSkills: RuntimeAgentMarkdownDefinition["skills"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
   if (input.configuredTools === true) {
+    if (input.configuredDeniedTools?.length) return [];
     return input.requestedTools === undefined ? undefined : [...new Set(input.requestedTools)];
   }
 
@@ -157,7 +164,13 @@ export function resolveHostedRuntimeAllowedTools(input: {
     return [...configuredToolNames];
   }
 
-  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
+  const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
+    input.configuredSkills === true ||
+    (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
+  return [...new Set(input.requestedTools)].filter((toolName) =>
+    configuredToolNames.has(toolName) ||
+    (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
+  );
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -183,6 +196,8 @@ export function resolveHostedRuntimeRequestConfig(
     input.request.model ?? getForwardedHostedModelId(input.request.forwardedProps) ??
       input.agentConfig.model,
   );
+  const failClosedUnrestrictedToolDenials = input.agentConfig.tools === true &&
+    Boolean(input.agentConfig.deniedTools?.length);
 
   return {
     effectiveRuntimeOverrides,
@@ -199,13 +214,19 @@ export function resolveHostedRuntimeRequestConfig(
     requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
+      configuredDeniedTools: input.agentConfig.deniedTools,
       configuredDelegates: input.agentConfig.delegates,
+      configuredSkills: input.agentConfig.skills,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({
       configuredProviderTools: input.agentConfig.providerTools,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
-    includeRuntimeEssentialToolsWhenEmpty: effectiveRuntimeOverrides?.allowedTools === undefined,
+    includeRuntimeEssentialToolsWhenEmpty: !failClosedUnrestrictedToolDenials &&
+      effectiveRuntimeOverrides?.allowedTools === undefined,
+    deniedToolNames: input.agentConfig.deniedTools?.length
+      ? [...input.agentConfig.deniedTools]
+      : undefined,
   };
 }

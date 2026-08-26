@@ -3,7 +3,10 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type {
+  RuntimeAdapter,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
@@ -21,6 +24,7 @@ import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
+import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const logger = getBaseLogger("SERVER").component("project-runtime-context");
 
@@ -281,6 +285,7 @@ export async function resolveProjectRuntimeContext(
       parsedDomain: projectRes.parsedDomain,
       pathname: input.url.pathname,
       isProxyMode: input.isProxyMode,
+      allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
       proxyTrusted: input.proxyTrust.proxyTrusted,
       ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
     })
@@ -436,6 +441,13 @@ export async function resolveProjectRuntimeContext(
       }
       : {}),
   });
+
+  if (adapterRes.previewDocumentSourceSnapshot !== undefined) {
+    seedPreviewDocumentSourceSnapshot(
+      handlerContext,
+      adapterRes.previewDocumentSourceSnapshot,
+    );
+  }
 
   let rawEnvVars: Record<string, string> = hostedConfigLoadPromise
     ? (await hostedConfigLoadPromise).environment
@@ -604,7 +616,10 @@ export async function deriveProjectCspOrigins(args: {
         ) => Promise<Array<{ path: string; content?: string }>>;
         getContentContext?: () => ResolvedContentContext | null;
         getSourceSnapshotVersion?: () => number | Promise<number | undefined>;
-        ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
+        ensureSourceSnapshotFresh?: (
+          reason?: string,
+          options?: SourceSnapshotFreshnessOptions,
+        ) => Promise<void>;
       }
       : undefined;
     if (!underlying || typeof underlying.getAllSourceFiles !== "function") {

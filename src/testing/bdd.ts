@@ -14,6 +14,7 @@
 import "./init.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
+import { isTestOverlayAwareDenoEnvView } from "#veryfront/platform/compat/process/scoped-process-env.ts";
 
 /** Test function that can be sync or async */
 type TestFn = () => void | Promise<void>;
@@ -94,6 +95,11 @@ function installDenoEnvOverlayFacade(): void {
   const globalAny = globalThis as Record<string, unknown>;
   if (globalAny["__vfTestDenoEnvOverlayFacadeInstalled"]) return;
   globalAny["__vfTestDenoEnvOverlayFacadeInstalled"] = true;
+
+  // The project environment facade composes this overlay itself. It is frozen
+  // so tenant code cannot replace its methods, and assigning here would make
+  // the public testing module depend on whether the server loaded first.
+  if (isTestOverlayAwareDenoEnvView(Deno.env)) return;
 
   const originalDenoEnv = {
     get: Deno.env.get.bind(Deno.env),

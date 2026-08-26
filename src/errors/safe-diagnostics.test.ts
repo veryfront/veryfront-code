@@ -11,6 +11,7 @@ import {
   sanitizeStackDiagnosticText,
   sanitizeTerminalDiagnosticText,
   snapshotErrorForBoundary,
+  snapshotThrowableDiagnosticRedactingPath,
 } from "./safe-diagnostics.ts";
 import { VeryfrontError } from "./types.ts";
 
@@ -113,6 +114,28 @@ describe("safe-diagnostics", () => {
     assert(sanitized.endsWith("...[truncated]"));
   });
 
+  it("should keep conversion hooks from running on a non-string stack or terminal field", () => {
+    let coercions = 0;
+    const hostile = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        throw new Error("blocked");
+      },
+    };
+
+    for (const sanitize of [sanitizeStackDiagnosticText, sanitizeTerminalDiagnosticText]) {
+      for (const value of [hostile, Symbol("s"), undefined, 42]) {
+        assertEquals(
+          sanitize(value),
+          "[REDACTED]",
+          "non-string diagnostic input must be opaque",
+        );
+      }
+    }
+
+    assertEquals(coercions, 0, "project-owned conversion hooks must never run");
+  });
+
   it("should neutralize an escape sequence cut by the terminal field bound", () => {
     const prefix = "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS - 20);
     const sanitized = sanitizeTerminalDiagnosticText(
@@ -131,5 +154,305 @@ describe("safe-diagnostics", () => {
 
     assertEquals(stack.length, ERROR_STACK_MAX_LENGTH_CHARS);
     assert(stack.endsWith("...[truncated]"));
+  });
+
+  it("should redact file URLs normalized through encoded dots and case variants", () => {
+    for (
+      const [requestedPath, diagnosticPath] of [
+        [
+          "file:///audit-root/project/%2e%2e/private-source-marker",
+          "file:///audit-root/private-source-marker",
+        ],
+        [
+          "file:///audit-root/project/%2E%2e/private-source-marker",
+          "file:///audit-root/private-source-marker",
+        ],
+        [
+          "file:///C:/audit-root/project/../private-source-marker",
+          "file:///c:/audit-root/private-source-marker",
+        ],
+        [
+          "file://SERVER/audit-root/project/../private-source-marker",
+          "file://server/audit-root/private-source-marker",
+        ],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`failure ${diagnosticPath}`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "failure <absolute-path>",
+      );
+    }
+  });
+
+  it("should redact the URI-decoded spelling of an absolute request", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: /definitely-private-marker/secret"),
+        "/definitely%2Dprivate-marker/secret",
+        "<absolute-path>",
+      ),
+      "ENOENT: <absolute-path>",
+    );
+  });
+
+  it("should fail closed on unmatched absolute paths in adapter diagnostics", () => {
+    for (
+      const [requestedPath, diagnostic] of [
+        ["config.json", "ENOENT:/workspace/private-marker/config.json"],
+        ["config.json", "ENOENT:%2Fworkspace%2Fprivate-marker%2Fconfig.json"],
+        ["config.json", "ENOENT:%5C%5Cserver%5Cprivate-marker%5Cconfig.json"],
+        ["config.json", "ENOENT:C%3A%5Cprivate-marker%5Cconfig.json"],
+        ["/workspace/link/config.json", "ENOENT: /mnt/private-marker/config.json"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(diagnostic),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
+  it("should bound filesystem diagnostics before redacting path aliases", () => {
+    const privatePath = "file:///audit-root/private-source-marker";
+    const diagnostic = `${"x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS * 100)} ${privatePath}`;
+
+    const sanitized = snapshotThrowableDiagnosticRedactingPath(
+      new Error(diagnostic),
+      privatePath,
+      "<absolute-path>",
+    );
+
+    assertEquals(sanitized.length, ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+    assert(sanitized.endsWith("...[truncated]"));
+    assertEquals(sanitized.includes("private-source-marker"), false);
+  });
+
+  it("should reject oversized diagnostic paths before deriving aliases", () => {
+    const privatePath = `/private/${
+      "private-source-marker".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS)
+    }`;
+
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error(`failure ${privatePath}`),
+        privatePath,
+        "<absolute-path>",
+      ),
+      "Filesystem operation failed for <absolute-path>",
+    );
+  });
+
+  it("should redact the platform filesystem spelling decoded from file URLs", () => {
+    for (
+      const [requestedPath, diagnostic] of [
+        [
+          "file:///definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/definitely-private-marker/nope'",
+        ],
+        [
+          "file:///audit-root/my%20dir/../private-source-marker",
+          "ENOENT: no such file or directory, open '/audit-root/private-source-marker'",
+        ],
+        [
+          "file://localhost/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/definitely-private-marker/nope'",
+        ],
+        [
+          "file:///C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file://C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/C:/definitely-private-marker/nope'",
+        ],
+        [
+          "file://C:/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file:///C|/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'C:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file:///c%7C/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open 'c:\\definitely-private-marker\\nope'",
+        ],
+        [
+          "file:///c%7C/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/c|/definitely-private-marker/nope'",
+        ],
+        [
+          "file://server/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '\\\\server\\definitely-private-marker\\nope'",
+        ],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(diagnostic),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
+  });
+
+  it("should fall back when a diagnostic truncates the platform spelling of a file URL", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/definitely-private-marker/no"),
+        "file:///definitely-private-marker/nope",
+        "<absolute-path>",
+      ),
+      "Filesystem operation failed for <absolute-path>",
+    );
+  });
+
+  it("should redact native paths after canonicalizing embedded file URL whitespace", () => {
+    for (const whitespace of ["\t", "\n", "\r"] as const) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("ENOENT: no such file or directory, open '/private/secret/nope'"),
+          `file:///private/se${whitespace}cret/nope`,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
+  });
+
+  it("should redact native paths after canonicalizing controls inside the file scheme", () => {
+    for (const control of ["\t", "\n", "\r"] as const) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("ENOENT: no such file or directory, open '/private/secret/nope'"),
+          `fi${control}le:///private/secret/nope`,
+          "<absolute-path>",
+        ),
+        "ENOENT: no such file or directory, open '<absolute-path>'",
+      );
+    }
+  });
+
+  it("should preserve repeated separators in native file URL aliases", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/private//marker/nope'"),
+        "file:///private//marker/nope",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
+  });
+
+  it("should detect truncated single-segment absolute paths", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["/definitely-private-marker", "/definitely-private-mar"],
+        ["C:\\private-marker", "c:/private-mar"],
+        ["file:///definitely-private-marker", "/definitely-private-mar"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
+  it("should detect ellipsis-suffixed truncated absolute paths", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["/definitely-private-marker/secret", "/definitely-private-mar..."],
+        ["C:\\private-marker\\secret", "c:/private-mar..."],
+        ["file:///definitely-private-marker/secret", "/definitely-private-mar..."],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
+  it("should detect truncation inside the first segment of longer absolute paths", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["//private-control-plane.example/share/file", "//private-control"],
+        ["/definitely-private-marker/share/file", "/definitely-private"],
+        ["C:\\private-marker\\share\\file", "c:/private-mar"],
+        ["file:///definitely-private-marker/share/file", "/definitely-private"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
+  it("should normalize localhost file authorities before redacting canonical diagnostics", () => {
+    for (
+      const requestedPath of [
+        "file://localhost/audit-root/project/../private-source-marker",
+        "file://LOCALHOST/audit-root/project/%2E%2e/private-source-marker",
+        "file://%6cocalhost/audit-root/project/../private-source-marker",
+        "file://%4cocalhost/audit-root/project/%2E%2e/private-source-marker",
+      ]
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error("failure file:///audit-root/private-source-marker"),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "failure <absolute-path>",
+      );
+    }
+  });
+
+  it("should redact the POSIX interpretation of an ambiguous double-separator path", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: no such file or directory, open '/private-source-marker'"),
+        "//audit-root/../private-source-marker",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
+  });
+
+  it("should redact the canonical authority spelling produced by the file URL parser", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error(
+          "ENOENT: no such file or directory, open '\\\\127.0.0.1\\share\\private-source-marker'",
+        ),
+        "file://0177.0.0.1/share/private-source-marker",
+        "<absolute-path>",
+      ),
+      "ENOENT: no such file or directory, open '<absolute-path>'",
+    );
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "#veryfront/agent";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -35,6 +36,7 @@ import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   buildMergedTools,
   createRuntimeAgentStreamResponse,
+  getExplicitlyDeniedToolNames,
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
 } from "./run-stream.ts";
 
@@ -324,6 +326,130 @@ describe("internal-agents/run-stream", () => {
     } finally {
       toolRegistryInternal.delete("number-generator");
     }
+  });
+
+  it("keeps explicit false denials authoritative over request-injected tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runtimeAgent = {
+      id: "locked-down",
+      config: {
+        id: "locked-down",
+        system: "test",
+        tools: {
+          load_skill: false,
+          load_skill_reference: false,
+          execute_skill_script: false,
+        },
+      },
+    } as unknown as Agent;
+
+    const mergedTools = buildMergedTools(
+      runtimeAgent,
+      {
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [],
+        tools: [
+          { name: "load_skill", description: "Caller-supplied loader" },
+          { name: "execute_skill_script", description: "Caller-supplied executor" },
+          { name: "unrelated_tool", description: "Still injectable" },
+        ],
+        context: [],
+      } as Parameters<typeof buildMergedTools>[1],
+      sessionManager,
+    );
+
+    assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
+  });
+
+  it("rejects every request-injected tool when an unrestricted selector fails closed", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+      id: "fail-closed-injected",
+      name: "Fail Closed Injected",
+      description: "Does not accept injected project tools",
+      instructions: "Do not use project tools.",
+      tools: true,
+      deniedTools: ["update_file"],
+    });
+
+    const mergedTools = buildMergedTools(
+      runtimeAgent,
+      {
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [],
+        tools: [
+          { name: "update_file", description: "Denied tool" },
+          { name: "unrelated_tool", description: "Another project tool" },
+        ],
+        context: [],
+      } as Parameters<typeof buildMergedTools>[1],
+      sessionManager,
+    );
+
+    assertEquals(mergedTools, undefined);
+  });
+
+  it("applies owned short-name denials to registered-name injected tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    toolRegistryInternal.register("researcher--fetch-paper", {
+      id: "researcher--fetch-paper",
+      shortName: "fetch-paper",
+      ownerAgentId: "researcher",
+      type: "function",
+      description: "Fetch paper",
+      inputSchema: {} as never,
+      execute: () => ({ ok: true }),
+    } as unknown as Tool);
+    try {
+      const runtimeAgent = {
+        id: "researcher",
+        config: {
+          id: "researcher",
+          system: "test",
+          tools: { "fetch-paper": false },
+        },
+      } as unknown as Agent;
+
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{ name: "researcher--fetch-paper", description: "Injected wrapper" }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools, undefined);
+    } finally {
+      toolRegistryInternal.delete("researcher--fetch-paper");
+    }
+  });
+
+  it("collects only explicit false entries as denied tool names", () => {
+    const runtimeAgent = {
+      id: "denied-remote",
+      config: {
+        id: "denied-remote",
+        system: "test",
+        tools: {
+          create_file: false,
+          load_skill: false,
+          search_docs: true,
+          echo: { id: "echo", description: "Echo" },
+        },
+      },
+    } as unknown as Agent;
+
+    const deniedToolNames = [...getExplicitlyDeniedToolNames(runtimeAgent)]
+      .sort((left, right) => left.localeCompare(right));
+
+    assertEquals(deniedToolNames, ["create_file", "load_skill"]);
+    assertEquals(getExplicitlyDeniedToolNames({ config: {} } as unknown as Agent).size, 0);
   });
 
   it("keeps registry tools authoritative for server-resolved project tool names", () => {
@@ -953,6 +1079,62 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["get_file", "search_knowledge"]);
   });
 
+  it("filters source remote grants when forwarded grants are absent", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedToolNames: string[] = [];
+    const agent = {
+      id: "support-agent",
+      config: {
+        id: "support-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { search_knowledge: false, get_file: true },
+        __vfAllowedRemoteTools: ["search_knowledge", "get_file"],
+        __vfRemoteToolSources: [{
+          id: "veryfront-mcp",
+          listTools: async () => [
+            { name: "search_knowledge", description: "Search", parameters: {} },
+            { name: "get_file", description: "Read", parameters: {} },
+          ],
+          executeTool: async () => ({}),
+        }],
+      },
+    } as unknown as Agent;
+
+    await createRuntimeAgentStreamResponse(
+      {
+        agentId: "support-agent",
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent, mergedTools) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["get_file"]);
+    assertEquals(capturedToolNames, ["get_file"]);
+  });
+
   it("preserves source remote tool allowlists when forwarded allowlists are present", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAllowedRemoteTools: string[] | undefined;
@@ -1563,7 +1745,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, []);
   });
 
-  it("caps providerTools to the toolAllowlist", async () => {
+  it("caps providerTools to the toolAllowlist and explicit denials", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedProviderTools: string[] | undefined;
 
@@ -1576,6 +1758,7 @@ describe("internal-agents/run-stream", () => {
         providerTools: ["web_search"],
         tools: {
           read_baseline: { description: "Read the telemetry baseline" },
+          web_search: false,
         },
       },
     } as unknown as Agent;
@@ -1589,7 +1772,7 @@ describe("internal-agents/run-stream", () => {
       context: [],
       forwardedProps: {
         runtimeOverrides: {
-          toolAllowlist: ["read_baseline"],
+          toolAllowlist: ["read_baseline", "web_search"],
         },
       },
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
@@ -1931,6 +2114,63 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, ["invoke_agent", "read_baseline"]);
+  });
+
+  it("does not preserve caller-injected delegation across a hard tool allowlist", async () => {
+    registerSkill("handoff", {
+      id: "handoff",
+      metadata: { name: "handoff", description: "Delegate safely" },
+      rootPath: "/test/skills/handoff",
+    });
+
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        skills: [],
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+        },
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [{
+        name: "invoke_agent",
+        description: "Caller-supplied delegation",
+        parameters: { type: "object", properties: {} },
+      }],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          toolAllowlist: ["read_baseline"],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (_agent, mergedTools) => {
+        capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
   it("compacts oversized internal runtime message history before streaming", async () => {

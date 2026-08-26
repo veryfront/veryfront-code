@@ -546,6 +546,8 @@ export class RenderPipeline {
       query: options.staticDataOnly ? new URLSearchParams() : options.url.searchParams,
       request: options.request ?? new Request(options.url, { method: "GET" }),
       url: options.url,
+      identity: options.applicationIdentity ?? null,
+      applicationIdentity: options.applicationIdentity ?? null,
     };
 
     const fileExtension = getExtensionName(pagePath);

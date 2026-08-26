@@ -9,9 +9,9 @@ import { showHeader } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cwd } from "veryfront/platform";
-import { SCAFFOLD_TYPES } from "../../scaffold/engine.ts";
+import { AUTH_PRESETS, isAuthPreset, SCAFFOLD_TYPES } from "../../scaffold/engine.ts";
 
-const VALID_TYPES = [...SCAFFOLD_TYPES, "integration"] as const;
+const VALID_TYPES = [...SCAFFOLD_TYPES, "auth", "integration"] as const;
 
 const getGenerateArgsSchema = defineSchema((v) =>
   v.object({
@@ -43,6 +43,14 @@ export async function handleGenerateCommand(args: ParsedArgs): Promise<void> {
   if (type === "integration") {
     await generateCommand(cwd(), type, name ?? "");
     return;
+  }
+
+  if (type === "auth" && (!name || !isAuthPreset(name))) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid arguments. Usage: veryfront generate auth <preset>\n\nValid presets: ${
+        AUTH_PRESETS.join(", ")
+      }`,
+    });
   }
 
   if (!type || !name) {

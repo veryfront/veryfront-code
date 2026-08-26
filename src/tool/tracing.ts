@@ -1,5 +1,6 @@
 import type { HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext } from "./types.ts";
+import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 
 /** Public API contract for host tool trace runner. */
 export type HostToolTraceRunner = <TResult>(
@@ -54,7 +55,7 @@ export function traceHostTools<
     }
 
     const originalExecute = definition.execute;
-    traced[toolName] = {
+    traced[toolName] = inheritTrustedHostToolProvenance(definition, {
       ...definition,
       execute: (input: unknown, context: ToolExecutionContext | undefined) =>
         options.trace(getSpanName(toolName), () => {
@@ -68,7 +69,7 @@ export function traceHostTools<
           }
           return originalExecute(input, context);
         }),
-    };
+    });
   }
 
   return traced;

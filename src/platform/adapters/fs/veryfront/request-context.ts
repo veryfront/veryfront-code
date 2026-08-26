@@ -95,6 +95,11 @@ export function runWithRequestContext<T>(
   return asyncLocalStorage.run(context, fn);
 }
 
+/** Run an operation without inheriting a credential-bearing filesystem context. */
+export function runWithoutRequestContext<T>(fn: () => T): T {
+  return asyncLocalStorage.exit(fn);
+}
+
 /**
  * Typed global interface for the multi-project adapter module.
  * Registered on globalThis to avoid circular dependencies between

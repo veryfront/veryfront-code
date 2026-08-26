@@ -17,6 +17,15 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
  */
 export const DEFAULT_OUTBOUND_USER_AGENT = `veryfront/${VERSION}`;
 
+export interface PinnedFetchTlsOptions {
+  /**
+   * Complete trusted CA set for this connection. Passing this replaces the
+   * runtime default store, so callers that add a private CA must include the
+   * runtime roots too.
+   */
+  readonly trustedCaCertificates?: readonly string[];
+}
+
 /** What the runtime advertises when it is willing to decode a compressed body. */
 const DEFAULT_ACCEPT_ENCODING = "gzip, deflate";
 
@@ -247,6 +256,7 @@ export async function fetchWithPinnedAddresses(
   url: URL,
   addresses: readonly string[],
   init: RequestInit,
+  tls: PinnedFetchTlsOptions = {},
 ): Promise<Response> {
   if (addresses.length === 0) {
     throw new Error(`No validated addresses are available for ${url.host}`);
@@ -265,7 +275,10 @@ export async function fetchWithPinnedAddresses(
   let lastConnectError: unknown;
 
   for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
-    const requestOptions: RequestOptions & { autoSelectFamily?: boolean } = {
+    const requestOptions: RequestOptions & {
+      autoSelectFamily?: boolean;
+      ca?: string[];
+    } = {
       protocol: url.protocol,
       // Connect straight to the validated address. Overriding DNS through a
       // custom `lookup` is the documented way to pin and Node honours it, but
@@ -279,7 +292,12 @@ export async function fetchWithPinnedAddresses(
       method,
       headers: { ...requestHeaders, host: url.host },
 
-      ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
+      ...(url.protocol === "https:"
+        ? {
+          servername: url.hostname,
+          ...(tls.trustedCaCertificates?.length ? { ca: [...tls.trustedCaCertificates] } : {}),
+        }
+        : {}),
     };
 
     let pendingRequest: ClientRequest | undefined;

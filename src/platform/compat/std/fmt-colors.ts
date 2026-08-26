@@ -6,12 +6,18 @@
 
 type ColorFn = (str: string) => string;
 
+const ArrayPrototypeJoin = Array.prototype.join;
+const ReflectApply = Reflect.apply;
+const StringPrototypeSplit = String.prototype.split;
+
 /** @internal Builds one ANSI wrapper while preserving an outer nested style. */
 export function createColor(open: number, close: number): ColorFn {
   const openSequence = `\x1b[${open}m`;
   const closeSequence = `\x1b[${close}m`;
-  return (str: string) =>
-    openSequence + str.split(closeSequence).join(openSequence) + closeSequence;
+  return (str: string) => {
+    const parts = ReflectApply(StringPrototypeSplit, str, [closeSequence]);
+    return openSequence + ReflectApply(ArrayPrototypeJoin, parts, [openSequence]) + closeSequence;
+  };
 }
 
 const colors = {

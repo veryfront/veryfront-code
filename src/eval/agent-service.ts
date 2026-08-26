@@ -23,6 +23,7 @@ import {
   normalizeEvalStringList,
   stringifyEvalError,
 } from "./validation.ts";
+import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -332,6 +333,8 @@ function isDeniedToolResult(event: Record<string, unknown>, error: string | unde
 type PendingToolCall = {
   call: EvalToolCall;
   inputText?: string;
+  hasStandardInput?: boolean;
+  hasStandardResult?: boolean;
 };
 
 function getToolCallEntry(
@@ -358,11 +361,64 @@ function getToolCallEntry(
   return next;
 }
 
+function applyToolCallStatusEvent(
+  toolCalls: Map<string, PendingToolCall>,
+  event: Record<string, unknown>,
+  index: number,
+): boolean {
+  if (
+    getAgUiSseStringField(event, "type") !== agUiSseEventTypes.custom ||
+    getAgUiSseStringField(event, "name") !== "tool-call-status" ||
+    !isRecord(event.value)
+  ) {
+    return false;
+  }
+
+  const value = event.value;
+  const id = getAgUiSseStringField(value, "toolCallId");
+  const name = getAgUiSseStringField(value, "toolCallName");
+  if (!id && !name) return true;
+
+  const entry = getToolCallEntry(toolCalls, id ?? `name:${name ?? index}`, id, name);
+  if (!entry.hasStandardInput && Object.hasOwn(value, "arguments")) {
+    entry.call.input = value.arguments;
+  }
+
+  if (!entry.hasStandardResult) {
+    if (Object.hasOwn(value, "result")) {
+      entry.call.output = value.result;
+    } else if (Object.hasOwn(value, "output")) {
+      entry.call.output = value.output;
+    }
+
+    const status = getAgUiSseStringField(value, "status");
+    const error = Object.hasOwn(value, "error") ? stringifyError(value.error) : undefined;
+    const failed = value.isError === true || error !== undefined ||
+      status === "failed" || status === "error" || status === "cancelled" ||
+      status === "canceled" ||
+      (typeof value.exitCode === "number" && value.exitCode !== 0);
+    if (status === "denied") {
+      entry.call.status = "denied";
+    } else if (status === "skipped") {
+      entry.call.status = "skipped";
+    } else if (failed) {
+      entry.call.status = "error";
+    } else if (status === "completed") {
+      entry.call.status = "ok";
+    }
+    if (failed) entry.call.error = error ?? "Tool call failed";
+  }
+
+  return true;
+}
+
 function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[] {
   const toolCalls = new Map<string, PendingToolCall>();
 
   for (const [index, event] of events.entries()) {
     const type = getAgUiSseStringField(event, "type");
+
+    if (applyToolCallStatusEvent(toolCalls, event, index)) continue;
 
     if (type === agUiSseEventTypes.toolCallStart) {
       const name = getAgUiSseStringField(event, "toolCallName");
@@ -381,6 +437,8 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const entry = getToolCallEntry(toolCalls, key, id, toolName);
       const input = Object.hasOwn(event, "input") ? event.input : undefined;
       if (input !== undefined) {
+        entry.hasStandardInput = true;
+        entry.inputText = undefined;
         entry.call.input = input;
         continue;
       }
@@ -388,6 +446,11 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const delta = readToolInputDelta(event);
       if (delta === undefined) continue;
 
+      if (!entry.hasStandardInput) {
+        entry.inputText = "";
+        delete entry.call.input;
+      }
+      entry.hasStandardInput = true;
       entry.inputText = mergeToolInputDelta(entry.inputText ?? "", delta);
       entry.call.input = parseJsonString(entry.inputText);
       continue;
@@ -409,14 +472,19 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const failed = event.isError === true;
       const error = failed ? getToolResultError(event) : undefined;
       const input = Object.hasOwn(event, "input") ? event.input : undefined;
-      if (input !== undefined) entry.call.input = input;
+      if (input !== undefined) {
+        entry.hasStandardInput = true;
+        entry.inputText = undefined;
+        entry.call.input = input;
+      }
+      entry.hasStandardResult = true;
+      delete entry.call.output;
+      delete entry.call.error;
       if (!failed) {
         const output = readToolOutput(event);
         if (output !== undefined) entry.call.output = output;
       }
-      entry.call.status = failed
-        ? isDeniedToolResult(event, error) ? "denied" : "error"
-        : entry.call.status ?? "ok";
+      entry.call.status = failed ? isDeniedToolResult(event, error) ? "denied" : "error" : "ok";
       if (error) entry.call.error = error;
     }
   }
@@ -437,8 +505,10 @@ function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) 
 
 function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | undefined {
   const inputTokens = readNonNegativeNumber(record.inputTokens) ??
+    readNonNegativeNumber(record.input_tokens) ??
     readNonNegativeNumber(record.promptTokens);
   const outputTokens = readNonNegativeNumber(record.outputTokens) ??
+    readNonNegativeNumber(record.output_tokens) ??
     readNonNegativeNumber(record.completionTokens);
   const totalTokens = readNonNegativeNumber(record.totalTokens) ??
     (inputTokens !== undefined || outputTokens !== undefined
@@ -457,6 +527,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);
   const reasoningTokens = readNonNegativeNumber(record.reasoningTokens) ??
+    readNonNegativeNumber(record.reasoning_output_tokens) ??
     readNonNegativeNumber(record.reasoning_tokens);
   const providerInputCostUsd = readNonNegativeNumber(record.providerInputCostUsd) ??
     readNonNegativeNumber(record.provider_input_cost_usd);
@@ -522,9 +593,18 @@ function readEvalUsage(value: unknown): EvalUsage | undefined {
 function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage | undefined {
   for (const event of [...events].reverse()) {
     const type = getAgUiSseStringField(event, "type");
-    if (type !== agUiSseEventTypes.runFinished) continue;
-
-    return readEvalUsage(event.metadata) ?? readEvalUsage(event.usage) ?? readEvalUsage(event);
+    if (type === agUiSseEventTypes.runFinished) {
+      const usage = readEvalUsage(event.metadata) ?? readEvalUsage(event.usage) ??
+        readEvalUsage(event);
+      if (usage) return usage;
+    }
+    if (
+      type === agUiSseEventTypes.custom &&
+      getAgUiSseStringField(event, "name") === "codex.turn.completed"
+    ) {
+      const usage = readEvalUsage(event.value);
+      if (usage) return usage;
+    }
   }
   return undefined;
 }
@@ -556,6 +636,12 @@ function assertAgentServiceEvalAdapterConfig(config: AgentServiceEvalAdapterConf
   assertCanonicalEvalString(config.authToken, "Agent-service eval auth token");
   assertOptionalAgentServiceConfigString(config.endpoint, "Agent-service eval endpoint");
   assertOptionalAgentServiceConfigString(config.agentId, "Agent-service eval agentId");
+  if (config.agentId != null && config.agentId !== trustedLocalEvalFetchAgentId(config.fetch)) {
+    throw new TypeError(
+      `Agent-service evals cannot select agent "${config.agentId}" through public AG-UI; ` +
+        "provide a trusted fetch bound to that agent or omit agentId",
+    );
+  }
   assertOptionalAgentServiceConfigString(config.projectId, "Agent-service eval projectId");
   assertOptionalAgentServiceConfigString(config.projectSlug, "Agent-service eval projectSlug");
   assertOptionalAgentServiceConfigString(config.releaseId, "Agent-service eval releaseId");
@@ -727,7 +813,7 @@ export function createAgentServiceEvalAdapter(
         exampleId: context.example.id,
         input: context.example.input,
         metadata: context.example.metadata,
-        agentId: config.agentId,
+        agentId: undefined,
         projectId: config.projectId,
         conversationId: config.conversationId,
         branchId: config.branchId,

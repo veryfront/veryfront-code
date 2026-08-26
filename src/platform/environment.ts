@@ -18,12 +18,25 @@ import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 
 export type Environment = "development" | "production" | "test";
 
+const reflectApply = Reflect.apply;
+const stringPrototypeToLowerCase = String.prototype.toLowerCase;
+const stringPrototypeTrim = String.prototype.trim;
+
+function toLowerCaseString(value: string): string {
+  return reflectApply(stringPrototypeToLowerCase, value, []);
+}
+
+function trimString(value: string): string {
+  return reflectApply(stringPrototypeTrim, value, []);
+}
+
 function resolveEnvironment(): Environment {
   let configured: string | undefined;
   for (const key of ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const) {
     // Runtime posture is framework-owned configuration. A tenant/project
     // environment overlay must never be able to weaken it for one request.
-    const value = getHostEnv(key)?.trim().toLowerCase();
+    const rawValue = getHostEnv(key);
+    const value = rawValue === undefined ? undefined : toLowerCaseString(trimString(rawValue));
     if (value) {
       configured = value;
       break;

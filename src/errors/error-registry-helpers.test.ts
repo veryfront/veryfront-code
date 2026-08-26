@@ -129,5 +129,55 @@ describe("error-registry-helpers", () => {
       RangeError,
       "Registered error status",
     );
+
+    // These shapes are deliberately invalid, so they are built as plain objects
+    // and cast past the typed catalog instead of going through defineError.
+    // Each key matches its own slug so the key/slug check cannot fire first and
+    // mask the validator under test.
+    const badCategory = {
+      "bad-category": {
+        slug: "bad-category",
+        category: "NOT_A_CATEGORY",
+        status: 500,
+        title: "Bad category",
+      },
+    } as unknown as Parameters<typeof composeErrorRegistry>[0];
+
+    assertThrows(
+      () => composeErrorRegistry(badCategory),
+      TypeError,
+      "unknown category",
+    );
+
+    const blankTitle = {
+      "blank-title": {
+        slug: "blank-title",
+        category: "GENERAL",
+        status: 500,
+        title: "   ",
+      },
+    } as unknown as Parameters<typeof composeErrorRegistry>[0];
+
+    assertThrows(
+      () => composeErrorRegistry(blankTitle),
+      TypeError,
+      "Registered error title",
+    );
+
+    const blankSuggestion = {
+      "blank-suggestion": {
+        slug: "blank-suggestion",
+        category: "GENERAL",
+        status: 500,
+        title: "Blank suggestion",
+        suggestion: "",
+      },
+    } as unknown as Parameters<typeof composeErrorRegistry>[0];
+
+    assertThrows(
+      () => composeErrorRegistry(blankSuggestion),
+      TypeError,
+      "Registered error suggestion",
+    );
   });
 });

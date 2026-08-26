@@ -106,6 +106,8 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       assertExists(httpFilter);
       assertEquals(httpFilter.test("https://esm.sh/react"), true);
       assertEquals(httpFilter.test("http://cdn.example.com/lib.js"), true);
+      assertEquals(httpFilter.test("HTTPS://esm.sh/react"), true);
+      assertEquals(httpFilter.test("HTTP://cdn.example.com/lib.js"), true);
     });
 
     it("should register React JSX runtime resolver", () => {
@@ -366,6 +368,149 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         assertExists(errors?.[0]);
         assertEquals(errors[0].text.includes("Remote import blocked by allow-list"), true);
         assertEquals(fetchCalls, 0);
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
+    it("validates executable capabilities in a fetched remote module", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(`export const load = (url) => import(url);`, {
+              status: 200,
+            })) as typeof fetch,
+        );
+        await assertRejects(
+          async () =>
+            await loadHandler!({
+              path: "https://esm.sh/unsafe-module",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            }),
+          Error,
+          "unconstrained dynamic import",
+          "remote source must be validated after fetching, not only its URL",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
+    it("preserves the fetched remote module URL while bundling", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      const resolvedUrl = "https://esm.sh/module?target=es2020&bundle=true";
+      try {
+        installMockFetch(
+          (async () => {
+            return new Response(`export const moduleUrl = import.meta.url;`, {
+              status: 200,
+            });
+          }) as typeof fetch,
+        );
+        const result = await loadHandler({
+          path: "https://esm.sh/module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals(
+          (result as { contents: string }).contents,
+          `export const moduleUrl = ${JSON.stringify(resolvedUrl)};`,
+          "a remote dependency must not resolve import.meta.url to the requesting route",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
+    it("preserves import.meta.resolve for a fetched remote module", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(`export const dependency = import.meta.resolve("./dep.js");`, {
+              status: 200,
+            })) as typeof fetch,
+        );
+        const result = await loadHandler({
+          path: "https://esm.sh/module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals(
+          (result as { contents: string }).contents,
+          `export const dependency = "https://esm.sh/dep.js";`,
+          "a remote resolver must stay bound to the fetched module URL",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
+    it("rejects local Worker entries declared by a fetched remote module", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(
+              `new Worker("./worker.ts", { type: "module" }); export const ok = true;`,
+              { status: 200 },
+            )) as typeof fetch,
+        );
+        await assertRejects(
+          async () =>
+            await loadHandler!({
+              path: "https://esm.sh/module-with-worker",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            }),
+          Error,
+          "local Worker",
+          "a remote module's relative Worker graph cannot escape source validation",
+        );
       } finally {
         restoreMockFetch();
       }

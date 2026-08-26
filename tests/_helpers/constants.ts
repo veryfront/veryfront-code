@@ -1,3 +1,8 @@
+import { fromFileUrl } from "#veryfront/compat/path/index.ts";
+
+/** Stable repository root for integration fixtures, independent of test depth. */
+export const TEST_REPOSITORY_ROOT = fromFileUrl(new URL("../../", import.meta.url));
+
 export const TEST_TIMEOUTS = {
   UNIT: 5_000,
   INTEGRATION: 30_000,

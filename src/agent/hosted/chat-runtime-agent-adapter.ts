@@ -30,6 +30,10 @@ export type HostedChatRuntimeAgentAdapterInput = {
   conversationId?: string;
   projectId?: string;
   projectSlug?: string;
+  /**
+   * @deprecated Ignored. Hosted auth tokens are scoped to first-party MCP and
+   * are no longer forwarded to the runtime agent context.
+   */
   authToken?: string;
   maxOutputTokens?: number;
   resolveProjectContext?: () => {
@@ -73,7 +77,6 @@ export function createHostedChatRuntimeAgentAdapter(
                 ...(input.runId ? { runId: input.runId } : {}),
                 ...(input.agentId ? { agentId: input.agentId } : {}),
                 ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-                ...(input.authToken !== undefined ? { authToken: input.authToken } : {}),
                 ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
                 ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
                 abortSignal: streamInput.abortSignal,

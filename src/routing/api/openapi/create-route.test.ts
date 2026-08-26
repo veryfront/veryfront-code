@@ -169,6 +169,7 @@ describe("createRoute", () => {
     const mockContext = {
       params: {},
       searchParams: new URLSearchParams(),
+      identity: null,
       env: {},
     };
     const response = await handler(new Request("http://test.com"), mockContext);

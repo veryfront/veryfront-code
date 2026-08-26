@@ -5,6 +5,7 @@ import {
   FRAMEWORK_EMBEDDED_SRC_DIR,
   FRAMEWORK_SRC_DIR,
   getFrameworkSourceLookupDirs,
+  isPublicFrameworkSourceKey,
   resolveFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
 } from "./framework-source-resolver.ts";
@@ -307,5 +308,26 @@ describe("framework-source-resolver (VULN-FS-3) — path containment", () => {
       },
     });
     assertEquals(result?.path, target);
+  });
+});
+
+describe("framework-source-resolver public entry keys", () => {
+  it("accepts public export targets and rejects internal wrappers", () => {
+    assertEquals(isPublicFrameworkSourceKey("platform/env.js"), true);
+    assertEquals(isPublicFrameworkSourceKey("react/runtime/core.ts"), true);
+    assertEquals(
+      isPublicFrameworkSourceKey("react/public.js"),
+      true,
+      "the supported veryfront/react SSR override must remain loadable",
+    );
+    assertEquals(
+      isPublicFrameworkSourceKey("workflow/react/index.js"),
+      true,
+      "the supported veryfront/workflow SSR override must remain loadable",
+    );
+    assertEquals(isPublicFrameworkSourceKey("config/index.ts"), false);
+    assertEquals(isPublicFrameworkSourceKey("platform/compat/process/env-public.js"), false);
+    assertEquals(isPublicFrameworkSourceKey("observability/tracing/telemetry-env.ts"), false);
+    assertEquals(isPublicFrameworkSourceKey("platform/cloud/resolver.ts"), false);
   });
 });

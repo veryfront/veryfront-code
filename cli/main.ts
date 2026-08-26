@@ -9,6 +9,11 @@
  * ```
  */
 
+if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
+  const { runSecureScaffoldWriterProcess } = await import("./scaffold/secure-writer.ts");
+  Deno.exit(await runSecureScaffoldWriterProcess());
+}
+
 // Set the CLI logger preset before importing modules that may log during initialization.
 const { setLoggerPreset } = await import("veryfront/utils/logger");
 setLoggerPreset("cli");

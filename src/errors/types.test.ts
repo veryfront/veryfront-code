@@ -3,8 +3,9 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineError, isVeryfrontErrorInstance, VeryfrontError } from "./types.ts";
 import type { ErrorSlug } from "./error-registry.ts";
+import { getErrorBySlug } from "./error-registry.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "./safe-diagnostics.ts";
-import { ERROR_DOCS_BASE_URL } from "./diagnostic-policy.ts";
+import { buildErrorDocsUrl, ERROR_DOCS_BASE_URL } from "./diagnostic-policy.ts";
 
 describe("errors/types", () => {
   describe("defineError", () => {
@@ -154,6 +155,71 @@ describe("errors/types", () => {
       assertEquals(rfc9457.detail, "Component failed to render");
     });
 
+    it("should degrade to the unknown-error document when a field is unreadable", () => {
+      const err = new VeryfrontError("Something went wrong", {
+        slug: "render-error",
+        category: "RUNTIME",
+        status: 500,
+        title: "Render error",
+      });
+      Object.defineProperty(err, "slug", {
+        configurable: true,
+        get() {
+          throw new Error("hostile");
+        },
+      });
+
+      const problem = err.toRFC9457();
+
+      assertEquals(
+        problem.type,
+        buildErrorDocsUrl("unknown-error"),
+        "an unreadable error must degrade to the unknown-error document",
+      );
+      assertEquals(
+        problem.title,
+        "Unknown/unclassified error",
+        "an unreadable error must not claim a registered title",
+      );
+      assertEquals(problem.status, 500, "an unreadable error is reported as a server fault");
+      assertEquals(problem.category, "GENERAL", "an unreadable error has no known category");
+      assertEquals(
+        err.getDocsUrl().endsWith("#unknown-error"),
+        true,
+        "the docs URL degrades with the same fallback slug",
+      );
+    });
+
+    it("should serialize a proxied error without reading its fields", () => {
+      let trapReads = 0;
+      const proxy = new Proxy(
+        new VeryfrontError("Something went wrong", {
+          slug: "render-error",
+          category: "RUNTIME",
+          status: 500,
+          title: "Render error",
+        }),
+        {
+          get(): never {
+            trapReads++;
+            throw new Error("hostile");
+          },
+        },
+      );
+
+      // Called through the prototype: a `get` trap would otherwise intercept
+      // the method lookup itself.
+      const problem = VeryfrontError.prototype.toRFC9457.call(proxy);
+
+      assertEquals(problem.status, 500, "a proxied error must not throw out of the serializer");
+      assertEquals(
+        problem.type,
+        buildErrorDocsUrl("unknown-error"),
+        "a proxied error degrades to the unknown-error document",
+      );
+      assertEquals(trapReads, 0, "the serializer must not read fields off a proxy");
+    });
+
     it("should safely encode hostile docs slugs and bound direct RFC diagnostics", () => {
       const err = new VeryfrontError("Vendor error", {
         slug: "vendor/path?token=slug-secret#fragment%value\ud800",
@@ -191,7 +257,19 @@ describe("errors/types", () => {
         "build-failed",
         "render-error",
       ];
-      assertEquals(slugs.length, 3);
+
+      // Widening ErrorSlug to `string` would silence this directive, and the
+      // unused directive is itself an error under `deno task lint:test-typecheck`.
+      // @ts-expect-error an unregistered slug must not satisfy ErrorSlug
+      getErrorBySlug("not-a-real-slug");
+
+      for (const slug of slugs) {
+        assertEquals(
+          getErrorBySlug(slug)?.slug,
+          slug,
+          `registry entry for ${slug} must exist and report its own slug`,
+        );
+      }
     });
   });
 });

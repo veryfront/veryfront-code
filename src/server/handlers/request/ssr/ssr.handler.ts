@@ -32,7 +32,10 @@ import {
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
-import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSource,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import {
@@ -46,12 +49,20 @@ import { isProductionMode, shouldHideRouteInProduction } from "../route-visibili
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
-import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
+import {
+  ensurePreviewDocumentSourceSnapshot,
+  finishPreviewDocumentSourceSnapshot,
+  type PreviewDocumentSnapshotReclassifier,
+  reclassifyPreviewDocumentSourceSnapshotIfChanged,
+} from "../source-snapshot-freshness.ts";
+import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
 
 const logger = serverLogger.component("ssr");
+const MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS = 3;
 
 /**
  * SSR Handler - Thin orchestration layer
@@ -83,14 +94,10 @@ export class SSRHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    if (pathname.startsWith("/_veryfront/")) {
-      return Promise.resolve(this.continue());
-    }
-
-    const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(pathname) &&
-      !pathname.includes("/.veryfront/") &&
-      !pathname.startsWith("/.veryfront");
-    if (hasFileExtension) {
+    // The chain's route pattern already excludes /_ paths; the shared
+    // predicate keeps direct calls and the API/page classifier's
+    // pressure-deferral decision aligned with what this handler renders.
+    if (!ssrOwnsDocumentPathname(pathname)) {
       return Promise.resolve(this.continue());
     }
 
@@ -128,7 +135,10 @@ export class SSRHandler extends BaseHandler {
     // guards above would survive on every hidden-route or fail-closed request.
     startRequest(requestId);
 
-    return this.setupContextAndRender(req, ctx, slug, requestId, url);
+    return this.setupContextAndRender(req, ctx, slug, requestId, url).catch((error) => {
+      endRequest(requestId);
+      throw error;
+    });
   }
 
   private setupContextAndRender(
@@ -144,7 +154,7 @@ export class SSRHandler extends BaseHandler {
 
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
         const prodMode = isProductionMode(ctx);
-        const branch = ctx.parsedDomain?.branch ?? null;
+        const branch = ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
         // Framework-owned token: bypass project env overlay so proxy mode works
         // when a remote project overlay is active.
         const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
@@ -174,7 +184,9 @@ export class SSRHandler extends BaseHandler {
         // some adapters may not support them. Swallow those errors gracefully.
         try {
           if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
-          fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+          fsAdapter.setRequestBranch(
+            ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+          );
         } catch (e) {
           logger.warn("Non-critical adapter context setup failed (token/branch)", {
             error: e instanceof Error ? e.message : String(e),
@@ -200,6 +212,7 @@ export class SSRHandler extends BaseHandler {
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
     } catch (error) {
+      endRequest(requestId);
       logger.error("Context setup failed — request will fall through to 404", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -224,23 +237,45 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        const memoryStatus = this.ssrService.checkMemoryPressure();
+        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        if (memoryStatus.shouldReject) {
+          return this.rejectBeforeSourceRefresh(
+            req,
+            ctx,
+            slug,
+            requestId,
+            dependencySource,
+          );
+        }
+
         // Establish one current draft generation before route resolution and
         // rendering. If freshness cannot be established, fail the request
         // rather than serving an older SSR snapshot that hydration replaces.
-        try {
-          await ensurePreviewSourceSnapshotFresh(
+        // maxAgeMs: 0 is what narrows the stale window: a draft edit does not
+        // change the snapshot identity, so any reusable lease here would render
+        // the pre-edit source. Joining an already in-flight refresh still leaves
+        // one source round trip of exposure, but not the whole 30s lease.
+        // Sub-resource requests within this page load keep the default lease,
+        // so the strict listing happens once per document.
+        const reclassified = await this.reclassifyPreviewDocumentUntilStable(
+          ctx,
+          requestId,
+          () => ensurePreviewDocumentSourceSnapshot(ctx),
+        );
+        if (reclassified) return reclassified;
+
+        const postRefreshMemoryStatus = this.ssrService.checkMemoryPressure();
+        if (postRefreshMemoryStatus.shouldReject) {
+          return this.rejectAfterSourceRefresh(
+            req,
             ctx,
-            {
-              ensure: "preview-ssr-render",
-              refreshFallback: "preview-ssr-render",
-            },
+            slug,
+            requestId,
+            dependencySource,
           );
-        } catch (error) {
-          endRequest(requestId);
-          throw error;
         }
 
-        const dependencySource = createHandlerDependencyPinningSource(ctx);
         // The document request is where the client learns the current snapshot
         // key, so an unpinned request adopts it instead of conflicting.
         const resolution = await resolveSnapshotForRequest(
@@ -257,24 +292,13 @@ export class SSRHandler extends BaseHandler {
         const applicationUrl = new URL(url);
         const applicationHeaders = createApplicationRequestHeaders(
           stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
         );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
           signal: req.signal,
         });
-
-        const memoryStatus = this.ssrService.checkMemoryPressure();
-        if (memoryStatus.shouldReject) {
-          this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
-          const result = this.ssrService.createMemoryPressureResult(slug);
-          return this.buildResponse(
-            req,
-            ctx,
-            { ...result, dependencyPinningCacheKey: dependencySnapshot.cacheKey },
-            generateNonce(),
-          );
-        }
 
         const nonce = generateNonce();
         const studioEmbed = applicationUrl.searchParams.get("studio_embed") === "true";
@@ -302,53 +326,213 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
+          applicationIdentity: ctx.applicationIdentity ?? null,
         });
         const rendered: SSRRenderResult = {
           ...result,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         };
 
+        const failureResponse = await this.handleRenderedFailure(
+          req,
+          applicationRequest,
+          ctx,
+          slug,
+          nonce,
+          dependencySnapshot,
+          rendered,
+        );
+
+        // Custom not-found and error fallbacks read and render project files
+        // too, so keep the pre-render generation marker until that work has
+        // finished. Releasing it before fallback handling could combine a
+        // newer fallback module with configuration from the older snapshot.
+        const postRenderReclassified = await this.reclassifyPreviewDocumentAfterRender(
+          ctx,
+          requestId,
+        );
+        if (postRenderReclassified) return postRenderReclassified;
+
         endRequest(requestId);
 
-        const failure = rendered.failure;
-        switch (failure?.kind) {
-          case "redirect":
-            return this.handleRedirect(req, ctx, rendered, failure.location, nonce);
-          case "not-found":
-            return this.handleNotFound(
-              applicationRequest,
-              ctx,
-              slug,
-              nonce,
-              dependencySnapshot,
-              rendered,
-            );
-          case "overloaded":
-          case "runtime":
-          case "server-error": {
-            // Project error pages should beat the dev overlay for runtime
-            // errors. Build/import errors stay visible because their overlay is
-            // actionable, and only a runtime failure raises one.
-            const overlayWins = failure.kind === "runtime" && isSSRBuildFailure(failure.error);
-            if (!overlayWins) {
-              const customResponse = await this.tryCustomErrorFallback(
-                applicationRequest,
-                ctx,
-                rendered,
-                failure.error,
-                nonce,
-                dependencySnapshot,
-              );
-              if (customResponse) return customResponse;
-            }
-            break;
-          }
-        }
+        if (failureResponse) return failureResponse;
 
         return this.buildResponse(req, ctx, rendered, nonce);
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
+  }
+
+  private async reclassifyPreviewDocumentUntilStable(
+    ctx: HandlerContext,
+    requestId: string,
+    getReclassifier: () => Promise<PreviewDocumentSnapshotReclassifier | undefined>,
+  ): Promise<HandlerResult | undefined> {
+    try {
+      for (
+        let attempts = 0;
+        attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
+        attempts++
+      ) {
+        const reclassify = await getReclassifier();
+        if (reclassify === undefined) return;
+        if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
+          throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+            detail:
+              `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
+          });
+        }
+        const reclassified = await reclassify();
+        if (reclassified.response || !reclassified.continue) {
+          endRequest(requestId);
+          return reclassified;
+        }
+      }
+    } catch (error) {
+      endRequest(requestId);
+      throw error;
+    }
+  }
+
+  private async reclassifyPreviewDocumentAfterRender(
+    ctx: HandlerContext,
+    requestId: string,
+  ): Promise<HandlerResult | undefined> {
+    try {
+      const reclassify = await finishPreviewDocumentSourceSnapshot(ctx);
+      if (reclassify === undefined) return;
+
+      const reclassified = await reclassify();
+      if (reclassified.response || !reclassified.continue) {
+        endRequest(requestId);
+        return reclassified;
+      }
+
+      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+        detail:
+          `The source snapshot for "${ctx.projectSlug}" changed during SSR rendering, so this page request must be retried against one generation.`,
+      });
+    } catch (error) {
+      endRequest(requestId);
+      throw error;
+    }
+  }
+
+  private async rejectBeforeSourceRefresh(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    requestId: string,
+    dependencySource: DependencyPinningSource,
+  ): Promise<HandlerResult> {
+    // A page can become an API route after the wrapper classified it. API
+    // routes must not inherit renderer load shedding, so re-run a stale
+    // prepared classifier before returning the SSR 503. Unprepared direct SSR
+    // requests still take the cheap shed path without refreshing source.
+    const reclassified = await this.reclassifyPreviewDocumentUntilStable(
+      ctx,
+      requestId,
+      () => reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx),
+    );
+    if (reclassified) return reclassified;
+
+    // The shed response still carries the snapshot key that its dependent
+    // requests must use, but it must not spend memory refreshing source that it
+    // will not render.
+    const resolution = await resolveSnapshotForRequest(
+      dependencySource,
+      readSnapshotHeader(req.headers),
+      { unpinnedRequest: "adopt" },
+    );
+    if (resolution.kind === "conflict") {
+      endRequest(requestId);
+      return this.handleDependencySnapshotConflict(req, ctx);
+    }
+    this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
+    // The abandoned request must release its timing state: leaving it current
+    // keeps later timers attached to it for as long as the overload lasts.
+    endRequest(requestId);
+    const result = this.ssrService.createMemoryPressureResult(slug);
+    return this.buildResponse(
+      req,
+      ctx,
+      { ...result, dependencyPinningCacheKey: resolution.snapshot.cacheKey },
+      generateNonce(),
+    );
+  }
+
+  private async rejectAfterSourceRefresh(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    requestId: string,
+    dependencySource: DependencyPinningSource,
+  ): Promise<HandlerResult> {
+    const refreshedResolution = await resolveSnapshotForRequest(
+      dependencySource,
+      readSnapshotHeader(req.headers),
+      { unpinnedRequest: "adopt" },
+    );
+    if (refreshedResolution.kind === "conflict") {
+      endRequest(requestId);
+      return this.handleDependencySnapshotConflict(req, ctx);
+    }
+    this.logDebug("Rejecting after source refresh due to memory pressure", { slug }, ctx);
+    // As above: the shed request is finished, so close out its timing state
+    // before returning the 503.
+    endRequest(requestId);
+    const result = this.ssrService.createMemoryPressureResult(slug);
+    return this.buildResponse(
+      req,
+      ctx,
+      {
+        ...result,
+        dependencyPinningCacheKey: refreshedResolution.snapshot.cacheKey,
+      },
+      generateNonce(),
+    );
+  }
+
+  private async handleRenderedFailure(
+    req: Request,
+    applicationRequest: Request,
+    ctx: HandlerContext,
+    slug: string,
+    nonce: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    rendered: SSRRenderResult,
+  ): Promise<HandlerResult | undefined> {
+    const failure = rendered.failure;
+    switch (failure?.kind) {
+      case "redirect":
+        return this.handleRedirect(req, ctx, rendered, failure.location, nonce);
+      case "not-found":
+        return this.handleNotFound(
+          applicationRequest,
+          ctx,
+          slug,
+          nonce,
+          dependencySnapshot,
+          rendered,
+        );
+      case "overloaded":
+      case "runtime":
+      case "server-error": {
+        // Project error pages should beat the dev overlay for runtime errors.
+        // Build/import errors stay visible because their overlay is actionable,
+        // and only a runtime failure raises one.
+        const overlayWins = failure.kind === "runtime" && isSSRBuildFailure(failure.error);
+        if (overlayWins) return;
+        return (await this.tryCustomErrorFallback(
+          applicationRequest,
+          ctx,
+          rendered,
+          failure.error,
+          nonce,
+          dependencySnapshot,
+        )) ?? undefined;
+      }
+    }
   }
 
   private handleRedirect(

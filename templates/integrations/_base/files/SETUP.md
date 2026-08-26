@@ -514,10 +514,12 @@ STRIPE_PUBLISHABLE_KEY=pk_test_your-publishable-key
 1. Go to [Intuit Developer](https://developer.intuit.com/)
 2. Create app and get OAuth credentials
 3. Redirect URI: `http://localhost:3000/api/auth/quickbooks/callback`
+4. For a sandbox company, set the API host to `sandbox-quickbooks.api.intuit.com`
 
 ```env
 QUICKBOOKS_CLIENT_ID=your-client-id
 QUICKBOOKS_CLIENT_SECRET=your-client-secret
+QUICKBOOKS_API_HOST=sandbox-quickbooks.api.intuit.com
 ```
 
 ### Xero
@@ -593,15 +595,21 @@ ANTHROPIC_ADMIN_API_KEY=your-admin-api-key
 
 ### Mixpanel
 
-Uses API key/secret for data export.
+Uses a service account for query and export APIs. Regional projects must use
+their matching API and export hosts.
 
 1. Go to [Mixpanel Project Settings](https://mixpanel.com/settings/project)
-2. Get Project Token for tracking
-3. Get API Secret for data export
+2. Create a service account for query and export access
+3. Note the project ID and select the US, EU, or India hosts
 
 ```env
+MIXPANEL_SERVICE_ACCOUNT_USERNAME=your-service-account-username
+MIXPANEL_SERVICE_ACCOUNT_SECRET=your-service-account-secret
+MIXPANEL_PROJECT_ID=your-project-id
 MIXPANEL_PROJECT_TOKEN=your-project-token
 MIXPANEL_API_SECRET=your-api-secret
+MIXPANEL_HOST=eu.mixpanel.com
+MIXPANEL_EXPORT_HOST=data-eu.mixpanel.com
 ```
 
 ---

@@ -22,7 +22,6 @@ const expectedRuntimeExports = [
   "getActiveContext",
   "getErrorCollector",
   "getGlobalMetricsAPI",
-  "getHostTelemetryEnv",
   "getLogBuffer",
   "getMetricsState",
   "getTraceContext",
@@ -108,5 +107,6 @@ describe("veryfront/observability public export surface", () => {
   it("does not expose process-wide error-reporter mutators", () => {
     assertEquals("initializeApplicationErrorReporter" in observability, false);
     assertEquals("setApplicationErrorReporter" in observability, false);
+    assertEquals("getHostTelemetryEnv" in observability, false);
   });
 });
