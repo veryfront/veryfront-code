@@ -879,18 +879,16 @@ return 1`;
  *
  * Returns 1 when the approval was found and patched, 0 when the id is absent.
  */
-const UPDATE_PENDING_APPROVAL_SCRIPT = `-- conditional-approval-patch
+const UPDATE_PENDING_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- conditional-approval-patch
 local approvalId = ARGV[1]
-local patch = cjson.decode(ARGV[2])
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      for k, v in pairs(patch) do approval[k] = v end
-      approval.id = approvalId
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2]))
       return 1
     end
   end
@@ -905,18 +903,14 @@ return 0`;
  *
  * KEYS[1] = approvals list key
  * ARGV[1] = approval id
- * ARGV[2] = new status ("approved" | "rejected")
- * ARGV[3] = decidedBy
- * ARGV[4] = decidedAt (ISO string, computed by the caller for determinism)
- * ARGV[5] = "1" when a comment is provided, "0" otherwise
- * ARGV[6] = comment (ignored unless ARGV[5] == "1")
- * ARGV[7] = "1" when structured decision data is provided, "0" otherwise
- * ARGV[8] = decision data as JSON (ignored unless ARGV[7] == "1")
+ * ARGV[2] = decision fields as a JSON object
+ * ARGV[3] = absent optional field names as a JSON array
  *
  * Returns 1 when applied, 2 when the approval was found but no longer pending
  * (a lost race), 0 when the id is absent.
  */
-const UPDATE_APPROVAL_SCRIPT = `-- conditional-approval-decision
+const UPDATE_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- conditional-approval-decision
 local approvalId = ARGV[1]
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
@@ -925,13 +919,9 @@ for i = 0, len - 1 do
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
       if approval.status ~= 'pending' then return 2 end
-      approval.status = ARGV[2]
-      approval.decidedBy = ARGV[3]
-      approval.decidedAt = ARGV[4]
-      approval.reconciliationPending = true
-      if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
-      if ARGV[7] == '1' then approval.decisionData = cjson.decode(ARGV[8]) else approval.decisionData = nil end
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      local updated = mergeJsonObjects(raw, ARGV[2])
+      updated = deleteJsonObjectFields(updated, ARGV[3])
+      redis.call('lset', KEYS[1], i, updated)
       return 1
     end
   end
@@ -939,7 +929,8 @@ end
 return 0`;
 
 /** Release one approval decision reservation after its node outcome commits. */
-const FINALIZE_APPROVAL_DECISION_SCRIPT = `-- finalize-approval-decision
+const FINALIZE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- finalize-approval-decision
 local approvalId = ARGV[1]
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
@@ -947,8 +938,7 @@ for i = 0, len - 1 do
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      approval.reconciliationPending = nil
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      redis.call('lset', KEYS[1], i, deleteJsonObjectFields(raw, '["reconciliationPending"]'))
       return 1
     end
   end
@@ -1710,7 +1700,7 @@ export class RedisBackend implements WorkflowBackend {
     const result = await client.eval(
       UPDATE_PENDING_APPROVAL_SCRIPT,
       [this.approvalsKey(runId)],
-      [approvalId, JSON.stringify(patch)],
+      [approvalId, JSON.stringify({ ...patch, id: approvalId })],
     );
     if (Number(result) !== 1) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
@@ -1725,6 +1715,9 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
     const hasData = decision.data !== undefined;
+    const decisionData = hasData
+      ? JSON.parse(serializeWorkflowJson(decision.data, "approval decision data", runId))
+      : undefined;
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
@@ -1733,13 +1726,18 @@ export class RedisBackend implements WorkflowBackend {
       [this.approvalsKey(runId)],
       [
         approvalId,
-        decision.approved ? "approved" : "rejected",
-        decision.approver,
-        new Date().toISOString(),
-        hasComment ? "1" : "0",
-        hasComment ? decision.comment! : "",
-        hasData ? "1" : "0",
-        hasData ? serializeWorkflowJson(decision.data, "approval decision data", runId) : "",
+        JSON.stringify({
+          status: decision.approved ? "approved" : "rejected",
+          decidedBy: decision.approver,
+          decidedAt: new Date().toISOString(),
+          reconciliationPending: true,
+          ...(hasComment ? { comment: decision.comment } : {}),
+          ...(hasData ? { decisionData } : {}),
+        }),
+        JSON.stringify([
+          ...(hasComment ? [] : ["comment"]),
+          ...(hasData ? [] : ["decisionData"]),
+        ]),
       ],
     );
     const code = Number(result);

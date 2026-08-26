@@ -406,27 +406,16 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("conditional-approval-decision")) {
       const approvalId = args[0]!;
-      const newStatus = args[1]!;
-      const decidedBy = args[2]!;
-      const decidedAt = args[3]!;
-      const hasComment = args[4] === "1";
-      const comment = args[5];
-      const hasData = args[6] === "1";
-      const decisionData = args[7];
+      const patch = JSON.parse(args[1]!);
+      const deletedFields = JSON.parse(args[2]!) as string[];
       const list = this.lists.get(key);
       if (list) {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
             if (approval.status !== "pending") return Promise.resolve(2);
-            approval.status = newStatus;
-            approval.decidedBy = decidedBy;
-            approval.decidedAt = decidedAt;
-            approval.reconciliationPending = true;
-            if (hasComment) approval.comment = comment;
-            else delete approval.comment;
-            if (hasData) approval.decisionData = JSON.parse(decisionData!);
-            else delete approval.decisionData;
+            Object.assign(approval, patch);
+            for (const field of deletedFields) delete approval[field];
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -3031,6 +3020,46 @@ describe("RedisBackend", () => {
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
       assertEquals(stored.decisionData, { confirmed: true });
+    });
+
+    it("preserves nested empty arrays in durable approval decision data", async () => {
+      await backend.createRun(createTestRun("run-ap-empty-arrays"));
+      await backend.savePendingApproval(
+        "run-ap-empty-arrays",
+        makeApproval("ap-empty-arrays"),
+      );
+
+      assertEquals(
+        await backend.updateApproval("run-ap-empty-arrays", "ap-empty-arrays", {
+          approved: true,
+          approver: "admin",
+          data: { answers: [], nested: { selections: [] } },
+        }),
+        true,
+      );
+
+      const [claim] = await backend.listApprovalDecisionClaims("run-ap-empty-arrays");
+      assertEquals(claim?.approval.decisionData, {
+        answers: [],
+        nested: { selections: [] },
+      });
+      assertEquals(mockRedis.lastScript.includes("mergeJsonObjects"), true);
+      assertEquals(
+        mockRedis.lastScript.includes("approval.decisionData = cjson.decode"),
+        false,
+      );
+
+      await backend.updatePendingApproval("run-ap-empty-arrays", "ap-empty-arrays", {
+        notificationError: "late notification failure",
+      });
+      await backend.finalizeApprovalDecision("run-ap-empty-arrays", "ap-empty-arrays");
+      const finalized = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-empty-arrays")![0]!,
+      );
+      assertEquals(finalized.decisionData, {
+        answers: [],
+        nested: { selections: [] },
+      });
     });
 
     it("updateApproval omits absent comments at the serialized boundary", async () => {

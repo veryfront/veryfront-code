@@ -138,13 +138,21 @@ export async function executeLoopNodeStrategy(
   const currentStaticChildIds = Array.isArray(config.steps)
     ? collectWorkflowNodeIds(config.steps)
     : undefined;
+  const legacyStaticChildIds = Array.isArray(config.steps)
+    ? collectWorkflowNodeIds(removeWorkflowNodeNamespace(`${node.id}/`, config.steps))
+    : undefined;
   // Runs suspended before loop children were namespaced persist both their
   // private iteration snapshot and durable wait record under local IDs. Keep
   // that one in-flight iteration on its old graph identity; new iterations use
   // the namespaced definition and receive the collision fix.
   const resumeLegacyStaticChildIds = currentStaticChildIds !== undefined &&
+    legacyStaticChildIds !== undefined &&
     resumeIterationNodeStates !== undefined &&
-    Object.keys(resumeIterationNodeStates).some((nodeId) => !currentStaticChildIds.has(nodeId));
+    hasLegacyDeclaredNodeState(
+      resumeIterationNodeStates,
+      currentStaticChildIds,
+      legacyStaticChildIds,
+    );
 
   let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
     ? { ...resumeIterationNodeStates }
@@ -177,7 +185,11 @@ export async function executeLoopNodeStrategy(
       const namespacedSteps = namespaceWorkflowNodes(`${node.id}/`, generatedSteps);
       const namespacedIds = collectWorkflowNodeIds(namespacedSteps);
       const resumeLegacyDynamicChildIds = resumingIterationNodeStates !== undefined &&
-        Object.keys(resumingIterationNodeStates).some((nodeId) => !namespacedIds.has(nodeId));
+        hasLegacyDeclaredNodeState(
+          resumingIterationNodeStates,
+          namespacedIds,
+          collectWorkflowNodeIds(generatedSteps),
+        );
       steps = resumeLegacyDynamicChildIds ? generatedSteps : namespacedSteps;
     } else {
       steps = resumingIterationNodeStates && resumeLegacyStaticChildIds
@@ -345,6 +357,15 @@ function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
   };
   nodes.forEach(visit);
   return ids;
+}
+
+/** Detect an old snapshot from a declared local child, not a generated descendant. */
+function hasLegacyDeclaredNodeState(
+  states: Record<string, NodeState>,
+  currentIds: Set<string>,
+  legacyIds: Set<string>,
+): boolean {
+  return Object.keys(states).some((nodeId) => legacyIds.has(nodeId) && !currentIds.has(nodeId));
 }
 
 /**

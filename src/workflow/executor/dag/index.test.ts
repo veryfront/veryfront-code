@@ -35,7 +35,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
-import { loop, step, waitForApproval } from "../../dsl/index.ts";
+import { loop, map, step, waitForApproval } from "../../dsl/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1314,6 +1314,51 @@ describe("DAGExecutor", () => {
       assertEquals(order, ["after-wait"]);
       assertEquals(result.nodeStates["inner-wait"], completedDecision);
       assertEquals(result.nodeStates["the-loop/inner-wait"], undefined);
+    });
+
+    it("does not treat generated map states in a current loop as legacy IDs", async () => {
+      const exec = new DAGExecutor({ stepExecutor: createMockStepExecutor() });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            map("mapped-review", {
+              items: [{ id: 1 }],
+              processor: waitForApproval("review-template", { message: "approve?" }),
+            }),
+          ],
+        }),
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "the-loop/mapped-review_0");
+
+      const completedDecision: NodeState = {
+        nodeId: "the-loop/mapped-review_0",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "the-loop/mapped-review_0": completedDecision,
+          },
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.completed, true);
+      assertEquals(second.waiting, false);
+      assertEquals(second.nodeStates["the-loop/mapped-review_0"], completedDecision);
+      assertEquals(second.nodeStates["mapped-review_0"], undefined);
     });
 
     it("reports every parked wait from a resumed iteration whose record may need recovery", async () => {
