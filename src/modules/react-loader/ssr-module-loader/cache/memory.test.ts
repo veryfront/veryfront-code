@@ -205,6 +205,33 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         resetState();
       }
     });
+
+    it("should bound queued acquisitions for one project", async () => {
+      const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+      resetState();
+
+      const projectId = "bounded-waiter-project";
+      try {
+        assertEquals(acquireTransformSlot(projectId), true);
+
+        const waiters = Array.from(
+          { length: 1_024 },
+          () => tryAcquireTransformSlot(projectId, 10_000),
+        );
+        assertEquals(await tryAcquireTransformSlot(projectId, 10_000), false);
+
+        clearSSRModuleCacheForProject(projectId);
+        assertEquals(await Promise.all(waiters), Array(1_024).fill(false));
+      } finally {
+        if (previousLimit === undefined) {
+          Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+        } else {
+          Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+        }
+        resetState();
+      }
+    });
   });
 
   describe("getTransformStats", () => {

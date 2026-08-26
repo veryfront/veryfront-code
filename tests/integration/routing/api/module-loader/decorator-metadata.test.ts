@@ -62,11 +62,11 @@ describe("API route decorator metadata", () => {
               Subject.prototype,
               "property",
             )?.name;
-            const constructor = Reflect.getMetadata(
+            const constructorParams = Reflect.getMetadata(
               "design:paramtypes",
               Subject,
-            )?.map((type: Function) => type.name);
-            return Response.json({ property, constructor });
+            )?.map((type: { name: string }) => type.name);
+            return Response.json({ property, constructorParams });
           }
         `,
       );
@@ -86,7 +86,7 @@ describe("API route decorator metadata", () => {
 
       assertEquals(await response.json(), {
         property: "String",
-        constructor: ["Dependency"],
+        constructorParams: ["Dependency"],
       });
 
       for (

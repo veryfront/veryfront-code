@@ -601,10 +601,23 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     );
   }
 
-  return await withVerifiedRunEventAppendToken(
+  const verifiedRequest = await withVerifiedRunEventAppendToken(
     request,
     parsedRequest,
     options.verifyRunEventAppendToken,
     true,
   );
+  if (verifiedRequest instanceof Response) {
+    return verifiedRequest;
+  }
+
+  // Request-scoped agent definitions may only come from the trusted control plane.
+  if (verifiedRequest.agentConfig && verifiedRequest.serverEnvelopeVerified !== true) {
+    return Response.json(
+      { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
+      { status: 403 },
+    );
+  }
+
+  return verifiedRequest;
 }

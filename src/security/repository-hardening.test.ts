@@ -211,7 +211,7 @@ describe("repository hardening", () => {
     );
 
     const retryCallSites = flattenedPublishScript.match(
-      /publish_npm_package_with_retry "\$\{PACKAGE_NAME\}".*/g,
+      /publish_npm_package_with_retry \S+ "\$\{PACKAGE_NAME\}".*/g,
     ) ?? [];
     assertEquals(retryCallSites.length, 2);
     assert(
@@ -220,9 +220,18 @@ describe("repository hardening", () => {
         callSite.includes("--access public")
       ),
     );
-    assertEquals(
-      retryCallSites.filter((callSite) => callSite.includes("--tag rc")).length,
-      1,
+    // Only the RC path may recover a conflicted publish through registry
+    // metadata; the stable release call site must stay fail-closed so an
+    // existing name@version can never be accepted via a matching gitHead.
+    const rcCallSites = retryCallSites.filter((callSite) => callSite.includes("--tag rc"));
+    assertEquals(rcCallSites.length, 1);
+    assert(rcCallSites[0]?.includes("publish_npm_package_with_retry recover "));
+    const stableCallSites = retryCallSites.filter(
+      (callSite) => !callSite.includes("--tag rc"),
+    );
+    assertEquals(stableCallSites.length, 1);
+    assert(
+      stableCallSites[0]?.includes("publish_npm_package_with_retry fail-closed "),
     );
   });
 

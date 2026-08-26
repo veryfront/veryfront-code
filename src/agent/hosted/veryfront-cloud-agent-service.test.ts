@@ -1664,7 +1664,7 @@ Deno.test("Veryfront MCP server helpers create explicit server configs", () => {
 Deno.test("hosted MCP resolver preserves default behavior without a service ceiling", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers({}),
-    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+    [{ kind: "veryfront-api" }],
   );
 
   assertEquals(
@@ -1699,7 +1699,7 @@ Deno.test("hosted MCP resolver binds deployment-owned transports to first-party 
 
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers({ createRemoteToolSource }),
-    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+    [{ kind: "veryfront-api" }],
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers(

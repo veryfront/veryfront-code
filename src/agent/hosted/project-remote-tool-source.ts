@@ -364,27 +364,10 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
 
-function needsStudioMcpSource(input: CreateHostedProjectRemoteToolSourcesInput): boolean {
-  const allowedToolNames = input.allowedToolNames;
-  if (!allowedToolNames) {
-    return false;
-  }
-
-  return Array.from(allowedToolNames).some((toolName) => toolName.startsWith("studio_"));
-}
-
 function resolveHostedProjectMcpServers(
   input: CreateHostedProjectRemoteToolSourcesInput,
 ): readonly AgentServiceMcpServerConfig[] {
-  const servers = [...(input.mcpServers ?? defaultAgentServiceMcpServers())];
-  if (
-    input.mcpServers === undefined &&
-    needsStudioMcpSource(input) &&
-    !servers.some((server) => server.kind === "veryfront-studio")
-  ) {
-    servers.push({ kind: "veryfront-studio" });
-  }
-  return servers;
+  return input.mcpServers ?? defaultAgentServiceMcpServers();
 }
 
 function throwExplicitStudioMcpUnavailable(

@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import type { HostToolSet } from "./host-tools.ts";
 import { traceHostTools, type TraceHostToolsOptions } from "./tracing.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "./host-tool-provenance.ts";
 
 function requireTool(tools: HostToolSet, toolName: string) {
   const definition = tools[toolName];
@@ -20,6 +24,16 @@ Deno.test("traceHostTools passes through tools without execute unchanged", () =>
   });
 
   assertStrictEquals(traced.web_search, providerTool);
+});
+
+Deno.test("traceHostTools preserves trusted framework provenance", () => {
+  const traced = traceHostTools({
+    trusted: markTrustedHostToolProvenance({ execute: () => "ok" }),
+  }, {
+    trace: (_spanName, operation) => operation(),
+  });
+
+  assertEquals(hasTrustedHostToolProvenance(traced.trusted), true);
 });
 
 Deno.test("traceHostTools wraps executable tools with a trace span", async () => {

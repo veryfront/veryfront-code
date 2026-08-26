@@ -2013,10 +2013,11 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
-  it("preserves request-scoped project agent config from runtime invocations", async () => {
+  it("preserves verified request-scoped project agent config from runtime invocations", async () => {
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
         method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
         body: JSON.stringify({
           ...createRuntimeInvocation(),
           agentConfig: {
@@ -2032,6 +2033,7 @@ describe("agent/hosted-chat-request", () => {
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
         verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
         runtimeSource,
       },
     );
