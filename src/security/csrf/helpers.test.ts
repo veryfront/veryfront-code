@@ -427,6 +427,29 @@ describe("security/csrf/helpers", () => {
       );
     });
 
+    it("origin-scopes the HTTP default when only the header name is customized", () => {
+      const origin = "http://192.168.1.20:3000";
+      const headers = new Headers();
+      applyCsrfCookie(
+        new Request(`${origin}/`, { headers: { accept: "text/html" } }),
+        headers,
+        { headerName: "x-project-csrf" },
+      );
+
+      const cookies = headers.getSetCookie();
+      const tokenName = csrfHttpTokenCookieName("vf_csrf", origin);
+      assertExists(
+        cookies.find((cookie) => cookie.startsWith(`${tokenName}=`)),
+        "an HTTPS sibling that explicitly uses vf_csrf must not own the HTTP token name",
+      );
+      assertExists(
+        cookies.find((cookie) =>
+          cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes(tokenName)
+        ),
+        "the browser helper must discover the origin-scoped token with the custom header",
+      );
+    });
+
     it("should skip when csrf config is false", () => {
       const req = new Request("http://localhost/");
       const headers = new Headers();

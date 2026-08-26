@@ -239,10 +239,12 @@ export function applyCsrfCookie(
   const configuredToken = cookies[configuredCookieName];
   const hasExplicitCustomCookieName = config.cookieName !== undefined &&
     config.cookieName !== DEFAULT_CSRF_COOKIE_NAME;
+  const needsOriginScopedHttpToken = hasExplicitCustomCookieName ||
+    headerName !== DEFAULT_CSRF_HEADER_NAME;
   const cookieName = configuredToken || browserProtocol !== "http:" ||
       configuredCookieName.startsWith("__Host-") ||
       configuredCookieName.startsWith("__Secure-") ||
-      !hasExplicitCustomCookieName
+      !needsOriginScopedHttpToken
     ? configuredCookieName
     : csrfHttpTokenCookieName(configuredCookieName, browserOrigin);
   const secureAdvertisement = cookieName.startsWith("__Host-") ||
