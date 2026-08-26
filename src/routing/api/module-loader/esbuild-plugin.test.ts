@@ -591,11 +591,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
-    it("serves a previously fetched remote module when the CDN later returns an error", async () => {
+    it("does not persist remote module bodies when the CDN later returns an error", async () => {
       const projectDir = await Deno.makeTempDir();
       const moduleSource = "export const parsed = true;";
       const requestUrl = "https://esm.sh/yaml@2";
       const resolvedUrl = "https://esm.sh/yaml@2?target=es2020&bundle=true";
+      const legacyCacheDir = `${projectDir}/.veryfront/cache/api-http-imports`;
+      await Deno.mkdir(legacyCacheDir, { recursive: true });
+      await Deno.writeTextFile(`${legacyCacheDir}/legacy.mjs`, moduleSource);
 
       const load = (fetchImpl: typeof fetch) => {
         installMockFetch(fetchImpl);
@@ -637,7 +640,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         const second = await load(
           (async () => new Response("cdn unavailable", { status: 599 })) as typeof fetch,
         );
-        assertEquals((second as { contents: string }).contents, moduleSource);
+        assertEquals("errors" in (second as Record<string, unknown>), true);
+        assertEquals(
+          await Deno.stat(legacyCacheDir).then(
+            () => true,
+            () => false,
+          ),
+          false,
+        );
       } finally {
         restoreMockFetch();
         await Deno.remove(projectDir, { recursive: true }).catch(() => {});
@@ -854,14 +864,14 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         assertEquals(warnings, []);
 
         failRemoteFetches = true;
-        const cached = await loadHandler({
+        const unavailable = await loadHandler({
           path: "https://esm.sh/yaml@2/parse",
           namespace: "http-url",
           pluginData: undefined,
           suffix: "",
         });
 
-        assertEquals((cached as { contents: string }).contents, moduleSource);
+        assertEquals("errors" in (unavailable as Record<string, unknown>), true);
         assertEquals(
           warnings.some((warning) => warning.includes("could not persist lockfile entry")),
           false,
@@ -1018,6 +1028,69 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("does not fall back to a mutable URL when the locked URL is unavailable", async () => {
+      const requestUrl = "https://esm.sh/yaml@2";
+      const lockedUrl = "https://cdn.example/secret-value/yaml-2.0.0.js?token=secret-value";
+      const lockedSource = "export const version = '2.0.0';";
+      const lockedIntegrity = await computeIntegrity(lockedSource);
+      const requestedUrls: string[] = [];
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const lockfile: LockfileManager = {
+        read: () => Promise.resolve(null),
+        write: () => Promise.resolve(),
+        get: (url) =>
+          Promise.resolve(
+            url === requestUrl
+              ? {
+                resolved: lockedUrl,
+                integrity: lockedIntegrity,
+                fetchedAt: new Date().toISOString(),
+              }
+              : null,
+          ),
+        set: () => Promise.resolve(),
+        has: () => Promise.resolve(true),
+        clear: () => Promise.resolve(),
+        flush: () => Promise.resolve(),
+      };
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://esm.sh", "https://cdn.example"],
+        lockfile,
+      });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async (input) => {
+            const url = String(input);
+            requestedUrls.push(url);
+            return url === lockedUrl
+              ? new Response("unavailable", { status: 599 })
+              : new Response("export const mutable = true;", { status: 200 });
+          }) as typeof fetch,
+        );
+
+        const result = await loadHandler({
+          path: requestUrl,
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals("errors" in (result as Record<string, unknown>), true);
+        assertEquals(JSON.stringify(result).includes("secret-value"), false);
+        assertEquals(requestedUrls, [lockedUrl, lockedUrl, lockedUrl]);
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
     it("refetches instead of serving stale cache when a lockfile URL returns new content", async () => {
       const projectDir = await Deno.makeTempDir();
       const oldSource = "export const value = 'old';";
@@ -1115,130 +1188,9 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         const errors = (second as { errors?: Array<{ text: string }> }).errors;
         assertExists(errors?.[0], "strict builds must return an esbuild error");
         assertEquals(
-          errors[0].text.includes(`Integrity mismatch for ${requestUrl}`),
+          errors[0].text.includes("Integrity mismatch for https://esm.sh"),
           true,
           "the lockfile hash mismatch must be reported, not silently refetched",
-        );
-      } finally {
-        restoreMockFetch();
-        await Deno.remove(projectDir, { recursive: true }).catch(() => {});
-      }
-    });
-
-    it("refuses a tampered disk cache entry when the CDN is unreachable", async () => {
-      const projectDir = await Deno.makeTempDir();
-      const moduleSource = "export const parsed = true;";
-      const tamperedSource = "export const value = 'tampered';";
-      const requestUrl = "https://esm.sh/yaml@2";
-      const cacheDir = `${projectDir}/.veryfront/cache/api-http-imports`;
-
-      const load = (fetchImpl: typeof fetch) => {
-        installMockFetch(fetchImpl);
-        let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
-        const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"], projectDir });
-        const mockBuild = createMockBuild(
-          () => {},
-          (_opts, fn) => {
-            loadHandler = fn;
-          },
-        );
-        plugin.setup(mockBuild);
-        assertExists(loadHandler);
-        return loadHandler({
-          path: requestUrl,
-          namespace: "http-url",
-          pluginData: undefined,
-          suffix: "",
-        });
-      };
-
-      try {
-        const first = await load(
-          (async () => new Response(moduleSource, { status: 200 })) as typeof fetch,
-        );
-        assertEquals((first as { contents: string }).contents, moduleSource);
-
-        let tampered = 0;
-        for await (const entry of Deno.readDir(cacheDir)) {
-          if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
-          await Deno.writeTextFile(`${cacheDir}/${entry.name}`, tamperedSource);
-          tampered += 1;
-        }
-        assertEquals(tampered > 0, true, "the first load must populate the disk cache");
-
-        const second = await load(
-          (async () => new Response("cdn unavailable", { status: 599 })) as typeof fetch,
-        );
-
-        assertEquals(
-          "errors" in (second as Record<string, unknown>),
-          true,
-          "a tampered cache entry must not be served as remote module source",
-        );
-        assertEquals(
-          (second as { contents?: string }).contents,
-          undefined,
-          "no tampered contents may reach the bundler",
-        );
-      } finally {
-        restoreMockFetch();
-        await Deno.remove(projectDir, { recursive: true }).catch(() => {});
-      }
-    });
-
-    it("refuses a cache entry whose metadata integrity was rewritten", async () => {
-      const projectDir = await Deno.makeTempDir();
-      const moduleSource = "export const parsed = true;";
-      const requestUrl = "https://esm.sh/yaml@2";
-      const cacheDir = `${projectDir}/.veryfront/cache/api-http-imports`;
-
-      const load = (fetchImpl: typeof fetch) => {
-        installMockFetch(fetchImpl);
-        let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
-        const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"], projectDir });
-        const mockBuild = createMockBuild(
-          () => {},
-          (_opts, fn) => {
-            loadHandler = fn;
-          },
-        );
-        plugin.setup(mockBuild);
-        assertExists(loadHandler);
-        return loadHandler({
-          path: requestUrl,
-          namespace: "http-url",
-          pluginData: undefined,
-          suffix: "",
-        });
-      };
-
-      try {
-        const first = await load(
-          (async () => new Response(moduleSource, { status: 200 })) as typeof fetch,
-        );
-        assertEquals((first as { contents: string }).contents, moduleSource);
-
-        let rewritten = 0;
-        for await (const entry of Deno.readDir(cacheDir)) {
-          if (!entry.isFile || !entry.name.endsWith(".json")) continue;
-          const metadataPath = `${cacheDir}/${entry.name}`;
-          const metadata = JSON.parse(await Deno.readTextFile(metadataPath)) as {
-            integrity?: string;
-          };
-          metadata.integrity = await computeIntegrity("export const value = 'other';");
-          await Deno.writeTextFile(metadataPath, JSON.stringify(metadata));
-          rewritten += 1;
-        }
-        assertEquals(rewritten > 0, true, "the first load must write cache metadata");
-
-        const second = await load(
-          (async () => new Response("cdn unavailable", { status: 599 })) as typeof fetch,
-        );
-
-        assertEquals(
-          "errors" in (second as Record<string, unknown>),
-          true,
-          "a cache entry whose metadata integrity disagrees must not be served",
         );
       } finally {
         restoreMockFetch();
