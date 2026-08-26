@@ -57,6 +57,7 @@ const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 // inherited adapter properties. Capture the intrinsics it depends on at module
 // initialization, as the path compatibility layer does for its own operations.
 const ReflectApply = Reflect.apply;
+const ArrayJoin = Array.prototype.join;
 const ArrayPush = Array.prototype.push;
 const PromiseConstructor = Promise;
 const PromiseAll = Promise.all;
@@ -64,8 +65,10 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const SymbolIterator: typeof Symbol.iterator = Symbol.iterator;
 const universalObjectPrototype = Object.prototype;
+const RegExpTest = RegExp.prototype.test;
 const StringEndsWith = String.prototype.endsWith;
 const StringLastIndexOf = String.prototype.lastIndexOf;
+const StringReplace = String.prototype.replace;
 const StringReplaceAll = String.prototype.replaceAll;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
@@ -81,6 +84,14 @@ function arrayPush<T>(target: T[], value: T): void {
   ReflectApply(ArrayPush, target, [value]);
 }
 
+function arrayJoin(values: readonly string[], separator: string): string {
+  return ReflectApply(ArrayJoin, values, [separator]) as string;
+}
+
+function regExpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpTest, pattern, [value]) as boolean;
+}
+
 function stringEndsWith(value: string, search: string): boolean {
   return ReflectApply(StringEndsWith, value, [search]) as boolean;
 }
@@ -91,6 +102,10 @@ function stringLastIndexOf(value: string, search: string): number {
 
 function stringReplaceAll(value: string, search: string, replacement: string): string {
   return ReflectApply(StringReplaceAll, value, [search, replacement]) as string;
+}
+
+function stringReplace(value: string, search: string | RegExp, replacement: string): string {
+  return ReflectApply(StringReplace, value, [search, replacement]) as string;
 }
 
 function stringSlice(value: string, start: number, end?: number): string {
@@ -206,7 +221,8 @@ export async function parseLocalImports(
   const missingImports: MissingImport[] = [];
   const containment = createContainmentContext(projectDir, adapter);
 
-  for (const imp of imports) {
+  for (let importIndex = 0; importIndex < imports.length; importIndex++) {
+    const imp = imports[importIndex]!;
     const specifier = imp.n;
     if (!specifier) continue;
 
@@ -243,7 +259,7 @@ export async function parseLocalImports(
       arrayPush(missingImports, {
         specifier: authoredSpecifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
+        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
       });
       continue;
     }
@@ -251,7 +267,7 @@ export async function parseLocalImports(
     if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
       if (resolved) {
-        if (resolved.endsWith(".css")) {
+        if (stringEndsWith(resolved, ".css")) {
           arrayPush(cssImports, { specifier, absolutePath: resolved });
         } else {
           arrayPush(localImports, { specifier, absolutePath: resolved });
@@ -262,13 +278,13 @@ export async function parseLocalImports(
       arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
+        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
       });
       continue;
     }
 
     if (stringStartsWith(specifier, "@/")) {
-      const aliasPath = specifier.slice(2);
+      const aliasPath = stringSlice(specifier, 2);
       const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
         const entry = {
@@ -538,7 +554,8 @@ async function resolveLocalImportPath(
     if (resolvedFrameworkImport) return resolvedFrameworkImport;
   }
 
-  const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
+  const lastSeparator = stringLastIndexOf(fromFile, "/");
+  const fromDir = stringSlice(fromFile, 0, lastSeparator < 0 ? 0 : lastSeparator);
   return await resolveExistingFilePath(resolveRelative(fromDir, importSpecifier), adapter);
 }
 
@@ -554,7 +571,7 @@ async function resolveExistingFilePath(
 ): Promise<string | null> {
   if (adapter?.fs.resolveFile) {
     try {
-      const normalizedPath = basePath.replace(/^\/+/, "");
+      const normalizedPath = stringReplace(basePath, /^\/+/, "");
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
     } catch (_) {
@@ -563,17 +580,17 @@ async function resolveExistingFilePath(
     }
   }
 
-  if (HAS_EXTENSION_RE.test(basePath)) {
+  if (regExpTest(HAS_EXTENSION_RE, basePath)) {
     return (await checkFileExists(basePath, adapter)) ? basePath : null;
   }
 
-  for (const ext of EXTENSIONS) {
-    const candidate = basePath + ext;
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    const candidate = basePath + EXTENSIONS[extensionIndex]!;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
-  for (const ext of EXTENSIONS) {
-    const candidate = `${basePath}/index${ext}`;
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    const candidate = `${basePath}/index${EXTENSIONS[extensionIndex]!}`;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
@@ -584,7 +601,7 @@ async function resolveAliasImportPath(
   basePath: string,
   containment: ContainmentContext,
 ): Promise<ContainedImportPath | null> {
-  const normalizedPath = basePath.replace(/^\/+/, "");
+  const normalizedPath = stringReplace(basePath, /^\/+/, "");
   const lexicalPath = join(containment.projectDir, normalizedPath);
   if (!isPathWithinProject(lexicalPath, containment.projectDir)) return null;
 
@@ -605,14 +622,23 @@ async function resolveAliasImportPath(
     }
   }
 
-  if (HAS_EXTENSION_RE.test(normalizedPath)) {
+  if (regExpTest(HAS_EXTENSION_RE, normalizedPath)) {
     return await resolveContainedFilePath(lexicalPath, containment);
   }
 
-  const candidates = [
-    ...EXTENSIONS.map((ext) => join(containment.projectDir, normalizedPath + ext)),
-    ...EXTENSIONS.map((ext) => join(containment.projectDir, normalizedPath, "index" + ext)),
-  ];
+  const candidates: string[] = [];
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    arrayPush(
+      candidates,
+      join(containment.projectDir, normalizedPath + EXTENSIONS[extensionIndex]!),
+    );
+  }
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    arrayPush(
+      candidates,
+      join(containment.projectDir, normalizedPath, "index" + EXTENSIONS[extensionIndex]!),
+    );
+  }
 
   const resolved = await findFirstExistingFile(candidates, createFileSystem());
   if (!resolved) return null;
@@ -623,19 +649,29 @@ async function findFirstExistingFile(
   paths: string[],
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<string | null> {
-  const results = await promiseAll(
-    paths.map(async (path) => {
-      try {
-        const stat = await fs.stat(path);
-        return stat.isFile ? path : null;
-      } catch (_) {
-        /* expected: file may not exist */
-        return null;
-      }
-    }),
-  );
+  const pending: Array<Promise<string | null>> = [];
+  for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
+    const path = paths[pathIndex]!;
+    arrayPush(
+      pending,
+      (async () => {
+        try {
+          const stat = await fs.stat(path);
+          return stat.isFile ? path : null;
+        } catch (_) {
+          /* expected: file may not exist */
+          return null;
+        }
+      })(),
+    );
+  }
+  const results = await promiseAll(pending);
 
-  return results.find((r) => r !== null) ?? null;
+  for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+    const result = results[resultIndex];
+    if (result !== null && result !== undefined) return result;
+  }
+  return null;
 }
 
 function resolveRelative(fromDir: string, importPath: string): string {

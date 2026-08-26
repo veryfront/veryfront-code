@@ -43,8 +43,15 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
 const universalObjectPrototype = Object.prototype;
+const arrayJoin = Array.prototype.join;
+const arrayPush = Array.prototype.push;
 const mapConstructor = Map;
+const mapForEach = Map.prototype.forEach;
 const mapSet = Map.prototype.set;
+const setConstructor = Set;
+const setAdd = Set.prototype.add;
+const setForEach = Set.prototype.forEach;
+const setHas = Set.prototype.has;
 const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 // Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
@@ -70,6 +77,14 @@ function createStringMap(): Map<string, string> {
 
 function setMapValue(map: Map<string, string>, key: string, value: string): void {
   reflectApply(mapSet, map, [key, value]);
+}
+
+function pushArrayValue<T>(values: T[], value: T): void {
+  reflectApply(arrayPush, values, [value]);
+}
+
+function joinStringArray(values: readonly string[], separator: string): string {
+  return reflectApply(arrayJoin, values, [separator]) as string;
 }
 
 function mapBatch<T, U>(
@@ -182,16 +197,32 @@ export async function cachedCodeUsesResolvedDependencies(
   code: string,
   dependencies: ResolvedCachedDependencies,
 ): Promise<boolean> {
-  const expectedPaths = new Set([
-    ...dependencies.localImportPaths.values(),
-    ...dependencies.crossProjectPaths.values(),
-  ]);
-  if (expectedPaths.size === 0) return true;
+  const expectedPaths = new setConstructor<string>();
+  let expectedPathCount = 0;
+  const recordExpectedPath = (path: string): void => {
+    if (reflectApply(setHas, expectedPaths, [path]) as boolean) return;
+    reflectApply(setAdd, expectedPaths, [path]);
+    expectedPathCount++;
+  };
+  reflectApply(mapForEach, dependencies.localImportPaths, [recordExpectedPath]);
+  reflectApply(mapForEach, dependencies.crossProjectPaths, [recordExpectedPath]);
+  if (expectedPathCount === 0) return true;
 
-  const cachedSpecifiers = new Set(
-    (await parseImports(code)).map((entry) => entry.n).filter((entry): entry is string => !!entry),
-  );
-  return [...expectedPaths].every((path) => cachedSpecifiers.has(`file://${path}`));
+  const cachedSpecifiers = new setConstructor<string>();
+  const parsedImports = await parseImports(code);
+  for (let index = 0; index < parsedImports.length; index++) {
+    const specifier = ownStringValue(parsedImports[index]!, "n");
+    if (specifier) reflectApply(setAdd, cachedSpecifiers, [specifier]);
+  }
+  let complete = true;
+  reflectApply(setForEach, expectedPaths, [
+    (path: string) => {
+      if (!(reflectApply(setHas, cachedSpecifiers, [`file://${path}`]) as boolean)) {
+        complete = false;
+      }
+    },
+  ]);
+  return complete;
 }
 
 function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
@@ -285,12 +316,18 @@ export class SSRDependencyValidator {
    * Throw a structured error with all accumulated missing dependencies.
    */
   throwMissingDependencies(filePath: string): never {
-    const missingList = this.missingDependencies
-      .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
-      .join("\n");
+    const missingLines: string[] = [];
+    for (let index = 0; index < this.missingDependencies.length; index++) {
+      const missing = this.missingDependencies[index]!;
+      pushArrayValue(
+        missingLines,
+        `  - ${missing.specifier} (from ${sliceString(missing.fromFile, -40)}): ${missing.reason}`,
+      );
+    }
+    const missingList = joinStringArray(missingLines, "\n");
 
     logger.error("Missing dependencies detected", {
-      file: filePath.slice(-60),
+      file: sliceString(filePath, -60),
       missing: this.missingDependencies.length,
       details: this.missingDependencies,
     });
@@ -331,12 +368,14 @@ export class SSRDependencyValidator {
     );
 
     // Register CSS imports from cached modules for HTML inclusion
-    for (const cssImport of parseResult.cssImports) {
-      this.registerContainedCSSImport(cssImport);
+    for (let index = 0; index < parseResult.cssImports.length; index++) {
+      this.registerContainedCSSImport(parseResult.cssImports[index]!);
     }
 
     if (parseResult.missing.length > 0) {
-      this.missingDependencies.push(...parseResult.missing);
+      for (let index = 0; index < parseResult.missing.length; index++) {
+        pushArrayValue(this.missingDependencies, parseResult.missing[index]!);
+      }
     }
 
     const localFs = createFileSystem();
@@ -385,7 +424,7 @@ export class SSRDependencyValidator {
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
-            this.missingDependencies.push({
+            pushArrayValue(this.missingDependencies, {
               specifier: crossImport.specifier,
               fromFile: filePath,
               reason: `Failed to fetch cross-project import: ${
@@ -446,7 +485,7 @@ export class SSRDependencyValidator {
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
-            this.missingDependencies.push({
+            pushArrayValue(this.missingDependencies, {
               specifier: imp.specifier,
               fromFile: fromFilePath,
               reason: `Failed to load dependency: ${

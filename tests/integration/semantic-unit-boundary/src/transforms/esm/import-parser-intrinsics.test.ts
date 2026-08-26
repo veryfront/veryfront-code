@@ -255,3 +255,40 @@ it("records contained imports through the captured array intrinsic", async () =>
     await stopEsbuild();
   }
 });
+
+it("walks parsed imports without inherited array iteration", async () => {
+  const originalIterator = Array.prototype[Symbol.iterator];
+  const adapter = {
+    fs: {
+      symlinkSemantics: "none",
+      resolveFile: () => Promise.resolve("/project/child.tsx"),
+    },
+  } as unknown as RuntimeAdapter;
+
+  try {
+    Array.prototype[Symbol.iterator] = function (this: unknown[]): ArrayIterator<unknown> {
+      const first = this[0];
+      if (
+        this.length > 0 &&
+        typeof first === "object" &&
+        first !== null &&
+        Object.prototype.hasOwnProperty.call(first, "n")
+      ) {
+        return Reflect.apply(originalIterator, [], []);
+      }
+      return Reflect.apply(originalIterator, this, []);
+    };
+
+    const result = await parseLocalImports(
+      `import Child from "file:///project/child.tsx";\nexport default Child;`,
+      "/project/page.tsx",
+      "/project",
+      adapter,
+    );
+
+    assertEquals(result.imports.length, 1);
+  } finally {
+    Array.prototype[Symbol.iterator] = originalIterator;
+    await stopEsbuild();
+  }
+});
