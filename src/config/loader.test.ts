@@ -971,20 +971,38 @@ export default config as const;
         assertEquals(error.message.includes("C:\\Users\\example"), false);
       });
 
-      it("keeps a hosted config URL intact while still redacting machine paths", async () => {
+      it("redacts a hosted config URL cleanly instead of mangling it into a path", async () => {
         const error = await loadFailure(
-          "vf-config-url-not-a-path-",
+          "vf-config-url-redaction-",
           `throw new Error("Failed to fetch https://cdn.example.test/hosted/config.ts from /home/example/project/veryfront.config.ts");\n`,
         );
 
-        // The drive-letter alternative used to match the `s:/` inside `https:/`
-        // and eat the rest of the URL, so this line arrived as `http[path]` --
-        // losing the only token the reader can act on (veryfront-issue-inbox#836).
-        assertStringIncludes(error.message, "https://cdn.example.test/hosted/config.ts");
+        // The drive-letter alternative matches the `s:/` inside `https:/`, so an
+        // unguarded pass reported `http[path]` -- neither the URL nor an honest
+        // redaction marker. AGENTS.md counts private hostnames among the values
+        // user-facing output must not carry, so the URL is redacted whole rather
+        // than preserved (veryfront-issue-inbox#836).
+        assertStringIncludes(error.message, "[url]");
         assertEquals(error.message.includes("http[path]"), false);
-        // The real machine path on the same line is still redacted.
+        assertEquals(error.message.includes("cdn.example.test"), false);
+        // The machine path on the same line is still redacted separately.
         assertStringIncludes(error.message, "[path]");
         assertEquals(error.message.includes("/home/example"), false);
+      });
+
+      it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-ansi-path-",
+          `throw new Error("Failed to load ${escape}[31m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // Dropping only the ESC as a control character leaves `[31m` sitting
+        // between the boundary and the path, which defeats any pattern anchored
+        // on what precedes it. The whole SGR sequence is removed first.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("31m"), false);
       });
 
       it("classifies Bun resolver objects that do not inherit from Error", async () => {

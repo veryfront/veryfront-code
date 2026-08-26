@@ -1628,15 +1628,24 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+// A colorized cause arrives as ESC + "[31m" + text. Dropping only the ESC as a
+// control character leaves the "[31m" behind, and that residue sits between the
+// start of the token and the path -- which defeats any pattern anchored on what
+// precedes a path. Remove the whole SGR sequence so the path patterns see the
+// text a plain terminal would.
+// deno-lint-ignore no-control-regex
+const ANSI_SGR_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]/g;
+// A remote config URL is redacted whole rather than picked apart. AGENTS.md
+// counts private hostnames among the values user-facing output must not carry,
+// and the caller cannot tell an internal registry from a public CDN by looking
+// at it. Matching the scheme here also keeps `https:/` away from
+// WINDOWS_ABSOLUTE_PATH, whose drive-letter alternative would otherwise match
+// the `s:/` inside it and report `http[path]` (veryfront-issue-inbox#836).
+const REMOTE_URL = /(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'()]+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
-// The drive-letter alternative needs the same token boundary its quoted and
-// POSIX siblings already carry: without it, `[A-Za-z]:[\\/]` matches the `s:/`
-// inside `https:/`, and the rest of the URL is eaten as a Windows path. A
-// hosted-config failure then reports `http[path]` and loses the one token the
-// reader can act on (veryfront-issue-inbox#836).
-const WINDOWS_ABSOLUTE_PATH = /(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function replaceMatchesWithCapturedExec(
@@ -1670,6 +1679,7 @@ function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, REMOTE_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
@@ -1693,7 +1703,8 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   const redacted = sanitizeUrlCredentials(message);
   const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
     "";
-  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
+  const deColorized = replaceMatchesWithCapturedExec(firstLine, ANSI_SGR_SEQUENCE, "");
+  const replaced = replaceMatchesWithCapturedExec(deColorized, CONTROL_CHARACTERS, " ");
   const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
