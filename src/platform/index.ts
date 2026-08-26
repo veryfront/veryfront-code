@@ -17,6 +17,7 @@ export {
   type CommandResult,
   cwd,
   env,
+  execPath,
   exit,
   getArgs,
   getEnv,

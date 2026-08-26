@@ -345,7 +345,10 @@ export class APIRouteHandler {
           allowHostProjectCodeExecution: useHostRealm,
         };
 
-        const applicationRequest = createApplicationRequest(request);
+        const applicationRequest = createApplicationRequest(request, {
+          denyHeaders: ctx?.applicationIdentityHeaderNames,
+        });
+        const applicationIdentity = ctx?.applicationIdentity ?? null;
         const response = route.kind === "isolated"
           ? isAppRoute
             ? await executePreparedAppRoute(applicationRequest, match, pathname, {
@@ -354,6 +357,7 @@ export class APIRouteHandler {
               modulePath: match.route.page,
               projectDir: this.projectDir,
               isLocalProject,
+              applicationIdentity,
             })
             : await executePreparedPagesRoute(applicationRequest, match, pathname, {
               executionScopeId: this.executionScopeId,
@@ -361,6 +365,7 @@ export class APIRouteHandler {
               modulePath: match.route.page,
               projectDir: this.projectDir,
               isLocalProject,
+              applicationIdentity,
             })
           : isAppRoute
           ? await executeAppRoute(
@@ -369,7 +374,7 @@ export class APIRouteHandler {
             match,
             pathname,
             adapter,
-            isolationOptions,
+            { ...isolationOptions, applicationIdentity },
           )
           : await executePagesRoute(
             route.handler,
@@ -378,7 +383,7 @@ export class APIRouteHandler {
             pathname,
             adapter,
             this.projectDir,
-            isolationOptions,
+            { ...isolationOptions, applicationIdentity },
           );
 
         const corsResponse = await applyCORSHeaders({

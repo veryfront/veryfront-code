@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert } from "#veryfront/testing/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { exists, makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { generateCommand } from "./index.ts";
+import { scaffoldFailureToError } from "./command.ts";
 import { type TestContext, withTestContext } from "../../../tests/_helpers/context.ts";
 import {
   __registerLogRecordEmitter,
@@ -34,6 +40,20 @@ async function setRouter(
 }
 
 describe("CLI generate command", () => {
+  it("preserves filesystem scaffold failure classification", () => {
+    const error = scaffoldFailureToError({
+      success: false,
+      files: [],
+      message: "Scaffold filesystem preflight failed",
+      failureKind: "filesystem",
+    });
+    const context = Object.getOwnPropertyDescriptor(error, "context")?.value as
+      | { type?: string }
+      | undefined;
+
+    assertEquals(context?.type, "file");
+  });
+
   it("creates app-router files by default", async () => {
     await withTestContext("generate-files", async (context: TestContext) => {
       await generateCommand(context.projectDir, "page", "docs/intro");
@@ -43,6 +63,109 @@ describe("CLI generate command", () => {
       assert(await exists(join(context.projectDir, "app", "docs", "intro", "page.tsx")));
       assert(await exists(join(context.projectDir, "app", "main", "layout.tsx")));
       assert(await exists(join(context.projectDir, "app", "api", "users", "[id]", "route.ts")));
+    });
+  });
+
+  it("generates auth files without modifying existing application files", async () => {
+    await withTestContext("generate-auth-existing-app", async (context: TestContext) => {
+      const configPath = join(context.projectDir, "veryfront.config.ts");
+      const envPath = join(context.projectDir, ".env");
+      const routePath = join(context.projectDir, "app", "api", "health", "route.ts");
+      const middlewarePath = join(context.projectDir, "middleware.ts");
+      await Deno.mkdir(join(context.projectDir, "app", "api", "health"), { recursive: true });
+      await writeTextFile(
+        configPath,
+        'import { defineConfig } from "veryfront";\nexport default defineConfig(() => ({ router: "app" }));\n',
+      );
+      await writeTextFile(envPath, "EXISTING=value\n");
+      await writeTextFile(routePath, "export const GET = () => Response.json({ ok: true });\n");
+      await writeTextFile(
+        middlewarePath,
+        "export function middleware(req: Request) { return req; }\n",
+      );
+
+      const before = await Promise.all([
+        Deno.readTextFile(configPath),
+        Deno.readTextFile(envPath),
+        Deno.readTextFile(routePath),
+        Deno.readTextFile(middlewarePath),
+      ]);
+
+      await generateCommand(context.projectDir, "auth", "authelia");
+
+      assert(await exists(join(context.projectDir, "AUTH_SETUP.md")));
+      assert(await exists(join(context.projectDir, "AUTH_PROVIDER_SETUP.md")));
+      assert(await exists(join(context.projectDir, ".env.auth.example")));
+      assert(await exists(join(context.projectDir, "veryfront.auth.config.example.ts")));
+      assert(await exists(join(context.projectDir, "authelia.client.example.yml")));
+      assertEquals(await exists(join(context.projectDir, "app", "api", "auth", "route.ts")), false);
+      assertEquals(
+        await exists(join(context.projectDir, "app", "api", "auth", "callback", "route.ts")),
+        false,
+      );
+
+      const after = await Promise.all([
+        Deno.readTextFile(configPath),
+        Deno.readTextFile(envPath),
+        Deno.readTextFile(routePath),
+        Deno.readTextFile(middlewarePath),
+      ]);
+      assertEquals(after, before);
+
+      const setup = await Deno.readTextFile(join(context.projectDir, "AUTH_SETUP.md"));
+      assertStringIncludes(setup, "/_veryfront/auth/callback");
+      assertStringIncludes(setup, "No sticky sessions");
+      assertStringIncludes(setup, "(iss, sub)");
+    });
+  });
+
+  it("rejects unknown auth presets as a usage error", async () => {
+    await withTestContext("generate-auth-unknown", async (context: TestContext) => {
+      const error = (await assertRejects(() =>
+        generateCommand(context.projectDir, "auth", "ldap")
+      )) as Error;
+
+      assertStringIncludes(error.message, "Unknown auth preset");
+      assertStringIncludes(error.message, "authelia, oidc, microsoft-entra");
+    });
+  });
+
+  it("classifies auth scaffold conflicts separately from unsafe setup failures", async () => {
+    await withTestContext("generate-auth-error-classification", async (context: TestContext) => {
+      await writeTextFile(join(context.projectDir, "AUTH_SETUP.md"), "existing\n");
+
+      const conflict = (await assertRejects(() =>
+        generateCommand(context.projectDir, "auth", "oidc")
+      )) as Error & { slug?: string };
+
+      assertEquals(conflict.slug, "already-exists");
+
+      await remove(join(context.projectDir, "AUTH_SETUP.md"));
+      const outside = await makeTempDir({ prefix: "generate-auth-symlink-outside-" });
+      const linkedRoot = `${context.projectDir}-link`;
+      try {
+        await Deno.symlink(outside, linkedRoot);
+      } catch (error) {
+        await remove(outside, { recursive: true });
+        if (error instanceof Deno.errors.PermissionDenied) {
+          return;
+        }
+        throw error;
+      }
+
+      try {
+        const unsafe = (await assertRejects(() =>
+          generateCommand(linkedRoot, "auth", "oidc")
+        )) as
+          & Error
+          & { slug?: string };
+
+        assertEquals(unsafe.slug, "config-invalid");
+        assertStringIncludes(unsafe.message, "Unsafe scaffold project root");
+      } finally {
+        await remove(linkedRoot);
+        await remove(outside, { recursive: true });
+      }
     });
   });
 

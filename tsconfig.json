@@ -86,7 +86,7 @@
       "veryfront/platform/esbuild-init": [
         "./src/platform/compat/esbuild-init.ts"
       ],
-      "veryfront/platform/env": ["./src/platform/compat/process/public-env.ts"],
+      "veryfront/platform/env": ["./src/platform/compat/process/env-public.ts"],
       "veryfront/platform/path": ["./src/platform/compat/path/index.ts"],
       "veryfront/platform/http": ["./src/platform/compat/http/index.ts"],
       "veryfront/errors/general": ["./src/errors/error-registry/general.ts"],

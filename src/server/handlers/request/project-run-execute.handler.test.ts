@@ -15,7 +15,7 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
@@ -214,8 +214,10 @@ function createDeps(
   };
 }
 
-function requestJsonBody(init: RequestInit | undefined): Record<string, unknown> | null {
-  const body = init?.body;
+function requestJsonBody(
+  init: Parameters<typeof globalThis.fetch>[1],
+): Record<string, unknown> | null {
+  const body = observeFetchRequestInit(init).body;
   return typeof body === "string" ? JSON.parse(body) as Record<string, unknown> : null;
 }
 
@@ -1103,7 +1105,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         withMockFetch(
           async (input, init) => {
             const url = new URL(String(input));
-            const method = init && "method" in init ? init.method ?? "GET" : "GET";
+            const method = observeFetchRequestInit(init).method ?? "GET";
             const requestBody = requestJsonBody(init);
             requests.push({ method, pathname: url.pathname, body: requestBody });
 
@@ -1217,7 +1219,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           withMockFetch(
             async (input, init) => {
               const url = new URL(String(input));
-              const method = init && "method" in init ? init.method ?? "GET" : "GET";
+              const method = observeFetchRequestInit(init).method ?? "GET";
               const requestBody = requestJsonBody(init);
               requests.push({ method, pathname: url.pathname, body: requestBody });
 
