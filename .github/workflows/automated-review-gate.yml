@@ -35,7 +35,7 @@ jobs:
          github.event.comment.user.type == 'Bot')) &&
        (github.event_name != 'workflow_run' ||
         (github.event.workflow_run.event == 'pull_request_review' &&
-         github.event.workflow_run.conclusion != 'skipped')))
+         endsWith(github.event.workflow_run.display_title, '-eligible'))))
     permissions:
       contents: read
       pull-requests: read
@@ -72,7 +72,7 @@ jobs:
               const title = typeof run?.display_title === "string"
                 ? run.display_title
                 : "";
-              const match = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(title);
+              const match = /^automated-review-wakeup-pr-([1-9]\d*)-eligible$/.exec(title);
               const pullNumber = match ? Number(match[1]) : undefined;
               const headRepositoryId = run?.head_repository?.id;
               if (

@@ -3283,7 +3283,7 @@ describe("automated review workflow", () => {
         "github.event.comment.user.id == 199175422",
         "github.event.comment.user.type == 'Bot'",
         "github.event.workflow_run.event == 'pull_request_review'",
-        "github.event.workflow_run.conclusion != 'skipped'",
+        "endsWith(github.event.workflow_run.display_title, '-eligible')",
       ]
     ) {
       assert(
@@ -3291,6 +3291,10 @@ describe("automated review workflow", () => {
         "target resolution must skip events that no publisher job can use",
       );
     }
+    assert(
+      !targetIf.includes("github.event.workflow_run.conclusion"),
+      "review wakeup eligibility must come from the classified wakeup run-name",
+    );
     assert(
       !targetIf.includes("github.event.workflow_run.conclusion == 'success'"),
       "failed or cancelled review wakeups must reach trusted invalidation",
@@ -3813,7 +3817,7 @@ describe("automated review workflow", () => {
     assertEquals(workflow.name, "Automated review wakeup");
     assertEquals(
       workflow["run-name"],
-      "automated-review-wakeup-pr-${{ github.event.pull_request.number }}",
+      "automated-review-wakeup-pr-${{ github.event.pull_request.number }}-${{ (github.event.review.user.type == 'User' || (github.event.review.user.login == 'chatgpt-codex-connector[bot]' && github.event.review.user.id == 199175422 && github.event.review.user.type == 'Bot')) && 'eligible' || 'ignored' }}",
     );
     assertEquals(record(workflow.permissions, "wakeup permissions"), {});
     assertEquals(
