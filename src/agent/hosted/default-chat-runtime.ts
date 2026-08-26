@@ -206,7 +206,9 @@ async function buildToolAssembly(
           branchId: input.taskContext.branchId,
           environmentContext: liveProjectSteering.environmentContext,
           instructions: liveProjectSteering.initialProjectInstructions ?? "",
-          skills: liveProjectSteering.initialSkills ?? [],
+          skills: modelVisibleToolNames.includes("load_skill")
+            ? liveProjectSteering.initialSkills ?? []
+            : [],
           availableToolNames: modelVisibleToolNames,
         }),
     }),

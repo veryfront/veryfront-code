@@ -186,7 +186,10 @@ function withoutDeniedHostTools(
   }
   const denied = new Set(deniedToolNames);
   return Object.fromEntries(
-    Object.entries(tools).filter(([toolName]) => !denied.has(toolName)),
+    Object.entries(tools).filter(([toolName, tool]) =>
+      !denied.has(toolName) &&
+      (tool.shortName === undefined || !denied.has(tool.shortName))
+    ),
   );
 }
 

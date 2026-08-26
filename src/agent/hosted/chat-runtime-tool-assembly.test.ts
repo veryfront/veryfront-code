@@ -748,6 +748,39 @@ Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's configured s
   assertEquals(taskContext.availableToolNames, ["researcher--fetch-paper"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's denied short tool name", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    agentId: "researcher",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      "researcher--fetch-paper": {
+        ...localTool("Fetch a paper"),
+        id: "researcher--fetch-paper",
+        ownerAgentId: "researcher",
+        shortName: "fetch-paper",
+      },
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["fetch-paper"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+  assertEquals(taskContext.availableToolNames?.includes("researcher--fetch-paper") ?? false, false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
