@@ -20,7 +20,7 @@ import {
   markNativeFileSystemAdapter,
 } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
-import { posix, resolve } from "../../../compat/path/index.ts";
+import { posix, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError, FileSnapshotPathError } from "../../file-snapshot-error.ts";
 import {
