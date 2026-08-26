@@ -9,7 +9,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import type { DevError } from "veryfront/observability";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector } from "#cli/observability/error-collector";
 import { vfGetProjectContext } from "./project-tools.ts";
 import { vfGetConventions } from "./scaffold-tools.ts";
 

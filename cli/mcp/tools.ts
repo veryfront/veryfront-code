@@ -10,8 +10,8 @@ import {
   type LogEntry,
   type LogLevel,
 } from "veryfront/observability";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getErrorCollector } from "#cli/observability/error-collector";
+import { getLogBuffer } from "#cli/observability/log-buffer";
 import { createFileSystem } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import type { MCPTool } from "veryfront/mcp";

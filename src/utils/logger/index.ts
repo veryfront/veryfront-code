@@ -8,7 +8,6 @@ export {
   __resetLoggerConfigForTests,
   createRequestLogger,
   createRunUserLogger,
-  getBaseLogger,
   getDefaultLevel,
   type LogEntry,
   type LogFormat,
@@ -23,6 +22,7 @@ import {
   agentLogger as internalAgentLogger,
   bundlerLogger as internalBundlerLogger,
   cliLogger as internalCliLogger,
+  getBaseLogger as getInternalBaseLogger,
   type Logger,
   logger as internalLogger,
   proxyLogger as internalProxyLogger,
@@ -40,6 +40,14 @@ function immutableLoggerFacade(source: Logger): Logger {
     child: (context: Record<string, unknown>) => immutableLoggerFacade(source.child(context)),
     component: (name: string) => immutableLoggerFacade(source.component(name)),
   });
+}
+
+/** Get an immutable base logger without request context awareness. */
+export function getBaseLogger(
+  prefix: string,
+  options?: { injectTraceContext?: boolean },
+): Logger {
+  return immutableLoggerFacade(getInternalBaseLogger(prefix, options));
 }
 
 export const agentLogger = immutableLoggerFacade(internalAgentLogger);

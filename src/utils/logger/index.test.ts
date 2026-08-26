@@ -31,4 +31,13 @@ describe("veryfront/utils/logger public export surface", () => {
       assertEquals(Reflect.set(publicLogger[name], "info", () => {}), false);
     }
   });
+
+  it("returns an immutable public base logger facade", () => {
+    const baseLogger = publicLogger.getBaseLogger("SERVER");
+
+    assertEquals(Object.isFrozen(baseLogger), true);
+    assertEquals(Reflect.set(baseLogger, "info", () => {}), false);
+    assertEquals(Object.isFrozen(baseLogger.child({ request_id: "req-test" })), true);
+    assertEquals(Object.isFrozen(baseLogger.component("test")), true);
+  });
 });
