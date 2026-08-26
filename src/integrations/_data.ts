@@ -33445,7 +33445,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Locate your Metabase instance",
         "description":
-          "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain, and set it as METABASE_HOST in your .env. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'.",
+          "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain, and set it as METABASE_HOST in your .env. Veryfront connects with HTTPS. The default Docker container serves HTTP only, so put it behind an HTTPS reverse proxy or configure native HTTPS before using this connector.",
       }, {
         "step": 2,
         "title": "Create an API key",
@@ -43807,7 +43807,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create a Qdrant Cloud account",
         "description":
-          "Sign up at https://cloud.qdrant.io. The free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured).",
+          "Sign up at https://cloud.qdrant.io. The free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant requires an API key plus native TLS or an HTTPS reverse proxy before you use this connector.",
       }, {
         "step": 2,
         "title": "Create a cluster and API key",
@@ -43826,6 +43826,7 @@ export const connectors: IntegrationConfig[] = [
       "notes": [
         "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
         "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333); there is no global Qdrant API host",
+        "Self-hosted Qdrant must enable native TLS or use an HTTPS reverse proxy. The default HTTP listener on port 6333 is not supported by this connector",
         "Migrating from earlier versions: tools no longer accept a clusterHost parameter; set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
         "QDRANT_CLUSTER_HOST is treated as sensitive because the cluster hostname identifies your private deployment; the CLI masks it in prompts and output",
         "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)",
