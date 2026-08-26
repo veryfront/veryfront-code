@@ -294,6 +294,25 @@ describe("readDenoImportMap", () => {
     );
   });
 
+  it("resolves URL-relative scope prefixes against the import map base", async () => {
+    const projectDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(projectDir, "deno.json"),
+      `{ "scopes": { "lib/": { "dep": "https://blocked.example/mod.js" } } }\n`,
+    );
+
+    const importMap = await readDenoImportMap(fs, projectDir);
+    assertNotEquals(importMap, null);
+    if (importMap === null) return;
+
+    assertEquals(Object.keys(importMap.scopes), [join(projectDir, "lib") + "/"]);
+    assertEquals(
+      lookupImportMapEntry(importMap, "dep", join(projectDir, "lib", "route.ts")),
+      "https://blocked.example/mod.js",
+      "a URL-relative scope prefix must match the same referrer path as ./lib/",
+    );
+  });
+
   it("selects the local target belonging to the importing file's scope", async () => {
     const projectDir = await makeTempDir();
     await fs.writeTextFile(

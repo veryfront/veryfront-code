@@ -913,6 +913,33 @@ describe("routing/api/module-loader/http-validator", () => {
           `Reflect.apply(Object.setPrototypeOf, null, [holder, () => {}]);`,
           `const setProto = Reflect.setPrototypeOf;` +
           ` let args = [{}, null]; args = [holder, () => {}]; setProto.apply(null, args);`,
+          `Object.setPrototypeOf.bind(Object, holder, () => {})();`,
+          `Reflect.setPrototypeOf.bind(Reflect, holder, () => {})();`,
+          `const setProto = Object.setPrototypeOf.bind(Object, holder, () => {}); setProto();`,
+          `const setProto = Reflect.setPrototypeOf.bind(Reflect, holder, () => {}); setProto();`,
+          `Object.setPrototypeOf.bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `Reflect.setPrototypeOf.bind.call(Reflect.setPrototypeOf, Reflect, holder, () => {})();`,
+          `Object.setPrototypeOf.bind.apply(Object.setPrototypeOf, [Object, holder, () => {}])();`,
+          `Reflect.setPrototypeOf.bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `const bind = Object.setPrototypeOf.bind;` +
+          ` bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `const bind = Reflect.setPrototypeOf.bind;` +
+          ` bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `Function.prototype.bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `Function.prototype.bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `Reflect.apply(Function.prototype.bind, Object.setPrototypeOf,` +
+          ` [Object, holder, () => {}])();`,
+          `const setProto = Object.setPrototypeOf.bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Reflect.setPrototypeOf.bind.apply(Reflect.setPrototypeOf, [Reflect]);` +
+          ` setProto(holder, () => {});`,
+          `const bind = Object.setPrototypeOf.bind;` +
+          ` const setProto = bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Function.prototype.bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Reflect.apply(Function.prototype.bind,` +
+          ` Reflect.setPrototypeOf, [Reflect]); setProto(holder, () => {});`,
         ]
       ) {
         await assertRejects(
@@ -928,6 +955,12 @@ describe("routing/api/module-loader/http-validator", () => {
           "calling a borrowed setPrototypeOf mutator must invalidate the target object",
         );
       }
+      await validateHTTPImports(
+        `const first = {}; Object.setPrototypeOf(first, null);` +
+          ` const mutate = Reflect.setPrototypeOf; const second = {};` +
+          ` mutate(second, null);`,
+        [],
+      );
       await assertRejects(
         async () =>
           await validateHTTPImports(
@@ -1702,6 +1735,66 @@ describe("routing/api/module-loader/http-validator", () => {
         Error,
         "dynamic code generation",
         "a destructured subprocess constructor remains an unchecked module loader",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `Reflect.construct(Deno.Command, [Deno.execPath(),` +
+              ` { args: ["run", "-A", "https://blocked.example/mod.ts"] }]).output();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "reflective construction must not hide a subprocess runtime loader",
+      );
+      for (
+        const source of [
+          `Reflect.apply(Reflect.construct, Reflect, [Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]]);`,
+          `Reflect.construct.bind(Reflect)(Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]);`,
+          `const args = [Deno.Command, ["deno", { args: ["run", "./x.ts"] }]];` +
+          ` Reflect.apply(Reflect.construct, Reflect, args);`,
+          `Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }])();`,
+          `const construct = Reflect.construct.bind(Reflect);` +
+          ` construct(Deno.Command, ["deno", { args: ["run", "./x.ts"] }]);`,
+          `const construct = Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]); construct();`,
+          `const { bind } = Reflect.construct;` +
+          ` const construct = bind.call(Reflect.construct, Reflect);` +
+          ` construct(Deno.Command, ["deno", { args: ["run", "./x.ts"] }]);`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "borrowed Reflect.construct must not hide a subprocess runtime loader",
+        );
+      }
+      await validateHTTPImports(
+        `class Safe {}` +
+          `Reflect.construct(Safe, []);` +
+          `Reflect.apply(Reflect.construct, null, [Safe, []]);` +
+          `Reflect.construct.bind(null, Safe, [])();`,
+        [],
+      );
+      await validateHTTPImports(
+        `class Command {}` +
+          `const Deno = { Command };` +
+          `const Reflect = { construct: { bind: () => () => undefined } };` +
+          `Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }])();`,
+        [],
+      );
+      await validateHTTPImports(
+        `class Command {}` +
+          `const Deno = { Command };` +
+          `const { bind } = Reflect.construct;` +
+          `const construct = bind.call(Reflect.construct, Reflect);` +
+          `construct(Deno.Command, []);`,
+        [],
       );
       for (const method of ["spawn", "spawnSync"]) {
         await assertRejects(

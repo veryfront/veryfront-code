@@ -1044,15 +1044,12 @@ function normalizeFileUrlSpecifier(specifier: string): string | null {
 }
 
 function normalizeImportMapScope(prefix: string, baseDir: string): string | null {
-  if (prefix.startsWith("./") || prefix.startsWith("../")) {
-    const resolved = resolveImportMapTargetPath(prefix, baseDir);
-    return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
-  }
   if (!/^file:/i.test(prefix)) {
     try {
       return new URL(prefix).href;
     } catch {
-      return prefix;
+      const resolved = resolveImportMapTargetPath(prefix, baseDir);
+      return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
     }
   }
 
