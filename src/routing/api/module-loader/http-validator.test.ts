@@ -1112,6 +1112,19 @@ describe("routing/api/module-loader/http-validator", () => {
           `${moduleName} starts an unchecked module graph`,
         );
       }
+      for (const moduleName of ["node:child_process", "child_process"]) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `import { spawn } from "${moduleName}";` +
+                ` spawn(Deno.execPath(), ["run", "-A", "https://blocked.example/mod.ts"]);`,
+              [],
+            ),
+          Error,
+          "subprocess module loading",
+          `${moduleName} can launch a runtime outside the checked module graph`,
+        );
+      }
     });
 
     it("should reject module loads hidden from the bundled graph", async () => {
