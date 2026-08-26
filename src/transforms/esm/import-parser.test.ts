@@ -368,7 +368,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("preserves POSIX backslashes while normalizing the project root", async () => {
     if (Deno.build.os === "windows") return;
-    const rootDir = await Deno.makeTempDir({ prefix: "vf-import-parser-backslash-root-" });
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-backslash-root-" });
     const projectDir = `${rootDir}/proj\\name`;
     try {
       await Deno.mkdir(projectDir, { recursive: true });
@@ -430,7 +430,7 @@ describe("transforms/esm/import-parser", () => {
 
   it("preserves POSIX backslashes when resolving recursive relative imports", async () => {
     if (Deno.build.os === "windows") return;
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-import-parser-relative-backslash-" });
+    const projectDir = await makeTempDir({ prefix: "vf-import-parser-relative-backslash-" });
     try {
       await Deno.writeTextFile(
         `${projectDir}/a\\b.tsx`,
