@@ -1665,7 +1665,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
     });
     const body = createAgentStreamRequestBody({
-      credentials: { authToken: "request-scoped-user-token" },
       forwardedProps: { clientId: "external-client" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1684,6 +1683,45 @@ describe("server/handlers/request/agent-stream.handler", () => {
     );
 
     assertEquals(result.response?.status, 403);
+  });
+
+  it("requires authentication for explicit Studio MCP from an authorized client", async () => {
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", {
+            tools: true,
+            mcpServers: [{ kind: "veryfront-studio" }],
+          })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        clientId: "veryfront-studio",
+        veryfront: {
+          client: { id: "veryfront-studio", type: "web", platform: "browser" },
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 401);
   });
 
   it("preserves an explicit Studio MCP opt-out", async () => {

@@ -532,7 +532,19 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   availableToolNames?: string[];
 }): Promise<Agent> {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
-  if (configuredServers.length === 0 || !input.token) return input.agent;
+  if (configuredServers.length === 0) return input.agent;
+
+  const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+  if (!clientAllowsStudioMcp(clientProfile)) {
+    throw PERMISSION_DENIED.create({
+      detail: "Studio MCP tools require an authorized Studio client profile.",
+    });
+  }
+  if (!input.token) {
+    throw AUTHENTICATION_REQUIRED.create({
+      detail: "Studio MCP tools require a request-scoped API token.",
+    });
+  }
 
   let requestedStudioToolNames = getRequestedUnresolvedBooleanToolNames({
     tools: input.agent.config.tools,
@@ -542,12 +554,6 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
   );
 
-  const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
-  if (!clientAllowsStudioMcp(clientProfile)) {
-    throw PERMISSION_DENIED.create({
-      detail: "Studio MCP tools require an authorized Studio client profile.",
-    });
-  }
   const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
   if (!studioMcpUrl) return input.agent;
 
