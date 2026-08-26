@@ -15,31 +15,33 @@ export const PREFIX_WIDTH = 23; // timestamp(8) + gap(2) + tag(10) + space(1) + 
 
 export type LogLevelName = "debug" | "info" | "warn" | "error";
 
-export const LEVEL_GLYPHS: Record<LogLevelName, string> = {
+export const LEVEL_GLYPHS: Record<LogLevelName, string> = Object.freeze({
   debug: "·",
   info: "●",
   warn: "▲",
   error: "✖",
-};
+});
 
-export const ANSI = {
-  reset: "\u001b[0m",
-  dim: "\u001b[2m",
-  gray: "\u001b[90m",
-  red: "\u001b[31m",
-  green: "\u001b[32m",
-  yellow: "\u001b[33m",
-  blue: "\u001b[34m",
-  magenta: "\u001b[35m",
-  cyan: "\u001b[36m",
-} as const;
+export const ANSI = Object.freeze(
+  {
+    reset: "\u001b[0m",
+    dim: "\u001b[2m",
+    gray: "\u001b[90m",
+    red: "\u001b[31m",
+    green: "\u001b[32m",
+    yellow: "\u001b[33m",
+    blue: "\u001b[34m",
+    magenta: "\u001b[35m",
+    cyan: "\u001b[36m",
+  } as const,
+);
 
-export const LEVEL_COLORS: Record<LogLevelName, string> = {
+export const LEVEL_COLORS: Record<LogLevelName, string> = Object.freeze({
   debug: ANSI.gray,
   info: ANSI.green,
   warn: ANSI.yellow,
   error: ANSI.red,
-};
+});
 
 // ============================================================================
 // Pure Formatting Functions (no dependencies)

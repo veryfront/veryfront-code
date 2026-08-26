@@ -8,7 +8,7 @@ import * as embeddingMod from "#veryfront/embedding/index.ts";
 import * as knowledgeMod from "#veryfront/knowledge";
 import * as workflowMod from "#veryfront/workflow";
 import * as evalMod from "#veryfront/eval";
-import * as metricsMod from "#veryfront/metrics";
+import * as metricsMod from "veryfront/metrics";
 import * as schemasMod from "#veryfront/schemas";
 import * as integrationsMod from "#veryfront/integrations/index.ts";
 import * as middlewareMod from "#veryfront/middleware";
