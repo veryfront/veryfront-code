@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -46,6 +47,47 @@ function installDom(): () => void {
 
 describe("useWorkflowStart", () => {
   afterEach(restoreMockFetch);
+
+  it("keeps a start launched from a layout effect current on mount", async () => {
+    const restoreDom = installDom();
+    const response = Promise.withResolvers<Response>();
+    const startedRunIds: string[] = [];
+    const onStart = (runId: string): void => {
+      startedRunIds.push(runId);
+    };
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+    let startPromise: Promise<string> | null = null;
+
+    installMockFetch((() => response.promise) as typeof fetch);
+
+    function Capture(): null {
+      hook = useWorkflowStart({
+        workflowId: "workflow-1",
+        onStart,
+      });
+      const start = hook.start;
+      useLayoutEffect(() => {
+        startPromise = start({});
+      }, [start]);
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      assertEquals(hook!.isStarting, true);
+
+      response.resolve(Response.json({ runId: "layout-run" }));
+      assertEquals(await startPromise, "layout-run");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isStarting, false);
+      assertEquals(hook!.lastRunId, "layout-run");
+      assertEquals(startedRunIds, ["layout-run"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
 
   it("ignores an obsolete start response after authorization changes", async () => {
     const restoreDom = installDom();

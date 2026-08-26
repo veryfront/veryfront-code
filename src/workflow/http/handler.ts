@@ -472,27 +472,26 @@ export function createWorkflowHandler(
           );
         }
 
-        if (decision.approved) {
-          await client.approve(
+        const resolved = decision.approved
+          ? await client.approve(
+            second,
+            approvalId,
+            authorizedApprover,
+            decision.comment,
+            decision.data,
+          )
+          : await client.reject(
             second,
             approvalId,
             authorizedApprover,
             decision.comment,
             decision.data,
           );
-        } else {
-          await client.reject(
-            second,
-            approvalId,
-            authorizedApprover,
-            decision.comment,
-            decision.data,
-          );
-        }
 
         return Response.json({
           approvalId,
           approved: decision.approved,
+          result: resolved ?? null,
           resolvedBy: authorizedApprover,
         });
       }

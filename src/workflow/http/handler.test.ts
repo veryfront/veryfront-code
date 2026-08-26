@@ -480,6 +480,7 @@ describe("createWorkflowHandler", () => {
     expect(await decided.json()).toEqual({
       approvalId,
       approved: true,
+      result: null,
       resolvedBy: "tester",
     });
 

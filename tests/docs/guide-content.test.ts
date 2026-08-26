@@ -87,6 +87,22 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("requires server-verified authentication for the workflow handler example", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows-advanced.md", repoRoot),
+    );
+
+    assertStringIncludes(
+      guide,
+      "Its `getSession(request)` function must verify",
+    );
+    assertStringIncludes(guide, "a signed, HttpOnly, same-origin session cookie");
+    assertStringIncludes(
+      guide,
+      "Do not decode an unsigned cookie or",
+    );
+  });
+
   it("keeps the workflow EventSource example terminal-safe and wire-accurate", async () => {
     const guide = await Deno.readTextFile(
       new URL("docs/guides/workflows-advanced.md", repoRoot),

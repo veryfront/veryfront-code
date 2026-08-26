@@ -114,6 +114,12 @@ sync with the server's run state.
 Nothing serves those paths by default. Mount `createWorkflowHandler` on a
 catch-all route to answer all of them at once:
 
+Before mounting this route, provide `lib/auth.ts` through your application's
+server-side authentication layer. Its `getSession(request)` function must verify
+a signed, HttpOnly, same-origin session cookie and return
+`Promise<{ user: { id: string } } | null>`. Do not decode an unsigned cookie or
+accept a browser-supplied user ID header as authentication.
+
 ```ts theme={null}
 // app/api/workflows/[...path]/route.ts
 import { createWorkflowHandler } from "veryfront/workflow";
