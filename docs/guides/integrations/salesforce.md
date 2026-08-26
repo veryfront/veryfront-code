@@ -114,6 +114,13 @@ Local Salesforce execution supports the catalog's fixed REST tools and the
 client-credentials service account only. Keep using managed execution for a
 Salesforce user's authorization-code OAuth connection.
 
+Curated query tools accept a custom `q` value only when it keeps the default
+query's selected fields and object. Filter and sort clauses may reference only
+fields the default query already uses, and mandatory predicates such as
+`PublishStatus = 'Online'` must be preserved, so additional conditions can only
+be AND-ed after them. Functions, subqueries, and side-effecting clauses are
+rejected. Use `salesforce__run_soql_query` for free-form read-only queries.
+
 For a local or self-hosted project, create a source with
 `createSalesforceServiceAccountToolSource` from `veryfront/integrations`, then
 materialize it with `loadRemoteToolsFromSource` from `veryfront/tool` and pass

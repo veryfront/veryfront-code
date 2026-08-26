@@ -138,7 +138,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];
-  /** Preserve skill runtime infrastructure for a config-derived empty tool selector. */
+  /**
+   * Marks `allowedTools` as config-derived (no request-level override):
+   * skill runtime infrastructure is preserved for empty selectors and skill
+   * delegation stays available for empty and non-empty configured sets.
+   */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   allowDelegation?: boolean;
   thinking?: TThinkingConfig;

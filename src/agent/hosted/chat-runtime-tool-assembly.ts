@@ -43,6 +43,7 @@ import {
 import type { RuntimeToolDiscoveryContext } from "../runtime/tool-discovery-context.ts";
 import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
@@ -108,6 +109,10 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  /**
+   * Include runtime-essential tools when `allowedToolNames` is an empty set.
+   * Non-empty selectors remain restrictive.
+   */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -270,7 +275,7 @@ export function filterHostedChatRuntimeLocalTools(input: {
     allowedToolNames ? allowedToolNames.has(toolName) : true
   );
 
-  return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
+  return Object.fromEntries(entries.sort(([left], [right]) => compareStrings(left, right)));
 }
 
 function shouldIncludeHostedWebFetchFallback(input: {
@@ -295,11 +300,11 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
-/** Prepare hosted chat runtime tool assembly. */
-export async function prepareHostedChatRuntimeToolAssembly<
+async function prepareHostedChatRuntimeToolAssemblyInternal<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+  configDerivedSelector: boolean,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const authorizedLocalTools = applyHostedHostToolPolicy(
     input.localTools,
@@ -317,7 +322,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
-    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
+    configDerivedSelector: configDerivedSelector ||
+      (input.includeRuntimeEssentialToolsWhenEmpty === true &&
+        normalizedAllowedToolNames?.size === 0),
   });
   const postFormInputLocalTools = filterPostFormInputLocalTools(
     authorizedLocalTools,
@@ -352,7 +359,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     }
   }
   const sortedLocalTools = Object.fromEntries(
-    sortedLocalToolEntries.sort(([left], [right]) => left.localeCompare(right)),
+    sortedLocalToolEntries.sort(([left], [right]) => compareStrings(left, right)),
   );
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
@@ -412,7 +419,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     : "eager";
   const authorizedToolNames = [
     ...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames]),
-  ].sort();
+  ].sort(compareStrings);
   // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
   // the model, so the provider schema limit must not truncate its searchable or
   // executable authorization catalog. Eager mode still needs an up-front cap.
@@ -432,7 +439,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     ? [
       ...bootstrapToolNames,
       ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
-    ].sort()
+    ].sort(compareStrings)
     : availableToolNames;
 
   input.taskContext.availableToolNames = modelVisibleToolNames;
@@ -474,4 +481,25 @@ export async function prepareHostedChatRuntimeToolAssembly<
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),
   };
+}
+
+/** Prepare hosted chat runtime tool assembly. */
+export function prepareHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(input, false);
+}
+
+/** @internal Prepare an assembly whose selector provenance was verified by the hosted runtime. */
+export function prepareConfigDerivedHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(
+    input,
+    input.includeRuntimeEssentialToolsWhenEmpty === true,
+  );
 }

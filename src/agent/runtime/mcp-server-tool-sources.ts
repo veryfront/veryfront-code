@@ -23,6 +23,7 @@ import {
 import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export type RuntimeRemoteToolConfig = {
   __vfRemoteToolSources?: RemoteToolSource[];
@@ -68,7 +69,7 @@ export function getRequestedUnresolvedBooleanToolNames(input: {
       !RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES.has(toolName)
     )
     .map(([toolName]) => toolName)
-    .sort();
+    .sort(compareStrings);
 }
 
 async function resolveValue<T>(

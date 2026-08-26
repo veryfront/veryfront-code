@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
+import { zodToJsonSchema } from "veryfront/tool/schema";
 import { vfGetConventions, vfScaffold } from "./scaffold-tools.ts";
 
 async function withTempProject(fn: (projectDir: string) => Promise<void>): Promise<void> {
@@ -69,6 +70,14 @@ describe("mcp/tools/scaffold-tools", () => {
 
     it("has execute function", () => {
       assertEquals(typeof vfScaffold.execute, "function");
+    });
+
+    it("publishes the exact auth preset enum in the development MCP schema", () => {
+      assertEquals(getAuthPresetEnum(zodToJsonSchema(vfScaffold.inputSchema)), [
+        "authelia",
+        "oidc",
+        "microsoft-entra",
+      ]);
     });
 
     it("scaffolds AI primitives into auto-discovered project-root directories", async () => {
@@ -191,5 +200,70 @@ describe("mcp/tools/scaffold-tools", () => {
         assertStringIncludes(second.message, "already exists");
       });
     });
+
+    it("scaffolds auth presets through the existing type and name input shape", async () => {
+      await withTempProject(async (projectDir) => {
+        const result = await vfScaffold.execute({
+          type: "auth",
+          name: "authelia",
+          projectPath: projectDir,
+        });
+
+        assertEquals(result.success, true);
+        assertEquals(result.files.map((file) => file.path), [
+          ".env.auth.example",
+          "AUTH_PROVIDER_SETUP.md",
+          "AUTH_SETUP.md",
+          "authelia.client.example.yml",
+          "veryfront.auth.config.example.ts",
+        ]);
+        const config = await Deno.readTextFile(
+          join(projectDir, "veryfront.auth.config.example.ts"),
+        );
+        assertStringIncludes(config, "oidc:");
+      });
+    });
+
+    it("returns sanitized auth conflicts without absolute machine paths", async () => {
+      await withTempProject(async (projectDir) => {
+        await vfScaffold.execute({
+          type: "auth",
+          name: "oidc",
+          projectPath: projectDir,
+        });
+        const conflict = await vfScaffold.execute({
+          type: "auth",
+          name: "oidc",
+          projectPath: projectDir,
+        });
+
+        assertEquals(conflict.success, false);
+        assertEquals(conflict.files.map((file) => file.path), [
+          ".env.auth.example",
+          "AUTH_PROVIDER_SETUP.md",
+          "AUTH_SETUP.md",
+          "veryfront.auth.config.example.ts",
+        ]);
+        assertEquals(conflict.message.includes(projectDir), false);
+      });
+    });
   });
 });
+
+function getAuthPresetEnum(schema: unknown): unknown {
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return undefined;
+
+  for (const variant of schema.anyOf) {
+    if (!isRecord(variant) || !isRecord(variant.properties)) continue;
+    const type = variant.properties.type;
+    const name = variant.properties.name;
+    if (!isRecord(type) || !isRecord(name)) continue;
+    if (type.const === "auth") return name.enum;
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

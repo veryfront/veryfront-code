@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createElement } from "react";
 import { extractComponent } from "./extract-component.ts";
 
 describe("modules/react-loader/extract-component", () => {
@@ -30,6 +31,287 @@ describe("modules/react-loader/extract-component", () => {
       () => extractComponent({}, "empty.tsx"),
       Error,
       "No component exported from empty.tsx",
+    );
+  });
+
+  it("skips the __esModule marker when falling back to a named export", () => {
+    const Named = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Named }, "cjs.tsx"),
+      Named,
+      "a transpiled CommonJS namespace must yield its component, not the __esModule boolean",
+    );
+  });
+
+  it("throws when the only export is the __esModule marker", () => {
+    assertThrows(
+      () => extractComponent({ __esModule: true }, "marker-only.tsx"),
+      Error,
+      "No component exported from marker-only.tsx",
+      "a namespace carrying only the transpiler marker exports no component",
+    );
+  });
+
+  it("skips named exports that cannot be rendered", () => {
+    const Named = () => null;
+    assertEquals(
+      extractComponent({ version: "1.0.0", count: 2, Named }, "meta.tsx"),
+      Named,
+      "primitive exports declared ahead of the component must not be mistaken for it",
+    );
+  });
+
+  it("prefers a function export over a data export such as App Router metadata", () => {
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, metadata: { title: "Home" }, Page }, "page.tsx"),
+      Page,
+      "a data object exported ahead of the component must not be mistaken for it",
+    );
+  });
+
+  it("keeps a memo component that is declared before a helper function", () => {
+    const Page = { $$typeof: Symbol.for("react.memo"), type: () => null };
+    const loader = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Page, loader }, "memo-page.tsx") as unknown,
+      Page,
+      "a React-tagged object and a function are both components, so declaration order decides",
+    );
+  });
+
+  it("does not mistake a React element for a component type", () => {
+    const Header = { $$typeof: Symbol.for("react.transitional.element"), type: "div" };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Header, Page }, "element-export.tsx"),
+      Page,
+      "an element is a rendered node, not something React can instantiate as a component",
+    );
+  });
+
+  it("falls back to an untagged object when no function or tagged component exists", () => {
+    const Odd = { render: () => null };
+    assertEquals(
+      extractComponent({ __esModule: true, Odd }, "odd.tsx") as unknown,
+      Odd,
+      "an unrecognised component shape is still preferred over exporting nothing",
+    );
+  });
+
+  it("accepts object components such as memo and forwardRef results", () => {
+    const Memoized = { $$typeof: Symbol.for("react.memo"), type: () => null };
+    assertEquals(
+      extractComponent({ __esModule: true, Memoized }, "memo.tsx") as unknown,
+      Memoized,
+      "React.memo and React.forwardRef produce objects, which are valid components",
+    );
+  });
+
+  it("skips React-namespaced object markers that are not component types", () => {
+    const marker = { $$typeof: Symbol.for("react.not-a-component") };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, marker, Page }, "marker-object.tsx"),
+      Page,
+      "a react.* namespace alone must not make an arbitrary tagged object renderable",
+    );
+  });
+
+  it("rejects an unrecognized tagged object when no component exists", () => {
+    const marker = { $$typeof: Symbol.for("react.not-a-component") };
+
+    assertThrows(
+      () => extractComponent({ __esModule: true, marker }, "marker-only.tsx"),
+      Error,
+      "No component exported from marker-only.tsx",
+      "an unrecognized tagged object must not use the untagged fallback",
+    );
+  });
+
+  it("rejects a rendered React element when no component exists", () => {
+    const element = createElement("div");
+
+    assertThrows(
+      () => extractComponent({ __esModule: true, element }, "element-only.tsx"),
+      Error,
+      "No component exported from element-only.tsx",
+      "a rendered React element must not use the untagged fallback",
+    );
+  });
+
+  it("keeps a context provider declared before a helper function", () => {
+    const Ctx = { $$typeof: Symbol.for("react.context"), Provider: () => null };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Ctx, helper }, "context.tsx") as unknown,
+      Ctx,
+      "a context is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
+  it("keeps a provider type declared before a helper function", () => {
+    const Provider = { $$typeof: Symbol.for("react.provider"), _context: {} };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Provider, helper }, "provider.tsx") as unknown,
+      Provider,
+      "a provider is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
+  it("keeps a consumer type declared before a helper function", () => {
+    const Consumer = { $$typeof: Symbol.for("react.consumer"), _context: {} };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Consumer, helper }, "consumer.tsx") as unknown,
+      Consumer,
+      "a consumer is a renderable React type, so declaration order decides against a helper",
+    );
+  });
+
+  it("keeps a symbol-valued React built-in declared before a helper", () => {
+    // Fragment, Suspense, StrictMode and Profiler are registered symbols, and a
+    // passthrough layout is allowed to be one.
+    const Layout = Symbol.for("react.fragment");
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Layout, helper }, "fragment-layout.tsx") as unknown,
+      Layout,
+      "a built-in React type must not lose to a helper declared after it",
+    );
+  });
+
+  it("keeps React's SuspenseList built-in declared before a helper", () => {
+    const SuspenseList = Symbol.for("react.suspense_list");
+    const helper = () => null;
+
+    assertEquals(
+      extractComponent({ __esModule: true, SuspenseList, helper }, "suspense-list.tsx") as unknown,
+      SuspenseList,
+      "SuspenseList is a valid bare-symbol element type and must retain declaration order",
+    );
+  });
+
+  it("keeps an RSC client reference declared before a helper function", () => {
+    // The RSC path recognises this shape too, in
+    // rendering/rsc/server-renderer/component-detector.ts.
+    const Page = { $$typeof: Symbol.for("react.client.reference"), $$id: "page#default" };
+    const helper = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "client-ref.tsx") as unknown,
+      Page,
+      "a client reference is a component the RSC renderer resolves, not a data export",
+    );
+  });
+
+  it("keeps a React 18 Flight module reference declared before a helper", () => {
+    const Page = { $$typeof: Symbol.for("react.module.reference") };
+    const helper = () => null;
+
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "module-ref.tsx") as unknown,
+      Page,
+      "a valid React 18 Flight reference must retain declaration order against a helper",
+    );
+  });
+
+  it("keeps a getModuleId Flight reference declared before a helper", () => {
+    const Page = { getModuleId: () => "page#default" };
+    const helper = () => null;
+
+    assertEquals(
+      extractComponent({ __esModule: true, Page, helper }, "get-module-id-ref.tsx") as unknown,
+      Page,
+      "a valid structural Flight reference must retain declaration order against a helper",
+    );
+  });
+
+  it("does not mistake a portal for a component type", () => {
+    const node = { $$typeof: Symbol.for("react.portal"), children: null };
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, node, Page }, "portal.tsx"),
+      Page,
+      "a portal is a rendered node, like an element, and cannot be instantiated",
+    );
+  });
+
+  it("skips a bare $$typeof marker re-exported before the component", () => {
+    // react-is re-exports Memo, ForwardRef, Element and friends as the bare
+    // symbols React uses for $$typeof. react-is's own isValidElementType
+    // rejects every one of them standing alone.
+    const Memo = Symbol.for("react.memo");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Memo, Page }, "react-is-memo.tsx"),
+      Page,
+      "a wrapper marker is only meaningful as a tag, never as a type on its own",
+    );
+  });
+
+  it("skips a bare react-is node marker re-exported before the component", () => {
+    // react-is exposes `Element` and `Portal` as the same bare symbols that
+    // appear on a node's $$typeof. React rejects them as element types.
+    const Element = Symbol.for("react.element");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, Element, Page }, "react-is-reexport.tsx"),
+      Page,
+      "a node marker is not renderable standing alone any more than it is as a tag",
+    );
+  });
+
+  it("skips a symbol that is not a React type", () => {
+    const marker = Symbol.for("app.marker");
+    const Page = () => null;
+    assertEquals(
+      extractComponent({ __esModule: true, marker, Page }, "marker.tsx"),
+      Page,
+      "an unrelated registered symbol is not a component",
+    );
+  });
+
+  it("skips an export that throws when it is read", () => {
+    const Page = () => null;
+    const moduleObj: Record<string, unknown> = { __esModule: true };
+    Object.defineProperty(moduleObj, "circular", {
+      enumerable: true,
+      get() {
+        throw new ReferenceError("Cannot access 'circular' before initialization");
+      },
+    });
+    moduleObj.Page = Page;
+
+    assertEquals(
+      extractComponent(moduleObj, "circular.tsx"),
+      Page,
+      "a namespace getter that throws must not hide a usable component behind it",
+    );
+  });
+
+  it("does not read a later getter after finding a component", () => {
+    const Page = () => null;
+    const moduleObj: Record<string, unknown> = { __esModule: true, Page };
+    Object.defineProperty(moduleObj, "optionalDependency", {
+      enumerable: true,
+      get() {
+        throw new ReferenceError("Cannot access 'optionalDependency' before initialization");
+      },
+    });
+
+    assertEquals(
+      extractComponent(moduleObj, "lazy.tsx"),
+      Page,
+      "an unrelated getter after the selected component must never be evaluated",
+    );
+  });
+
+  it("hands back a default export that is not renderable", () => {
+    assertEquals(
+      extractComponent({ __esModule: true, default: 42 }, "bad-default.tsx") as unknown,
+      42,
+      "callers validate the default themselves so they can name the slot that is wrong, such as a layout",
     );
   });
 });

@@ -81,12 +81,23 @@ const projectTransformCounts = new Map<string, number>();
 type ProjectTransformWaiter = {
   resolve: (acquired: boolean) => void;
   reject: (reason?: unknown) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
+  timeoutId?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   onAbort?: () => void;
+  previous?: ProjectTransformWaiter;
+  next?: ProjectTransformWaiter;
 };
 
-const projectTransformWaiters = new Map<string, ProjectTransformWaiter[]>();
+type ProjectTransformWaiterQueue = {
+  head?: ProjectTransformWaiter;
+  tail?: ProjectTransformWaiter;
+  size: number;
+};
+
+// Bound pending work per tenant so transform contention cannot consume
+// unbounded memory before the acquisition timeout applies backpressure.
+const MAX_PROJECT_TRANSFORM_WAITERS = 1_024;
+const projectTransformWaiters = new Map<string, ProjectTransformWaiterQueue>();
 
 /**
  * Projects that bypass per-project rate limiting.
@@ -135,9 +146,14 @@ function removeProjectTransformWaiter(
   const queue = projectTransformWaiters.get(projectId);
   if (!queue) return;
 
-  const index = queue.indexOf(waiter);
-  if (index !== -1) queue.splice(index, 1);
-  if (queue.length === 0) projectTransformWaiters.delete(projectId);
+  if (waiter.previous) waiter.previous.next = waiter.next;
+  else queue.head = waiter.next;
+  if (waiter.next) waiter.next.previous = waiter.previous;
+  else queue.tail = waiter.previous;
+  queue.size--;
+  waiter.previous = undefined;
+  waiter.next = undefined;
+  if (queue.size === 0) projectTransformWaiters.delete(projectId);
 }
 
 function settleProjectTransformWaiter(
@@ -146,7 +162,7 @@ function settleProjectTransformWaiter(
   acquired: boolean,
 ): void {
   removeProjectTransformWaiter(projectId, waiter);
-  clearTimeout(waiter.timeoutId);
+  if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
   if (waiter.signal && waiter.onAbort) {
     waiter.signal.removeEventListener("abort", waiter.onAbort);
   }
@@ -158,7 +174,7 @@ function abortProjectTransformWaiter(
   waiter: ProjectTransformWaiter,
 ): void {
   removeProjectTransformWaiter(projectId, waiter);
-  clearTimeout(waiter.timeoutId);
+  if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
   if (waiter.signal && waiter.onAbort) {
     waiter.signal.removeEventListener("abort", waiter.onAbort);
   }
@@ -172,26 +188,26 @@ function wakeNextProjectTransformWaiter(projectId: string): void {
   if (limit <= 0) return;
 
   const queue = projectTransformWaiters.get(projectId);
-  if (!queue?.length) return;
+  if (!queue?.head) return;
 
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current >= limit) return;
 
-  const waiter = queue.shift();
-  if (queue.length === 0) projectTransformWaiters.delete(projectId);
-  if (!waiter) return;
-
+  const waiter = queue.head;
   projectTransformCounts.set(projectId, current + 1);
   settleProjectTransformWaiter(projectId, waiter, true);
 }
 
 function rejectProjectTransformWaiters(projectId: string): void {
   const queue = projectTransformWaiters.get(projectId);
-  if (!queue?.length) return;
+  if (!queue?.head) return;
 
   projectTransformWaiters.delete(projectId);
-  for (const waiter of queue) {
+  let waiter: ProjectTransformWaiter | undefined = queue.head;
+  while (waiter) {
+    const next: ProjectTransformWaiter | undefined = waiter.next;
     settleProjectTransformWaiter(projectId, waiter, false);
+    waiter = next;
   }
 }
 
@@ -214,24 +230,36 @@ export async function tryAcquireTransformSlot(
 ): Promise<boolean> {
   throwIfAborted(signal);
   if (acquireTransformSlot(projectId, bypass)) return true;
-  if (timeoutMs <= 0) return false;
+  if (Number.isNaN(timeoutMs) || timeoutMs <= 0) return false;
 
   return new Promise<boolean>((resolve, reject) => {
+    let queue = projectTransformWaiters.get(projectId);
+    if (queue && queue.size >= MAX_PROJECT_TRANSFORM_WAITERS) {
+      resolve(false);
+      return;
+    }
+
     const waiter: ProjectTransformWaiter = {
       resolve,
       reject,
-      timeoutId: setTimeout(() => {
-        settleProjectTransformWaiter(projectId, waiter, false);
-      }, timeoutMs),
       signal,
     };
-
-    const queue = projectTransformWaiters.get(projectId);
-    if (queue) {
-      queue.push(waiter);
-    } else {
-      projectTransformWaiters.set(projectId, [waiter]);
+    if (Number.isFinite(timeoutMs)) {
+      waiter.timeoutId = setTimeout(() => {
+        settleProjectTransformWaiter(projectId, waiter, false);
+      }, timeoutMs);
     }
+
+    if (!queue) {
+      queue = { size: 0 };
+      projectTransformWaiters.set(projectId, queue);
+    }
+
+    waiter.previous = queue.tail;
+    if (queue.tail) queue.tail.next = waiter;
+    else queue.head = waiter;
+    queue.tail = waiter;
+    queue.size++;
 
     if (signal) {
       waiter.onAbort = () => abortProjectTransformWaiter(projectId, waiter);

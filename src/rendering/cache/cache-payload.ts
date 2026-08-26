@@ -2,6 +2,7 @@ import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload } from "./types.ts";
 import { isHtmlNonceCachePlaceholder } from "#veryfront/html/nonce-injection.ts";
 import { normalizeDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const MAX_CACHE_VALUE_DEPTH = 64;
 const MAX_CACHE_VALUE_NODES = 100_000;
@@ -377,8 +378,8 @@ function jsonValuesEqual(left: unknown, right: unknown): boolean {
       left.every((entry, index) => jsonValuesEqual(entry, right[index]));
   }
   if (!isPlainRecord(left) || !isPlainRecord(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
+  const leftKeys = Object.keys(left).sort(compareStrings);
+  const rightKeys = Object.keys(right).sort(compareStrings);
   return leftKeys.length === rightKeys.length &&
     leftKeys.every((key, index) =>
       key === rightKeys[index] && jsonValuesEqual(left[key], right[key])

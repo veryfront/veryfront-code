@@ -597,12 +597,16 @@ export const GET = createWebSocketHandler({
   onClose: ({ publisher, run }) => {
     eventSubscriptions.get(publisher)?.();
     eventSubscriptions.delete(publisher);
-    // A socket close detaches only this transport generation. Call
-    // registry.releaseRun(run) when the workflow run itself terminates.
+    // The safe default releases registry state when this socket closes.
     console.log(`Client disconnected: ${run.runId}`);
   },
 });
 ```
+
+`retainRunOnClose` defaults to `false`, which releases registry state when a
+socket closes. Enable it only for authenticated, admitted run IDs when the
+application unsubscribes external resources and calls `registry.releaseRun()`
+with the exact run registration for every terminal workflow run.
 
 #### 2. Consume in React with Bidirectional Hook
 

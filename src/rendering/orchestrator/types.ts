@@ -4,6 +4,7 @@ import type { RenderResult } from "#veryfront/types";
 import type { BuildVersion } from "#veryfront/utils/version.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 export type { RenderResult };
 
@@ -71,6 +72,8 @@ export interface RenderOptions {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace paired with the immutable snapshot. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Verified application identity admitted by the host-owned auth boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
   /** Release ID for production renders (drives release asset manifest consumption) */
   releaseId?: string;
   /** Request-scoped ready release asset manifest, shared by cache keys and HTML generation. */

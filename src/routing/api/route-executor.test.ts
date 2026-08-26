@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __serializeRequestForTests,
@@ -11,11 +16,14 @@ import {
   type PreparedRouteExecutionOptions,
   resolvePreparedRouteMethods,
 } from "./route-executor.ts";
+import type { APIContext } from "./context-builder.ts";
+import type { AppRouteContext } from "./module-loader/types.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 function makeAdapter(mode = "development"): RuntimeAdapter {
   const envMap = new Map<string, string>([["MODE", mode]]);
@@ -83,6 +91,18 @@ const LOCAL_EXECUTION: ExecuteRouteOptions = Object.freeze({
   isLocalProject: true,
   allowHostProjectCodeExecution: true,
 });
+
+function createIdentity(): ApplicationIdentity {
+  return Object.freeze({
+    issuer: "veryfront:trusted-proxy",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: Object.freeze(["admin"]),
+    roles: Object.freeze([]),
+    groupsComplete: true,
+    claims: Object.freeze({ sub: "user-123" }),
+  });
+}
 
 function executeAppRoute(
   handler: Parameters<typeof executeAppRouteRaw>[0],
@@ -318,6 +338,104 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.json(), { ok: true });
+    });
+
+    it("passes admitted application identity to host app route context", async () => {
+      const identity = createIdentity();
+      const handler = {
+        GET: (_req: Request, ctx: AppRouteContext) =>
+          Response.json({
+            sameIdentity: ctx.identity === identity,
+            subject: ctx.identity?.subject ?? null,
+            rootFrozen: ctx.identity === null ? null : Object.isFrozen(ctx.identity),
+            rootProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity) === null,
+            claimsProtoNull: ctx.identity === null
+              ? null
+              : Object.getPrototypeOf(ctx.identity.claims) === null,
+          }),
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { ...LOCAL_EXECUTION, applicationIdentity: identity },
+      );
+
+      assertEquals(await response.json(), {
+        sameIdentity: false,
+        subject: "user-123",
+        rootFrozen: true,
+        rootProtoNull: true,
+        claimsProtoNull: true,
+      });
+    });
+
+    it("keeps explicit null anonymous and rejects malformed host app route identity options", async () => {
+      let calls = 0;
+      const handler = {
+        GET: (_req: Request, ctx: AppRouteContext) => {
+          calls += 1;
+          return Response.json({ identityIsNull: ctx.identity === null });
+        },
+      };
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const anonymous = await executeAppRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        { ...LOCAL_EXECUTION, applicationIdentity: null },
+      );
+      assertEquals(await anonymous.json(), { identityIsNull: true });
+
+      assertThrows(
+        () =>
+          executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            {
+              ...LOCAL_EXECUTION,
+              applicationIdentity: "malformed" as unknown as ApplicationIdentity,
+            },
+          ),
+        TypeError,
+        "Application identity must be a plain object",
+      );
+
+      let accessorCalls = 0;
+      const accessorIdentity = { ...createIdentity() };
+      Object.defineProperty(accessorIdentity, "email", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return "user@example.test";
+        },
+      });
+      assertThrows(
+        () =>
+          executeAppRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            { ...LOCAL_EXECUTION, applicationIdentity: accessorIdentity },
+          ),
+        TypeError,
+        "accessor property",
+      );
+      assertEquals(accessorCalls, 0);
+      assertEquals(calls, 1);
     });
 
     it("should reject forged Response-like objects", async () => {
@@ -586,6 +704,107 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "pages get");
+    });
+
+    it("passes admitted application identity to host pages route context", async () => {
+      const identity = createIdentity();
+      const handler = {
+        GET: (ctx: APIContext) => {
+          const ctxIdentity = ctx.identity ?? null;
+          return Response.json({
+            sameIdentity: ctxIdentity === identity,
+            subject: ctxIdentity?.subject ?? null,
+            rootFrozen: ctxIdentity === null ? null : Object.isFrozen(ctxIdentity),
+            rootProtoNull: ctxIdentity === null
+              ? null
+              : Object.getPrototypeOf(ctxIdentity) === null,
+            claimsProtoNull: ctxIdentity === null
+              ? null
+              : Object.getPrototypeOf(ctxIdentity.claims) === null,
+          });
+        },
+      };
+
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const response = await executePagesRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        undefined,
+        { ...LOCAL_EXECUTION, applicationIdentity: identity },
+      );
+
+      assertEquals(await response.json(), {
+        sameIdentity: false,
+        subject: "user-123",
+        rootFrozen: true,
+        rootProtoNull: true,
+        claimsProtoNull: true,
+      });
+    });
+
+    it("keeps explicit null anonymous and rejects malformed host pages route identity options", async () => {
+      let calls = 0;
+      const handler = {
+        GET: (ctx: APIContext) => {
+          calls += 1;
+          return Response.json({ identityIsNull: ctx.identity === null });
+        },
+      };
+      const request = new Request("http://localhost/api/test", { method: "GET" });
+      const anonymous = await executePagesRoute(
+        handler,
+        request,
+        makeMatch(),
+        "/api/test",
+        makeAdapter(),
+        "/test/project",
+        { ...LOCAL_EXECUTION, applicationIdentity: null },
+      );
+      assertEquals(await anonymous.json(), { identityIsNull: true });
+
+      assertThrows(
+        () =>
+          executePagesRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            "/test/project",
+            { ...LOCAL_EXECUTION, applicationIdentity: 7 as unknown as ApplicationIdentity },
+          ),
+        TypeError,
+        "Application identity must be a plain object",
+      );
+
+      let accessorCalls = 0;
+      const accessorIdentity = { ...createIdentity() };
+      Object.defineProperty(accessorIdentity, "email", {
+        enumerable: true,
+        get() {
+          accessorCalls += 1;
+          return "user@example.test";
+        },
+      });
+      assertThrows(
+        () =>
+          executePagesRoute(
+            handler,
+            request,
+            makeMatch(),
+            "/api/test",
+            makeAdapter(),
+            "/test/project",
+            { ...LOCAL_EXECUTION, applicationIdentity: accessorIdentity },
+          ),
+        TypeError,
+        "accessor property",
+      );
+      assertEquals(accessorCalls, 0);
+      assertEquals(calls, 1);
     });
 
     it("should fall back to default handler", async () => {
@@ -1208,6 +1427,51 @@ describe("routing/api/route-executor", () => {
       assertEquals(await response.json(), { id: "42" });
     });
 
+    it("passes admitted identity to prepared app route worker context", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const identity = createIdentity();
+      const options = {
+        ...(await preparedRouteOptions(
+          `
+            export function GET(_req, ctx) {
+              return Response.json({
+                subject: ctx.identity?.subject ?? null,
+                sameWithinContext: ctx.identity === ctx.identity,
+                frozen: ctx.identity === null ? null : {
+                  root: Object.isFrozen(ctx.identity),
+                  groups: Object.isFrozen(ctx.identity.groups),
+                  claims: Object.isFrozen(ctx.identity.claims),
+                },
+              });
+            }
+          `,
+          "prepared-app-identity",
+        )),
+        applicationIdentity: identity,
+      };
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedAppRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        subject: "user-123",
+        sameWithinContext: true,
+        frozen: { root: true, groups: true, claims: true },
+      });
+    });
+
     it("returns a 500 error response when the prepared app route handler throws", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
@@ -1255,6 +1519,51 @@ describe("routing/api/route-executor", () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "prepared pages ok");
+    });
+
+    it("passes admitted identity to prepared pages route worker context", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const identity = createIdentity();
+      const options = {
+        ...(await preparedRouteOptions(
+          `
+            export function GET(ctx) {
+              return Response.json({
+                subject: ctx.identity?.subject ?? null,
+                sameWithinContext: ctx.identity === ctx.identity,
+                frozen: ctx.identity === null ? null : {
+                  root: Object.isFrozen(ctx.identity),
+                  roles: Object.isFrozen(ctx.identity.roles),
+                  claims: Object.isFrozen(ctx.identity.claims),
+                },
+              });
+            }
+          `,
+          "prepared-pages-identity",
+        )),
+        applicationIdentity: identity,
+      };
+
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          executePreparedPagesRoute(
+            new Request("http://localhost/api/test", { method: "GET" }),
+            makeMatch(),
+            "/api/test",
+            options,
+          ),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), {
+        subject: "user-123",
+        sameWithinContext: true,
+        frozen: { root: true, roles: true, claims: true },
+      });
     });
 
     it("returns a 500 error response when the prepared pages route handler throws", async () => {

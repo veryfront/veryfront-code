@@ -21,6 +21,7 @@ import {
   normalizeOAuthTokenSnapshot,
   normalizeStoredOAuthTokens,
 } from "../token-utils.ts";
+import { isSupersededOAuthGrant } from "../grant-policy.ts";
 import {
   MAX_OAUTH_API_RESPONSE_BYTES,
   MAX_OAUTH_AUTHORIZATION_CODE_LENGTH,
@@ -66,7 +67,6 @@ const TOKEN_REFRESH_BUFFER_MS = 300_000;
 const SECONDS_TO_MS = 1_000;
 const DEFAULT_TOKEN_RESPONSE_MAX_BYTES = 64 * 1_024;
 const DEFAULT_API_RESPONSE_MAX_BYTES = 1_048_576;
-
 function assertBoundedPositiveInteger(value: number, name: string, maximum: number): void {
   if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     throw INVALID_ARGUMENT.create({
@@ -1093,12 +1093,24 @@ export class OAuthService extends OAuthProvider {
         detail: "OAuth authorization options must use plain data properties",
       });
     }
-    return await super.createAuthorizationUrl(
+    const authorization = await super.createAuthorizationUrl(
       {
         ...captured,
         defaultScopes: this.serviceConfig.defaultScopes,
       } as AuthorizationUrlOptions & { defaultScopes: string[] },
     );
+    return {
+      url: authorization.url,
+      state: {
+        ...authorization.state,
+        scopeSource: captured.scopes === undefined ? "default" : "explicit",
+      },
+    };
+  }
+
+  /** Whether a stored token carries a built-in grant this config superseded. */
+  isSupersededGrant(tokens: OAuthTokens): boolean {
+    return isSupersededOAuthGrant(this.serviceId, tokens, this.serviceConfig.defaultScopes);
   }
 
   /**
@@ -1118,6 +1130,10 @@ export class OAuthService extends OAuthProvider {
     const stored = await awaitAbortable(this.readTokenSnapshot(userId), signal);
     if (!stored) return null;
     const { tokens } = stored;
+
+    if (await this.isRejectedSupersededSnapshot(userId, stored)) {
+      return null;
+    }
 
     const refreshToken = tokens.refreshToken;
     if (tokens.expiresAt === undefined) return tokens.accessToken;
@@ -1182,6 +1198,7 @@ export class OAuthService extends OAuthProvider {
         const current = await this.readTokenSnapshot(userId);
         if (!current) return null;
         const { tokens, revision } = current;
+        if (await this.isRejectedSupersededSnapshot(userId, current)) return null;
         const now = Date.now();
         if (tokens.expiresAt === undefined) return tokens.accessToken;
         if (!tokens.refreshToken) return now < tokens.expiresAt ? tokens.accessToken : null;
@@ -1210,7 +1227,17 @@ export class OAuthService extends OAuthProvider {
           ...(result.tokens.scope === undefined && tokens.scope !== undefined
             ? { scope: tokens.scope }
             : {}),
+          ...(tokens.scopeSource === undefined ? {} : { scopeSource: tokens.scopeSource }),
+          ...(tokens.requestedScope === undefined ? {} : { requestedScope: tokens.requestedScope }),
         };
+        if (
+          await this.isRejectedSupersededSnapshot(userId, {
+            tokens: refreshedTokens,
+            revision,
+          })
+        ) {
+          return null;
+        }
         const replaced = await compareAndSetTokens.call(
           tokenStore,
           this.serviceId,
@@ -1260,8 +1287,25 @@ export class OAuthService extends OAuthProvider {
   private async readCurrentUnexpiredAccessToken(userId: string): Promise<string | null> {
     const current = await this.readTokenSnapshot(userId);
     if (!current) return null;
+    if (await this.isRejectedSupersededSnapshot(userId, current)) return null;
     const expiresAt = current.tokens.expiresAt;
     return expiresAt === undefined || Date.now() < expiresAt ? current.tokens.accessToken : null;
+  }
+
+  private async isRejectedSupersededSnapshot(
+    userId: string,
+    snapshot: { tokens: OAuthTokens; revision?: string },
+  ): Promise<boolean> {
+    if (!this.isSupersededGrant(snapshot.tokens)) return false;
+    // Invalidate only the exact row that was classified. An unconditional
+    // clear could race a concurrent reauthorization and delete the freshly
+    // written least-privilege grant (the ABA problem the snapshot revision
+    // exists to prevent). When the store cannot express a revision-guarded
+    // delete, fail safe by leaving the row in place: it is never served.
+    if (snapshot.revision && typeof this.tokenStore?.compareAndClearTokens === "function") {
+      await this.tokenStore.compareAndClearTokens(this.serviceId, userId, snapshot.revision);
+    }
+    return true;
   }
 
   /**

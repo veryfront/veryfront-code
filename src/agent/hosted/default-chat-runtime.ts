@@ -35,7 +35,7 @@ import {
 import {
   type HostedChatRuntimeToolAssemblyResult,
   type HostedHostToolPolicy,
-  prepareHostedChatRuntimeToolAssembly,
+  prepareConfigDerivedHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
@@ -195,7 +195,7 @@ async function buildToolAssembly(
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
-  return prepareHostedChatRuntimeToolAssembly({
+  return prepareConfigDerivedHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
     ...(liveProjectSteering === undefined ? {} : {

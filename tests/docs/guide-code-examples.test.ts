@@ -12,7 +12,8 @@ import { withEnv } from "#veryfront/testing";
 import {
   agent,
   createAgUiHandler,
-  startAgentService,
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "../../src/agent/index.ts";
@@ -70,6 +71,7 @@ import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/resu
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";
 import { parsePushArgs } from "../../cli/commands/push/command.ts";
 import { parseCliArgs } from "../../cli/shared/args.ts";
+import { AUTH_PRESETS } from "../../cli/scaffold/engine.ts";
 import { getTemplate } from "../../templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
@@ -90,6 +92,7 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
   "agent-service-runtime.md",
+  "application-auth.md",
   "build-a-rag-app.md",
   "chat-hooks.md",
   "chat-ui.md",
@@ -315,13 +318,80 @@ describe("Guide: concepts/webhook.md", () => {
 
 describe("Guide: agent-service-runtime.md", () => {
   it("uses public agent service helpers that exist and produce documented MCP configs", () => {
-    assertEquals(typeof startAgentService, "function");
+    assertEquals(typeof loadAgentServiceEnvFiles, "function");
+    assertEquals(typeof startNodeVeryfrontCloudAgentService, "function");
     assertEquals(typeof createAgUiHandler, "function");
     assertEquals(veryfrontApiMcpServer(), { kind: "veryfront-api" });
     assertEquals(veryfrontStudioMcpServer(), { kind: "veryfront-studio" });
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
+  });
+});
+
+describe("Guide: application-auth.md", () => {
+  it("uses an OIDC config accepted by the public config helper", () => {
+    const config = defineConfig({
+      security: {
+        auth: {
+          oidc: {
+            issuerEnvVar: "OIDC_ISSUER",
+            clientIdEnvVar: "OIDC_CLIENT_ID",
+            clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+            sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
+            scopes: ["openid", "profile", "email", "groups"],
+            trustedEndpointOrigins: ["https://idp-endpoints.example.com"],
+          },
+        },
+      },
+    });
+
+    assertEquals(config.security?.auth?.oidc?.scopes, [
+      "openid",
+      "profile",
+      "email",
+      "groups",
+    ]);
+    assertEquals(config.security?.auth?.oidc?.trustedEndpointOrigins, [
+      "https://idp-endpoints.example.com",
+    ]);
+  });
+
+  it("uses a trusted-proxy config accepted by the public config helper", () => {
+    const config = defineConfig({
+      security: {
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["10.0.0.10"],
+            headers: {
+              subject: "x-auth-subject",
+              email: "x-auth-email",
+              groups: "x-auth-groups",
+            },
+          },
+        },
+      },
+    });
+
+    assertEquals(config.security?.auth?.trustedProxy?.trustedPeers, ["10.0.0.10"]);
+    assertEquals(config.security?.auth?.trustedProxy?.headers.subject, "x-auth-subject");
+  });
+
+  it("documents real auth presets, reserved routes, and horizontal-scale constraints", async () => {
+    const guide = await readGuide("application-auth.md");
+
+    assertEquals(AUTH_PRESETS, ["authelia", "oidc", "microsoft-entra"]);
+    for (
+      const required of [
+        "GET /_veryfront/auth/login",
+        "GET /_veryfront/auth/callback",
+        "POST /_veryfront/auth/logout",
+        "There is no sticky-session requirement",
+        "directly to LDAP, NTLM, or Kerberos",
+      ]
+    ) {
+      assertStringIncludes(guide, required);
+    }
   });
 });
 

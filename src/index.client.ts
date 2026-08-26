@@ -71,8 +71,11 @@ export {
   parseJsonBody,
   parseQueryParams,
   sanitizeData,
-} from "#veryfront/security";
-export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
+} from "#veryfront/security/input-validation/index.ts";
+export type {
+  ValidatedHandlerConfig,
+  ValidatedHandlerFunction,
+} from "#veryfront/security/input-validation/index.ts";
 
 export { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 export type { CsrfMutationHeadersOptions } from "#veryfront/security/csrf/browser-mutation-headers.ts";

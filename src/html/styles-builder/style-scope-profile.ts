@@ -1,5 +1,6 @@
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHash } from "node:crypto";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
@@ -98,9 +99,9 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     ignoredRoots.delete(root);
   }
 
-  const sortedIgnoredRoots = [...ignoredRoots].sort();
-  const sortedProtectedRoots = [...protectedRoots].sort();
-  const sortedProtectedPaths = [...protectedPaths].sort();
+  const sortedIgnoredRoots = [...ignoredRoots].sort(compareStrings);
+  const sortedProtectedRoots = [...protectedRoots].sort(compareStrings);
+  const sortedProtectedPaths = [...protectedPaths].sort(compareStrings);
 
   return {
     ignoredRoots: sortedIgnoredRoots,

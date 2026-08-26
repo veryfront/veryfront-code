@@ -10,11 +10,22 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import { getEffectiveRequestOrigin } from "#veryfront/server/utils/request-host.ts";
 import { MAX_CSRF_TTL_SECONDS } from "#veryfront/utils/constants/security.ts";
 import {
+  CSRF_NAMES_COOKIE_NAME,
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
   type CsrfNameOptions,
+  csrfNamesCookieName,
+  decodeCsrfNamesAdvertisement,
   DEFAULT_CSRF_COOKIE_NAME,
+  DEFAULT_CSRF_HEADER_NAME,
+  effectiveCsrfCookieNameForOrigin,
+  effectiveCsrfTokenCookieNameForOrigin,
+  encodeCsrfNamesAdvertisement,
   requireCsrfName,
+  requireNonReservedCsrfCookieName,
   resolveCsrfNames,
 } from "./names.ts";
 
@@ -61,9 +72,11 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
   token: string;
   setCookie: string;
 } {
-  const cookieName = requireCsrfName(
-    options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME,
-    "CSRF cookieName",
+  const cookieName = requireNonReservedCsrfCookieName(
+    requireCsrfName(
+      options?.cookieName ?? DEFAULT_CSRF_COOKIE_NAME,
+      "CSRF cookieName",
+    ),
   );
   const maxAge = requireCsrfTtl(options?.ttlSec ?? CSRF_DEFAULT_TTL_SEC);
   const httpOnly = options?.httpOnly === undefined
@@ -77,6 +90,15 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
     ? true
     : requestedSecure;
 
+  return generateCsrfTokenCookie(cookieName, maxAge, httpOnly, secure);
+}
+
+function generateCsrfTokenCookie(
+  cookieName: string,
+  maxAge: number,
+  httpOnly: boolean,
+  secure: boolean,
+): { token: string; setCookie: string } {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
 
@@ -89,7 +111,6 @@ export function generateCsrfToken(options?: CsrfTokenOptions): {
 }
 
 const encoder = new TextEncoder();
-const ASSET_PATH_RE = /\.(?!html?$)[a-z0-9]+$/i;
 
 /** Constant-time string comparison to prevent timing attacks */
 function timingSafeEqual(a: string, b: string): boolean {
@@ -111,14 +132,29 @@ export function validateCsrf(
   options?: CsrfNameOptions,
 ): boolean {
   try {
-    const { cookieName, headerName } = resolveCsrfNames(options);
-    const cookieToken = parseCookiesFromHeaders(req.headers)[cookieName];
-    if (!cookieToken) return false;
-
+    const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
+    const { cookieName, headerName } = resolveCsrfNames({
+      cookieName: effectiveCsrfCookieNameForOrigin(options?.cookieName, browserOrigin),
+      headerName: options?.headerName,
+    });
+    const cookies = parseCookiesFromHeaders(req.headers);
+    const cookieTokens = [cookies[cookieName]];
+    if (!cookieName.startsWith("__Host-") && !cookieName.startsWith("__Secure-")) {
+      const protocol = new URL(browserOrigin).protocol;
+      if (protocol === "http:") {
+        cookieTokens.push(cookies[csrfHttpTokenCookieName(cookieName, browserOrigin)]);
+      } else if (protocol === "https:") {
+        cookieTokens.push(cookies[csrfHttpsTokenCookieName(cookieName, browserOrigin)]);
+      }
+    }
     const headerToken = req.headers.get(headerName) ?? "";
     if (!headerToken) return false;
 
-    return timingSafeEqual(cookieToken, headerToken);
+    let matches = false;
+    for (const cookieToken of cookieTokens) {
+      if (cookieToken) matches = timingSafeEqual(cookieToken, headerToken) || matches;
+    }
+    return matches;
   } catch {
     // Invalid options, malformed cookies, and unreadable request headers all
     // fail closed through this boolean validation contract.
@@ -129,15 +165,16 @@ export function validateCsrf(
 /**
  * Resolve the token-issuing CSRF setting for a response-serving surface.
  *
- * Production defaults `security.csrf` on, so `applyCsrfCookie` issues the
- * double-submit token there. Local development leaves the setting unset and
- * stays permissive, which used to mean no token cookie existed locally at all:
- * every browser mutation — including the ones Veryfront's own hooks build with
- * `csrfMutationHeaders` — had nothing to echo, so correct client code still
- * sent no `x-csrf-token`. Issuing the same token cookie locally makes the
- * double-submit contract exercisable before deploy without enforcing it, so
- * the development warning is left to the mutations that genuinely omit the
- * header. Enforcement still keys off `security.csrf`, which this never sets.
+ * `deriveSecurityContext` defaults `security.csrf` on in every environment, so
+ * a derived context already asks for the token cookie. This covers the surfaces
+ * that serve a local response before any security context was derived: without
+ * it a local page would render with no CSRF cookie, leaving correct client code,
+ * including the hooks that build on `csrfMutationHeaders`, with nothing to echo
+ * into the header the gate then requires.
+ *
+ * It only ever issues a token. Enforcement keys off `security.csrf`, which this
+ * never sets, and an explicit `false` passes straight through so the documented
+ * opt-out suppresses the cookie as well as the check.
  */
 export function csrfCookieSetting(
   csrfConfig: boolean | CsrfConfig | undefined,
@@ -147,8 +184,17 @@ export function csrfCookieSetting(
 }
 
 /**
- * Set CSRF cookie on GET/HEAD responses when not already present.
- * Uses httpOnly: false so client JS can read the cookie for double-submit.
+ * Set or refresh browser-readable CSRF token and name-advertisement cookies on
+ * GET/HEAD responses. Existing tokens stay in place while stale or missing
+ * current and sibling advertisements are synchronized.
+ *
+ * Missing tokens get a fresh double-submit cookie. Existing tokens are retained,
+ * but stale or missing name advertisements are refreshed with the token TTL so
+ * browser helpers keep discovering configured names. When a host-wide custom
+ * token is shared with HTTP and HTTPS sibling origins, HTTPS refreshes use an
+ * origin-isolated Secure token so the legacy token remains readable to HTTP.
+ * HTTP siblings use their own origin-scoped token names for fresh pairs.
+ * `__Host-` and `__Secure-` token names always keep Secure.
  */
 export function applyCsrfCookie(
   req: Request,
@@ -163,7 +209,6 @@ export function applyCsrfCookie(
   const { pathname } = new URL(req.url);
   if (pathname.startsWith("/_veryfront/")) return;
   if (pathname === "/_ws") return;
-  if (ASSET_PATH_RE.test(pathname)) return;
 
   const accept = (req.headers.get("accept") ?? "").toLowerCase();
   if (!accept || (!accept.includes("text/html") && !accept.includes("application/xhtml+xml"))) {
@@ -171,7 +216,22 @@ export function applyCsrfCookie(
   }
 
   const config = typeof csrfConfig === "boolean" ? {} : csrfConfig;
-  const cookieName = config.cookieName ?? DEFAULT_CSRF_COOKIE_NAME;
+  const browserOrigin = browserFacingOrigin(req, isProxyTopologyTrusted());
+  const effectiveCookieName = effectiveCsrfCookieNameForOrigin(
+    config.cookieName,
+    browserOrigin,
+  );
+  // Validate here, not only in the schema: applyCsrfCookie is public API and a
+  // direct caller can pass names the schema never saw. An unvalidated name is
+  // interpolated straight into Set-Cookie.
+  const configuredCookieName = requireNonReservedCsrfCookieName(
+    requireCsrfName(effectiveCookieName, "CSRF cookieName"),
+  );
+  const headerName = requireCsrfName(
+    config.headerName ?? DEFAULT_CSRF_HEADER_NAME,
+    "CSRF headerName",
+  );
+  const ttlSec = requireCsrfTtl(config.ttlSec ?? CSRF_DEFAULT_TTL_SEC);
 
   // Skip if cookie already present in request
   let cookies: Record<string, string>;
@@ -181,23 +241,263 @@ export function applyCsrfCookie(
     /* expected: malformed cookie header — issue a fresh token */
     cookies = {};
   }
-  if (cookies[cookieName]) return;
-
-  // Detect HTTPS from the request URL, or from x-forwarded-proto only when the
-  // deployment trusts the upstream proxy (VERYFRONT_TRUST_FORWARDED_HEADERS=1).
-  // The forwarded header is client-spoofable otherwise, so blindly trusting it
-  // could suppress the Secure flag on a genuinely-HTTPS deployment.
-  const trustProxyHeaders = isProxyTopologyTrusted();
-  const isSecure = cookieName.startsWith("__Host-") ||
-    req.url.startsWith("https://") ||
-    (trustProxyHeaders && req.headers.get("x-forwarded-proto") === "https");
-
-  const { setCookie } = generateCsrfToken({
+  const configuredToken = cookies[configuredCookieName];
+  let cookieName = effectiveCsrfTokenCookieNameForOrigin(
+    configuredCookieName,
+    browserOrigin,
+    Boolean(configuredToken),
+  );
+  const browserProtocol = new URL(browserOrigin).protocol;
+  if (
+    browserProtocol === "https:" &&
+    shouldUseIsolatedHttpsCsrfToken(configuredCookieName, browserOrigin, cookies)
+  ) {
+    cookieName = csrfHttpsTokenCookieName(configuredCookieName, browserOrigin);
+  }
+  const secureAdvertisement = cookieName.startsWith("__Host-") ||
+    browserProtocol === "https:";
+  const secureToken = cookieName.startsWith("__Secure-") || secureAdvertisement;
+  const advertisement = encodeCsrfNamesAdvertisement(
     cookieName,
-    ttlSec: config.ttlSec,
-    httpOnly: false, // Client JS must read cookie for double-submit header
-    secure: isSecure,
-  });
+    headerName,
+    browserOrigin,
+  );
+  const advertisementCookieName = csrfNamesCookieName(browserOrigin);
+
+  // A deployment can change the advertised names and TTL while an older token
+  // remains valid. Refresh the pair together so the discovery cookie cannot
+  // expire before the token it describes.
+  const existingToken = cookies[cookieName];
+  if (existingToken) {
+    if (
+      !csrfNamesCookieNeedsRefresh(
+        advertisementCookieName,
+        advertisement,
+        cookies,
+      )
+    ) return;
+    appendCsrfNamesCookie(
+      responseHeaders,
+      advertisementCookieName,
+      advertisement,
+      cookies,
+      ttlSec,
+      secureAdvertisement,
+      true,
+    );
+    // An HTTP response cannot know or extend the lifetime of an HTTPS Secure
+    // sibling. Updating only this origin's advertisement is still safe: it
+    // immediately restores the configured header, and a later missing token
+    // causes the normal fresh-pair path to align both lifetimes again.
+    if (!canRefreshExistingCsrfPair(cookieName, configuredCookieName, secureAdvertisement)) return;
+    if (advertisement !== null) {
+      appendSiblingCsrfNamesCookies(
+        responseHeaders,
+        advertisementCookieName,
+        cookieName,
+        cookies,
+        ttlSec,
+      );
+      appendExistingCsrfTokenCookie(
+        responseHeaders,
+        cookieName,
+        existingToken,
+        ttlSec,
+        secureToken,
+      );
+    }
+    return;
+  }
+
+  const { setCookie } = generateCsrfTokenCookie(
+    cookieName,
+    ttlSec,
+    false, // Client JS must read cookie for double-submit header
+    secureToken,
+  );
 
   responseHeaders.append("Set-Cookie", setCookie);
+  appendCsrfNamesCookie(
+    responseHeaders,
+    advertisementCookieName,
+    advertisement,
+    cookies,
+    ttlSec,
+    secureAdvertisement,
+    true,
+  );
+}
+
+function shouldUseIsolatedHttpsCsrfToken(
+  configuredCookieName: string,
+  browserOrigin: string,
+  cookies: Record<string, string>,
+): boolean {
+  if (
+    configuredCookieName.startsWith("__Host-") ||
+    configuredCookieName.startsWith("__Secure-")
+  ) return false;
+
+  const isolatedName = csrfHttpsTokenCookieName(configuredCookieName, browserOrigin);
+  if (cookies[isolatedName]) return true;
+  const currentAdvertisement = decodeCsrfNamesAdvertisement(
+    cookies[csrfNamesCookieName(browserOrigin)],
+    browserOrigin,
+  );
+  if (currentAdvertisement?.cookieName === isolatedName) return true;
+
+  for (const [cookieName, value] of Object.entries(cookies)) {
+    if (!cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`)) continue;
+    const origin = csrfNamesAdvertisementOrigin(value);
+    if (origin === null || new URL(origin).protocol !== "http:") continue;
+    if (cookieName !== csrfNamesCookieName(origin)) continue;
+    if (decodeCsrfNamesAdvertisement(value, origin)?.cookieName === configuredCookieName) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function appendSiblingCsrfNamesCookies(
+  responseHeaders: Headers,
+  currentAdvertisementCookieName: string,
+  tokenCookieName: string,
+  cookies: Record<string, string>,
+  ttlSec: number,
+): void {
+  for (const [cookieName, value] of Object.entries(cookies)) {
+    if (cookieName === currentAdvertisementCookieName) continue;
+    if (!cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`)) continue;
+
+    const origin = csrfNamesAdvertisementOrigin(value);
+    if (origin === null) continue;
+    if (cookieName !== csrfNamesCookieName(origin)) continue;
+
+    const advertised = decodeCsrfNamesAdvertisement(value, origin);
+    if (advertised?.cookieName !== tokenCookieName) continue;
+
+    appendCsrfNamesCookie(
+      responseHeaders,
+      cookieName,
+      value,
+      cookies,
+      ttlSec,
+      new URL(origin).protocol === "https:",
+      true,
+    );
+  }
+}
+
+function canRefreshExistingCsrfPair(
+  tokenCookieName: string,
+  configuredCookieName: string,
+  secureAdvertisement: boolean,
+): boolean {
+  // A different physical name is the origin-isolated HTTP token derived by
+  // effectiveCsrfTokenCookieNameForOrigin. Unlike a shared configured name,
+  // this response owns its lifetime and can refresh it with its advertisement.
+  if (tokenCookieName !== configuredCookieName) return true;
+  if (tokenCookieName.startsWith("__Host-") || tokenCookieName.startsWith("__Secure-")) {
+    return true;
+  }
+  return secureAdvertisement;
+}
+
+function csrfNamesAdvertisementOrigin(value: string): string | null {
+  const lastSep = value.lastIndexOf(":");
+  if (lastSep <= 0) return null;
+  const firstOfPair = value.lastIndexOf(":", lastSep - 1);
+  if (firstOfPair <= 0) return null;
+
+  const origin = value.slice(0, firstOfPair);
+  try {
+    const url = new URL(origin);
+    if (url.origin !== origin) return null;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return origin;
+  } catch {
+    return null;
+  }
+}
+
+function appendExistingCsrfTokenCookie(
+  responseHeaders: Headers,
+  cookieName: string,
+  token: string,
+  ttlSec: number,
+  secure: boolean,
+): void {
+  const parts = [
+    `${cookieName}=${encodeURIComponent(token)}`,
+    "Path=/",
+    `Max-Age=${ttlSec}`,
+    "SameSite=Lax",
+  ];
+  if (secure) parts.push("Secure");
+  responseHeaders.append("Set-Cookie", parts.join("; "));
+}
+
+/**
+ * The origin the browser actually used, which is what `document.location.origin`
+ * will report.
+ *
+ * Behind a TLS-terminating proxy the request URL stays an internal `http://`
+ * address, so advertising it would publish an origin the document can never
+ * match and discovery would silently fall back to the defaults. The forwarded
+ * headers are consulted only when the deployment opts in through
+ * VERYFRONT_TRUST_FORWARDED_HEADERS, exactly as the Secure flag decision does,
+ * because they are client-spoofable otherwise. The flag is passed in rather than
+ * read here so this stays a pure function the colocated unit test can drive
+ * without touching process env.
+ */
+export function browserFacingOrigin(req: Request, trustProxyHeaders: boolean): string {
+  const origin = getEffectiveRequestOrigin(req, undefined, trustProxyHeaders);
+  if (origin === null) {
+    throw new TypeError("Browser-facing request origin is invalid");
+  }
+  return origin;
+}
+
+/**
+ * Publish configured names so the browser helper can discover them without the
+ * caller hand-plumbing server configuration. Skipped when both names are the
+ * documented defaults, so default projects gain no new cookie, and skipped when
+ * the browser already holds the identical advertisement.
+ */
+function appendCsrfNamesCookie(
+  responseHeaders: Headers,
+  advertisementCookieName: string,
+  advertisement: string | null,
+  cookies: Record<string, string>,
+  ttlSec: number,
+  secure: boolean,
+  forceRefresh: boolean,
+): void {
+  if (advertisement === null && !cookies[advertisementCookieName]) return;
+  if (
+    !forceRefresh && advertisement !== null &&
+    cookies[advertisementCookieName] === advertisement
+  ) return;
+
+  const parts = [
+    `${advertisementCookieName}=${advertisement === null ? "" : encodeURIComponent(advertisement)}`,
+    "Path=/",
+    `Max-Age=${advertisement === null ? 0 : ttlSec}`,
+    "SameSite=Lax",
+  ];
+  // Deliberately not HttpOnly: the browser helper must read it. It carries no
+  // secret, and a tampered value only makes the client send a header the server
+  // is not reading, which fails closed.
+  if (secure) parts.push("Secure");
+  responseHeaders.append("Set-Cookie", parts.join("; "));
+}
+
+function csrfNamesCookieNeedsRefresh(
+  advertisementCookieName: string,
+  advertisement: string | null,
+  cookies: Record<string, string>,
+): boolean {
+  return advertisement === null
+    ? Boolean(cookies[advertisementCookieName])
+    : cookies[advertisementCookieName] !== advertisement;
 }

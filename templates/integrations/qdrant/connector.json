@@ -22,6 +22,12 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://qdrant.tech/documentation/cloud/authentication/"
+    },
+    {
+      "name": "QDRANT_CLUSTER_HOST",
+      "description": "Qdrant cluster hostname without scheme or port. Copy it from the cluster details.",
+      "required": true,
+      "sensitive": true
     }
   ],
   "tools": [
@@ -32,21 +38,19 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{clusterHost}:6333/collections",
-        "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
-            "required": true
-          }
-        },
+        "url": "https://{{env.QDRANT_CLUSTER_HOST}}:6333/collections",
         "response": {
           "transform": "result.collections",
           "historicalSummary": {
-            "collectionKeys": ["collections"],
+            "collectionKeys": [
+              "collections"
+            ],
             "collectionName": "collections",
-            "itemFields": [{ "name": "name" }],
+            "itemFields": [
+              {
+                "name": "name"
+              }
+            ],
             "omitted": "provider-specific payload fields"
           }
         }
@@ -59,14 +63,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{clusterHost}:6333/collections/{collection_name}",
+        "url": "https://{{env.QDRANT_CLUSTER_HOST}}:6333/collections/{collection_name}",
         "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
-            "required": true
-          },
           "collection_name": {
             "type": "string",
             "in": "path",
@@ -86,14 +84,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{clusterHost}:6333/collections/{collection_name}/points/search",
+        "url": "https://{{env.QDRANT_CLUSTER_HOST}}:6333/collections/{collection_name}/points/search",
         "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
-            "required": true
-          },
           "collection_name": {
             "type": "string",
             "in": "path",
@@ -143,14 +135,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
-        "url": "https://{clusterHost}:6333/collections/{collection_name}/points",
+        "url": "https://{{env.QDRANT_CLUSTER_HOST}}:6333/collections/{collection_name}/points",
         "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Qdrant cluster hostname without scheme or port (the :6333 REST port is added automatically), e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io",
-            "required": true
-          },
           "collection_name": {
             "type": "string",
             "in": "path",
@@ -193,34 +179,41 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["openai", "anthropic", "mistral"],
+  "suggestedWith": [
+    "openai",
+    "anthropic",
+    "mistral"
+  ],
   "SETUP_GUIDE": {
     "title": "Qdrant Cloud Setup",
     "steps": [
       {
         "step": 1,
         "title": "Create a Qdrant Cloud account",
-        "description": "Sign up at https://cloud.qdrant.io — the free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant works too (run it with an api-key configured)."
+        "description": "Sign up at https://cloud.qdrant.io. The free tier includes a 1GB cluster, enough for testing. Self-hosted Qdrant requires an API key plus native TLS or an HTTPS reverse proxy before you use this connector."
       },
       {
         "step": 2,
         "title": "Create a cluster and API key",
-        "description": "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately — it is only shown once."
+        "description": "Create a cluster, then open its API Keys tab and create a database API key. Copy it immediately: it is only shown once."
       },
       {
         "step": 3,
         "title": "Store the key and note your endpoint",
-        "description": "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details — tools take it as the clusterHost parameter without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333."
+        "description": "Add QDRANT_API_KEY=... to your .env file. Copy the cluster endpoint hostname from Cluster details; tools take it as the QDRANT_CLUSTER_HOST environment variable without scheme or port (e.g. xyz-example.eu-central-1-0.aws.cloud.qdrant.io); requests go to port 6333."
       },
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the List Collections tool with your clusterHost."
+        "description": "With QDRANT_CLUSTER_HOST configured, run the List Collections tool."
       }
     ],
     "notes": [
       "The API key is sent in the api-key header; Qdrant Cloud also accepts Authorization: Bearer",
-      "Every tool needs the clusterHost parameter (hostname only; requests target HTTPS port 6333) — there is no global Qdrant API host",
+      "Every tool needs the QDRANT_CLUSTER_HOST environment variable (hostname only; requests target HTTPS port 6333); there is no global Qdrant API host",
+      "Self-hosted Qdrant must enable native TLS or use an HTTPS reverse proxy. The default HTTP listener on port 6333 is not supported by this connector",
+      "Migrating from earlier versions: tools no longer accept a clusterHost parameter; set QDRANT_CLUSTER_HOST once instead. Until it is configured, tools fail fast with 'Set local integration host variables: QDRANT_CLUSTER_HOST' and no request is sent",
+      "QDRANT_CLUSTER_HOST is treated as sensitive because the cluster hostname identifies your private deployment; the CLI masks it in prompts and output",
       "Vectors must match the collection's configured vector size; generate embeddings separately (e.g. with OpenAI or Mistral)"
     ],
     "documentation": "https://api.qdrant.tech/api-reference"

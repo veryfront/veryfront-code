@@ -6,6 +6,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 /** Options accepted by use completion. */
 export interface UseCompletionOptions {
@@ -70,10 +71,16 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
       try {
         const response = await fetch(options.api, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...options.headers,
-          },
+          // CSRF is enforced in every environment, local development included,
+          // so this POST has to echo the configured CSRF cookie the document
+          // response issued or the server answers 403. A caller that set the
+          // header itself through `options.headers` keeps its own value.
+          headers: csrfMutationHeaders(options.api, {
+            headers: {
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
+          }),
           body: JSON.stringify({ prompt, ...options.body }),
           signal: abortController.signal,
         });

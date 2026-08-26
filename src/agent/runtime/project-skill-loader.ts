@@ -35,6 +35,7 @@ import {
   readOwnDataProperty,
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const RUNTIME_SKILL_READABLE_DIR_SET = new Set<string>(SKILL_READABLE_DIRS);
 const ArrayIsArray = Array.isArray;
@@ -402,7 +403,7 @@ function collectProjectSkillReferences(input: {
     }
   }
 
-  return [...references].sort();
+  return [...references].sort(compareStrings);
 }
 
 async function listProjectSkillReferences(

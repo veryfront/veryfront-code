@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerPermissions } from "./worker-permissions.ts";
@@ -31,6 +32,27 @@ const TEST_EMPTY_PREPARED_MODULE = {
   source: TEST_EMPTY_MODULE_SOURCE,
   sha256: await computeHash(TEST_EMPTY_MODULE_SOURCE),
 };
+const TEST_APPLICATION_IDENTITY = Object.freeze({
+  issuer: "veryfront:trusted-proxy",
+  subject: "user-123",
+  email: "user@example.test",
+  name: "Example User",
+  groups: Object.freeze(["admin"]),
+  roles: Object.freeze(["operator"]),
+  groupsComplete: true,
+  claims: (() => {
+    const claims = Object.create(null);
+    Object.defineProperty(claims, "sub", {
+      value: "user-123",
+      enumerable: true,
+    });
+    Object.defineProperty(claims, "__proto__", {
+      value: Object.freeze({ preserved: true }),
+      enumerable: true,
+    });
+    return Object.freeze(claims);
+  })(),
+});
 const TEST_ISOLATED_SSR_RENDERER_MODULE_URL = new URL(
   "../../../extensions/ext-react-ssr/src/worker-renderer.ts",
   import.meta.url,
@@ -615,6 +637,8 @@ testSuite("ProjectWorker - error handling", () => {
         params: {},
         projectDir: "/project",
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       }).then(
         () => undefined,
         (cause: unknown) => {
@@ -657,6 +681,8 @@ testSuite("ProjectWorker - error handling", () => {
               params: {},
               projectDir: "/project",
               sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+              applicationIdentity: null,
             }),
           Error,
           "Worker request id must be a non-empty string",
@@ -690,6 +716,8 @@ testSuite("ProjectWorker - error handling", () => {
         params: {},
         projectDir: Deno.cwd(),
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
       assertEquals(true, false, "Should have thrown");
     } catch (error) {
@@ -721,6 +749,8 @@ testSuite("ProjectWorker - error handling", () => {
         },
         projectDir: "/project",
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       }).then(
         () => false,
         () => true,
@@ -768,6 +798,8 @@ testSuite("ProjectWorker - error handling", () => {
         },
         projectDir: "/project",
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       const results = await Promise.allSettled([hanging, invalid]);
@@ -816,6 +848,8 @@ testSuite("ProjectWorker - error handling", () => {
         params: {},
         projectDir: "/project",
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       }).then(
         () => false,
         () => true,
@@ -931,6 +965,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
             params: {},
             projectDir,
             sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+            applicationIdentity: null,
           }).then(
             () => false,
             () => true,
@@ -1027,6 +1063,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "result");
@@ -1066,6 +1104,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         request: serializedRequest,
         params: {},
         projectDir,
+
+        applicationIdentity: null,
       },
       {
         type: "execute-pages-route",
@@ -1075,6 +1115,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         method: "GET",
         context: { request: serializedRequest, params: {}, cookies: {} },
         projectDir,
+
+        applicationIdentity: null,
       },
       {
         type: "fetch-data",
@@ -1178,6 +1220,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [projectKey]: "tenant-a" },
+
+        applicationIdentity: null,
       });
 
       assertEquals(first.type, "result");
@@ -1208,6 +1252,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(second.type, "result");
@@ -1276,6 +1322,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [projectKey]: "pages-secret" },
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "result");
@@ -1283,6 +1331,255 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       assertEquals(
         JSON.parse(new TextDecoder().decode(response.response.body ?? new Uint8Array())),
         { value: "pages-secret", frozen: true },
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("passes immutable application identity per App and Pages route request without reuse bleed", async () => {
+    const projectDir = await makeTempDir();
+    const appModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const pagesModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    const poisonModulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
+    await Deno.writeTextFile(
+      appModulePath,
+      `
+        export function GET(_request, context) {
+          const identity = context.identity;
+          return Response.json({
+            subject: identity?.subject ?? null,
+            email: identity?.email ?? null,
+            groups: identity?.groups ?? null,
+            roles: identity?.roles ?? null,
+            groupsComplete: identity?.groupsComplete ?? null,
+            frozen: identity === null ? null : {
+              root: Object.isFrozen(identity),
+              rootProto: Object.getPrototypeOf(identity) === null,
+              groups: Object.isFrozen(identity.groups),
+              roles: Object.isFrozen(identity.roles),
+              claims: Object.isFrozen(identity.claims),
+              proto: Object.getPrototypeOf(identity.claims) === null,
+              protoClaim: identity.claims.__proto__,
+            },
+            sameWithinContext: identity === context.identity,
+          });
+        }
+      `,
+    );
+    await Deno.writeTextFile(
+      pagesModulePath,
+      `
+        export function GET(context) {
+          const identity = context.identity;
+          return Response.json({
+            subject: identity?.subject ?? null,
+            email: identity?.email ?? null,
+            frozen: identity === null ? null : {
+              root: Object.isFrozen(identity),
+              rootProto: Object.getPrototypeOf(identity) === null,
+              groups: Object.isFrozen(identity.groups),
+              roles: Object.isFrozen(identity.roles),
+              claims: Object.isFrozen(identity.claims),
+            },
+            sameWithinContext: identity === context.identity,
+          });
+        }
+      `,
+    );
+    await Deno.writeTextFile(
+      poisonModulePath,
+      `
+        export function GET() {
+          Set.prototype[Symbol.iterator] = function* () {
+            throw new Error("poisoned Set iterator");
+          };
+          return new Response("poisoned");
+        }
+      `,
+    );
+
+    const worker = new ProjectWorker({
+      projectId: "test-worker-application-identity",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      const appResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "app-identity",
+        module: await prepareModulePath(appModulePath),
+        modulePath: appModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/app-identity",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: TEST_APPLICATION_IDENTITY,
+      });
+      assertEquals(appResponse.type, "result");
+      if (appResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(appResponse.response.body ?? new Uint8Array())),
+        {
+          subject: "user-123",
+          email: "user@example.test",
+          groups: ["admin"],
+          roles: ["operator"],
+          groupsComplete: true,
+          frozen: {
+            root: true,
+            rootProto: true,
+            groups: true,
+            roles: true,
+            claims: true,
+            proto: true,
+            protoClaim: { preserved: true },
+          },
+          sameWithinContext: true,
+        },
+      );
+
+      const pagesResponse = await worker.execute({
+        type: "execute-pages-route",
+        id: "pages-identity",
+        module: await prepareModulePath(pagesModulePath),
+        modulePath: pagesModulePath,
+        method: "GET",
+        context: {
+          url: "http://localhost/api/pages-identity",
+          method: "GET",
+          headers: [],
+          body: null,
+          params: {},
+          cookies: {},
+        },
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: TEST_APPLICATION_IDENTITY,
+      });
+      assertEquals(pagesResponse.type, "result");
+      if (pagesResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(pagesResponse.response.body ?? new Uint8Array())),
+        {
+          subject: "user-123",
+          email: "user@example.test",
+          frozen: {
+            root: true,
+            rootProto: true,
+            groups: true,
+            roles: true,
+            claims: true,
+          },
+          sameWithinContext: true,
+        },
+      );
+
+      const poisonResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "poison-set-iterator",
+        module: await prepareModulePath(poisonModulePath),
+        modulePath: poisonModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/poison",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: null,
+      });
+      assertEquals(poisonResponse.type, "result");
+      if (poisonResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        new TextDecoder().decode(poisonResponse.response.body ?? new Uint8Array()),
+        "poisoned",
+      );
+
+      const postPoisonResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "identity-after-set-iterator-poisoning",
+        module: await prepareModulePath(appModulePath),
+        modulePath: appModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/app-identity",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: TEST_APPLICATION_IDENTITY,
+      });
+      assertEquals(postPoisonResponse.type, "result");
+      if (postPoisonResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(postPoisonResponse.response.body ?? new Uint8Array())),
+        {
+          subject: "user-123",
+          email: "user@example.test",
+          groups: ["admin"],
+          roles: ["operator"],
+          groupsComplete: true,
+          frozen: {
+            root: true,
+            rootProto: true,
+            groups: true,
+            roles: true,
+            claims: true,
+            proto: true,
+            protoClaim: { preserved: true },
+          },
+          sameWithinContext: true,
+        },
+      );
+
+      const anonymousResponse = await worker.execute({
+        type: "execute-app-route",
+        id: "anonymous-after-identity",
+        module: await prepareModulePath(appModulePath),
+        modulePath: appModulePath,
+        method: "GET",
+        request: {
+          url: "http://localhost/api/app-identity",
+          method: "GET",
+          headers: [],
+          body: null,
+        },
+        params: {},
+        projectDir,
+        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        applicationIdentity: null,
+      });
+      assertEquals(anonymousResponse.type, "result");
+      if (anonymousResponse.type !== "result") throw new Error("expected result response");
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(anonymousResponse.response.body ?? new Uint8Array())),
+        {
+          subject: null,
+          email: null,
+          groups: null,
+          roles: null,
+          groupsComplete: null,
+          frozen: null,
+          sameWithinContext: true,
+        },
       );
     } finally {
       worker.terminate();
@@ -1343,6 +1640,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestAKey]: "tenant-a" },
+
+        applicationIdentity: null,
       });
 
       const second = worker.execute({
@@ -1361,6 +1660,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [requestBKey]: "tenant-b" },
+
+        applicationIdentity: null,
       });
 
       const [firstResponse, secondResponse] = await Promise.all([first, second]);
@@ -1461,6 +1762,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
         projectEnv: { [projectKey]: "project-secret" },
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "result");
@@ -1778,6 +2081,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "error");
@@ -1905,6 +2210,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "error");
@@ -1969,6 +2276,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "error");
@@ -2030,6 +2339,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "result");
@@ -2108,6 +2419,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
       assertEquals(response.type, "result");
       if (response.type !== "result") throw new Error("expected result response");
@@ -2197,6 +2510,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
 
       assertEquals(response.type, "result");
@@ -2300,6 +2615,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
       assertEquals(response.type, "result", JSON.stringify(response));
       if (response.type !== "result") throw new Error("expected result response");
@@ -2421,6 +2738,8 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         params: {},
         projectDir,
         sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+
+        applicationIdentity: null,
       });
       assertEquals(response.type, "result");
       if (response.type !== "result") throw new Error("expected result response");

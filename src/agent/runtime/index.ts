@@ -248,6 +248,7 @@ import {
   type ToolExposureState,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
@@ -803,7 +804,7 @@ function synchronizeRuntimeToolInventory(
   }
   const instructions = withRuntimeToolInventory(
     systemPrompt,
-    Object.keys(runtimeTools ?? {}).sort(),
+    Object.keys(runtimeTools ?? {}).sort(compareStrings),
     deferredTools,
   );
   return typeof systemPrompt === "string" ? flattenSystemInstructions(instructions) : instructions;
@@ -2273,7 +2274,7 @@ export class AgentRuntime {
         ),
         preparedStep.integrationToolDiscovery,
       );
-      const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
+      const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort(compareStrings);
 
       const temperature = this.resolveTemperature(
         temperatureModelString ?? effectiveModel,
