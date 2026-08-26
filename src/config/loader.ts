@@ -1641,7 +1641,13 @@ const ANSI_SGR_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]/g;
 // at it. Matching the scheme here also keeps `https:/` away from
 // WINDOWS_ABSOLUTE_PATH, whose drive-letter alternative would otherwise match
 // the `s:/` inside it and report `http[path]` (veryfront-issue-inbox#836).
-const REMOTE_URL = /(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'()]+/g;
+//
+// Deliberately unanchored on the left, so a scheme glued to preceding text
+// (`3https://host/x`) is still recognised as a URL rather than falling through
+// to the Windows pattern. Requiring both slashes is what keeps a genuine
+// `C:/Users/...` out: with one slash allowed, that path would match here and be
+// reported as `[url]` instead of `[path]`.
+const REMOTE_URL = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'()]+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;

@@ -990,6 +990,19 @@ export default config as const;
         assertEquals(error.message.includes("/home/example"), false);
       });
 
+      it("redacts a URL whose scheme is glued to preceding text", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-url-",
+          `throw new Error("Attempt 3https://registry.internal/config.ts failed");\n`,
+        );
+
+        // REMOTE_URL is unanchored on the left for this: with a left boundary the
+        // glued scheme is not recognised as a URL, and the hostname survives into
+        // a caller-visible detail.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
       it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
