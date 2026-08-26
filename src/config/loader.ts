@@ -1653,14 +1653,23 @@ const ANSI_CSI_SEQUENCE = /\u001B\[[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007
 // to the Windows pattern. A single-slash form requires a scheme of at least two
 // characters, which catches malformed `https:/host/x` without misclassifying
 // the genuine Windows path `C:/Users/...` as a URL.
-// The scheme length is bounded because this pattern is unanchored and runs
-// over the whole message before the 200-character cap applies. Unbounded, the
-// greedy scheme prefix rescans to the end of the input at every position that
-// starts with a letter, so an ordinary long alphabetic message with no colon
-// costs O(n^2): 100k characters measured at ~17.9s, versus ~32ms bounded.
-// Real schemes are short -- 31 characters is well past every registered one.
-const REMOTE_URL =
-  /(?:[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/|[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/))[^\s"'()]+/g;
+// The ordinary form. Unanchored on the left so a scheme glued to preceding
+// text (`3https://host/x`) is still recognised rather than falling through to
+// the Windows pattern.
+//
+// The scheme length is bounded because this runs over the whole message before
+// the 200-character cap applies. Unbounded, the greedy prefix rescans to the
+// end of the input at every position starting with a letter, so a long
+// alphabetic message with no colon costs O(n^2) -- 100k characters measured at
+// ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
+const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s"'()]+/g;
+// The malformed single-slash form, kept separate from SCHEME_URL rather than
+// folded in as an alternation: two plain patterns read more clearly than one
+// branching expression, and each stays independently checkable.
+//
+// The scheme needs at least two characters here, which is what keeps a genuine
+// `C:/Users/...` out -- a drive letter is always exactly one.
+const MALFORMED_SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)[^\s"'()]+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
@@ -1722,7 +1731,8 @@ function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
-  redacted = replaceMatchesWithCapturedExec(redacted, REMOTE_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
