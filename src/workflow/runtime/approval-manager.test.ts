@@ -1101,6 +1101,46 @@ describe("ApprovalManager", () => {
       assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
 
+    it("finalizes a retained decision claim when a failed run is not retried within one day", async () => {
+      using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
+      backend = new FailOnApprovalDecisionBackend();
+      const executor = { resume: () => Promise.resolve() } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({
+        backend,
+        executor,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 0,
+      });
+      const runId = "run-abandoned-failed-decision";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: { nodeId: "review", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-abandoned-failed-decision",
+        nodeId: "review",
+        message: "approve me",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await manager.approve(runId, "apr-abandoned-failed-decision", "reviewer");
+      assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
+
+      await time.tickAsync(24 * 60 * 60 * 1_000 - 1);
+      await manager.checkApprovalDecisionClaims();
+      assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
+
+      await time.tickAsync(1);
+      await manager.checkApprovalDecisionClaims();
+
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+      assertEquals((await backend.getRun(runId))?.status, "failed");
+    });
+
     it("reconciles a decision when ownership changes during the run patch", async () => {
       backend = new ReclaimDuringDecisionBackend();
       const resumeCalls: unknown[][] = [];

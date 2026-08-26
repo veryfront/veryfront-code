@@ -32,14 +32,21 @@ const logger = baseLogger.component("approval-manager");
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS = 30_000;
+// Failed runs can be retried manually, so preserve a racing decision long
+// enough for operator recovery without reserving approval storage forever.
+const FAILED_DECISION_CLAIM_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
 function shouldRetainDecisionClaim(
   outcome: WorkflowRunControlReconcileOutcome,
   decision: ApprovalDecision,
   canResume: boolean,
+  claimAgeMs?: number,
 ): boolean {
-  return (outcome.status === "skipped-terminal" && outcome.run?.status === "failed") ||
+  const failedRunMayStillRetry = outcome.status === "skipped-terminal" &&
+    outcome.run?.status === "failed" &&
+    (claimAgeMs === undefined || claimAgeMs < FAILED_DECISION_CLAIM_RETENTION_MS);
+  return failedRunMayStillRetry ||
     (decision.approved && outcome.run?.status === "waiting" && !canResume);
 }
 
@@ -440,7 +447,15 @@ export class ApprovalManager {
               : undefined,
           },
         });
-        if (shouldRetainDecisionClaim(outcome, decision, this.config.executor !== undefined)) {
+        const claimAgeMs = Date.now() - approval.decidedAt.getTime();
+        if (
+          shouldRetainDecisionClaim(
+            outcome,
+            decision,
+            this.config.executor !== undefined,
+            claimAgeMs,
+          )
+        ) {
           continue;
         }
         await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
