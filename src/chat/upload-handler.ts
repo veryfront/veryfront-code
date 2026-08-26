@@ -74,6 +74,12 @@ export interface ChatUploadHandlerConfig {
    * Use this only for local prototypes or deliberately public upload routes.
    */
   allowUnauthenticated?: boolean;
+  /**
+   * Expose every stored upload through GET requests without an `id`.
+   * Keep this disabled unless every authorized caller can access every upload.
+   * @default false
+   */
+  allowListing?: boolean;
 }
 
 interface ResolvedUploadLimits {
@@ -364,7 +370,10 @@ function failureResponse(error: unknown, signal: AbortSignal): Response {
  * the `storage` you provide. Every route fails closed unless an authorizer
  * returns literal `true` or unauthenticated access is explicitly enabled.
  * Multipart request bodies and file bytes are bounded independently.
- * `DELETE ?id=` removes the file from storage.
+ * `GET` without an `id` (the listing used by `useAttachments` on mount)
+ * responds `400` unless `allowListing: true` opts in. Enable it only when
+ * every authorized caller may access every stored upload. `DELETE ?id=`
+ * removes the file from storage.
  */
 export function createChatUploadHandler(
   config: ChatUploadHandlerConfig = {},
@@ -459,10 +468,13 @@ export function createChatUploadHandler(
 
       const id = new URL(request.url).searchParams.get("id");
 
-      // No `id` → list the adapter's stored files (newest first). This is the
-      // source of truth for an "Uploads" surface, so it survives across
-      // sessions and browsers, unlike a client-only index.
+      // Listing exposes storage-wide metadata and identifiers, so callers must
+      // explicitly enable it after verifying that the authorization boundary
+      // grants access to every upload in this storage backend.
       if (!id) {
+        if (config.allowListing !== true) {
+          return Response.json({ error: "An upload id is required" }, { status: 400 });
+        }
         if (!storage.list) {
           return Response.json(
             { error: "This storage backend does not support listing", items: [] },

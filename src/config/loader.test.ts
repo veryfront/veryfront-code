@@ -1378,6 +1378,167 @@ export default config as const;
       assertEquals(existsCalls, 0);
     });
 
+    it("continues hosted config discovery after an API 404", async () => {
+      const adapter = setup();
+      const reads: string[] = [];
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        readFile: async (path: string) => {
+          reads.push(path);
+          if (path === "/veryfront.config.js") {
+            throw Object.assign(new Error("Config candidate not found"), {
+              status: 404,
+            });
+          }
+          if (path === "/veryfront.config.ts") {
+            return 'export default { title: "later-candidate" };';
+          }
+          throw configCandidateNotFound(path);
+        },
+      });
+      __setHostedConfigEvaluatorForTests(async () => ({
+        title: "later-candidate",
+      }));
+      const sourceContext = {
+        productionMode: false,
+        branch: "feature/api-not-found",
+      } as const;
+      const preparedContext = await prepareDeclarativeConfigContext({
+        environmentName: "preview",
+        environment: {},
+      });
+
+      const config = await runWithRequestContext(
+        {
+          projectSlug: "demo",
+          projectId: "project-api-not-found",
+          token: "token",
+          branch: sourceContext.branch,
+        },
+        () =>
+          getHostedConfig("/hosted-api-not-found", adapter, {
+            cacheKey: "project-api-not-found",
+            sourceContext,
+            preparedContext,
+          }),
+      );
+
+      assertEquals(reads, ["/veryfront.config.js", "/veryfront.config.ts"]);
+      assertEquals(config.title, "later-candidate");
+    });
+
+    it("surfaces the 404 when every hosted candidate is missing at the API layer", async () => {
+      // A release that publishes no config at all must keep 404ing out of
+      // getHostedConfig: adapter-factory reads that 404 as "hosted-absent" and
+      // substitutes process-wide defaults. Continuing discovery past a
+      // candidate 404 must not convert total absence into a synthesized
+      // default config.
+      const adapter = setup();
+      const reads: string[] = [];
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        readFile: (path: string) => {
+          reads.push(path);
+          return Promise.reject(
+            Object.assign(new Error("API request failed: 404 Not Found"), {
+              status: 404,
+            }),
+          );
+        },
+      });
+      const sourceContext = {
+        productionMode: false,
+        branch: "feature/api-all-not-found",
+      } as const;
+      const preparedContext = await prepareDeclarativeConfigContext({
+        environmentName: "preview",
+        environment: {},
+      });
+
+      const error = await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo",
+              projectId: "project-api-all-not-found",
+              token: "token",
+              branch: sourceContext.branch,
+            },
+            () =>
+              getHostedConfig("/hosted-api-all-not-found", adapter, {
+                cacheKey: "project-api-all-not-found",
+                sourceContext,
+                preparedContext,
+              }),
+          ),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      // Every candidate was tried before giving up.
+      assertEquals(reads, [
+        "/veryfront.config.js",
+        "/veryfront.config.ts",
+        "/veryfront.config.mjs",
+      ]);
+      // The 404 survives on the cause chain, where adapter-factory's
+      // hasNotFoundStatus finds it and reports the config as hosted-absent.
+      assertEquals(error.slug, "config-parse-error");
+      assertEquals((error.cause as { status?: number }).status, 404);
+    });
+
+    it("normalizes a proxy-backed hosted config read failure without invoking traps", async () => {
+      const adapter = setup();
+      let descriptorTrapCalls = 0;
+      const hostileError = new Proxy(new Error("backend details"), {
+        getOwnPropertyDescriptor() {
+          descriptorTrapCalls += 1;
+          throw new Error("descriptor trap must not run");
+        },
+      });
+      Object.assign(adapter.fs, {
+        getUnderlyingAdapter: () => adapter.fs,
+        isMultiProjectMode: () => true,
+        isVeryfrontAdapter: () => true,
+        readFile: async () => {
+          throw hostileError;
+        },
+      });
+      const sourceContext = {
+        productionMode: false,
+        branch: "feature/proxy-backend-failure",
+      } as const;
+      const preparedContext = await prepareDeclarativeConfigContext({
+        environmentName: "preview",
+        environment: {},
+      });
+
+      const error = await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo",
+              projectId: "project-proxy-failure",
+              token: "token",
+              branch: sourceContext.branch,
+            },
+            () =>
+              getHostedConfig("/hosted-proxy-failure", adapter, {
+                cacheKey: "project-proxy-failure",
+                sourceContext,
+                preparedContext,
+              }),
+          ),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(error.slug, "config-parse-error");
+      assertEquals(descriptorTrapCalls, 0);
+    });
+
     it("propagates hosted config backend failures without trying another candidate", async () => {
       const adapter = setup();
       let reads = 0;

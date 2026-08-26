@@ -749,6 +749,45 @@ describe("proxy release asset handler", () => {
     assertEquals(calls, 1);
   });
 
+  it("bounds callers waiting for cold asset loads", async () => {
+    const source = "export const boundedWaiters = true;";
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    const fetchImpl = makeFetch(async () => {
+      calls++;
+      await gate.promise;
+      return new Response(source, {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+    const url = await assetUrl(source, "js");
+    const pending = Array.from(
+      { length: 256 },
+      () => handle(url, { apiBaseUrl: API_BASE, fetchImpl }),
+    );
+    await flushAsyncWork();
+
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      503,
+    );
+
+    gate.resolve();
+    assertEquals(
+      (await Promise.all(pending)).filter((response) => response?.status === 200)
+        .length,
+      256,
+    );
+    assertEquals(calls, 1);
+
+    clearReleaseAssetProxyCache();
+    assertEquals(
+      (await handle(url, { apiBaseUrl: API_BASE, fetchImpl }))?.status,
+      200,
+    );
+    assertEquals(calls, 2);
+  });
+
   it("allows only GET and HEAD on the immutable asset endpoint", async () => {
     let calls = 0;
     const fetchImpl = makeFetch(() => {
