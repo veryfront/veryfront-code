@@ -466,7 +466,7 @@ describe("ext-eval-report-mlflow", () => {
           experimentName: "support-agent-classification",
         }),
       Error,
-      "MLflow trackingUri must not include credentials",
+      "Use trackingToken, or trackingUsername and trackingPassword, in the same extension configuration instead.",
     );
 
     clearMlflowEnv();
@@ -508,6 +508,20 @@ describe("ext-eval-report-mlflow", () => {
     );
     assertExists(reportUpload);
     assertEquals(String(reportUpload.body).includes("secret-token"), false);
+  });
+
+  it("uses environment credential guidance for an environment-selected tracking URI", () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://user:secret-token@mlflow.test");
+    const registry = createEvalReportExporterRegistry();
+    const extension = factory();
+
+    assertThrows(
+      () => extension.setup?.(createContext(registry)),
+      Error,
+      "Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.",
+    );
+    assertEquals(registry.list(), []);
   });
 
   it("does not pass host credentials to config-controlled MLflow transports", async () => {

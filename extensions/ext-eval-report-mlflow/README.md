@@ -100,7 +100,7 @@ combined a configured endpoint with `MLFLOW_TRACKING_TOKEN` must migrate the
 token explicitly:
 
 ```ts
-import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import extEvalReportMlflow from "veryfront/extensions/ext-eval-report-mlflow";
 import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
@@ -138,7 +138,7 @@ A configured `trackingUri` activates the exporter directly; otherwise
 `MLFLOW_TRACKING_URI` remains the environment-only activation path.
 
 ```ts
-import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import extEvalReportMlflow from "veryfront/extensions/ext-eval-report-mlflow";
 import { defineConfig } from "veryfront";
 
 export default defineConfig({

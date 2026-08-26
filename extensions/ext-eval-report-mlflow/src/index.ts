@@ -200,13 +200,22 @@ function isLoopbackHost(hostname: string): boolean {
     hostname === "::1" || hostname === "[::1]";
 }
 
-function normalizeHttpUri(uri: string, label: string): string {
+type TrackingCredentialSource = "configuration" | "environment";
+
+function normalizeHttpUri(
+  uri: string,
+  label: string,
+  trackingCredentialSource: TrackingCredentialSource = "environment",
+): string {
   const trimmed = uri.trim().replace(/\/+$/, "");
   try {
     const url = new URL(trimmed);
     if (url.username || url.password) {
+      const guidance = trackingCredentialSource === "configuration"
+        ? "Use trackingToken, or trackingUsername and trackingPassword, in the same extension configuration instead."
+        : "Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.";
       throw new Error(
-        `MLflow ${label} must not include credentials. Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.`,
+        `MLflow ${label} must not include credentials. ${guidance}`,
       );
     }
     if (url.protocol === "https:") return trimmed;
@@ -1690,9 +1699,14 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
       trackingUri: string;
     },
     fetchImpl: EvalReportMlflowFetch = fetch,
+    trackingCredentialSource: TrackingCredentialSource = "configuration",
   ) {
     this.id = config.id;
-    const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
+    const trackingUri = normalizeHttpUri(
+      config.trackingUri,
+      "trackingUri",
+      trackingCredentialSource,
+    );
     const artifactsUri = resolveArtifactsUri(config, trackingUri);
     const oauth = resolveOAuthClientCredentials(config);
     const request = resolveMlflowRequestOptions(config);
@@ -1899,6 +1913,7 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
         new EvalReportMlflowExporter(
           setupConfig,
           setupConfig.fetch,
+          normalizedFactoryConfig.trackingUri === undefined ? "environment" : "configuration",
         ),
       );
       registeredId = setupConfig.id;
