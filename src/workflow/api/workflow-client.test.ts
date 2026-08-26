@@ -2073,6 +2073,38 @@ class SlowFirstWaitClaimBackend extends MemoryBackend {
   }
 }
 
+class CoordinatedOverlappingDrainBackend extends MemoryBackend {
+  readonly firstClaimStarted = Promise.withResolvers<void>();
+  readonly releaseFirstClaim = Promise.withResolvers<void>();
+  readonly secondClaimStarted = Promise.withResolvers<void>();
+  readonly releaseSecondClaim = Promise.withResolvers<void>();
+  private armed = false;
+  private claimCalls = 0;
+
+  arm(): void {
+    this.armed = true;
+  }
+
+  override async claimRunEventForWait(
+    runId: string,
+    waitId: string,
+    eventName: string,
+  ): Promise<RunEventEnvelope | null> {
+    if (!this.armed) return await super.claimRunEventForWait(runId, waitId, eventName);
+    this.claimCalls++;
+    if (this.claimCalls === 1) {
+      this.firstClaimStarted.resolve();
+      await this.releaseFirstClaim.promise;
+      return null;
+    }
+    if (this.claimCalls === 2) {
+      this.secondClaimStarted.resolve();
+      await this.releaseSecondClaim.promise;
+    }
+    return await super.claimRunEventForWait(runId, waitId, eventName);
+  }
+}
+
 class SlowPendingEventWaitListBackend extends MemoryBackend {
   listDelayMs = 0;
 
@@ -2196,6 +2228,18 @@ class RollbackObservingBackend extends BlockableRunUpdateBackend {
 class RefusingDeliveryRollbackBackend extends BlockableRunUpdateBackend {
   override restoreRunEventDelivery(): Promise<boolean> {
     return Promise.reject(new Error("delivery rollback refused"));
+  }
+}
+
+class FailFirstDeliveryFinalizationBackend extends MemoryBackend {
+  finalizationAttempts = 0;
+
+  override finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+    this.finalizationAttempts++;
+    if (this.finalizationAttempts === 1) {
+      return Promise.reject(new Error("delivery finalization unavailable"));
+    }
+    return super.finalizeRunEventDelivery(runId, eventId);
   }
 }
 
@@ -2534,6 +2578,49 @@ describe("WorkflowClient durable event waits", () => {
     await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed");
   });
 
+  it("waits for an overlapping drain that claims this publisher's envelope", async () => {
+    const racingBackend = new CoordinatedOverlappingDrainBackend();
+    const racingClient = createWorkflowClient({ backend: racingBackend });
+    try {
+      racingClient.register(workflow({
+        id: "overlapping-drain-outcome",
+        steps: [waitForEvent("gate", { eventName: "gate.ready" })],
+      }));
+      const handle = await racingClient.start("overlapping-drain-outcome", {});
+      await handle.settled();
+      racingBackend.arm();
+
+      const firstPublish = racingClient.publishEvent(handle.runId, "gate.ready", {
+        sequence: 1,
+      });
+      await racingBackend.firstClaimStarted.promise;
+      const secondPublish = racingClient.publishEvent(handle.runId, "gate.ready", {
+        sequence: 2,
+      });
+      await racingBackend.secondClaimStarted.promise;
+
+      racingBackend.releaseFirstClaim.resolve();
+      const firstState = await Promise.race([
+        firstPublish.then(() => "settled" as const),
+        delay(30).then(() => "pending" as const),
+      ]);
+      racingBackend.releaseSecondClaim.resolve();
+      const [firstOutcome, secondOutcome] = await Promise.all([firstPublish, secondPublish]);
+
+      assertEquals(
+        firstState,
+        "pending",
+        "the first publisher must not classify its event while an overlapping drain is active",
+      );
+      assertEquals(firstOutcome, "delivered");
+      assertEquals(secondOutcome, "run-terminal");
+    } finally {
+      racingBackend.releaseFirstClaim.resolve();
+      racingBackend.releaseSecondClaim.resolve();
+      await racingClient.destroy();
+    }
+  });
+
   it("persists every event wait nested inside a parallel node", async () => {
     client.register(workflow({
       id: "nested-parallel-waits",
@@ -2745,6 +2832,49 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("recovers an event claimed by a publisher process that exited before delivery", async () => {
+    const sharedBackend = new MemoryBackend();
+    const parked = createWorkflowClient({ backend: sharedBackend });
+    const recovering = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0, deliveryClaimRecoveryDelay: 0 },
+    });
+    const recoveryWorkflow = workflow({
+      id: "abandoned-delivery-claim",
+      steps: [
+        waitForEvent("gate", { eventName: "gate.ready" }),
+        step("after", { tool: createMockTool("after-tool", { done: true }) }),
+      ],
+    });
+    parked.register(recoveryWorkflow);
+    recovering.register(recoveryWorkflow);
+    try {
+      const handle = await parked.start("abandoned-delivery-claim", {});
+      await handle.settled();
+      parked.getEventWaitManager().stop();
+      const [wait] = await sharedBackend.getPendingEventWaits(handle.runId);
+      assertExists(wait);
+      await sharedBackend.appendRunEvent(handle.runId, {
+        id: "evt-abandoned-claim",
+        eventName: "gate.ready",
+        payload: { recovered: true },
+        publishedAt: new Date(),
+      });
+      assertExists(
+        await sharedBackend.claimRunEventForWait(handle.runId, wait.id, wait.eventName),
+      );
+      assertEquals((await sharedBackend.listRunEventDeliveryClaims(handle.runId)).length, 1);
+
+      await recovering.getEventWaitManager().checkExpiredEventWaits();
+
+      assertEquals((await recovering.getRun(handle.runId))?.status, "completed");
+      assertEquals((await sharedBackend.listRunEventDeliveryClaims(handle.runId)).length, 0);
+    } finally {
+      await parked.destroy();
+      await recovering.destroy();
+    }
+  });
+
   it("keeps a still-parked run waiting when resume finds no decision", async () => {
     client.register(eventWorkflow);
     const handle = await client.start("event-workflow", {});
@@ -2826,16 +2956,10 @@ describe("WorkflowClient durable event waits", () => {
         "a failed delivery must leave the run parked, not terminal",
       );
 
-      // The rolled-back event is back in the mailbox, so this publish releases
-      // the wait with THAT (older) envelope; outcomes are attributed per
-      // envelope, so this call does not claim the delivery as its own.
-      const republished = await flakyClient.publishEvent(handle.runId, "payment.confirmed", {
-        amount: 42,
-      });
-      assert(
-        republished !== "delivered",
-        "the wait was released by the restored older envelope, not this call's own; " +
-          "claiming the delivery here would let a caller double-account the event",
+      assertEquals(
+        await flakyClient.retryEventDelivery(handle.runId, "payment.confirmed"),
+        true,
+        "retry must drain the restored envelope without appending a duplicate",
       );
       await waitFor(
         async () => (await flakyClient.getRun(handle.runId))?.status === "completed",
@@ -2846,6 +2970,68 @@ describe("WorkflowClient durable event waits", () => {
         "completed",
         "the re-publish must wake the run through the restored event",
       );
+    } finally {
+      await flakyClient.destroy();
+    }
+  });
+
+  it("does not duplicate a failed event while retrying sequential same-name waits", async () => {
+    const flaky = new BlockableRunUpdateBackend();
+    const flakyClient = createWorkflowClient({ backend: flaky });
+    try {
+      flakyClient.register(workflow({
+        id: "failed-event-retry-with-sequential-waits",
+        steps: [
+          waitForEvent("first", { eventName: "gate.ready" }),
+          waitForEvent("second", { eventName: "gate.ready" }),
+        ],
+      }));
+      const handle = await flakyClient.start("failed-event-retry-with-sequential-waits", {});
+      await handle.settled();
+
+      flaky.blockRunUpdates = true;
+      assertEquals(
+        await flakyClient.publishEvent(handle.runId, "gate.ready", { sequence: 1 }),
+        "delivery-failed",
+      );
+      flaky.blockRunUpdates = false;
+
+      assertEquals(await flakyClient.retryEventDelivery(handle.runId, "gate.ready"), true);
+      assertEquals((await flakyClient.getRun(handle.runId))?.status, "waiting");
+      assertEquals(
+        (await flakyClient.getPendingEventWaits(handle.runId)).map((wait) => wait.nodeId),
+        ["second"],
+        "one retried envelope must release only the first of two sequential waits",
+      );
+      assertEquals(await flaky.peekRunEvent(handle.runId, "gate.ready"), null);
+
+      await flakyClient.publishEvent(handle.runId, "gate.ready", { sequence: 2 });
+      await waitFor(async () => (await flakyClient.getRun(handle.runId))?.status === "completed");
+    } finally {
+      await flakyClient.destroy();
+    }
+  });
+
+  it("retries a transient delivery-finalization failure", async () => {
+    const flaky = new FailFirstDeliveryFinalizationBackend();
+    const flakyClient = createWorkflowClient({ backend: flaky });
+    try {
+      flakyClient.register(workflow({
+        id: "delivery-finalization-retry",
+        steps: [
+          waitForEvent("gate", { eventName: "gate.ready" }),
+          waitForApproval("approval", { message: "keep the run active" }),
+        ],
+      }));
+      const handle = await flakyClient.start("delivery-finalization-retry", {});
+      await handle.settled();
+
+      assertEquals(await flakyClient.publishEvent(handle.runId, "gate.ready", {}), "delivered");
+      await waitFor(() => flaky.finalizationAttempts >= 2, {
+        timeout: 2_500,
+        message: "a transient finalization failure was never retried",
+      });
+      assertEquals((await flaky.listRunEventDeliveryClaims(handle.runId)).length, 0);
     } finally {
       await flakyClient.destroy();
     }
@@ -3536,6 +3722,39 @@ describe("WorkflowClient durable event waits", () => {
       async () => (await client.getRun(handle.runId))?.status === "completed",
       { message: "the retried wait could not be woken by its event" },
     );
+  });
+
+  it("retains buffered mail while a failed run is retried", async () => {
+    client.register(workflow({
+      id: "retry-retains-buffered-mail",
+      steps: [
+        waitForEvent("timed", { eventName: "timed.ready", timeout: 400 }),
+        waitForEvent("later", { eventName: "later.ready" }),
+      ],
+    }));
+    const handle = await client.start("retry-retains-buffered-mail", {});
+    await handle.settled();
+    assertEquals(
+      await client.publishEvent(handle.runId, "later.ready", { retained: true }),
+      "buffered",
+    );
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "failed", {
+      message: "the first wait never reached its deadline",
+    });
+    assertExists(
+      await backend.peekRunEvent(handle.runId, "later.ready"),
+      "a retryable failed run must retain unrelated buffered mail",
+    );
+
+    await client.retry(handle.runId);
+    await waitFor(
+      async () =>
+        (await client.getPendingEventWaits(handle.runId)).some((wait) => wait.nodeId === "timed"),
+    );
+    await client.publishEvent(handle.runId, "timed.ready", {});
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed", {
+      message: "the retried workflow did not consume mail buffered before its failure",
+    });
   });
 
   it("keeps an expired deadline replayable when failing the run does not commit", async () => {

@@ -450,7 +450,8 @@ export class WorkflowClient {
    * covers cases a caller has to react to differently: `"delivered"`,
    * `"buffered"`, `"run-terminal"` (the run is over and the event was
    * discarded), or `"delivery-failed"` (a wait matched, delivery failed, and
-   * both were rolled back so a later publish can retry).
+   * both were rolled back so `retryEventDelivery` can retry the same envelope
+   * without appending a duplicate).
    *
    * Rejects when the run's mailbox is full of events no wait has claimed, in
    * preference to dropping one of them.
@@ -461,6 +462,15 @@ export class WorkflowClient {
     payload?: unknown,
   ): Promise<PublishEventOutcome> {
     return this.eventWaitManager.publishEvent(runId, eventName, payload);
+  }
+
+  /**
+   * Retry the oldest buffered event with this name after `publishEvent`
+   * returned `"delivery-failed"`, without appending a second envelope.
+   * Resolves with whether that exact buffered envelope was delivered.
+   */
+  retryEventDelivery(runId: string, eventName: string): Promise<boolean> {
+    return this.eventWaitManager.retryEventDelivery(runId, eventName);
   }
 
   /** Read the event waits a run is currently parked on. */

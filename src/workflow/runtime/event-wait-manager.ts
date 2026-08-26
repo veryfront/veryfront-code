@@ -24,6 +24,7 @@ const logger = baseLogger.component("event-wait-manager");
 /** Default interval for sweeping event waits whose declared timeout elapsed. */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MIN_EXPIRY_RETRY_DELAY_MS = 1_000;
+const DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS = 60_000;
 const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_WAIT_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 const expiryTimersByBackend = new WeakMap<
@@ -38,6 +39,8 @@ export interface EventWaitManagerConfig {
   executor?: WorkflowExecutor;
   /** Interval for sweeping timed-out waits parked by another process (ms) */
   expirationCheckInterval?: number;
+  /** Age after which an unfinished event claim is recoverable after a process exit (ms). */
+  deliveryClaimRecoveryDelay?: number;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -59,7 +62,8 @@ export type PublishEventOutcome =
   | "run-terminal"
   /**
    * A wait matched but delivering it failed. The wait and the event were both
-   * rolled back, so the run is still parked and a later publish can retry.
+   * rolled back, so the run is still parked and `retryEventDelivery` can retry
+   * the same envelope without appending a duplicate.
    */
   | "delivery-failed";
 
@@ -70,6 +74,13 @@ interface DrainOutcome {
   /** Envelope ids whose delivery failed and was rolled back into the mailbox. */
   failedEventIds: Set<string>;
   terminal: boolean;
+}
+
+interface DrainSession {
+  outcome: DrainOutcome;
+  activePasses: number;
+  idle: Promise<void>;
+  resolveIdle: () => void;
 }
 
 /** Strip backend-only fields so callers never see worker ownership. */
@@ -94,13 +105,16 @@ export class EventWaitManager {
   private expirationTimer?: ReturnType<typeof setInterval>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Shared accumulator for nested and concurrent drains of one run. */
-  private activeDrainOutcomes = new Map<string, DrainOutcome>();
+  /** Shared accumulator and completion barrier for same-run drain passes. */
+  private drainSessions = new Map<string, DrainSession>();
+  /** Best-effort prompt retries; durable claims remain the restart fallback. */
+  private finalizationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private destroyed = false;
 
   constructor(config: EventWaitManagerConfig) {
     this.config = {
       expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
+      deliveryClaimRecoveryDelay: DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
       debug: false,
       ...config,
     };
@@ -231,7 +245,10 @@ export class EventWaitManager {
 
   /** Drain buffered events after a complete waiting batch has been persisted. */
   async drainPendingEvents(runId: string): Promise<void> {
-    await this.drain(runId);
+    // This callback can run recursively while an outer delivery awaits resume.
+    // Its pass contributes to the shared outcome but cannot wait for the outer
+    // pass without deadlocking that resume.
+    await this.drain(runId, false);
   }
 
   /** Release an in-process deadline after another owner resolves the wait. */
@@ -282,7 +299,7 @@ export class EventWaitManager {
       publishedAt: new Date(),
     };
     await backend.appendRunEvent(runId, envelope);
-    const outcome = await this.drain(runId);
+    const outcome = await this.drain(runId, true);
 
     // The outcome reports what happened to THIS envelope. With concurrent
     // publishes or previously buffered mail, the drain can deliver an older
@@ -305,6 +322,26 @@ export class EventWaitManager {
     return "buffered";
   }
 
+  /** Retry the oldest buffered envelope without publishing a duplicate. */
+  async retryEventDelivery(runId: string, eventName: string): Promise<boolean> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "The configured workflow backend does not support durable event delivery",
+      });
+    }
+    if (!isCanonicalNonEmptyString(eventName) || eventName === INTERNAL_DELAY_EVENT_NAME) {
+      throw INVALID_ARGUMENT.create({
+        detail: "retryEventDelivery eventName must be a canonical non-empty public event name",
+      });
+    }
+
+    const envelope = await backend.peekRunEvent(runId, eventName);
+    if (!envelope) return false;
+    const outcome = await this.drain(runId, true);
+    return outcome.deliveredEventIds.has(envelope.id);
+  }
+
   /** Read the waits a run is currently parked on. */
   async getPendingEventWaits(runId: string): Promise<PendingEventWait[]> {
     const backend = this.config.backend;
@@ -323,17 +360,33 @@ export class EventWaitManager {
    * fail for reasons that have nothing to do with the other waits parked on it,
    * and one such failure must not stop the rest of this run's mail.
    */
-  private async drain(runId: string): Promise<DrainOutcome> {
+  private async drain(runId: string, waitForIdle: boolean): Promise<DrainOutcome> {
     const backend = this.config.backend;
-    const activeOutcome = this.activeDrainOutcomes.get(runId);
-    const outcome: DrainOutcome = activeOutcome ?? {
-      deliveredEventIds: new Set(),
-      failedEventIds: new Set(),
-      terminal: false,
-    };
-    if (!hasEventWaitSupport(backend)) return outcome;
-    const ownsOutcome = activeOutcome === undefined;
-    if (ownsOutcome) this.activeDrainOutcomes.set(runId, outcome);
+    if (!hasEventWaitSupport(backend)) {
+      return {
+        deliveredEventIds: new Set(),
+        failedEventIds: new Set(),
+        terminal: false,
+      };
+    }
+    await this.recoverAbandonedDeliveries(runId);
+    let session = this.drainSessions.get(runId);
+    if (!session) {
+      const idle = Promise.withResolvers<void>();
+      session = {
+        outcome: {
+          deliveredEventIds: new Set(),
+          failedEventIds: new Set(),
+          terminal: false,
+        },
+        activePasses: 0,
+        idle: idle.promise,
+        resolveIdle: idle.resolve,
+      };
+      this.drainSessions.set(runId, session);
+    }
+    const outcome = session.outcome;
+    session.activePasses++;
 
     try {
       for (const wait of await backend.getPendingEventWaits(runId)) {
@@ -407,10 +460,15 @@ export class EventWaitManager {
         outcome.deliveredEventIds.add(event.id);
         await this.finalizeDelivery(wait, event);
       }
-      return outcome;
     } finally {
-      if (ownsOutcome) this.activeDrainOutcomes.delete(runId);
+      session.activePasses--;
+      if (session.activePasses === 0) {
+        this.drainSessions.delete(runId);
+        session.resolveIdle();
+      }
     }
+    if (waitForIdle) await session.idle;
+    return outcome;
   }
 
   private async finalizeDelivery(
@@ -421,13 +479,84 @@ export class EventWaitManager {
     if (!hasEventWaitSupport(backend)) return;
     try {
       await backend.finalizeRunEventDelivery(wait.runId, event.id);
+      this.clearFinalizationRetry(event.id);
     } catch (error) {
       logger.error(
         "Failed to finalize an event delivery mailbox reservation",
         { runId: wait.runId, waitId: wait.id, eventId: event.id },
         error,
       );
+      this.scheduleFinalizationRetry(wait, event);
     }
+  }
+
+  private scheduleFinalizationRetry(
+    wait: PersistedPendingEventWait,
+    event: RunEventEnvelope,
+  ): void {
+    if (this.destroyed || this.finalizationRetryTimers.has(event.id)) return;
+    const timer = setTimeout(() => {
+      this.finalizationRetryTimers.delete(event.id);
+      if (this.destroyed) return;
+      void this.finalizeDelivery(wait, event);
+    }, MIN_EXPIRY_RETRY_DELAY_MS);
+    unrefTimer(timer);
+    this.finalizationRetryTimers.set(event.id, timer);
+  }
+
+  private clearFinalizationRetry(eventId: string): void {
+    const timer = this.finalizationRetryTimers.get(eventId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.finalizationRetryTimers.delete(eventId);
+  }
+
+  /** Recover durable claims left behind before delivery or finalization committed. */
+  private async recoverAbandonedDeliveries(runId?: string): Promise<Set<string>> {
+    const backend = this.config.backend;
+    const restoredRunIds = new Set<string>();
+    if (this.destroyed || !hasEventWaitSupport(backend)) return restoredRunIds;
+    const recoveryDelay = this.config.deliveryClaimRecoveryDelay ??
+      DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS;
+
+    for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
+      if (Date.now() - claim.claimedAt.getTime() < recoveryDelay) continue;
+      let run: WorkflowRun | null;
+      try {
+        run = await backend.getRun(claim.wait.runId);
+      } catch (error) {
+        // An uncertain read must not be treated as an uncommitted node: that
+        // could restore and redeliver an event whose node already committed.
+        logger.error(
+          "Failed to inspect an abandoned event delivery claim",
+          { runId: claim.wait.runId, waitId: claim.wait.id, eventId: claim.event.id },
+          error,
+        );
+        continue;
+      }
+      if (
+        !run || run.nodeStates[claim.wait.nodeId]?.status === "completed" ||
+        run.status === "completed" || run.status === "cancelled"
+      ) {
+        await this.finalizeDelivery(claim.wait, claim.event);
+        continue;
+      }
+      try {
+        const restored = await backend.restoreRunEventDelivery(
+          claim.wait.runId,
+          claim.wait.id,
+          claim.event,
+        );
+        if (restored) this.rearmRestoredWaitExpiry(claim.wait);
+        restoredRunIds.add(claim.wait.runId);
+      } catch (error) {
+        logger.error(
+          "Failed to recover an abandoned event delivery claim",
+          { runId: claim.wait.runId, waitId: claim.wait.id, eventId: claim.event.id },
+          error,
+        );
+      }
+    }
+    return restoredRunIds;
   }
 
   /**
@@ -711,6 +840,10 @@ export class EventWaitManager {
     const backend = this.config.backend;
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
 
+    for (const runId of await this.recoverAbandonedDeliveries()) {
+      await this.drain(runId, false);
+    }
+
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
     for (const { runId, wait } of await backend.listPendingEventWaits()) {
       // A wait whose run is already terminal can never be delivered or
@@ -757,6 +890,9 @@ export class EventWaitManager {
   stop(): void {
     this.destroyed = true;
     for (const waitId of [...this.expiryTimers.keys()]) this.clearOwnedExpiry(waitId);
+    for (const eventId of [...this.finalizationRetryTimers.keys()]) {
+      this.clearFinalizationRetry(eventId);
+    }
     if (this.expirationTimer === undefined) return;
     clearInterval(this.expirationTimer);
     this.expirationTimer = undefined;

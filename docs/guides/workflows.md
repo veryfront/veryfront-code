@@ -398,7 +398,7 @@ to what it did with the event:
 | `"delivered"`       | A wait matched, its node completed, and the run moved on.                                                            |
 | `"buffered"`        | No wait matched yet. The event is held until one does.                                                               |
 | `"run-terminal"`    | The run has already finished, so the event was discarded rather than buffered.                                       |
-| `"delivery-failed"` | A wait matched but delivery failed. Both were rolled back, so the run is still parked and a later publish can retry. |
+| `"delivery-failed"` | A wait matched but delivery failed. Both were rolled back, so the run is still parked; call `retryEventDelivery(runId, eventName)` to retry the same buffered envelope without publishing a duplicate. |
 
 A run's mailbox holds a bounded number of unconsumed events. Because an event
 is removed only when a wait takes it, none of them can be dropped safely, so a

@@ -18,6 +18,7 @@ import {
   type BackendConfig,
   type PersistedPendingApproval,
   type PersistedPendingEventWait,
+  type RunEventDeliveryClaim,
   type RunEventEnvelope,
   type WorkflowBackend,
   type WorkflowRunObservation,
@@ -127,7 +128,7 @@ export class MemoryBackend implements WorkflowBackend {
   private approvals = new Map<string, PersistedPendingApproval[]>();
   private eventWaits = new Map<string, PersistedPendingEventWait[]>();
   private runEvents = new Map<string, RunEventEnvelope[]>();
-  private runEventClaims = new Map<string, Set<string>>();
+  private runEventClaims = new Map<string, Map<string, RunEventDeliveryClaim>>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
@@ -207,12 +208,9 @@ export class MemoryBackend implements WorkflowBackend {
       this.stalledClaims.delete(runId);
     }
 
-    // A terminal run will never park on a wait again, so nothing can ever
-    // claim its buffered events: reclaim the mailbox with the transition
-    // rather than letting terminal runs pin mailboxes past the global bound.
-    if (
-      patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled"
-    ) {
+    // Completed and cancelled runs can never consume mail again. Failed runs
+    // are retryable, so their buffered events must survive for the retried DAG.
+    if (patch.status === "completed" || patch.status === "cancelled") {
       this.runEvents.delete(runId);
       this.runEventClaims.delete(runId);
     }
@@ -286,10 +284,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (snapshot.status && snapshot.status !== "running") {
       this.stalledClaims.delete(runId);
     }
-    if (
-      snapshot.status === "completed" || snapshot.status === "failed" ||
-      snapshot.status === "cancelled"
-    ) {
+    if (snapshot.status === "completed" || snapshot.status === "cancelled") {
       this.runEvents.delete(runId);
       this.runEventClaims.delete(runId);
     }
@@ -789,18 +784,23 @@ export class MemoryBackend implements WorkflowBackend {
    * mailbox count is over its bound. Publishing to a run id before the run
    * exists is supported, so a caller publishing to ids that never become runs
    * would otherwise accumulate mailboxes forever, and a run that reached a
-   * terminal status will never park on anything again, so its buffered events
-   * are equally unclaimable. A mailbox whose run is still active is kept: a
-   * parked wait may still claim its events.
+   * completed or cancelled will never park on anything again, so its buffered
+   * events are equally unclaimable. Failed runs remain retryable and retain
+   * their mail just like active runs.
    */
   private evictOrphanRunEventMailboxes(requiredSlots = 0): void {
     let overflow = this.runEvents.size + requiredSlots - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
     if (overflow <= 0) return;
-    const activeStatuses: WorkflowRun["status"][] = ["pending", "running", "waiting"];
+    const mailboxRetainingStatuses: WorkflowRun["status"][] = [
+      "pending",
+      "running",
+      "waiting",
+      "failed",
+    ];
     for (const mailboxRunId of this.runEvents.keys()) {
       if (overflow <= 0) return;
       const run = this.runs.get(mailboxRunId);
-      if (run && activeStatuses.includes(run.status)) continue;
+      if (run && mailboxRetainingStatuses.includes(run.status)) continue;
       if ((this.runEventClaims.get(mailboxRunId)?.size ?? 0) > 0) continue;
       this.runEvents.delete(mailboxRunId);
       overflow--;
@@ -817,6 +817,11 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(taken);
   }
 
+  peekRunEvent(runId: string, eventName: string): Promise<RunEventEnvelope | null> {
+    const event = this.runEvents.get(runId)?.find((candidate) => candidate.eventName === eventName);
+    return Promise.resolve(event ? structuredClone(event) : null);
+  }
+
   /** Claim the oldest matching event and its pending wait as one synchronous mutation. */
   claimRunEventForWait(
     runId: string,
@@ -830,13 +835,26 @@ export class MemoryBackend implements WorkflowBackend {
     const taken = takeRetainedRunEvent(mailbox, eventName);
     if (!taken) return Promise.resolve(null);
     wait.status = "delivered";
-    const claims = this.runEventClaims.get(runId) ?? new Set<string>();
-    claims.add(taken.id);
+    const claims = this.runEventClaims.get(runId) ?? new Map<string, RunEventDeliveryClaim>();
+    claims.set(taken.id, {
+      wait: structuredClone(wait),
+      event: structuredClone(taken),
+      claimedAt: new Date(),
+    });
     this.runEventClaims.set(runId, claims);
     // Keep an empty mailbox as the claimed event's capacity reservation. The
     // asynchronous delivery may still roll back, and another run must not take
     // this slot before restoreRunEventDelivery puts the event back.
     return Promise.resolve(taken);
+  }
+
+  listRunEventDeliveryClaims(runId?: string): Promise<RunEventDeliveryClaim[]> {
+    const claims: RunEventDeliveryClaim[] = [];
+    for (const [claimRunId, runClaims] of this.runEventClaims) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const claim of runClaims.values()) claims.push(structuredClone(claim));
+    }
+    return Promise.resolve(claims);
   }
 
   restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {

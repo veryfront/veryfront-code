@@ -154,6 +154,13 @@ export interface RunEventEnvelope {
   publishedAt: Date;
 }
 
+/** Recoverable record retained while an event delivery has not committed. */
+export interface RunEventDeliveryClaim {
+  wait: PersistedPendingEventWait;
+  event: RunEventEnvelope;
+  claimedAt: Date;
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   /**
@@ -334,6 +341,8 @@ export interface WorkflowBackend {
   appendRunEvent?(runId: string, event: RunEventEnvelope): Promise<void>;
   /** Remove one exact buffered envelope without touching same-name mail. */
   removeRunEvent?(runId: string, eventId: string): Promise<boolean>;
+  /** Read the oldest matching envelope without claiming or removing it. */
+  peekRunEvent?(runId: string, eventName: string): Promise<RunEventEnvelope | null>;
   /**
    * Atomically remove and return the oldest buffered event with this name, or
    * null when the mailbox holds none. Removing and returning must be one step
@@ -350,13 +359,20 @@ export interface WorkflowBackend {
    * resolve calls opens a crash window in which the event has left the mailbox
    * while the wait is still pending, losing the event forever. A durable
    * backend must implement it as one atomic operation (a transaction or
-   * script), never as a take followed by a resolve.
+   * script), never as a take followed by a resolve, and retain the wait plus
+   * envelope as a `RunEventDeliveryClaim` until rollback or finalization.
    */
   claimRunEventForWait?(
     runId: string,
     waitId: string,
     eventName: string,
   ): Promise<RunEventEnvelope | null>;
+  /**
+   * Enumerate recoverable in-flight delivery claims, optionally for one run.
+   * Claims remain here until either rollback or finalization commits, so a
+   * replacement process can recover a publisher that exited after claiming.
+   */
+  listRunEventDeliveryClaims?(runId?: string): Promise<RunEventDeliveryClaim[]>;
   /**
    * Return a claimed event to the mailbox after its delivery failed, at the
    * head of the mailbox rather than the tail.
@@ -559,8 +575,10 @@ type WithEventWaitSupport =
       | "restorePendingEventWait"
       | "appendRunEvent"
       | "removeRunEvent"
+      | "peekRunEvent"
       | "takeRunEvent"
       | "claimRunEventForWait"
+      | "listRunEventDeliveryClaims"
       | "restoreRunEvent"
       | "restoreRunEventDelivery"
       | "finalizeRunEventDelivery"
@@ -574,7 +592,7 @@ type WithEventWaitSupport =
  * record a wait but not buffer an event, or buffer an event but not resolve a
  * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
  * `restoreRunEvent`, `restoreRunEventDelivery`, and
- * `finalizeRunEventDelivery` are part of the group for
+ * `finalizeRunEventDelivery`, and recoverable delivery claims are part of the group for
  * the same reason: without them a delivery that fails halfway leaves the run
  * parked on a wait already marked delivered, re-orders its mailbox, or loses
  * the event outright when a crash lands between the two separate restores.
@@ -594,8 +612,10 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.restorePendingEventWait === "function" &&
     typeof backend.appendRunEvent === "function" &&
     typeof backend.removeRunEvent === "function" &&
+    typeof backend.peekRunEvent === "function" &&
     typeof backend.takeRunEvent === "function" &&
     typeof backend.claimRunEventForWait === "function" &&
+    typeof backend.listRunEventDeliveryClaims === "function" &&
     typeof backend.restoreRunEvent === "function" &&
     typeof backend.restoreRunEventDelivery === "function" &&
     typeof backend.finalizeRunEventDelivery === "function" &&
