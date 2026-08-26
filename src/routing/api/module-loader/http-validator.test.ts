@@ -367,6 +367,22 @@ describe("routing/api/module-loader/http-validator", () => {
           `${descriptorOwner}.getOwnPropertyDescriptor can expose the Function constructor`,
         );
       }
+      for (
+        const source of [
+          `globalThis.Symbol = () => "constructor"; const fn = () => {};` +
+          ` fn[Symbol()]('return import("https://blocked.example/mod.js")')();`,
+          `const host = globalThis; host.Symbol = { iterator: "constructor" };` +
+          ` const fn = () => {};` +
+          ` fn[Symbol.iterator]('return import("https://blocked.example/mod.js")')();`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a route must not replace the global Symbol intrinsic before a computed read",
+        );
+      }
     });
 
     it("should reject a generator name hidden in a single escaped string literal", async () => {
