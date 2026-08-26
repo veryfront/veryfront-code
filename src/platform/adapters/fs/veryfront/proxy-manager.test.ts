@@ -71,13 +71,6 @@ async function assertGetAdapterRejects(
 
 describe("ProxyFSAdapterManager", () => {
   it("uses the validation method captured before project code can replace it", async () => {
-    const schema = getGetAdapterParamsSchema();
-    const originalSafeParse = schema.safeParse;
-    let poisonedCalls = 0;
-    schema.safeParse = ((...args: Parameters<typeof originalSafeParse>) => {
-      poisonedCalls += 1;
-      return originalSafeParse.apply(schema, args);
-    }) as typeof schema.safeParse;
     const manager = createManager({
       adapterFactory: (config) => {
         const adapter = new VeryfrontFSAdapter(config);
@@ -85,7 +78,13 @@ describe("ProxyFSAdapterManager", () => {
         return adapter;
       },
     });
-
+    const schema = getGetAdapterParamsSchema();
+    const originalSafeParse = schema.safeParse;
+    let poisonedCalls = 0;
+    schema.safeParse = ((...args: Parameters<typeof originalSafeParse>) => {
+      poisonedCalls += 1;
+      return originalSafeParse.apply(schema, args);
+    }) as typeof schema.safeParse;
     try {
       await manager.getAdapter("my-project", "request-token", undefined, false);
       assertEquals(poisonedCalls, 0);

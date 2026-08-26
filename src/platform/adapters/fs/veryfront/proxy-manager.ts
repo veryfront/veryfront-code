@@ -47,11 +47,19 @@ const NativeUint8Array = Uint8Array;
 const IntrinsicReflectApply = Reflect.apply;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
-const GetAdapterParamsSchema = getGetAdapterParamsSchema();
-const GetAdapterParamsSchemaSafeParse = GetAdapterParamsSchema.safeParse;
+type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
 type GetAdapterParamsValidationResult = ReturnType<
-  typeof GetAdapterParamsSchemaSafeParse
+  GetAdapterParamsSchema["safeParse"]
 >;
+let capturedGetAdapterParamsSchema: GetAdapterParamsSchema | undefined;
+let capturedGetAdapterParamsSchemaSafeParse: GetAdapterParamsSchema["safeParse"] | undefined;
+
+function captureGetAdapterParamsValidator(): void {
+  if (capturedGetAdapterParamsSchema && capturedGetAdapterParamsSchemaSafeParse) return;
+  const schema = getGetAdapterParamsSchema();
+  capturedGetAdapterParamsSchema = schema;
+  capturedGetAdapterParamsSchemaSafeParse = schema.safeParse;
+}
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
   const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as ReturnType<
@@ -106,6 +114,7 @@ export class ProxyFSAdapterManager {
   private cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: ProxyFSAdapterManagerConfig) {
+    captureGetAdapterParamsValidator();
     this.baseConfig = config.baseConfig;
     this.adapterFactory = config.adapterFactory ??
       ((adapterConfig) => new VeryfrontFSAdapter(adapterConfig));
@@ -165,8 +174,8 @@ export class ProxyFSAdapterManager {
     });
 
     const validationResult = IntrinsicReflectApply(
-      GetAdapterParamsSchemaSafeParse,
-      GetAdapterParamsSchema,
+      capturedGetAdapterParamsSchemaSafeParse!,
+      capturedGetAdapterParamsSchema!,
       [{
         projectSlug,
         token,
