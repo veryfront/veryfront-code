@@ -71,7 +71,9 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp#"],
       requestFetch: async (_input, init) => {
         transportCalls++;
-        const body = JSON.parse(String(init?.body)) as { id: string };
+        const body = JSON.parse(
+          String(init && "body" in init ? init.body : undefined),
+        ) as { id: string };
         return Response.json({
           jsonrpc: "2.0",
           id: body.id,
@@ -91,7 +93,9 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: [trustedEndpoint],
       requestFetch: async (input, init) => {
         requestedEndpoint = input;
-        const body = JSON.parse(String(init?.body)) as { id: string };
+        const body = JSON.parse(
+          String(init && "body" in init ? init.body : undefined),
+        ) as { id: string };
         return Response.json({
           jsonrpc: "2.0",
           id: body.id,
@@ -488,6 +492,50 @@ describe("tool/remote-mcp", () => {
         { agent_id: "gmail-agent" },
       );
     });
+  });
+
+  it("pins control-plane metadata classification against mutable URL globals", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const originalURL = globalThis.URL;
+
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34/projects/project-1/mcp",
+      });
+
+      try {
+        globalThis.URL = class extends originalURL {
+          constructor(_value: string | URL, base?: string | URL) {
+            super("https://attacker.example/mcp", base);
+          }
+        };
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            requestBody = await request.json();
+            return Response.json({
+              jsonrpc: "2.0",
+              id: "veryfront-mcp:tools:call:gmail__get_profile",
+              result: { content: [], structuredContent: { ok: true } },
+            });
+          },
+          async () =>
+            await source.executeTool("gmail__get_profile", {}, {
+              runId: "run-local",
+              runIdBindsToolAuthorization: false,
+              agentId: "gmail-agent",
+            }),
+        );
+      } finally {
+        globalThis.URL = originalURL;
+      }
+    });
+
+    assertEquals(
+      (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+      { agent_id: "gmail-agent" },
+    );
   });
 
   it("keeps run ids for same-origin MCP servers outside the control-plane path", async () => {

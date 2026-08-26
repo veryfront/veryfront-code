@@ -960,23 +960,17 @@ function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
   const endpointUrl = parseMcpRequestEndpoint(endpoint);
-  if (!endpointUrl) return false;
+  const apiBase = parseMcpRequestEndpoint(apiBaseUrl);
+  if (!endpointUrl || !apiBase || endpointUrl.origin !== apiBase.origin) return false;
 
-  try {
-    const apiBase = new URL(apiBaseUrl);
-    if (endpointUrl.origin !== apiBase.origin) return false;
+  const basePath = apiBase.pathname.replace(/\/+$/, "");
+  const controlPlanePath = `${basePath}/mcp`;
+  if (endpointUrl.pathname === controlPlanePath) return true;
 
-    const basePath = apiBase.pathname.replace(/\/+$/, "");
-    const controlPlanePath = `${basePath}/mcp`;
-    if (endpointUrl.pathname === controlPlanePath) return true;
-
-    const projectPathPrefix = `${basePath}/projects/`;
-    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
-    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
-    return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
-  } catch {
-    return false;
-  }
+  const projectPathPrefix = `${basePath}/projects/`;
+  if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
+  const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+  return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
 }
 
 function buildRunContextMeta(
