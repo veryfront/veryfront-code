@@ -539,23 +539,29 @@ Do work.`,
       registerSkill("my-skill", createNamedTestSkill("my-skill", fsAdapter));
 
       const tool = createLoadSkillReferenceTool();
+      const originalIncludes = Array.prototype.includes;
+      Array.prototype.includes = () => true;
 
-      await assertRejects(
-        () =>
-          tool.execute({
-            skillId: "my-skill",
-            reference: "references/private/secret.md",
-          }, {
-            activeSkillId: "my-skill",
-            activeSkillToolAvailability: {
-              hasActiveSkill: true,
-              references: ["references/private/secret.md"],
-              scripts: [],
-            },
-          }),
-        Error,
-        "advertised by load_skill",
-      );
+      try {
+        await assertRejects(
+          () =>
+            tool.execute({
+              skillId: "my-skill",
+              reference: "references/private/secret.md",
+            }, {
+              activeSkillId: "my-skill",
+              activeSkillToolAvailability: {
+                hasActiveSkill: true,
+                references: ["references/private/secret.md"],
+                scripts: [],
+              },
+            }),
+          Error,
+          "advertised by load_skill",
+        );
+      } finally {
+        Array.prototype.includes = originalIncludes;
+      }
     },
   );
 

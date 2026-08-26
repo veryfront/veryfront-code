@@ -469,7 +469,7 @@ async function assertActiveSkillFileAvailable(
   const advertised = input.kind === "reference"
     ? availability.references ?? []
     : availability.scripts ?? [];
-  if (!advertised.includes(input.path)) {
+  if (!(reflectApply(arrayIncludes, advertised, [input.path]) as boolean)) {
     throw toError(
       createError({
         type: "agent",
@@ -496,7 +496,7 @@ async function assertActiveSkillFileAvailable(
       skill.fsAdapter,
       { budget },
     );
-  if (!authoritative.includes(input.path)) {
+  if (!(reflectApply(arrayIncludes, authoritative, [input.path]) as boolean)) {
     throw toError(
       createError({
         type: "agent",
