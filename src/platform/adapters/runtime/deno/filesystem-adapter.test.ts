@@ -76,7 +76,7 @@ if (isDeno) {
       }
     });
 
-    it("requires O_NOFOLLOW on POSIX and omits lossy Windows snapshot authority", () => {
+    it("requires O_NOFOLLOW on POSIX and exposes verified Windows snapshot authority", () => {
       const TestableAdapter = DenoFileSystemAdapter as unknown as new (
         options: { noFollow?: number; platform?: "posix" | "windows" },
       ) => DenoFileSystemAdapter;
@@ -86,7 +86,7 @@ if (isDeno) {
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
       }
       const windowsAdapter = new TestableAdapter({ noFollow: 1, platform: "windows" });
-      assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
+      assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), true);
     });
 
     it("omits createNew independently when that primitive is unavailable", () => {

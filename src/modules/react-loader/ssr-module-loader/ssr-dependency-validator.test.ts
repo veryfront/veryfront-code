@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { BUILD_FAILED, VeryfrontError } from "#veryfront/errors";
@@ -13,6 +18,7 @@ import {
   cachedCodeUsesResolvedDependencies,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
+import { getCSSImportReferences, runWithCSSCollector } from "../css-import-collector.ts";
 
 describe("SSRDependencyValidator", () => {
   afterAll(async () => {
@@ -313,6 +319,42 @@ describe("SSRDependencyValidator", () => {
 
     assertEquals(snapshotCalls, [{ path: "/real/project/child.tsx", root: "/linked/project" }]);
     assertEquals(transformedPaths, ["/linked/project/child.tsx"]);
+  });
+
+  it("registers contained CSS with its bound snapshot reader", async () => {
+    let directReads = 0;
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFile: () => {
+          directReads++;
+          return Promise.resolve("external");
+        },
+        readFileSnapshotWithinLimit: () =>
+          Promise.resolve(new TextEncoder().encode(".safe { color: green; }")),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    const { cssImports } = await runWithCSSCollector(async () => {
+      validator.registerContainedCSSImport({
+        absolutePath: "/project/theme.css",
+        requestedPath: "/project/theme.css",
+        projectContained: true,
+        specifier: "./theme.css",
+      });
+      const reference = getCSSImportReferences()[0];
+      assertExists(reference?.read);
+      assertEquals(await reference.read(), ".safe { color: green; }");
+    });
+
+    assertEquals(cssImports, ["/project/theme.css"]);
+    assertEquals(directReads, 0);
   });
 
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {

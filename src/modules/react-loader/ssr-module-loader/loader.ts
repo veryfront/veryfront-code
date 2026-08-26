@@ -65,7 +65,6 @@ import {
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
-import { registerCSSImport } from "../css-import-collector.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
 import {
@@ -991,7 +990,7 @@ export class SSRModuleLoader {
         // Register CSS imports for later inclusion in HTML output.
         // CSS files are not JS modules — skip them in the dependency graph.
         for (const cssImport of parseResult.cssImports) {
-          registerCSSImport(cssImport.absolutePath, cssImport.requestedPath);
+          this.depValidator.registerContainedCSSImport(cssImport);
         }
 
         if (parseResult.missing.length > 0) {

@@ -75,6 +75,8 @@ export interface NodeFileSystemCapabilityOptions {
   readonly noFollow?: number;
   /** Test seam for native open and path semantics. */
   readonly platform?: NativeSnapshotPlatform;
+  /** Adapter-owned assertion that Windows bigint file identity is usable. */
+  readonly windowsSnapshotIdentity?: boolean;
   /** Test seam for create-new primitive availability. */
   readonly exclusiveCreate?: boolean;
   /** Test seam for deterministic filesystem races and write failures. */
@@ -431,7 +433,8 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     const noFollow = resolveNoFollowFlag(options, nodeFsConstants);
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
-      ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
+      ? options.windowsSnapshotIdentity === true ||
+        hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
       : typeof noFollow === "number" && noFollow !== 0;
     if (canOpenExactSnapshot) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {

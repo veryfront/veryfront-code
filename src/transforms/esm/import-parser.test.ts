@@ -438,6 +438,47 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(result.imports[0]?.absolutePath, "C:/components/Button.tsx");
   });
 
+  it("preserves project-relative paths returned by symlink-free hosted adapters", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("components/Button.tsx") ? "components/Button.tsx" : null),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default Button;`;
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(result.imports[0]?.absolutePath, "components/Button.tsx");
+    assertEquals(result.imports[0]?.projectContained, true);
+  });
+
+  it("reports a canonicalization race as a missing import", async () => {
+    const projectDir = "/workspace/project";
+    const missing = Object.assign(new Error("removed during canonicalization"), { code: "ENOENT" });
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native" as const,
+        resolveFile: () => Promise.resolve(`${projectDir}/components/Button.tsx`),
+        realPath: (path: string) =>
+          path === projectDir ? Promise.resolve(projectDir) : Promise.reject(missing),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default Button;`;
+
+    const result = await parseLocalImports(code, `${projectDir}/app/page.tsx`, projectDir, adapter);
+
+    assertEquals(result.imports.length, 0);
+    assertEquals(result.missing.length, 1);
+  });
+
   // Regression: stripping trailing separators turned a projectDir of "/" into
   // "", so the canonical check called realPath("") and every @/ import of a
   // root-mounted project failed, including files that exist inside it.

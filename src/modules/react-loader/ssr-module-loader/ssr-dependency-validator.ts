@@ -208,7 +208,7 @@ export class SSRDependencyValidator {
 
     // Register CSS imports from cached modules for HTML inclusion
     for (const cssImport of parseResult.cssImports) {
-      registerCSSImport(cssImport.absolutePath, cssImport.requestedPath);
+      this.registerContainedCSSImport(cssImport);
     }
 
     if (parseResult.missing.length > 0) {
@@ -364,6 +364,16 @@ export class SSRDependencyValidator {
       return decodeDependencySource(bytes);
     }
     throw new Error("Contained project imports require a bound snapshot reader");
+  }
+
+  /** Register CSS with a read that revalidates containment at consumption. */
+  registerContainedCSSImport(cssImport: LocalImport): void {
+    const localFs = createFileSystem();
+    registerCSSImport(
+      cssImport.absolutePath,
+      cssImport.requestedPath,
+      () => this.readLocalImportSource(cssImport, localFs),
+    );
   }
 
   private readLocalImportSource(

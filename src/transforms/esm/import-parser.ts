@@ -1,6 +1,6 @@
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { dirname, join, normalize, relative } from "#veryfront/compat/path";
+import { dirname, join, normalize, relative, resolve } from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -12,6 +12,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
 import { parseImports } from "./lexer.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 export interface LocalImport {
   specifier: string;
@@ -372,19 +374,37 @@ async function toContainedImportPath(
   containment: ContainmentContext,
 ): Promise<ContainedImportPath | null> {
   if (containment.symlinkFree) {
-    if (!isPathWithinProject(resolved, containment.projectDir)) return null;
+    // Hosted adapters return paths in their project-relative namespace. Check
+    // that namespace against the already-approved project root, but preserve
+    // the adapter path for its later read.
+    if (!isPathWithinProject(resolve(containment.projectDir, resolved), containment.projectDir)) {
+      return null;
+    }
     return { absolutePath: resolved, requestedPath: resolved };
   }
   if (containment.canonicalize === null) return null;
 
-  const canonicalPaths = await promiseAll([
-    containment.canonicalProjectDir(),
-    containment.canonicalize(resolved),
-  ]);
+  let canonicalPaths: string[];
+  try {
+    canonicalPaths = await promiseAll([
+      containment.canonicalProjectDir(),
+      containment.canonicalize(resolved),
+    ]);
+  } catch (error) {
+    if (isExpectedCanonicalizationRace(error)) return null;
+    throw error;
+  }
   const canonicalProjectDir = canonicalPaths[0]!;
   const canonicalResolved = canonicalPaths[1]!;
   if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
   return { absolutePath: canonicalResolved, requestedPath: resolved };
+}
+
+function isExpectedCanonicalizationRace(error: unknown): boolean {
+  if (isCanonicalNotFoundError(error)) return true;
+  if (!isNativeErrorWithoutHooks(error)) return false;
+  const code = ObjectGetOwnPropertyDescriptor(error, "code");
+  return code !== undefined && "value" in code && code.value === "ELOOP";
 }
 
 /**

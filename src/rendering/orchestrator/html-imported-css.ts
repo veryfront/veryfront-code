@@ -36,13 +36,23 @@ export async function mergeImportedCSS({
   const configuredStylesheetAbsolute = normalizeCssModuleKey(
     join(projectDir, normalizedStylesheetPath),
   );
-  const uniqueImports = new Map<string, string>();
+  const uniqueImports = new Map<
+    string,
+    { cssPath: string; normalizedCssPath: string; read?: () => Promise<string> }
+  >();
   for (const cssImport of cssImports) {
     const cssPath = typeof cssImport === "string" ? cssImport : cssImport.readPath;
     const moduleKey = typeof cssImport === "string" ? cssImport : cssImport.moduleKey;
     const normalized = normalizeCssModuleKey(moduleKey);
-    if (!uniqueImports.has(normalized)) {
-      uniqueImports.set(normalized, cssPath);
+    const identity = `${cssPath.length}:${cssPath}${normalized}`;
+    if (!uniqueImports.has(identity)) {
+      uniqueImports.set(identity, {
+        cssPath,
+        normalizedCssPath: normalized,
+        ...(typeof cssImport === "string" || cssImport.read === undefined
+          ? {}
+          : { read: cssImport.read }),
+      });
     }
   }
 
@@ -50,13 +60,13 @@ export async function mergeImportedCSS({
   const regularCssSegments: string[] = [];
   const moduleCssSegments: string[] = [];
 
-  for (const [normalizedCssPath, cssPath] of sortedImports) {
+  for (const [, { cssPath, normalizedCssPath, read }] of sortedImports) {
     if (normalizedCssPath === configuredStylesheetAbsolute) {
       continue;
     }
 
     try {
-      const content = await fs.readFile(cssPath);
+      const content = read ? await read() : await fs.readFile(cssPath);
       if (!content) continue;
 
       if (normalizedCssPath.endsWith(".module.css")) {

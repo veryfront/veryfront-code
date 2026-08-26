@@ -12,13 +12,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 interface CSSCollectorStore {
-  imports: Map<string, string>;
+  imports: Map<string, CSSImportReference>;
 }
 
 /** Canonical CSS read path paired with the authored CSS module identity. */
 export interface CSSImportReference {
   readPath: string;
   moduleKey: string;
+  /** Bound read captured by the dependency validator for contained files. */
+  read?: () => Promise<string>;
 }
 
 const cssStorage = new AsyncLocalStorage<CSSCollectorStore>();
@@ -32,17 +34,24 @@ export async function runWithCSSCollector<T>(
 ): Promise<{ result: T; cssImports: string[] }> {
   const store: CSSCollectorStore = { imports: new Map() };
   const result = await cssStorage.run(store, fn);
-  return { result, cssImports: [...store.imports.keys()] };
+  return { result, cssImports: getCSSImportsFromReferences(store.imports.values()) };
 }
 
 /**
  * Register a CSS import path discovered during module loading.
  * No-op if called outside of a runWithCSSCollector context.
  */
-export function registerCSSImport(absolutePath: string, moduleKey = absolutePath): void {
+export function registerCSSImport(
+  absolutePath: string,
+  moduleKey = absolutePath,
+  read?: () => Promise<string>,
+): void {
   const store = cssStorage.getStore();
   if (!store) return;
-  if (!store.imports.has(absolutePath)) store.imports.set(absolutePath, moduleKey);
+  const key = `${absolutePath.length}:${absolutePath}${moduleKey}`;
+  if (!store.imports.has(key)) {
+    store.imports.set(key, { readPath: absolutePath, moduleKey, ...(read ? { read } : {}) });
+  }
 }
 
 /**
@@ -50,12 +59,18 @@ export function registerCSSImport(absolutePath: string, moduleKey = absolutePath
  * Returns empty array if called outside of a runWithCSSCollector context.
  */
 export function getCSSImports(): string[] {
-  return getCSSImportReferences().map(({ readPath }) => readPath);
+  return getCSSImportsFromReferences(getCSSImportReferences());
 }
 
 /** Return canonical CSS read paths with their authored module keys. */
 export function getCSSImportReferences(): CSSImportReference[] {
   const store = cssStorage.getStore();
   if (!store) return [];
-  return [...store.imports].map(([readPath, moduleKey]) => ({ readPath, moduleKey }));
+  return [...store.imports.values()];
+}
+
+function getCSSImportsFromReferences(
+  references: Iterable<CSSImportReference>,
+): string[] {
+  return [...new Set([...references].map(({ readPath }) => readPath))];
 }

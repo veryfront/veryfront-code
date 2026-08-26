@@ -23,7 +23,7 @@ export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
     private readonly runtime: BunFileSystemRuntime | null = getBunRuntime() ?? null,
     options: NodeFileSystemCapabilityOptions = {},
   ) {
-    super(serverLogger, options);
+    super(serverLogger, { ...options, windowsSnapshotIdentity: true });
     if (isDirectConstruction(this, BunFileSystemAdapter)) {
       markNativeFileSystemAdapter(this);
     }

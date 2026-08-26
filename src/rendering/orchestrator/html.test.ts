@@ -1635,5 +1635,24 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(readPaths, ["/project/generated-theme"]);
       assertEquals(merged?.includes(".theme_root__"), true);
     });
+
+    it("preserves distinct authored CSS identities for one canonical target", async () => {
+      const { result: merged } = await runWithCSSCollector(async () => {
+        const read = () => Promise.resolve(".root { color: red; }");
+        registerCSSImport("/project/generated-theme", "/project/first.module.css", read);
+        registerCSSImport("/project/generated-theme", "/project/second.module.css", read);
+        return await mergeImportedCSS({
+          fs: { readFile: () => Promise.reject(new Error("bound read must be used")) },
+          logger: { debug: () => {} },
+          projectDir: "/project",
+          globalCSS: undefined,
+          cssImports: getCSSImportReferences(),
+          stylesheetPath: "globals.css",
+        });
+      });
+
+      assertEquals(merged?.includes(".first_root__"), true);
+      assertEquals(merged?.includes(".second_root__"), true);
+    });
   });
 });
