@@ -88,6 +88,8 @@ Run the dev server and ask for an output that requires delegation:
 ```bash
 curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Research Deno Deploy and write a short technical summary."}]}]}'
 ```
 
@@ -202,6 +204,8 @@ the dev-server logs:
 ```bash
 curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Research and summarise the latest npm release."}]}]}'
 ```
 

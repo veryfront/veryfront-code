@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS } from "#veryfront/integrations/limits.ts";
+import { csrfHttpTokenCookieName, csrfNamesCookieName } from "#veryfront/security/csrf/names.ts";
 import {
   MAX_CORS_ORIGIN_COUNT,
   MAX_CORS_ORIGIN_LENGTH,
@@ -14,6 +15,8 @@ import {
   MAX_REMOTE_HOST_COUNT,
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
+import { SESSION_COOKIE_NAME } from "#veryfront/security/application-auth/cookies.ts";
+import { DEFAULT_CSRF_COOKIE_NAME } from "#veryfront/security/csrf/names.ts";
 import {
   MAX_FILE_LOG_FILES,
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
@@ -21,12 +24,43 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import type { AuthConfig } from "#veryfront/security/http/middleware/types.ts";
+import type { SecurityConfig } from "#veryfront/types";
 import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
 
 /** Derived from the schema so the test tracks it instead of restating the union. */
 type ImageFormat = NonNullable<
   NonNullable<NonNullable<VeryfrontConfig["assetPipeline"]>["images"]>["formats"]
 >[number];
+
+const VALID_OIDC_AUTH = {
+  oidc: {
+    issuerEnvVar: "OIDC_ISSUER",
+    clientIdEnvVar: "OIDC_CLIENT_ID",
+    clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+    sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
+    scopes: ["openid", "profile", "email", "groups"],
+    claims: {
+      email: "email",
+      name: "name",
+      groups: "groups",
+      roles: "roles",
+    },
+  },
+} satisfies AuthConfig;
+
+const VALID_TRUSTED_PROXY_AUTH = {
+  trustedProxy: {
+    trustedPeers: ["127.0.0.1", "::1"],
+    headers: {
+      subject: "x-auth-subject",
+      email: "x-auth-email",
+      name: "x-auth-name",
+      groups: "x-auth-groups",
+      roles: "x-auth-roles",
+    },
+  },
+} satisfies AuthConfig;
 
 describe("configSchema", () => {
   it("validates valid config", () => {
@@ -302,8 +336,266 @@ describe("configSchema", () => {
           },
         }),
       Error,
-      "Configure either basic or bearer authentication, not both",
+      "Configure exactly one authentication mode",
     );
+  });
+
+  it("accepts declarative OIDC authentication data", () => {
+    const config = validateVeryfrontConfig({
+      security: { auth: VALID_OIDC_AUTH },
+    });
+
+    assertEquals(config.security?.auth, VALID_OIDC_AUTH);
+  });
+
+  it("accepts self-host trusted-proxy authentication data in the config schema", () => {
+    const config = validateVeryfrontConfig({
+      security: { auth: VALID_TRUSTED_PROXY_AUTH },
+    });
+
+    assertEquals(config.security?.auth, VALID_TRUSTED_PROXY_AUTH);
+  });
+
+  it("rejects invalid OIDC environment variable names", () => {
+    for (
+      const [field, value] of [
+        ["issuerEnvVar", "OIDC-ISSUER"],
+        ["clientIdEnvVar", "1_OIDC_CLIENT_ID"],
+        ["clientSecretEnvVar", ""],
+        ["sessionSecretEnvVar", "VERYFRONT AUTH SESSION SECRET"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  [field]: value,
+                },
+              },
+            },
+          }),
+        Error,
+        `security.auth.oidc.${field}`,
+      );
+    }
+  });
+
+  it("requires exactly one OIDC openid scope and rejects unsafe scope tokens", () => {
+    for (
+      const [scopes, message] of [
+        [["profile", "email"], "OIDC scopes must include openid"],
+        [["openid", "openid"], "OIDC scopes must not contain duplicates"],
+        [["openid", ""], "security.auth.oidc.scopes.1"],
+        [["openid", "profile email"], "security.auth.oidc.scopes.1"],
+        [["openid", "profile\nemail"], "security.auth.oidc.scopes.1"],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  scopes,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("uses the runtime OIDC scope bounds", () => {
+    for (
+      const scopes of [
+        ["openid", ...Array.from({ length: 32 }, (_, index) => `scope-${index}`)],
+        ["openid", "s".repeat(129)],
+      ]
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  scopes,
+                },
+              },
+            },
+          }),
+        Error,
+        "security.auth.oidc.scopes",
+      );
+    }
+  });
+
+  it("bounds OIDC claim names, lifetimes, endpoint origins, and cookie names", () => {
+    for (
+      const [oidc, message] of [
+        [{ claims: { email: "" } }, "security.auth.oidc.claims.email"],
+        [{ claims: { name: "user\u0000name" } }, "security.auth.oidc.claims.name"],
+        [{ claims: { groups: "group\u007Fname" } }, "security.auth.oidc.claims.groups"],
+        [{ claims: { roles: "roles\u00A0claim" } }, "security.auth.oidc.claims.roles"],
+        [{ claims: { roles: "roles\nheader" } }, "security.auth.oidc.claims.roles"],
+        [{ sessionTtlSeconds: 0 }, "security.auth.oidc.sessionTtlSeconds"],
+        [{ discoveryCacheTtlSeconds: 0 }, "security.auth.oidc.discoveryCacheTtlSeconds"],
+        [{ cookieName: "vf auth" }, "security.auth.oidc.cookieName"],
+        [{ trustedEndpointOrigins: [] }, "security.auth.oidc.trustedEndpointOrigins"],
+        [
+          { trustedEndpointOrigins: ["http://idp.example.com"] },
+          "security.auth.oidc.trustedEndpointOrigins.0",
+        ],
+        [
+          { trustedEndpointOrigins: ["https://idp.example.com/"] },
+          "security.auth.oidc.trustedEndpointOrigins.0",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                oidc: {
+                  ...VALID_OIDC_AUTH.oidc,
+                  ...oidc,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("bounds trusted-proxy peer addresses and identity header names", () => {
+    for (
+      const [trustedProxy, message] of [
+        [{ trustedPeers: [] }, "security.auth.trustedProxy.trustedPeers"],
+        [{ trustedPeers: ["proxy.internal"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["::192.0.2.1"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["2001:db8::192.0.2.1"] }, "security.auth.trustedProxy.trustedPeers.0"],
+        [{ trustedPeers: ["127.0.0.1", "127.0.0.1"] }, "Trusted proxy peers must be unique"],
+        [
+          { trustedPeers: ["192.0.2.1", "::ffff:192.0.2.1"] },
+          "Trusted proxy peers must be unique",
+        ],
+        [
+          { headers: { ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers, subject: "" } },
+          "security.auth.trustedProxy.headers.subject",
+        ],
+        [
+          { headers: { ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers, roles: "x roles" } },
+          "security.auth.trustedProxy.headers.roles",
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                trustedProxy: {
+                  ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+                  ...trustedProxy,
+                },
+              },
+            },
+          }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("rejects trusted-proxy identity headers reserved by the runtime", () => {
+    for (const subject of ["host", "forwarded", "via", "x-real-ip", "X-Forwarded-User"]) {
+      assertThrows(
+        () =>
+          validateVeryfrontConfig({
+            security: {
+              auth: {
+                trustedProxy: {
+                  ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+                  headers: {
+                    ...VALID_TRUSTED_PROXY_AUTH.trustedProxy.headers,
+                    subject,
+                  },
+                },
+              },
+            },
+          }),
+        Error,
+        "security.auth.trustedProxy.headers.subject",
+      );
+    }
+  });
+
+  it("rejects unknown authentication config keys", () => {
+    for (
+      const [auth, message] of [
+        [{ ...VALID_OIDC_AUTH, provider: "oidc" }, `Unrecognized key: "provider"`],
+        [
+          {
+            oidc: {
+              ...VALID_OIDC_AUTH.oidc,
+              providerFactory: "factory",
+            },
+          },
+          `Unrecognized key: "providerFactory"`,
+        ],
+        [
+          {
+            trustedProxy: {
+              ...VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+              factory: "headers",
+            },
+          },
+          `Unrecognized key: "factory"`,
+        ],
+      ] as const
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { auth } }),
+        Error,
+        message,
+      );
+    }
+  });
+
+  it("rejects every combination of mutually exclusive auth modes", () => {
+    const modes = {
+      basic: { basic: { username: "user", password: "password" } },
+      bearer: { bearer: { token: "token" } },
+      oidc: VALID_OIDC_AUTH,
+      trustedProxy: VALID_TRUSTED_PROXY_AUTH,
+    } as const;
+    const combinations = [
+      [modes.basic, modes.bearer],
+      [modes.basic, modes.oidc],
+      [modes.basic, modes.trustedProxy],
+      [modes.bearer, modes.oidc],
+      [modes.bearer, modes.trustedProxy],
+      [modes.oidc, modes.trustedProxy],
+      [modes.basic, modes.bearer, modes.oidc, modes.trustedProxy],
+    ] as const;
+
+    for (const combination of combinations) {
+      const auth = Object.assign({}, ...combination);
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { auth } }),
+        Error,
+        "Configure exactly one authentication mode",
+      );
+    }
   });
 
   it("rejects filesystem options that do not match the selected backend", () => {
@@ -779,6 +1071,87 @@ describe("configSchema", () => {
       validateVeryfrontConfig({ security: { csrf } }).security?.csrf,
       csrf,
     );
+    const prefixedCompatibilityConfig = {
+      ...csrf,
+      cookieName: "vf_csrf_http_forbidden",
+    };
+    assertEquals(
+      validateVeryfrontConfig({ security: { csrf: prefixedCompatibilityConfig } }).security?.csrf,
+      prefixedCompatibilityConfig,
+      "a pre-existing public prefix name remains valid when it cannot collide with a derived token",
+    );
+  });
+
+  it("rejects OIDC session cookie names that collide with effective CSRF cookies", () => {
+    for (
+      const security of [
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+          csrf: true,
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: DEFAULT_CSRF_COOKIE_NAME } },
+          csrf: {},
+        },
+        {
+          auth: { oidc: { ...VALID_OIDC_AUTH.oidc, cookieName: "__Host-project_auth" } },
+          csrf: { cookieName: "__Host-project_auth" },
+        },
+        {
+          auth: { oidc: VALID_OIDC_AUTH.oidc },
+          csrf: { cookieName: SESSION_COOKIE_NAME },
+        },
+        {
+          auth: { oidc: VALID_OIDC_AUTH.oidc },
+          csrf: { cookieName: `${SESSION_COOKIE_NAME}_127_0_0_1_8787` },
+        },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security }),
+        Error,
+        "Invalid veryfront.config at security.auth.oidc.cookieName",
+      );
+    }
+
+    const disabled = validateVeryfrontConfig({
+      security: {
+        auth: {
+          oidc: {
+            ...VALID_OIDC_AUTH.oidc,
+            cookieName: DEFAULT_CSRF_COOKIE_NAME,
+          },
+        },
+        csrf: false,
+      },
+    });
+
+    assertEquals(disabled.security?.auth?.oidc?.cookieName, DEFAULT_CSRF_COOKIE_NAME);
+
+    const explicit = validateVeryfrontConfig({
+      security: {
+        auth: {
+          oidc: {
+            ...VALID_OIDC_AUTH.oidc,
+            cookieName: "__Host-project_auth",
+          },
+        },
+        csrf: { cookieName: `${SESSION_COOKIE_NAME}_127_0_0_1_8787` },
+      },
+    });
+    assertEquals(explicit.security?.auth?.oidc?.cookieName, "__Host-project_auth");
+  });
+
+  it("does not apply OIDC cookie collision rules to other auth modes", () => {
+    const security = {
+      auth: { basic: { username: "user", password: "password" } },
+      csrf: { cookieName: SESSION_COOKIE_NAME },
+    };
+
+    assertEquals(validateVeryfrontConfig({ security }).security, security);
   });
 
   it("rejects CSRF names and exclusion paths that are unsafe or non-canonical", () => {
@@ -809,6 +1182,9 @@ describe("configSchema", () => {
         { cookieName: "csrf cookie" },
         { cookieName: "csrf;SameSite=None" },
         { cookieName: "csrf\r\nInjected" },
+        { cookieName: "vf_csrf_names" },
+        { cookieName: csrfNamesCookieName("https://example.test") },
+        { cookieName: csrfHttpTokenCookieName("vf_csrf", "http://example.test") },
         { cookieName: "x".repeat(257) },
         { headerName: "" },
         { headerName: "x csrf" },
@@ -1105,3 +1481,40 @@ describe("configSchema", () => {
     );
   });
 });
+
+const legacyBasicAuthConfig: AuthConfig = {
+  basic: { username: "user", password: "password" },
+};
+const legacyBearerAuthConfig: AuthConfig = {
+  bearer: { token: "token" },
+};
+const oidcAuthConfig: AuthConfig = VALID_OIDC_AUTH;
+const trustedProxyAuthConfig: AuthConfig = VALID_TRUSTED_PROXY_AUTH;
+
+void legacyBasicAuthConfig;
+void legacyBearerAuthConfig;
+void oidcAuthConfig;
+void trustedProxyAuthConfig;
+
+const invalidBasicAndBearerAuthConfig: AuthConfig = {
+  basic: { username: "user", password: "password" },
+  bearer: { token: "token" },
+};
+
+const invalidOidcAndTrustedProxyAuthConfig: AuthConfig = {
+  oidc: VALID_OIDC_AUTH.oidc,
+  trustedProxy: VALID_TRUSTED_PROXY_AUTH.trustedProxy,
+};
+
+void invalidBasicAndBearerAuthConfig;
+void invalidOidcAndTrustedProxyAuthConfig;
+
+const previouslyDeclaredAuthConfig: {
+  basic?: AuthConfig["basic"];
+  bearer?: AuthConfig["bearer"];
+} = legacyBasicAuthConfig;
+const backwardCompatibleSecurityConfig: SecurityConfig = {
+  auth: previouslyDeclaredAuthConfig,
+};
+
+void backwardCompatibleSecurityConfig;

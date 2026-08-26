@@ -9,6 +9,7 @@ import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { isEvalDefinition } from "./factory.ts";
 import type { EvalDefinition } from "./types.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const EVAL_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 const EVAL_IGNORE_PATTERNS = [
@@ -180,7 +181,7 @@ export async function discoverEvals(
     }
 
     const files = await collectEvalFiles(baseDir, adapter);
-    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
+    for (const file of [...files].sort((left, right) => compareStrings(left.path, right.path))) {
       try {
         const evalItem = await loadEvalFromFile(
           file.path,
@@ -212,7 +213,7 @@ export async function discoverEvals(
       uniqueEvals.push(matches[0]!);
       continue;
     }
-    const paths = matches.map((item) => item.filePath).sort();
+    const paths = matches.map((item) => item.filePath).sort(compareStrings);
     for (const filePath of paths) {
       errors.push({
         filePath,
@@ -222,10 +223,10 @@ export async function discoverEvals(
   }
 
   uniqueEvals.sort((left, right) =>
-    left.id.localeCompare(right.id) || left.filePath.localeCompare(right.filePath)
+    compareStrings(left.id, right.id) || compareStrings(left.filePath, right.filePath)
   );
   errors.sort((left, right) =>
-    left.filePath.localeCompare(right.filePath) || left.error.localeCompare(right.error)
+    compareStrings(left.filePath, right.filePath) || compareStrings(left.error, right.error)
   );
   return { evals: uniqueEvals, errors };
 }

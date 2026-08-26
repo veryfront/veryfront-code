@@ -21,6 +21,68 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
     assertEquals(result?.has("invoke_agent"), false);
   });
 
+  it("does not add delegation to a request-derived restrictive allowlist when skills are available", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(["sleep"]),
+      localToolNames: ["sleep", "load_skill", "invoke_agent"],
+      availableSkillIds: ["plan"],
+    });
+
+    assertEquals(result?.has("sleep"), true, "requested tool stays allowed");
+    assertEquals(result?.has("load_skill"), true, "skill loading stays available");
+    assertEquals(
+      result?.has("invoke_agent"),
+      false,
+      "request-derived selectors never gain delegation",
+    );
+  });
+
+  it("keeps delegation for config-derived empty selectors when skills are available", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(),
+      localToolNames: ["invoke_agent", "load_skill", "sleep"],
+      configDerivedSelector: true,
+      availableSkillIds: ["plan"],
+    });
+
+    assertEquals(result?.has("invoke_agent"), true, "config-derived empty set keeps delegation");
+    assertEquals(result?.has("load_skill"), true, "skill loading stays available");
+    assertEquals(result?.has("sleep"), false, "unconfigured tools are not added");
+  });
+
+  it("keeps delegation for config-derived non-empty selectors when skills are available", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(["sleep"]),
+      localToolNames: ["invoke_agent", "load_skill", "sleep"],
+      configDerivedSelector: true,
+      availableSkillIds: ["plan"],
+    });
+
+    assertEquals(result?.has("sleep"), true, "configured tool stays allowed");
+    assertEquals(result?.has("load_skill"), true, "skill loading stays available");
+    assertEquals(
+      result?.has("invoke_agent"),
+      true,
+      "legacy skill-enabled agents with configured tools keep delegation",
+    );
+  });
+
+  it("does not add delegation to config-derived selectors when no skills are authorized", () => {
+    const result = resolveHostedRuntimeAllowedToolNames({
+      allowedToolNames: new Set(["sleep"]),
+      localToolNames: ["invoke_agent", "load_skill", "sleep"],
+      configDerivedSelector: true,
+      availableSkillIds: [],
+    });
+
+    assertEquals(result?.has("sleep"), true, "configured tool stays allowed");
+    assertEquals(
+      result?.has("invoke_agent"),
+      false,
+      "skill delegation stays out without an authorized skill",
+    );
+  });
+
   it("returns null (allow-all) when allowedToolNames is null", () => {
     const result = resolveHostedRuntimeAllowedToolNames({
       allowedToolNames: null,
@@ -65,7 +127,7 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
         "load_skill",
         "load_skill_reference",
       ],
-      includeRuntimeEssentialToolsWhenEmpty: true,
+      configDerivedSelector: true,
       availableSkillIds: [],
     });
 
@@ -77,7 +139,7 @@ describe("resolveHostedRuntimeAllowedToolNames", () => {
     const result = resolveHostedRuntimeAllowedToolNames({
       allowedToolNames: new Set(),
       localToolNames: ["load_skill", "load_skill_reference"],
-      includeRuntimeEssentialToolsWhenEmpty: true,
+      configDerivedSelector: true,
     });
 
     assertEquals(result?.has("load_skill"), true);

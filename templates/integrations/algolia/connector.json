@@ -28,7 +28,7 @@
     },
     {
       "name": "ALGOLIA_APP_ID",
-      "description": "Algolia application ID (10-character uppercase ID shown next to your API keys)",
+      "description": "Algolia application ID (10-character uppercase ID shown next to your API keys); read requests go to <application-id>-dsn.algolia.net and writes go to <application-id>.algolia.net",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://www.algolia.com/doc/guides/security/api-keys/"
@@ -42,14 +42,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/1/indexes",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
-            "required": true
-          },
           "page": {
             "type": "number",
             "in": "query",
@@ -59,17 +53,34 @@
         "response": {
           "transform": "items",
           "historicalSummary": {
-            "collectionKeys": ["items", "indices"],
+            "collectionKeys": [
+              "items",
+              "indices"
+            ],
             "collectionName": "indices",
             "itemFields": [
-              { "name": "name" },
-              { "name": "entries" },
-              { "name": "dataSize" },
-              { "name": "createdAt" },
-              { "name": "updatedAt" }
+              {
+                "name": "name"
+              },
+              {
+                "name": "entries"
+              },
+              {
+                "name": "dataSize"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              }
             ],
             "omitted": "index settings and provider-specific payload fields",
-            "outputFields": [{ "name": "nbPages" }]
+            "outputFields": [
+              {
+                "name": "nbPages"
+              }
+            ]
           }
         }
       }
@@ -81,14 +92,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/query",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/query",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
-            "required": true
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -130,14 +135,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/browse",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/browse",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
-            "required": true
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -169,14 +168,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/1/indexes/{indexName}/{objectID}",
+        "url": "https://{{env.ALGOLIA_APP_ID}}-dsn.algolia.net/1/indexes/{indexName}/{objectID}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
-            "required": true
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -204,14 +197,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/1/indexes/{indexName}/batch",
+        "url": "https://{{env.ALGOLIA_APP_ID}}.algolia.net/1/indexes/{indexName}/batch",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Algolia host built from your application ID: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\", e.g. B1G2GM9NG0-dsn.algolia.net",
-            "required": true
-          },
           "indexName": {
             "type": "string",
             "in": "path",
@@ -245,7 +232,11 @@
       "icon": "list"
     }
   ],
-  "suggestedWith": ["shopify", "supabase", "github"],
+  "suggestedWith": [
+    "shopify",
+    "supabase",
+    "github"
+  ],
   "SETUP_GUIDE": {
     "title": "Algolia API Setup",
     "steps": [
@@ -257,12 +248,12 @@
       {
         "step": 2,
         "title": "Copy your credentials",
-        "description": "In Settings → API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes — avoid the Admin API key."
+        "description": "In Settings > API Keys (https://dashboard.algolia.com/account/api-keys/all), copy the Application ID into ALGOLIA_APP_ID and an API key into ALGOLIA_API_KEY. Use the Search API key for read-only use, or create a scoped key with search, browse, and addObject ACLs for writes. Avoid the Admin API key."
       },
       {
         "step": 3,
         "title": "Note your host",
-        "description": "Tools take a 'host' parameter: pass \"<ALGOLIA_APP_ID>-dsn.algolia.net\" (your application ID followed by -dsn.algolia.net)."
+        "description": "Read tools query <ALGOLIA_APP_ID>-dsn.algolia.net and Save Objects writes to <ALGOLIA_APP_ID>.algolia.net. Both hosts derive from the ALGOLIA_APP_ID environment variable, so no host input is needed on tool calls."
       },
       {
         "step": 4,
@@ -271,7 +262,7 @@
       }
     ],
     "notes": [
-      "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id — both env vars are required",
+      "Algolia authenticates with two headers: X-Algolia-API-Key and X-Algolia-Application-Id, so both env vars are required",
       "Browse requires an API key with the 'browse' ACL; Save Objects requires 'addObject'",
       "The Search API key is safe to expose in frontends, but scoped/write keys must stay server-side"
     ],

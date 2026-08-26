@@ -6,7 +6,6 @@ name: Client bundle report
 # fail-fast check runs in the `ci (lint)` job via `deno task lint:client-bundle`.
 on:
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read

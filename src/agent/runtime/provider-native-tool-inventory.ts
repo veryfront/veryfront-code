@@ -1,4 +1,5 @@
 import type { HostToolSet, ToolDefinition } from "#veryfront/tool";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_fetch",
@@ -70,7 +71,7 @@ export function createProviderNativeToolExposureDefinitions(
   const supported = new Set(getProviderNativeToolNames(options));
   return [...new Set(options.toolNames)]
     .filter((toolName) => supported.has(toolName))
-    .sort()
+    .sort(compareStrings)
     .map((toolName) => ({
       name: toolName,
       description: PROVIDER_NATIVE_TOOL_DESCRIPTIONS[toolName] ?? "Provider-native tool.",
@@ -82,7 +83,7 @@ export function createProviderNativeToolExposureDefinitions(
 export function expandAllowedRemoteToolNames(
   options: ExpandAllowedRemoteToolNamesOptions,
 ): string[] {
-  return [...new Set(options.toolNames)].sort();
+  return [...new Set(options.toolNames)].sort(compareStrings);
 }
 
 /** Return fork runtime allowed tool names. */

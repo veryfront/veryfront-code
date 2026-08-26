@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parse } from "#std/yaml/parse";
 
 const WORKFLOW_PR_GUARD =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
@@ -38,6 +39,63 @@ function jobBlock(workflow: string, jobName: string): string {
   const rest = workflow.slice(start + marker.length);
   const nextJob = rest.search(/\n[ ]{2}[A-Za-z0-9_-]+:\n/);
   return nextJob === -1 ? rest : rest.slice(0, nextJob);
+}
+
+/**
+ * Reads the top-level `on:` mapping of a workflow as parsed YAML.
+ *
+ * The trigger assertions below used to slice this block with string offsets.
+ * That made every answer depend on where a sibling trigger happened to sit:
+ * a trigger written with no body left the slice starting at the NEXT sibling,
+ * so the helper silently returned that sibling's entry, and a guard could pass
+ * while reporting on a trigger nobody asked about. Parsing the document takes
+ * trigger order, body emptiness and comment placement out of the question.
+ *
+ * GitHub's `on` key comes back as the string key "on" rather than YAML 1.1's
+ * boolean `true`, so it is read by name.
+ */
+async function workflowTriggers(
+  path: string,
+): Promise<Record<string, unknown>> {
+  const document = parse(await readText(path));
+  assert(
+    document !== null && typeof document === "object" &&
+      !Array.isArray(document),
+    `expected ${path} to parse as a YAML mapping`,
+  );
+
+  const triggers = (document as Record<string, unknown>).on;
+  assert(
+    triggers !== null && typeof triggers === "object" &&
+      !Array.isArray(triggers),
+    `expected ${path} to define a top-level on: mapping of triggers`,
+  );
+  return triggers as Record<string, unknown>;
+}
+
+/**
+ * Reads one trigger entry out of a parsed `on:` mapping. A trigger written
+ * with no body (`pull_request:`) parses as null, which is its unfiltered form,
+ * and is returned as null rather than being confused with a sibling entry.
+ */
+function triggerEntry(
+  triggers: Record<string, unknown>,
+  path: string,
+  trigger: string,
+): Record<string, unknown> | null {
+  assert(
+    Object.hasOwn(triggers, trigger),
+    `expected ${path} to define an ${trigger}: trigger`,
+  );
+
+  const entry = triggers[trigger];
+  if (entry === null || entry === undefined) return null;
+  assert(
+    typeof entry === "object" && !Array.isArray(entry),
+    `expected ${path} ${trigger}: trigger to be empty or a mapping of ` +
+      `filters, found ${JSON.stringify(entry)}`,
+  );
+  return entry as Record<string, unknown>;
 }
 
 function workflowStepBlock(workflow: string, stepName: string): string {
@@ -142,15 +200,29 @@ describe("repository hardening", () => {
 
     assertEquals(publishScript.includes("NPM_TOKEN"), false);
     assertEquals(publishScript.includes("NODE_AUTH_TOKEN"), false);
+    // Every publish flows through one retry helper, so provenance and public
+    // access cannot be dropped at an individual call site. Collapse the
+    // `\`-continuations first so each call site reads as one line.
+    const flattenedPublishScript = publishScript.replace(/\\\n\s*/g, " ");
+    const publishInvocations = flattenedPublishScript.match(/npm publish "[^\n]*/g) ?? [];
+    assertEquals(publishInvocations.length, 1);
     assert(
-      publishScript.includes(
-        'npm publish "${PUBLISH_SPEC}" --provenance --access public --tag rc',
+      publishInvocations[0]?.includes('npm publish "${PUBLISH_SPEC}" "$@"'),
+    );
+
+    const retryCallSites = flattenedPublishScript.match(
+      /publish_npm_package_with_retry "\$\{PACKAGE_NAME\}".*/g,
+    ) ?? [];
+    assertEquals(retryCallSites.length, 2);
+    assert(
+      retryCallSites.every((callSite) =>
+        callSite.includes("--provenance") &&
+        callSite.includes("--access public")
       ),
     );
-    assert(
-      publishScript.includes(
-        'npm publish "${PUBLISH_SPEC}" --provenance --access public 2>&1',
-      ),
+    assertEquals(
+      retryCallSites.filter((callSite) => callSite.includes("--tag rc")).length,
+      1,
     );
   });
 
@@ -331,6 +403,70 @@ describe("repository hardening", () => {
           `expected ${path} job ${jobName} to carry the fork guard on its own job-level if:, not on a step`,
         );
       }
+    }
+  });
+
+  it("runs the required checks on a pull request whatever its base branch", async () => {
+    // GitHub matches `branches:` on a `pull_request:` trigger against the pull
+    // request's BASE branch, not its head. While these workflows carried
+    // `branches: [main]`, a pull request stacked on any other branch ran none
+    // of them, and a required status context that never runs is ABSENT rather
+    // than failing, so branch protection had nothing to block on: the pull
+    // request rendered fully green having run zero gates.
+    //
+    // cicd.yml owns `ci (format)`, `ci (lint)`, `ci (typecheck)`,
+    // `tests (unit)`, `tests (integration)`, `coverage gate`,
+    // `tests (rsc browser e2e)` and `tests (binary e2e)`; codeql.yml owns
+    // `Analyze`. client-bundle-report.yml is informational but shares the
+    // failure mode, so it is held to the same rule.
+    for (
+      const path of [
+        ".github/workflows/cicd.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/client-bundle-report.yml",
+      ]
+    ) {
+      const pullRequest = triggerEntry(
+        await workflowTriggers(path),
+        path,
+        "pull_request",
+      );
+      const branchFilters = Object.keys(pullRequest ?? {}).filter((key) =>
+        key === "branches" || key === "branches-ignore"
+      );
+
+      assertEquals(
+        branchFilters,
+        [],
+        `${path} filters its pull_request: trigger by branch, and GitHub ` +
+          `matches that filter against the pull request BASE branch. A pull ` +
+          `request stacked on any other branch would skip this workflow ` +
+          `entirely, its required checks would report as absent rather than ` +
+          `failing, and branch protection would let it merge green without ` +
+          `ever running the gates. Found pull_request: ` +
+          `${JSON.stringify(pullRequest)}`,
+      );
+    }
+  });
+
+  it("keeps push builds pinned to main so widening pull requests cannot publish", async () => {
+    for (
+      const path of [
+        ".github/workflows/cicd.yml",
+        ".github/workflows/codeql.yml",
+      ]
+    ) {
+      const push = triggerEntry(await workflowTriggers(path), path, "push");
+
+      assertEquals(
+        push?.branches,
+        ["main"],
+        `${path} must keep its push: trigger pinned to branches: [main]. ` +
+          `Release-capable jobs key off refs/heads/main on push, so widening ` +
+          `this trigger would expose the publish path to feature branches. ` +
+          `An empty push: entry is the widest form of all and must fail here ` +
+          `too. Found push: ${JSON.stringify(push)}`,
+      );
     }
   });
 

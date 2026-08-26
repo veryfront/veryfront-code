@@ -6,53 +6,7 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { isEsmShUrl } from "../url-builder.ts";
-
-function extractEsmShPackage(url: string): string | null {
-  if (!isEsmShUrl(url)) return null;
-
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
-
-    if (pathname.startsWith("@")) {
-      const pkg = pathname.split("/").slice(0, 2).join("/");
-      return pkg.replace(/@[\d.]+.*$/, "") || null;
-    }
-
-    const pkg = (pathname.split("@")[0] ?? "").split("/")[0] ?? "";
-    return pkg || null;
-  } catch (_) {
-    /* expected: URL may be malformed */
-    return null;
-  }
-}
-
-function extractEsmShSubpath(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
-
-    if (pathname.startsWith("@")) {
-      const parts = pathname.split("/");
-      if (parts.length <= 2) return "";
-
-      const packageParts = parts.slice(0, 2).join("/");
-      const afterPackage = pathname.slice(packageParts.length);
-      const versionMatch = afterPackage.match(/^@[^/]+(.*)$/);
-
-      return versionMatch?.[1] ?? "";
-    }
-
-    const firstSlash = pathname.indexOf("/");
-    if (firstSlash === -1) return "";
-
-    const restPath = pathname.slice(firstSlash);
-    return restPath.startsWith("/") ? restPath : "";
-  } catch (_) {
-    /* expected: URL may be malformed */
-    return "";
-  }
-}
+import { resolveEsmShThroughImportMap } from "#veryfront/transforms/shared/esm-sh-import-map.ts";
 
 export function resolveImportWithMap(
   specifier: string,
@@ -64,33 +18,22 @@ export function resolveImportWithMap(
   const scopedExact = scopedImports?.[specifier];
   if (scopedExact) return scopedExact;
 
+  const esmShMapping = resolveEsmShThroughImportMap(
+    specifier,
+    scopedImports,
+    undefined,
+  );
+  if (esmShMapping) return esmShMapping;
+
   const globalExact = importMap.imports?.[specifier];
   if (globalExact) return globalExact;
 
-  if (isEsmShUrl(specifier)) {
-    const esmShPackage = extractEsmShPackage(specifier);
-    if (esmShPackage) {
-      const subpath = extractEsmShSubpath(specifier);
-
-      if (subpath) {
-        const fullKey = esmShPackage + subpath;
-        const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
-        if (subpathMapping) return subpathMapping;
-      }
-
-      const mapping = scopedImports?.[esmShPackage] ?? importMap.imports?.[esmShPackage];
-      if (mapping) {
-        if (!subpath) return mapping;
-
-        const isFilePath = !mapping.startsWith("http://") &&
-          !mapping.startsWith("https://") &&
-          !mapping.startsWith("npm:");
-        if (isFilePath) return mapping;
-
-        return mapping + subpath;
-      }
-    }
-  }
+  const globalEsmShMapping = resolveEsmShThroughImportMap(
+    specifier,
+    undefined,
+    importMap.imports,
+  );
+  if (globalEsmShMapping) return globalEsmShMapping;
 
   if (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs")) {
     const base = specifier.replace(/\.(m|c)?js$/, "");

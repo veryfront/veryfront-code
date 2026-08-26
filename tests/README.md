@@ -71,8 +71,17 @@ already-listed test, fails CI. Removing debt should delete the stale disposition
 entry in the same change.
 
 The audit compares the inventory with the merge base of `origin/main` by
-default. Set `TEST_SEMANTIC_AUDIT_BASE_REF` to a fetched commit or ref when
-reproducing CI from a shallow checkout. Pass `--json` for machine-readable
+default. In a shallow checkout, fetch complete ancestry and create that remote
+baseline explicitly:
+
+```sh
+git fetch --no-tags --unshallow origin "main:refs/remotes/origin/main"
+export TEST_SEMANTIC_AUDIT_BASE_REF=origin/main
+```
+
+If the repository is already unshallow but lacks `origin/main`, run the same
+fetch without `--unshallow`. Fetching only the named commit is not sufficient
+when its ancestry is still shallow. Pass `--json` for machine-readable
 candidate, error, and considered-file output.
 
 Disposition values:

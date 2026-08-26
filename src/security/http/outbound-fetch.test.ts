@@ -11,6 +11,7 @@ import {
   createOutboundFetchBoundary,
   guardedOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  loadTrustedCaCertificates,
   OutboundRequestBlockedError,
 } from "./outbound-fetch.ts";
 
@@ -22,6 +23,53 @@ function createTestBoundary(fetchImpl: typeof fetch) {
 }
 
 describe("guardedOutboundFetch", () => {
+  it("adds a bounded PEM bundle after the runtime trust roots", async () => {
+    let seenPath: string | undefined;
+    let seenLimit: number | undefined;
+    const trusted = await loadTrustedCaCertificates(
+      "/project/local-ca.crt",
+      ["<RUNTIME_CA>"],
+      (path, byteLimit) => {
+        seenPath = path;
+        seenLimit = byteLimit;
+        return Promise.resolve(
+          new TextEncoder().encode(
+            "-----BEGIN CERTIFICATE-----\n<LOCAL_CA>\n-----END CERTIFICATE-----\n",
+          ),
+        );
+      },
+    );
+
+    assertEquals(seenPath, "/project/local-ca.crt");
+    assertEquals(seenLimit, 1024 * 1024);
+    assertEquals(trusted, [
+      "<RUNTIME_CA>",
+      "-----BEGIN CERTIFICATE-----\n<LOCAL_CA>\n-----END CERTIFICATE-----\n",
+    ]);
+    assertEquals(Object.isFrozen(trusted), true);
+  });
+
+  it("rejects unreadable or malformed extra CA bundles", async () => {
+    await assertRejects(
+      () =>
+        loadTrustedCaCertificates("/private/ca.crt", [], () => {
+          throw new Error("path-specific failure");
+        }),
+      Error,
+      "Bun could not read NODE_EXTRA_CA_CERTS.",
+    );
+    await assertRejects(
+      () =>
+        loadTrustedCaCertificates(
+          "/private/ca.crt",
+          [],
+          () => Promise.resolve(new TextEncoder().encode("not a certificate")),
+        ),
+      Error,
+      "NODE_EXTRA_CA_CERTS must contain PEM certificates.",
+    );
+  });
+
   it("uses withMockFetch transport instead of the captured host fetch in tests", async () => {
     let captured: Request | undefined;
 

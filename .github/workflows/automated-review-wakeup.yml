@@ -1,0 +1,23 @@
+name: Automated review wakeup
+run-name: automated-review-wakeup-pr-${{ github.event.pull_request.number }}-${{ (github.event.review.user.type == 'User' || (github.event.review.user.login == 'chatgpt-codex-connector[bot]' && github.event.review.user.id == 199175422 && github.event.review.user.type == 'Bot')) && 'eligible' || 'ignored' }}
+
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  review_event:
+    name: signal review reconciliation
+    if: >-
+      github.event.review.user.type == 'User' ||
+      (github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
+       github.event.review.user.id == 199175422 &&
+       github.event.review.user.type == 'Bot')
+    permissions: {}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record the review event
+        run: "true"

@@ -77,6 +77,20 @@ var __vf_projectRoot = ${safeProjectRoot};
 // legitimate dependencies would be rejected.
 try { __vf_projectRoot = Deno.realPathSync(__vf_projectRoot); } catch (_) { /* expected: projectRoot may not exist at shim init in some environments */ }
 var __vf_cache = Object.create(null);
+// Resolve symlinks so containment compares canonical paths. A module that does
+// not exist yet cannot be canonicalized, so fall back to its parent directory,
+// which is what carries a symlinked project root; only if that fails too is the
+// plain resolved path used.
+function __vf_canonicalize(candidate) {
+  try {
+    return Deno.realPathSync(candidate);
+  } catch (_) { /* expected: candidate may not exist */ }
+  try {
+    var parent = __vf_dirname(candidate);
+    return Deno.realPathSync(parent) + candidate.slice(parent.length);
+  } catch (_) { /* expected: parent may not exist either */ }
+  return __vf_resolve(candidate);
+}
 function __vf_assertContained(resolved) {
   var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
   var root = __vf_projectRoot.replace(/\\\\/g, "/");
@@ -101,20 +115,15 @@ function __vf_loadCjs(id, parentDir) {
   } else {
     resolved = __vf_builtinRequire.resolve(id);
   }
-  // VULN-FS-5: Always assert containment after resolution (both branches),
-  // then re-canonicalize via realPathSync to resist symlinked node_modules
-  // entries that could point outside the project root.
+  // VULN-FS-5: Canonicalize before asserting containment, so the candidate and
+  // the already-canonical project root are compared like with like, then assert
+  // once. Checking the non-canonical path first rejected dependencies genuinely
+  // inside a project whose root is reached through a symlink, which is the
+  // ordinary case for package managers, CI checkouts and macOS /tmp.
+  // Canonicalizing first also keeps the guard against symlinked node_modules
+  // entries pointing outside the root: the escape is only visible once resolved.
+  resolved = __vf_canonicalize(resolved);
   __vf_assertContained(resolved);
-  var real;
-  try {
-    real = Deno.realPathSync(resolved);
-  } catch (_) {
-    /* expected: realPathSync fails for non-existent paths — assertContained above already held */
-  }
-  if (real !== undefined) {
-    __vf_assertContained(real);
-    resolved = real;
-  }
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
   if (resolved.endsWith(".json")) {

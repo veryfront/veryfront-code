@@ -16,6 +16,7 @@ function createMockFs(files: Map<string, string>): FileSystemAdapter {
   };
 
   return {
+    symlinkSemantics: "none",
     readFile,
     writeFile: () => Promise.resolve(),
     exists: (path: string) => Promise.resolve(files.has(path)),
@@ -246,6 +247,103 @@ describe("rendering/rsc/component-analyzer", () => {
   });
 
   describe("buildClientManifest", () => {
+    it("does not scan a configured app directory outside the project", async () => {
+      let scanned = false;
+      const fs = createMockFs(new Map());
+      fs.readDir = () => {
+        scanned = true;
+        return (async function* () {})();
+      };
+
+      const manifest = await buildClientManifest("/project", "../sibling/app", fs);
+
+      assertEquals(manifest.size, 0);
+      assertEquals(scanned, false);
+    });
+
+    it("does not scan an in-project app symlink whose target escapes the project", async () => {
+      let scanned = false;
+      const fs = createMockFs(new Map());
+      delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
+      fs.realPath = (path) =>
+        Promise.resolve(path === "/project" ? "/canonical/project" : "/outside/app");
+      fs.readDir = () => {
+        scanned = true;
+        return (async function* () {})();
+      };
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.size, 0);
+      assertEquals(scanned, false);
+    });
+
+    it("does not scan with an adapter that lacks containment authority", async () => {
+      const filePath = "/project/app/Button.tsx";
+      const fs = createMockFs(
+        new Map([
+          [filePath, `'use client';\nexport default function Button() {}`],
+        ]),
+      );
+      delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
+      fs.readDir = (path) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.size, 0);
+    });
+
+    it("keeps relative paths for a symlink-free virtual adapter", async () => {
+      const filePath = "app/Button.tsx";
+      const fs = createMockFs(
+        new Map([
+          [filePath, `'use client';\nexport default function Button() {}`],
+        ]),
+      );
+      const scannedPaths: string[] = [];
+      fs.readDir = (path) =>
+        (async function* () {
+          scannedPaths.push(path);
+          if (path === "app") {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest(".", "app", fs);
+
+      assertEquals(scannedPaths, ["app"]);
+      assertEquals(manifest.get("Button")?.sourcePath, filePath);
+      assertEquals(manifest.get("Button")?.rel, "app/Button.tsx");
+    });
+
+    it("keeps lexical manifest paths after canonical containment succeeds", async () => {
+      const filePath = "/project/app/Button.tsx";
+      const fs = createMockFs(
+        new Map([
+          [filePath, `'use client';\nexport default function Button() {}`],
+        ]),
+      );
+      delete (fs as { symlinkSemantics?: "none" }).symlinkSemantics;
+      fs.realPath = (path) =>
+        Promise.resolve(path === "/project" ? "/canonical/project" : "/canonical/project/app");
+      fs.readDir = (path) =>
+        (async function* () {
+          if (path === "/project/app") {
+            yield { name: "Button.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          }
+        })();
+
+      const manifest = await buildClientManifest("/project", "app", fs);
+
+      assertEquals(manifest.get("Button")?.sourcePath, filePath);
+      assertEquals(manifest.get("Button")?.rel, "app/Button.tsx");
+    });
+
     it("fails explicitly when different paths produce the same component ID", async () => {
       const files = new Map([
         [

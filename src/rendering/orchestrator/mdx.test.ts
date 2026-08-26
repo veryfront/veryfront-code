@@ -196,6 +196,41 @@ describe("rendering/orchestrator/MDXCompiler singleflight", () => {
     });
   });
 
+  describe("a cached bundle short-circuits compilation", () => {
+    it("returns the cached bundle without compiling or re-caching", async () => {
+      let setCacheCount = 0;
+
+      const { register: registerContract } = await import(
+        "#veryfront/extensions/contracts.ts"
+      );
+      registerContract("ContentProcessor", {
+        compileMdx: (): Promise<MDXCompilationResult> => {
+          throw new Error("compileMdx must not run on a bundle cache hit");
+        },
+      });
+
+      const adapter = makeMissAdapter(() => {
+        setCacheCount++;
+      });
+      adapter.getCachedBundle = (
+        _content: string,
+        _fm?: Record<string, unknown>,
+        _fp?: string,
+      ) => Promise.resolve(makeResult("cached-code"));
+
+      const compiler = new MDXCompiler({
+        projectDir: "/project",
+        mode: "production",
+        mdxCacheAdapter: adapter,
+      });
+
+      const result = await compiler.compileMDX("# Cached", {}, "cached.mdx");
+
+      assertEquals(result.compiledCode, "cached-code", "a bundle cache hit is returned verbatim");
+      assertEquals(setCacheCount, 0, "a cache hit must not rewrite the bundle cache");
+    });
+  });
+
   describe("different source content compiles independently", () => {
     it("two distinct content strings each invoke compileAndCache once", async () => {
       let compileCount = 0;

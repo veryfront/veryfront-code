@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import { FakeTime } from "#std/testing/time";
+import {
+  createStyleScopeProfile,
+  type StyleScopeProfile,
+} from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
@@ -32,9 +36,48 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       // Should not throw
     });
 
-    it("should clear cache for specific scope", () => {
-      invalidateProjectCandidateManifests("my-project");
-      // Should not throw
+    it("clears only the named scope's manifests", () => {
+      invalidateProjectCandidateManifests();
+
+      const optionsFor = (projectScope: string, content: string) => ({
+        projectScope,
+        projectVersion: "v1",
+        projectDir: "/project",
+        files: [{ path: "/project/pages/index.tsx", content }],
+        developmentMode: false,
+      });
+
+      getProjectCandidates(optionsFor("scope-a", '<div className="text-red-500">Home</div>'));
+      getProjectCandidates(optionsFor("scope-b", '<div className="text-red-500">Home</div>'));
+
+      const before = getCandidateManifestCacheStats().manifests.entries;
+      assertEquals(before, 2, "each scope must hold its own manifest");
+
+      invalidateProjectCandidateManifests("scope-a");
+
+      assertEquals(
+        getCandidateManifestCacheStats().manifests.entries,
+        before - 1,
+        "scoped invalidation must drop exactly the named scope's manifest",
+      );
+
+      const rebuilt = getProjectCandidates(
+        optionsFor("scope-a", '<div className="text-green-500">Home</div>'),
+      );
+      assertEquals(
+        rebuilt.has("text-green-500"),
+        true,
+        "the invalidated scope must rescan its sources",
+      );
+
+      const untouched = getProjectCandidates(
+        optionsFor("scope-b", '<div className="text-green-500">Home</div>'),
+      );
+      assertEquals(
+        untouched.has("text-green-500"),
+        false,
+        "an unrelated scope's manifest must survive",
+      );
     });
 
     it("should be idempotent", () => {
@@ -111,37 +154,68 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
 
     it("should use cached manifest for same projectScope and version", () => {
       invalidateProjectCandidateManifests();
-      const opts = {
+      const optionsFor = (content: string) => ({
         projectScope: "test-cache",
         projectVersion: "v2",
         projectDir: "/project",
         routeKey: "about",
         routeFilePaths: ["/project/about.tsx"],
-        files: [
-          {
-            path: "/project/about.tsx",
-            content: '<p className="font-bold">About</p>',
-          },
-        ],
+        files: [{ path: "/project/about.tsx", content }],
         developmentMode: false,
-      };
-      const r1 = getRouteCandidates(opts);
-      const r2 = getRouteCandidates(opts);
-      assertEquals(r1.size, r2.size);
+      });
+
+      const first = getRouteCandidates(optionsFor('<p className="font-bold">About</p>'));
+      const second = getRouteCandidates(optionsFor('<p className="italic">About</p>'));
+
+      assertEquals(first.has("font-bold"), true, "the first build scans the route sources");
+      assertEquals(
+        second.has("font-bold"),
+        true,
+        "the cached manifest is reused for the same scope and version",
+      );
+      assertEquals(
+        second.has("italic"),
+        false,
+        "a production cache hit must not rescan the sources",
+      );
     });
 
     it("should rebuild manifest in development mode after TTL", () => {
-      invalidateProjectCandidateManifests();
-      const result = getRouteCandidates({
-        projectScope: "test-dev",
-        projectVersion: "v1",
-        projectDir: "/project",
-        routeKey: "index",
-        routeFilePaths: [],
-        files: [],
-        developmentMode: true,
-      });
-      assertEquals(result.size, 0);
+      const time = new FakeTime();
+      try {
+        invalidateProjectCandidateManifests();
+        const optionsFor = (content: string) => ({
+          projectScope: "test-dev",
+          projectVersion: "v1",
+          projectDir: "/project",
+          files: [{ path: "/project/pages/index.tsx", content }],
+          developmentMode: true,
+        });
+
+        getProjectCandidates(optionsFor('<div className="text-red-500">Home</div>'));
+
+        time.tick(500);
+        const withinTtl = getProjectCandidates(
+          optionsFor('<div className="text-blue-500">Home</div>'),
+        );
+        assertEquals(
+          withinTtl.has("text-blue-500"),
+          false,
+          "the development manifest must be reused inside the TTL window",
+        );
+
+        time.tick(2_001);
+        const afterTtl = getProjectCandidates(
+          optionsFor('<div className="text-blue-500">Home</div>'),
+        );
+        assertEquals(
+          afterTtl.has("text-blue-500"),
+          true,
+          "a development manifest must rebuild after the TTL",
+        );
+      } finally {
+        time.restore();
+      }
     });
 
     it("bounds cached route candidate sets for high-cardinality production routes", () => {
@@ -219,6 +293,62 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       assertEquals(result.has("text-red-500"), true);
       assertEquals(result.has("rounded-lg"), true);
       assertEquals(result.has("shadow-sm"), true);
+    });
+
+    it("rebuilds the manifest when projectVersion changes", () => {
+      invalidateProjectCandidateManifests();
+      const optionsFor = (projectVersion: string, content: string) => ({
+        projectScope: "scope-version-key",
+        projectVersion,
+        projectDir: "/project",
+        files: [{ path: "/project/pages/index.tsx", content }],
+        developmentMode: false,
+      });
+
+      getProjectCandidates(optionsFor("v1", '<div className="text-red-500">Home</div>'));
+      const v2 = getProjectCandidates(
+        optionsFor("v2", '<div className="text-emerald-500">Home</div>'),
+      );
+
+      assertEquals(v2.has("text-emerald-500"), true, "a version bump must rescan the sources");
+      assertEquals(
+        v2.has("text-red-500"),
+        false,
+        "the previous version's candidates must not leak into a redeploy",
+      );
+    });
+
+    it("rebuilds the manifest when the style scope profile changes", () => {
+      invalidateProjectCandidateManifests();
+      const optionsFor = (styleProfile: StyleScopeProfile) => ({
+        projectScope: "scope-style-profile-key",
+        projectVersion: "v1",
+        projectDir: "/project",
+        styleProfile,
+        files: [
+          {
+            path: "/project/knowledge/app/page.tsx",
+            content: '<div className="text-fuchsia-500">Home</div>',
+          },
+        ],
+        developmentMode: false,
+      });
+
+      const defaultScope = getProjectCandidates(optionsFor(createStyleScopeProfile()));
+      assertEquals(
+        defaultScope.has("text-fuchsia-500"),
+        false,
+        "the default profile ignores the knowledge root",
+      );
+
+      const appScope = getProjectCandidates(
+        optionsFor(createStyleScopeProfile({ directories: { app: "knowledge/app" } })),
+      );
+      assertEquals(
+        appScope.has("text-fuchsia-500"),
+        true,
+        "a profile that protects the configured app root must rebuild its own manifest",
+      );
     });
 
     it("applies the default style scope conventions when building manifests", () => {

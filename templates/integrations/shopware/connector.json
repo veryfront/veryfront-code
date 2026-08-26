@@ -48,15 +48,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{shopDomain}/api/search/product",
-        "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          }
-        },
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/search/product",
         "body": {
           "term": {
             "type": "string",
@@ -95,15 +87,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{shopDomain}/api/search/order",
-        "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          }
-        },
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/search/order",
         "body": {
           "term": {
             "type": "string",
@@ -142,15 +126,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{shopDomain}/api/search/customer",
-        "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          }
-        },
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/search/customer",
         "body": {
           "term": {
             "type": "string",
@@ -189,14 +165,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{shopDomain}/api/order/{orderId}",
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/order/{orderId}",
         "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          },
           "orderId": {
             "type": "string",
             "in": "path",
@@ -216,14 +186,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{shopDomain}/api/product/{productId}",
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/product/{productId}",
         "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          },
           "productId": {
             "type": "string",
             "in": "path",
@@ -243,14 +207,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{shopDomain}/api/product",
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/product",
         "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          },
           "_response": {
             "type": "string",
             "in": "query",
@@ -278,14 +236,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{shopDomain}/api/product/{productId}",
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/product/{productId}",
         "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          },
           "productId": {
             "type": "string",
             "in": "path",
@@ -319,14 +271,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{shopDomain}/api/_action/order/{orderId}/state/{transition}",
+        "url": "https://{{env.SHOPWARE_SHOP_DOMAIN}}/api/_action/order/{orderId}/state/{transition}",
         "params": {
-          "shopDomain": {
-            "type": "string",
-            "in": "path",
-            "description": "Shopware shop hostname (SHOPWARE_SHOP_DOMAIN)",
-            "required": true
-          },
           "orderId": {
             "type": "string",
             "in": "path",
@@ -366,7 +312,11 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["stripe", "slack", "mailchimp"],
+  "suggestedWith": [
+    "stripe",
+    "slack",
+    "mailchimp"
+  ],
   "SETUP_GUIDE": {
     "title": "Shopware setup",
     "steps": [

@@ -2,6 +2,27 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
+import {
+  CommonSchemas as clientCommonSchemas,
+  createValidatedHandler as clientCreateValidatedHandler,
+  createValidationError as clientCreateValidationError,
+  csrfMutationHeaders,
+  INPUT_VALIDATION_FAILED as CLIENT_INPUT_VALIDATION_FAILED,
+  parseFormData as clientParseFormData,
+  parseJsonBody as clientParseJsonBody,
+  parseQueryParams as clientParseQueryParams,
+  sanitizeData as clientSanitizeData,
+} from "./index.client.ts";
+import {
+  CommonSchemas,
+  createValidatedHandler,
+  createValidationError,
+  INPUT_VALIDATION_FAILED,
+  parseFormData,
+  parseJsonBody,
+  parseQueryParams,
+  sanitizeData,
+} from "./security/input-validation/index.ts";
 
 /**
  * `src/index.client.ts` is the browser/SSR-safe mirror of the `veryfront` root
@@ -157,6 +178,21 @@ async function collectStaticGraph(entry: string): Promise<Map<string, string | n
 }
 
 describe("index.client static import boundary", () => {
+  it("exports the browser CSRF mutation helper", () => {
+    assertEquals(typeof csrfMutationHeaders, "function");
+  });
+
+  it("exports browser-safe validation helpers from the input-validation leaf", () => {
+    assertEquals(clientCommonSchemas, CommonSchemas);
+    assertEquals(clientCreateValidatedHandler, createValidatedHandler);
+    assertEquals(clientCreateValidationError, createValidationError);
+    assertEquals(CLIENT_INPUT_VALIDATION_FAILED, INPUT_VALIDATION_FAILED);
+    assertEquals(clientParseFormData, parseFormData);
+    assertEquals(clientParseJsonBody, parseJsonBody);
+    assertEquals(clientParseQueryParams, parseQueryParams);
+    assertEquals(clientSanitizeData, sanitizeData);
+  });
+
   it("never statically reaches a server runtime adapter (#3661)", async () => {
     const graph = await collectStaticGraph("src/index.client.ts");
 

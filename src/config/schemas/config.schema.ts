@@ -9,10 +9,15 @@ import {
   MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS,
 } from "#veryfront/integrations/limits.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
+import { SESSION_COOKIE_NAME } from "#veryfront/security/application-auth/cookies.ts";
 import {
   EXAMPLE_CSP_DIRECTIVES,
   isCspDirectiveName,
 } from "#veryfront/security/http/csp-directives.ts";
+import {
+  DEFAULT_CSRF_COOKIE_NAME,
+  isReservedCsrfCookieName,
+} from "#veryfront/security/csrf/names.ts";
 import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
@@ -63,11 +68,39 @@ import {
   MAX_SERVER_EXTERNAL_PACKAGE_COUNT,
   MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH,
 } from "#veryfront/config/server-external-packages.ts";
+import { isValidOAuthEnvironmentVariableName } from "#veryfront/oauth/config-validation.ts";
+import { MAX_OAUTH_URL_LENGTH } from "#veryfront/oauth/limits.ts";
+import {
+  isForbiddenApplicationIdentityHeaderName,
+  MAX_APPLICATION_AUTH_SCOPE_COUNT,
+  MAX_APPLICATION_AUTH_SCOPE_LENGTH,
+  MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH,
+} from "#veryfront/security/application-auth/policy.ts";
+import { canonicalizePeerAddress } from "#veryfront/security/application-auth/trusted-proxy.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
 const MAX_CSRF_EXCLUDE_PATH_LIST_LENGTH = 16_384;
 const CSRF_EXCLUDE_PATH_BASE_URL = "https://csrf-policy.invalid";
+const MAX_AUTH_CLAIM_NAME_LENGTH = 128;
+const MAX_AUTH_COOKIE_NAME_LENGTH = 128;
+const MAX_AUTH_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
+const MAX_TRUSTED_PROXY_PEERS = 32;
+const MAX_AUTH_MODE_COUNT = 4;
+const OIDC_SCOPE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+const NON_CONTROL_CLAIM_WHITESPACE_PATTERN =
+  /[ \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]/u;
+const OIDC_SIGNING_ALGORITHMS = [
+  "RS256",
+  "RS384",
+  "RS512",
+  "PS256",
+  "PS384",
+  "PS512",
+  "ES256",
+  "ES384",
+  "ES512",
+] as const;
 
 function isBoundedSourceIntegrationAllowlist(
   allow: Readonly<Record<string, SourceIntegrationRestriction>>,
@@ -209,6 +242,10 @@ const getCsrfSchema = defineSchema((v) =>
         .min(1)
         .max(MAX_CSRF_NAME_LENGTH)
         .regex(HTTP_TOKEN_PATTERN, "Expected a valid cookie name")
+        .refine(
+          (name) => !isReservedCsrfCookieName(name),
+          "Expected a cookie name outside Veryfront's reserved CSRF namespaces",
+        )
         .optional(),
       headerName: v
         .string()
@@ -251,6 +288,227 @@ const getBearerAuthSchema = defineSchema((v) =>
     token: v.string().min(1),
   }).strict()
 );
+
+function hasRequiredOpenidScope(scopes: readonly string[]): boolean {
+  return scopes.includes("openid");
+}
+
+function hasUniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+function isSafeOidcScope(value: string): boolean {
+  return OIDC_SCOPE_PATTERN.test(value);
+}
+
+function isSecureOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      value === url.origin;
+  } catch {
+    return false;
+  }
+}
+
+function isValidClaimName(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= MAX_AUTH_CLAIM_NAME_LENGTH &&
+    value.trim() === value &&
+    !hasControlCodeUnit(value) &&
+    !NON_CONTROL_CLAIM_WHITESPACE_PATTERN.test(value);
+}
+
+function hasControlCodeUnit(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1F || codeUnit === 0x7F) return true;
+  }
+  return false;
+}
+
+function isValidAuthCookieName(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= MAX_AUTH_COOKIE_NAME_LENGTH &&
+    value.startsWith("__Host-") &&
+    HTTP_TOKEN_PATTERN.test(value);
+}
+
+function isTrustedProxyPeerAddress(value: string): boolean {
+  return canonicalizePeerAddress(value) !== null;
+}
+
+function hasUniqueTrustedProxyPeerAddresses(values: readonly string[]): boolean {
+  const canonical = values.map(canonicalizePeerAddress);
+  return canonical.every((value): value is string => value !== null) &&
+    new Set(canonical).size === canonical.length;
+}
+
+const getOidcClaimMappingSchema = defineSchema((v) =>
+  v.object({
+    email: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    name: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    groups: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+    roles: v
+      .string()
+      .max(MAX_AUTH_CLAIM_NAME_LENGTH)
+      .refine(isValidClaimName, "Expected a bounded claim name")
+      .optional(),
+  }).partial().strict()
+);
+
+const getOidcAuthSchema = defineSchema((v) =>
+  v.object({
+    issuerEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    clientIdEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    clientSecretEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    sessionSecretEnvVar: v.string().refine(
+      isValidOAuthEnvironmentVariableName,
+      "Invalid environment variable name",
+    ),
+    scopes: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_APPLICATION_AUTH_SCOPE_LENGTH)
+          .refine(isSafeOidcScope, "Expected an OAuth scope token"),
+      )
+      .min(1)
+      .max(MAX_APPLICATION_AUTH_SCOPE_COUNT)
+      .refine(hasRequiredOpenidScope, "OIDC scopes must include openid")
+      .refine(hasUniqueStrings, "OIDC scopes must not contain duplicates"),
+    claims: getOidcClaimMappingSchema().optional(),
+    signingAlgorithms: v
+      .array(v.enum(OIDC_SIGNING_ALGORITHMS))
+      .min(1)
+      .max(OIDC_SIGNING_ALGORITHMS.length)
+      .refine(hasUniqueStrings, "OIDC signing algorithms must be unique")
+      .optional(),
+    trustedEndpointOrigins: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_OAUTH_URL_LENGTH)
+          .refine(isSecureOrigin, "Expected a canonical HTTPS origin"),
+      )
+      .min(1)
+      .max(MAX_REMOTE_HOST_COUNT)
+      .refine(hasUniqueStrings, "OIDC trusted endpoint origins must be unique")
+      .optional(),
+    sessionTtlSeconds: v.number().int().positive().max(MAX_AUTH_LIFETIME_SECONDS).optional(),
+    discoveryCacheTtlSeconds: v.number().int().positive().max(MAX_AUTH_LIFETIME_SECONDS)
+      .optional(),
+    cookieName: v.string().refine(
+      isValidAuthCookieName,
+      "Expected a __Host- HTTP cookie name",
+    ).optional(),
+  }).strict()
+);
+
+const getApplicationIdentityHeaderNameSchema = defineSchema((v) =>
+  v.string()
+    .min(1)
+    .max(MAX_APPLICATION_IDENTITY_HEADER_NAME_LENGTH)
+    .regex(HTTP_TOKEN_PATTERN, "Expected a valid HTTP header name")
+    .refine(
+      (value) => !isForbiddenApplicationIdentityHeaderName(value),
+      "Expected a non-reserved HTTP header name",
+    )
+);
+
+const getTrustedProxyHeadersSchema = defineSchema((v) =>
+  v.object({
+    subject: getApplicationIdentityHeaderNameSchema(),
+    email: getApplicationIdentityHeaderNameSchema().optional(),
+    name: getApplicationIdentityHeaderNameSchema().optional(),
+    groups: getApplicationIdentityHeaderNameSchema().optional(),
+    roles: getApplicationIdentityHeaderNameSchema().optional(),
+  }).strict()
+);
+
+const getTrustedProxyAuthSchema = defineSchema((v) =>
+  v.object({
+    trustedPeers: v
+      .array(
+        v.string()
+          .min(1)
+          .max(MAX_REMOTE_HOST_URL_LENGTH)
+          .refine(isTrustedProxyPeerAddress, "Expected an IP address"),
+      )
+      .min(1)
+      .max(MAX_TRUSTED_PROXY_PEERS)
+      .refine(hasUniqueTrustedProxyPeerAddresses, "Trusted proxy peers must be unique"),
+    headers: getTrustedProxyHeadersSchema(),
+  }).strict()
+);
+
+type SecurityObjectForCookieCollisionCheck = {
+  readonly auth?: {
+    readonly oidc?: {
+      readonly cookieName?: string;
+    };
+  };
+  readonly csrf?: boolean | {
+    readonly cookieName?: string;
+  };
+};
+
+function effectiveConfiguredCsrfCookieName(
+  csrf: SecurityObjectForCookieCollisionCheck["csrf"],
+): string | null {
+  if (csrf === false) return null;
+  if (typeof csrf === "object" && csrf.cookieName !== undefined) return csrf.cookieName;
+  return DEFAULT_CSRF_COOKIE_NAME;
+}
+
+function hasNoOidcCsrfCookieCollision(
+  security: SecurityObjectForCookieCollisionCheck,
+): boolean {
+  const oidc = security.auth?.oidc;
+  if (oidc === undefined) return true;
+  const csrfCookieName = effectiveConfiguredCsrfCookieName(security.csrf);
+  if (csrfCookieName === null) return true;
+  if (oidc.cookieName !== undefined) return oidc.cookieName !== csrfCookieName;
+  return csrfCookieName !== SESSION_COOKIE_NAME &&
+    !csrfCookieName.startsWith(`${SESSION_COOKIE_NAME}_`);
+}
+
+function hasExactlyOneAuthMode(
+  auth: Partial<Record<"basic" | "bearer" | "oidc" | "trustedProxy", unknown>>,
+): boolean {
+  let count = 0;
+  if (auth.basic !== undefined) count += 1;
+  if (auth.bearer !== undefined) count += 1;
+  if (auth.oidc !== undefined) count += 1;
+  if (auth.trustedProxy !== undefined) count += 1;
+  return count === 1 && count <= MAX_AUTH_MODE_COUNT;
+}
 
 function defineFilesystemRetrySchema(maxConfiguredCount: number) {
   return defineSchema((v) =>
@@ -540,12 +798,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             .object({
               basic: getBasicAuthSchema().optional(),
               bearer: getBearerAuthSchema().optional(),
+              oidc: getOidcAuthSchema().optional(),
+              trustedProxy: getTrustedProxyAuthSchema().optional(),
             })
             .partial()
             .strict()
             .refine(
-              (auth) => !(auth.basic && auth.bearer),
-              "Configure either basic or bearer authentication, not both",
+              hasExactlyOneAuthMode,
+              "Configure exactly one authentication mode",
             )
             .optional(),
           /**
@@ -600,11 +860,14 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           cors: getCorsSchema().optional(),
           /**
            * CSRF protection using the double-submit cookie pattern.
-           * Set `true` for defaults, or pass an object to customize.
+           * On by default in every environment, local development included.
+           * Pass an object to customize it, or `false` to switch it off.
            *
-           * When enabled, POST/PUT/PATCH/DELETE requests must include
-           * an `x-csrf-token` header matching the `__Host-vf_csrf` cookie.
-           * The cookie is set automatically on HTML document responses.
+           * Every request that is not GET, HEAD, or OPTIONS must include an
+           * `x-csrf-token` header matching the origin's default CSRF cookie.
+           * Veryfront uses `__Host-vf_csrf` on HTTPS and loopback origins, and
+           * `vf_csrf` on plain-HTTP non-loopback origins. The cookie is set
+           * automatically on HTML document responses.
            * Custom names must use HTTP token syntax. Exclusions must be
            * canonical absolute URL paths without queries, fragments, or
            * trailing slashes.
@@ -629,6 +892,13 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         })
         .partial()
         .strict()
+        .superRefine((security, ctx) => {
+          if (hasNoOidcCsrfCookieCollision(security)) return;
+          ctx.addIssue({
+            message: "OIDC auth cookieName must not match the effective CSRF cookie name",
+            path: ["auth", "oidc", "cookieName"],
+          });
+        })
         .optional(),
       middleware: v
         .object({

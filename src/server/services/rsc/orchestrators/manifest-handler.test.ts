@@ -67,6 +67,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
 
     it("builds manifests through the request filesystem adapter", async () => {
       const fs = {
+        symlinkSemantics: "none" as const,
         readDir: async function* (path: string) {
           if (path === "/project/frontend") {
             yield {
@@ -434,6 +435,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         markFirstReadStarted = resolve;
       });
       const fs = {
+        symlinkSemantics: "none" as const,
         readDir: async function* (path: string) {
           if (path === "/project/app") {
             yield {

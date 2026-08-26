@@ -11,6 +11,7 @@ import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/e
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import { readSandboxFileContent, sandboxSessionRoute } from "./proxy-routes.ts";
+import { readExecStreamEvents } from "./exec-stream.ts";
 import type {
   BackgroundCommand,
   BackgroundCommandHeartbeatStatus,
@@ -210,49 +211,7 @@ export class Sandbox {
     if (!res.body) {
       throw new Error("Exec response has no body");
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let completed = false;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          completed = true;
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop()!;
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              yield JSON.parse(line) as ExecStreamEvent;
-            } catch {
-              // Malformed NDJSON line (e.g. truncated network chunk); skip and
-              // continue streaming so already-buffered output is not lost.
-            }
-          }
-        }
-      }
-
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        try {
-          yield JSON.parse(buffer) as ExecStreamEvent;
-        } catch {
-          // Malformed final chunk; discard rather than surfacing a SyntaxError.
-        }
-      }
-    } finally {
-      if (!completed) {
-        await reader.cancel().catch(() => {});
-      }
-      reader.releaseLock();
-    }
+    yield* readExecStreamEvents(res.body);
   }
 
   /** Read a file from the sandbox workspace. */

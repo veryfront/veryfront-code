@@ -8,7 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createRunsClient,
   VeryfrontRunsClient,

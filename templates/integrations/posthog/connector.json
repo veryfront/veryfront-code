@@ -26,10 +26,11 @@
     },
     {
       "name": "POSTHOG_HOST",
-      "description": "PostHog API host (defaults to https://us.posthog.com; app.posthog.com is the legacy US alias)",
+      "description": "PostHog API host or HTTPS origin: us.posthog.com for US Cloud (default; https://app.posthog.com is the legacy US alias) or eu.posthog.com for EU Cloud",
       "required": false,
-      "sensitive": false,
-      "docsUrl": "https://posthog.com/docs/self-host"
+      "sensitive": true,
+      "docsUrl": "https://posthog.com/docs/self-host",
+      "default": "us.posthog.com"
     }
   ],
   "tools": [
@@ -40,14 +41,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/api/projects/{projectId}/query/",
+        "url": "https://{{env.POSTHOG_HOST}}/api/projects/{projectId}/query/",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
-          },
           "projectId": {
             "type": "string",
             "in": "path",
@@ -75,14 +70,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/projects/{projectId}/feature_flags/",
+        "url": "https://{{env.POSTHOG_HOST}}/api/projects/{projectId}/feature_flags/",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
-          },
           "projectId": {
             "type": "string",
             "in": "path",
@@ -104,17 +93,36 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["results"],
+            "collectionKeys": [
+              "results"
+            ],
             "collectionName": "feature_flags",
             "itemFields": [
-              { "name": "id" },
-              { "name": "key" },
-              { "name": "name" },
-              { "name": "active" },
-              { "name": "created_at" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "active"
+              },
+              {
+                "name": "created_at"
+              }
             ],
             "omitted": "rollout filters, variants, and provider-specific payload fields",
-            "outputFields": [{ "name": "count" }, { "name": "next" }]
+            "outputFields": [
+              {
+                "name": "count"
+              },
+              {
+                "name": "next"
+              }
+            ]
           }
         }
       }
@@ -126,14 +134,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/projects/{projectId}/persons/",
+        "url": "https://{{env.POSTHOG_HOST}}/api/projects/{projectId}/persons/",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
-            "default": "us.posthog.com"
-          },
           "projectId": {
             "type": "string",
             "in": "path",
@@ -160,16 +162,34 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["results"],
+            "collectionKeys": [
+              "results"
+            ],
             "collectionName": "persons",
             "itemFields": [
-              { "name": "id" },
-              { "name": "name" },
-              { "name": "distinct_ids", "kind": "string-array" },
-              { "name": "created_at" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "distinct_ids",
+                "kind": "string-array"
+              },
+              {
+                "name": "created_at"
+              }
             ],
             "omitted": "person properties and provider-specific payload fields",
-            "outputFields": [{ "name": "count" }, { "name": "next" }]
+            "outputFields": [
+              {
+                "name": "count"
+              },
+              {
+                "name": "next"
+              }
+            ]
           }
         }
       }
@@ -204,5 +224,9 @@
       "icon": "users"
     }
   ],
-  "suggestedWith": ["slack", "analytics", "monitoring"]
+  "suggestedWith": [
+    "slack",
+    "analytics",
+    "monitoring"
+  ]
 }

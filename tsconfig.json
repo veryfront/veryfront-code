@@ -89,7 +89,7 @@
       "veryfront/platform/dynamic-import": [
         "./src/platform/compat/dynamic-import.ts"
       ],
-      "veryfront/platform/env": ["./src/platform/compat/process/env.ts"],
+      "veryfront/platform/env": ["./src/platform/compat/process/env-public.ts"],
       "veryfront/platform/path": ["./src/platform/compat/path/index.ts"],
       "veryfront/platform/http": ["./src/platform/compat/http/index.ts"],
       "veryfront/platform/runtime": ["./src/platform/compat/runtime.ts"],

@@ -5,7 +5,7 @@
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import { applySecurityHeaders } from "./security-handler.ts";
-import { applyCsrfCookie } from "../../csrf/helpers.ts";
+import { applyCsrfCookie, csrfCookieSetting } from "../../csrf/helpers.ts";
 import type { CacheStrategy, SecurityConfig, SyncCORSConfig } from "./types.ts";
 
 export interface FluentMethodsContext {
@@ -61,7 +61,7 @@ export function withSecurity<T extends FluentMethodsContext>(
   );
   if (req) {
     const secConfig = config ?? this.securityConfig;
-    applyCsrfCookie(req, this.headers, secConfig?.csrf);
+    applyCsrfCookie(req, this.headers, csrfCookieSetting(secConfig?.csrf, this.isDev));
   }
   return this;
 }

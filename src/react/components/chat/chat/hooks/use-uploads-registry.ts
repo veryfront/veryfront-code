@@ -18,7 +18,9 @@
  * which is where pluggable *storage* lives: it resolves a `BlobStorage`
  * (Veryfront Cloud when deployed, local disk in dev; or S3/GCS/your own). So
  * this hook needs only the `url` — "point storage anywhere" is the handler's
- * job, not the client's.
+ * job, not the client's. Because this hook lists the whole storage backend,
+ * that handler must opt in with `allowListing: true`; enable it only when the
+ * route authorization grants every caller access to every stored upload.
  *
  * @module react/components/chat/hooks/use-uploads-registry
  */
@@ -36,7 +38,8 @@ const useIsomorphicLayoutEffect = typeof document === "undefined"
 export interface UseAttachmentsOptions {
   /**
    * Upload endpoint — `GET` lists, `POST` (multipart `file`) uploads, `DELETE`
-   * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
+   * removes. Usually {@link createChatUploadHandler}'s route, configured with
+   * `allowListing: true` behind storage-wide authorization. @default "/api/uploads"
    */
   url?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
@@ -504,10 +507,9 @@ export function useAttachments(
             const response = await fetch(endpoint, {
               method: "POST",
               body: form,
-              // A production build turns `security.csrf` on by default, so this
-              // POST has to echo the `__Host-vf_csrf` cookie back or the server
-              // answers 403 — dev, where CSRF is off, would never show it.
-              headers: csrfMutationHeaders(endpoint, headersRef.current),
+              // CSRF is enforced in every environment, so this POST has to echo
+              // the browser-readable token or the server answers 403.
+              headers: csrfMutationHeaders(endpoint, { headers: headersRef.current }),
               signal: controller.signal,
             });
             if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
@@ -555,7 +557,7 @@ export function useAttachments(
           method: "DELETE",
           // Same CSRF requirement as the upload POST above. The token is keyed
           // off the request target, so pass the `?id=` URL actually being hit.
-          headers: csrfMutationHeaders(target, headersRef.current),
+          headers: csrfMutationHeaders(target, { headers: headersRef.current }),
           signal: controller.signal,
         });
         if (!response.ok) {

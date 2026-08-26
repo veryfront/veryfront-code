@@ -8,7 +8,7 @@
  */
 
 import { createError, toError } from "veryfront/errors";
-import { getHostEnv } from "veryfront/platform/env";
+import { getEnv } from "veryfront/platform/env";
 
 const LOCAL_AI_DISABLED_MESSAGE =
   "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.";
@@ -22,7 +22,7 @@ export type LocalAIDevice = "cpu" | "webgpu";
  * Works in Deno, Node, and compiled binaries.
  */
 export function isLocalAIDisabled(): boolean {
-  return getHostEnv("VERYFRONT_DISABLE_LOCAL_AI") === "1";
+  return getEnv("VERYFRONT_DISABLE_LOCAL_AI") === "1";
 }
 
 export function createLocalAIDisabledError(): Error {
@@ -41,7 +41,7 @@ export function throwIfLocalAIDisabled(): void {
 }
 
 export function getLocalAIDevice(): LocalAIDevice {
-  const value = getHostEnv(LOCAL_AI_DEVICE_ENV);
+  const value = getEnv(LOCAL_AI_DEVICE_ENV);
   if (!value) return "cpu";
 
   const normalized = value.trim().toLowerCase();
@@ -59,7 +59,7 @@ export function getLocalAIDevice(): LocalAIDevice {
 }
 
 export function getLocalAIThinkingEnabled(): boolean {
-  const value = getHostEnv(LOCAL_AI_THINKING_ENV);
+  const value = getEnv(LOCAL_AI_THINKING_ENV);
   if (!value) return false;
 
   const normalized = value.trim().toLowerCase();

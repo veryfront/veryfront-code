@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { usePageContext } from 'veryfront/context'
+import { csrfMutationHeaders } from 'veryfront/index.client'
 import { useWorkflow } from 'veryfront/workflow'
 
 const STEP_ICONS: Record<string, string> = {
@@ -27,9 +28,14 @@ export default function WorkflowDetail(): React.JSX.Element {
   async function handleApproval(approvalId: string, approved: boolean) {
     setIsSubmitting(true)
     try {
-      await fetch(`/api/workflows/runs/${params.id}/approvals/${approvalId}`, {
+      const endpoint = `/api/workflows/runs/${params.id}/approvals/${approvalId}`
+      await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // CSRF is enforced in every environment, so this POST has to echo the
+        // configured CSRF cookie back or the server answers 403.
+        headers: csrfMutationHeaders(endpoint, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
         body: JSON.stringify({ approved, approver: 'user' }),
       })
       await refresh()
