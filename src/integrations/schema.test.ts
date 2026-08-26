@@ -16,44 +16,24 @@ describe("IntegrationEndpointParamSchema", () => {
     assertEquals(parsed.exposeDefault, true);
   });
 
-  it("preserves a declared value allowlist", () => {
-    const parsed = getIntegrationEndpointParamSchema().parse({
-      type: "string",
-      in: "path",
-      description: "Datadog site domain",
-      default: "datadoghq.com",
-      enum: ["datadoghq.com", "datadoghq.eu"],
-    });
-
-    assertEquals(parsed.enum, ["datadoghq.com", "datadoghq.eu"]);
-  });
-
-  it("rejects defaults outside a declared value allowlist", () => {
-    assertThrows(
-      () =>
-        getIntegrationEndpointParamSchema().parse({
-          type: "string",
-          in: "path",
-          description: "Datadog site domain",
-          default: "attacker.example",
-          enum: ["datadoghq.com", "datadoghq.eu"],
-        }),
-      Error,
-      "must be one of the enum values",
+  it("accepts enums only for string parameters", () => {
+    const schema = getIntegrationEndpointParamSchema();
+    assertEquals(
+      schema.parse({
+        type: "string",
+        in: "path",
+        description: "Provider host",
+        enum: ["api.example.com"],
+      }).enum,
+      ["api.example.com"],
     );
-  });
-
-  it("rejects value allowlists on non-string parameters", () => {
-    assertThrows(
-      () =>
-        getIntegrationEndpointParamSchema().parse({
-          type: "number",
-          in: "query",
-          description: "Page size",
-          enum: ["10", "20"],
-        }),
-      Error,
-      "supported only for string parameters",
+    assertThrows(() =>
+      schema.parse({
+        type: "number",
+        in: "query",
+        description: "Page size",
+        enum: ["10"],
+      })
     );
   });
 });

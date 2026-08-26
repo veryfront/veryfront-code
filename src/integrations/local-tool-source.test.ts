@@ -10,7 +10,6 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
-  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -27,7 +26,6 @@ import {
   _createLocalIntegrationToolSourceForTesting,
   type LocalIntegrationToolSourceOptions,
 } from "./local-tool-source.ts";
-import { connectors } from "./_data.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
@@ -540,13 +538,13 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
-  it("keeps exposed host enums detached from runtime enforcement", async () => {
+  it("enforces analytics host allowlists before resolving credentials", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;
     const requestedOrigins: string[] = [];
     const source = _createLocalIntegrationToolSourceForTesting(
       {
-        tools: ["datadog__validate_api_key"],
+        tools: ["posthog__list_feature_flags"],
         credentialProvider: () => {
           credentialProviderCalls += 1;
           return TEST_CREDENTIAL;
@@ -555,20 +553,27 @@ describe("createLocalIntegrationToolSource", () => {
       (request) => {
         transportCalls += 1;
         requestedOrigins.push(request.url.origin);
-        return Promise.resolve(Response.json({ valid: true }));
+        assertEquals(request.url.origin, request.allowedOrigin);
+        return Promise.resolve(Response.json({ results: [] }));
       },
     );
-    const definition = (await source.listTools())[0]!;
-    const siteEnum = (definition.parameters as {
-      properties: { site: { enum: string[] } };
-    }).properties.site.enum;
-    assertThrows(() => siteEnum.push("attacker.example"), TypeError);
+
+    const definitions = await source.listTools();
+    const properties = (definitions[0]?.parameters as {
+      properties?: Record<string, { enum?: string[] }>;
+    }).properties;
+    assertEquals(properties?.host?.enum, [
+      "us.posthog.com",
+      "eu.posthog.com",
+      "app.posthog.com",
+    ]);
     credentialProviderCalls = 0;
 
     const error = await assertRejects(
       () =>
-        source.executeTool("datadog__validate_api_key", {
-          site: "attacker.example",
+        source.executeTool("posthog__list_feature_flags", {
+          host: "attacker.example",
+          projectId: "42",
         }),
       VeryfrontError,
     );
@@ -577,35 +582,26 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(credentialProviderCalls, 0);
     assertEquals(transportCalls, 0);
 
-    assertEquals(await source.executeTool("datadog__validate_api_key", {}), { valid: true });
-    assertEquals(credentialProviderCalls, 2);
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", {
+        host: "eu.posthog.com",
+        projectId: "42",
+      }),
+      { results: [] },
+    );
+    assertEquals(credentialProviderCalls, 1);
     assertEquals(transportCalls, 1);
-    assertEquals(requestedOrigins, ["https://api.datadoghq.com"]);
-  });
+    assertEquals(requestedOrigins, ["https://eu.posthog.com"]);
 
-  it("rejects unsupported capabilities on enumerated-host endpoints", async () => {
-    const datadog = connectors.find((connector) => connector.name === "datadog")!;
-    const tool = datadog.tools.find((candidate) => candidate.id === "datadog__validate_api_key")!;
-    const endpoint = tool.endpoint!;
-    const originalType = endpoint.type;
-
-    try {
-      endpoint.type = "graphql";
-      const isolated = await import("./local-tool-source.ts?enumerated-host-capability-regression");
-      await assertConfigurationError(async () => {
-        const source = isolated._createLocalIntegrationToolSourceForTesting(
-          {
-            tools: ["datadog__validate_api_key"],
-            credentialProvider: testCredentialProvider,
-          },
-          () => Promise.resolve(Response.json({ valid: true })),
-        );
-        await source.listTools();
-      }, "GraphQL");
-    } finally {
-      if (originalType === undefined) delete endpoint.type;
-      else endpoint.type = originalType;
-    }
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", {
+        projectId: "42",
+      }),
+      { results: [] },
+    );
+    assertEquals(credentialProviderCalls, 2);
+    assertEquals(transportCalls, 2);
+    assertEquals(requestedOrigins, ["https://eu.posthog.com", "https://us.posthog.com"]);
   });
 
   it("mints client credentials before executing a fixed-origin provider tool", async () => {

@@ -44,8 +44,8 @@ const regexpExec = RegExp.prototype.exec;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
-const stringEndsWith = String.prototype.endsWith;
 const stringIncludes = String.prototype.includes;
+const stringEndsWith = String.prototype.endsWith;
 const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
@@ -314,27 +314,20 @@ function enumeratedHostBinding(
   endpoint: IntegrationEndpoint,
   toolId: string,
 ): EnumeratedHostBinding | undefined {
-  const schemePrefix = "https://";
-  if (!stringBoolean(stringStartsWith, endpoint.url, schemePrefix)) return undefined;
-  const pathStart = apply(stringIndexOf, endpoint.url, ["/", schemePrefix.length]) as number;
-  const authorityEnd = pathStart === -1 ? endpoint.url.length : pathStart;
-  const tokenStart = apply(stringIndexOf, endpoint.url, ["{", schemePrefix.length]) as number;
-  if (tokenStart === -1 || tokenStart >= authorityEnd) return undefined;
-  const tokenEnd = apply(stringIndexOf, endpoint.url, ["}", tokenStart + 1]) as number;
-  if (tokenEnd === -1 || tokenEnd >= authorityEnd) return undefined;
-
-  const parameterName = apply(stringSlice, endpoint.url, [tokenStart + 1, tokenEnd]) as string;
+  const prefix = "https://{";
+  if (!stringBoolean(stringStartsWith, endpoint.url, prefix)) return undefined;
+  const tokenEnd = apply(stringIndexOf, endpoint.url, ["}", prefix.length]) as number;
+  if (tokenEnd === -1 || endpoint.url[tokenEnd + 1] !== "/") return undefined;
+  const parameterName = apply(stringSlice, endpoint.url, [prefix.length, tokenEnd]) as string;
   const token = `{${parameterName}}`;
   const parameter = endpoint.params?.[parameterName];
-  // A tokened authority without a declared enum falls through to the
-  // patterned-authority admission in resolveSupportedEndpointOrigin, which
-  // fails closed unless the parameter carries an anchored pattern.
-  if (!parameter || !arrayIsArray(parameter.enum)) return undefined;
-  if (parameter.in !== "path" || parameter.type !== "string" || parameter.enum.length === 0) {
-    configurationError(
-      `Local integration tool "${toolId}" endpoint must be a fixed HTTPS URL ` +
-        "or restrict its host to an enum",
-    );
+  if (
+    !parameter || parameter.in !== "path" || parameter.type !== "string" ||
+    !arrayIsArray(parameter.enum) || parameter.enum.length === 0
+  ) {
+    // Not enum-constrained: leave the endpoint to the patterned-authority or
+    // fixed-URL admission checks, which reject any remaining unconstrained host.
+    return undefined;
   }
 
   const origins = new MapConstructor<string, string>();
@@ -401,10 +394,11 @@ function assertSupportedAuth(
   );
 }
 
-function assertSupportedEndpointCapabilities(
+function assertSupportedEndpoint(
+  connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
   toolId: string,
-): void {
+): string | undefined {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
   }
@@ -421,13 +415,7 @@ function assertSupportedEndpointCapabilities(
       configurationError(`Local integration tool "${toolId}" uses an unsupported encoded body`);
     }
   }
-}
 
-function resolveSupportedEndpointOrigin(
-  connector: LocalCatalogConnector,
-  endpoint: IntegrationEndpoint,
-  toolId: string,
-): string | undefined {
   if (connector.name === "salesforce") {
     if (!stringBoolean(stringStartsWith, endpoint.url, "{{oauth.raw.instance_url}}/")) {
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
@@ -479,8 +467,8 @@ function inputPropertySchema(
     type: string;
     description: string;
     default?: unknown;
-    enum?: string[];
     exposeDefault?: boolean;
+    enum?: string[];
     pattern?: string;
   },
   credentialNames: readonly string[],
@@ -497,9 +485,6 @@ function inputPropertySchema(
   };
   if (field.type === "string[]") schema.items = { type: "string" };
   if (field.enum !== undefined) {
-    if (field.type !== "string" || field.enum.length === 0) {
-      configurationError("Local integration enums require a non-empty string allowlist");
-    }
     const allowedValues: string[] = [];
     for (let index = 0; index < field.enum.length; index++) {
       append(allowedValues, field.enum[index]!);
@@ -586,11 +571,10 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
-  assertSupportedEndpointCapabilities(tool.endpoint, canonicalToolId);
   const enumeratedHost = enumeratedHostBinding(tool.endpoint, canonicalToolId);
   const endpointOrigin = enumeratedHost
     ? undefined
-    : resolveSupportedEndpointOrigin(connector, tool.endpoint, canonicalToolId);
+    : assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
   assertSupportedAuth(connector, tool.endpoint);
   const authPlan = createLocalCredentialAuthPlan(connector);
   return freeze({

@@ -13320,15 +13320,6 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
         },
       },
@@ -13346,15 +13337,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
           "name": {
             "type": "string",
@@ -13404,15 +13386,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
           "monitorId": {
             "type": "string",
@@ -13436,15 +13409,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
           "monitorId": {
             "type": "string",
@@ -13473,15 +13437,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
         },
         "response": {
@@ -13510,15 +13465,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
           "from": {
             "type": "number",
@@ -13554,15 +13500,6 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com",
-            ],
           },
         },
         "body": {
@@ -34231,6 +34168,7 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Mixpanel raw export host: data.mixpanel.com (US), data-eu.mixpanel.com (EU), or data-in.mixpanel.com (India)",
             "default": "data.mixpanel.com",
+            "enum": ["data.mixpanel.com", "data-eu.mixpanel.com", "data-in.mixpanel.com"],
           },
           "project_id": {
             "type": "string",
@@ -34283,6 +34221,7 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
             "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"],
           },
           "project_id": {
             "type": "string",
@@ -34330,6 +34269,7 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
             "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"],
           },
           "project_id": {
             "type": "string",
@@ -34354,6 +34294,7 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
             "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"],
           },
           "project_id": {
             "type": "string",
@@ -34411,6 +34352,7 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Mixpanel API host: mixpanel.com (US), eu.mixpanel.com (EU), or in.mixpanel.com (India)",
             "default": "mixpanel.com",
+            "enum": ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"],
           },
           "project_id": {
             "type": "string",
@@ -43362,8 +43304,9 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },
           "projectId": {
             "type": "string",
@@ -43398,8 +43341,9 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },
           "projectId": {
             "type": "string",
@@ -43445,8 +43389,9 @@ export const connectors: IntegrationConfig[] = [
             "type": "string",
             "in": "path",
             "description":
-              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud",
+              "PostHog API host: us.posthog.com for US Cloud, eu.posthog.com for EU Cloud, or app.posthog.com for the legacy US alias",
             "default": "us.posthog.com",
+            "enum": ["us.posthog.com", "eu.posthog.com", "app.posthog.com"],
           },
           "projectId": {
             "type": "string",

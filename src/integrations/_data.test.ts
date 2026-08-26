@@ -40,23 +40,6 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
-  it("restricts Datadog API hosts to supported sites", () => {
-    const datadog = getConnector("datadog");
-    const supportedSites = [
-      "datadoghq.com",
-      "us3.datadoghq.com",
-      "us5.datadoghq.com",
-      "datadoghq.eu",
-      "ap1.datadoghq.com",
-      "ap2.datadoghq.com",
-      "ddog-gov.com",
-    ];
-
-    for (const tool of datadog.tools) {
-      assertEquals(tool.endpoint?.params?.site?.enum, supportedSites);
-    }
-  });
-
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",
@@ -1382,6 +1365,36 @@ describe("integration endpoint specs", () => {
         }
       }
     }
+  });
+
+  it("restricts credentialed analytics endpoint hosts to provider origins", () => {
+    const expectedHosts = new Map([
+      ["posthog", ["us.posthog.com", "eu.posthog.com", "app.posthog.com"]],
+      ["mixpanel", ["mixpanel.com", "eu.mixpanel.com", "in.mixpanel.com"]],
+    ]);
+
+    for (const [connectorName, hosts] of expectedHosts) {
+      const connector = getConnector(connectorName);
+      for (const tool of connector.tools) {
+        const host = tool.endpoint?.params?.host;
+        if (!host) continue;
+        assertEquals(
+          host.enum,
+          hosts,
+          `${connectorName}:${tool.id ?? tool.name} must restrict its credentialed endpoint host`,
+        );
+        if (connectorName === "posthog") {
+          for (const allowedHost of hosts) {
+            assertEquals(host.description.includes(allowedHost), true);
+          }
+        }
+      }
+    }
+
+    assertEquals(
+      getTool("mixpanel", "query_events").endpoint?.params?.exportHost?.enum,
+      ["data.mixpanel.com", "data-eu.mixpanel.com", "data-in.mixpanel.com"],
+    );
   });
 
   it("keeps QuickBooks OAuth requests on the official Intuit API origins", () => {

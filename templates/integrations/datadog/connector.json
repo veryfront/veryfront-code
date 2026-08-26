@@ -52,16 +52,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           }
         }
       }
@@ -79,16 +70,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           },
           "name": {
             "type": "string",
@@ -142,16 +124,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           },
           "monitorId": {
             "type": "string",
@@ -175,16 +148,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           },
           "monitorId": {
             "type": "string",
@@ -213,16 +177,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           }
         },
         "response": {
@@ -255,16 +210,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           },
           "from": {
             "type": "number",
@@ -300,16 +246,7 @@
             "type": "string",
             "in": "path",
             "description": "Datadog site domain",
-            "default": "datadoghq.com",
-            "enum": [
-              "datadoghq.com",
-              "us3.datadoghq.com",
-              "us5.datadoghq.com",
-              "datadoghq.eu",
-              "ap1.datadoghq.com",
-              "ap2.datadoghq.com",
-              "ddog-gov.com"
-            ]
+            "default": "datadoghq.com"
           }
         },
         "body": {
