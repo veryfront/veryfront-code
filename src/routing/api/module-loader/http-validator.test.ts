@@ -7,7 +7,37 @@ import {
   scanModuleSpecifiers,
   validateHTTPImports,
 } from "./http-validator.ts";
-import { __setSourceCapabilityParserLoaderForTests } from "./source-capability-analyzer.ts";
+import {
+  __setSourceCapabilityParserLoaderForTests,
+  rewriteImportMetaUrl,
+} from "./source-capability-analyzer.ts";
+
+describe("rewriteImportMetaUrl", () => {
+  it("rewrites syntax nodes without changing inert text", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source = [
+      `const direct = import.meta.url;`,
+      `const computed = import.meta["url"];`,
+      `const text = "import.meta.url";`,
+      `// import.meta.url`,
+    ].join("\n");
+
+    assertEquals(
+      await rewriteImportMetaUrl(source, moduleUrl),
+      [
+        `const direct = ${JSON.stringify(moduleUrl)};`,
+        `const computed = ${JSON.stringify(moduleUrl)};`,
+        `const text = "import.meta.url";`,
+        `// import.meta.url`,
+      ].join("\n"),
+    );
+    assertEquals(
+      await rewriteImportMetaUrl(`const url = import /* comment */ . meta.url;`, moduleUrl),
+      `const url = ${JSON.stringify(moduleUrl)};`,
+      "comments between import.meta tokens must not bypass the module URL rewrite",
+    );
+  });
+});
 
 describe("routing/api/module-loader/http-validator", () => {
   describe("validateHTTPImports", () => {
@@ -470,6 +500,38 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "an assigned Object.getOwnPropertyDescriptor alias must retain the guarded intrinsic",
       );
+      for (
+        const descriptorAlias of [
+          `export const get = Object.getOwnPropertyDescriptor;`,
+          `const get = Reflect.getOwnPropertyDescriptor; export { get };`,
+          `const readers = {}; readers.get = Object.getOwnPropertyDescriptor;` +
+          ` export const get = readers.get;`,
+          `const source = { read: Object.getOwnPropertyDescriptor };` +
+          ` const readers = { ...source }; export const get = readers.read;`,
+          `const readers = Object.assign({},` +
+          ` { read: Reflect.getOwnPropertyDescriptor }); export const get = readers.read;`,
+          `const readers = {}; Object.assign(readers,` +
+          ` { read: Object.getOwnPropertyDescriptor }); export const get = readers.read;`,
+          `const readers = {}; Object.defineProperty(readers, "read",` +
+          ` { value: Reflect.getOwnPropertyDescriptor }); export const get = readers.read;`,
+          `const readers = {}; Object.assign.apply(Object,` +
+          ` [readers, { read: Object.getOwnPropertyDescriptor }]);` +
+          ` export const get = readers.read;`,
+          `const readers = {}; Reflect.apply(Object.defineProperty, Object,` +
+          ` [readers, "read", { value: Reflect.getOwnPropertyDescriptor }]);` +
+          ` export const get = readers.read;`,
+          `const copy = Object.assign.bind(Object); const readers = {};` +
+          ` copy(readers, { read: Object.getOwnPropertyDescriptor });` +
+          ` export const get = readers.read;`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(descriptorAlias, []),
+          Error,
+          "dynamic code generation",
+          "an exported descriptor-reader alias must not cross a module boundary",
+        );
+      }
     });
 
     it("should reject a generator name hidden in a single escaped string literal", async () => {
@@ -914,6 +976,34 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const assign = Object.assign;` +
+              ` const source = Object.fromEntries([["__proto__", () => {}]]);` +
+              ` const holder = {}; assign(holder, source);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an Object.assign method alias can still invoke the inherited __proto__ setter",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const methods = {}; methods.copy = Object.assign;` +
+              ` const source = Object.fromEntries([["__proto__", () => {}]]);` +
+              ` const holder = {}; methods.copy(holder, source);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an Object.assign alias assigned to an object property remains a prototype mutator",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const holder = {}; const key = ["__", "proto__"].join("");` +
               ` holder[key] = () => {}; const make = holder.constructor;` +
               ` make('return import("https://blocked.example/mod.js")')();`,
@@ -1302,8 +1392,10 @@ describe("routing/api/module-loader/http-validator", () => {
         const moduleName of [
           "inspector",
           "inspector/promises",
+          "repl",
           "node:inspector",
           "node:inspector/promises",
+          "node:repl",
         ]
       ) {
         await assertRejects(
@@ -1395,6 +1487,27 @@ describe("routing/api/module-loader/http-validator", () => {
           `${moduleName} can launch an unchecked runtime outside the module graph`,
         );
       }
+      for (
+        const source of [
+          `import { run } from "node:test"; run({ files: ["./unchecked.cjs"] });`,
+          `const tests = await import("node:test"); tests.run({ files: ["./unchecked.cjs"] });`,
+          `const tests = require("node:test"); tests.run({ files: ["./unchecked.cjs"] });`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "subprocess module loading",
+          "node:test can execute a test file outside the checked module graph",
+        );
+      }
+      await assertRejects(
+        async () => await validateHTTPImports(`process.getBuiltinModule("node:test");`, []),
+        Error,
+        "dynamic code generation",
+        "getBuiltinModule must not recover the node:test runner",
+      );
+      await validateHTTPImports(`import testPackage from "test"; void testPackage;`, []);
     });
 
     it("should reject module loads hidden from the bundled graph", async () => {
@@ -1408,6 +1521,63 @@ describe("routing/api/module-loader/http-validator", () => {
         "unconstrained dynamic import",
         "a nonliteral require target is invisible to the graph and injected require shim",
       );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const loaders = { load: require }; export const value = loaders.load("./unchecked.cjs");`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a require alias stored on an object is invisible to the bundled graph",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const loaders = {}; loaders.load = require;` +
+              ` export const value = loaders.load("./unchecked.cjs");`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a require alias assigned to an object property is invisible to the bundled graph",
+      );
+      for (
+        const source of [
+          `const source = { load: require }; const loaders = { ...source };` +
+          ` export const value = loaders.load("./unchecked.cjs");`,
+          `const loaders = Object.assign({}, { load: require });` +
+          ` export const value = loaders.load("./unchecked.cjs");`,
+          `const loaders = {}; Object.assign(loaders, { load: require });` +
+          ` export const value = loaders.load("./unchecked.cjs");`,
+          `const loaders = {}; Object.defineProperty(loaders, "load", { value: require });` +
+          ` export const value = loaders.load("./unchecked.cjs");`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "unconstrained dynamic import",
+          "copying a require alias onto an object must not hide it from the bundled graph",
+        );
+      }
+      for (
+        const source of [
+          `const loaders = {}; Object.assign.apply(Object,` +
+          ` [loaders, { load: require }]); loaders.load("./unchecked.cjs");`,
+          `const loaders = {}; Reflect.apply(Object.defineProperty, Object,` +
+          ` [loaders, "load", { value: require }]); loaders.load("./unchecked.cjs");`,
+          `const copy = Object.assign.bind(Object); const loaders = {};` +
+          ` copy(loaders, { load: require }); loaders.load("./unchecked.cjs");`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "an indirect property-copy intrinsic must fail closed",
+        );
+      }
       await assertRejects(
         async () =>
           await validateHTTPImports(
@@ -1500,6 +1670,12 @@ describe("routing/api/module-loader/http-validator", () => {
           `process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
           `const run = process.execve;` +
           ` run(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+          `const processFns = {}; processFns.run = process.execve;` +
+          ` processFns.run(process.execPath,` +
+          ` [process.execPath, "./unchecked.cjs"], process.env);`,
+          `const processFns = {}; processFns.execve = process.execve;` +
+          ` processFns.execve(process.execPath,` +
+          ` [process.execPath, "./unchecked.cjs"], process.env);`,
           `const { execve: run } = process;` +
           ` run(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
           `process.execve.call(process, process.execPath,` +
@@ -1530,13 +1706,49 @@ describe("routing/api/module-loader/http-validator", () => {
           `import processModule = require("node:process");` +
           ` processModule.execve(processModule.execPath,` +
           ` [processModule.execPath, "./unchecked.cjs"], processModule.env);`,
+          `process.binding("spawn_sync").spawn({` +
+          ` file: process.execPath, args: [process.execPath, "./unchecked.cjs"] });`,
+          `process["binding"]("spawn" + "_sync").spawn({});`,
+          `const bind = process.binding; bind("spawn_sync").spawn({});`,
+          `const internals = {}; internals.bind = process.binding;` +
+          ` internals.bind("spawn_sync").spawn({});`,
+          `const internals = {}; internals.binding = process.binding;` +
+          ` internals.binding("spawn_sync").spawn({});`,
+          `const internals = Object.assign({}, { binding: process.binding });` +
+          ` internals.binding("spawn_sync").spawn({});`,
+          `const internals = {}; Object.assign.apply(Object,` +
+          ` [internals, { binding: process.binding }]);` +
+          ` internals.binding("spawn_sync").spawn({});`,
+          `const internals = {}; Reflect.apply(Object.defineProperty, Object,` +
+          ` [internals, "binding", { value: process.binding }]);` +
+          ` internals.binding("spawn_sync").spawn({});`,
+          `const copy = Object.assign.bind(Object); const internals = {};` +
+          ` copy(internals, { binding: process.binding });` +
+          ` internals.binding("spawn_sync").spawn({});`,
+          `const { binding: bind } = process; bind("spawn_sync").spawn({});`,
+          `process.binding.call(process, "spawn_sync").spawn({});`,
+          `process.binding.apply(process, ["spawn_sync"]).spawn({});`,
+          `process.binding.bind(process)("spawn_sync").spawn({});`,
+          `Reflect.apply(process.binding, process, ["spawn_sync"]).spawn({});`,
+          `process._linkedBinding("spawn_sync").spawn({});`,
+          `export const bind = process.binding;`,
+          `import processModule from "node:process";` +
+          ` processModule.binding("spawn_sync").spawn({});`,
+          `import * as processModule from "process";` +
+          ` processModule.binding("spawn_sync").spawn({});`,
+          `const processModule = require("node:process");` +
+          ` processModule.binding("spawn_sync").spawn({});`,
+          `const processModule = process.getBuiltinModule("node:process");` +
+          ` processModule.binding("spawn_sync").spawn({});`,
+          `import processModule = require("node:process");` +
+          ` processModule.binding("spawn_sync").spawn({});`,
         ]
       ) {
         await assertRejects(
           async () => await validateHTTPImports(source, []),
           Error,
           "dynamic code generation",
-          "process.execve can replace the server with an unchecked module loader",
+          "process subprocess capabilities can execute an unchecked module loader",
         );
       }
       for (
@@ -1591,6 +1803,11 @@ describe("routing/api/module-loader/http-validator", () => {
     it("should ignore locally shadowed subprocess capability names", async () => {
       await validateHTTPImports(
         `const process = { execve() { return "local"; } }; process.execve();`,
+        [],
+      );
+      await validateHTTPImports(
+        `const process = { binding() { return { spawn() {} }; } };` +
+          ` process.binding("spawn_sync").spawn({});`,
         [],
       );
       await validateHTTPImports(
