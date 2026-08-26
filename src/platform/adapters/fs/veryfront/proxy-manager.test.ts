@@ -1242,14 +1242,10 @@ describe("ProxyFSAdapterManager", () => {
 
     it("evicts the least recently used adapter, not the most recent", async () => {
       const disposedSlugs: string[] = [];
-      // ProxyFSAdapterManager stamps lastAccessed with Date.now(), so a pinned
-      // clock is what makes the three admissions strictly ordered instead of
-      // sharing a millisecond.
-      const originalNow = Date.now;
       let clock = 1_000_000;
-      Date.now = (): number => clock;
       const manager = createManager({
         maxAdapters: 2,
+        now: () => clock,
         adapterFactory: createRecordingAdapterFactory(disposedSlugs),
       });
 
@@ -1279,7 +1275,6 @@ describe("ProxyFSAdapterManager", () => {
           "eviction must dispose only the least recently used adapter",
         );
       } finally {
-        Date.now = originalNow;
         manager.dispose();
       }
     });

@@ -10,6 +10,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __enableMultiProjectManagerTestAccess,
   clearRequestScopedFileCache,
   getCurrentRequestContext,
   getRequestScopedFile,
@@ -22,7 +23,7 @@ import {
 import { VeryfrontFSAdapter } from "./adapter.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
-  return new MultiProjectFSAdapter({
+  const adapter = new MultiProjectFSAdapter({
     veryfront: {
       apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
@@ -30,6 +31,8 @@ function createAdapter(): MultiProjectFSAdapter {
       cache: { enabled: false },
     },
   });
+  __enableMultiProjectManagerTestAccess(adapter);
+  return adapter;
 }
 
 function assertMethod(
@@ -62,6 +65,26 @@ async function withAdapterAsync(
 }
 
 describe("MultiProjectFSAdapter", () => {
+  it("keeps the credential manager outside the public object graph", () => {
+    const adapter = new MultiProjectFSAdapter({
+      veryfront: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "test-token",
+        projectSlug: "test-project",
+        cache: { enabled: false },
+      },
+    });
+    try {
+      assertEquals(Object.getOwnPropertyNames(adapter).includes("manager"), false);
+      assertEquals(
+        Object.getOwnPropertyDescriptor(MultiProjectFSAdapter.prototype, "manager"),
+        undefined,
+      );
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   describe("class", () => {
     it("should export MultiProjectFSAdapter class", () => {
       assertExists(MultiProjectFSAdapter);

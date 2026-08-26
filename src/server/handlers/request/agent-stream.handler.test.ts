@@ -61,6 +61,7 @@ import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-invento
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { __setHostedConfigEvaluatorForTests } from "#veryfront/config/loader.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
@@ -3341,6 +3342,55 @@ describe("server/handlers/request/agent-stream.handler", () => {
       "agent-source-credential-handoff",
       "agent-source-discovery-identity",
     ]);
+  });
+
+  it("enters wrapped custom multi-project source contexts through captured dispatch", async () => {
+    const contextTokens: string[] = [];
+    const customAdapter = {
+      ...createNoopFsAdapter([]),
+      runWithContext: <T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
+      ) => {
+        contextTokens.push(token);
+        return runWithRequestContext({ projectSlug, token, projectId, ...options }, fn);
+      },
+    };
+    const wrapper = new FSAdapterWrapper(customAdapter as unknown as FSAdapter);
+    const ctx = createCtx();
+    ctx.proxyToken = "request-scoped-user-token";
+    ctx.adapter = { ...ctx.adapter, fs: wrapper };
+    const handler = new AgentStreamHandler() as unknown as {
+      withAgentSourceContext<T>(
+        context: HandlerContext,
+        source: { type: "branch"; branch: string },
+        fn: () => Promise<T>,
+      ): Promise<T>;
+    };
+
+    const observed = await handler.withAgentSourceContext(
+      ctx,
+      { type: "branch", branch: "custom" },
+      () =>
+        Promise.resolve({
+          branch: getCurrentRequestContext()?.branch,
+          token: getCurrentRequestContext()?.token,
+        }),
+    );
+
+    assertEquals(observed, {
+      branch: "custom",
+      token: "request-scoped-user-token",
+    });
+    assertEquals(contextTokens, ["request-scoped-user-token"]);
   });
 
   it("uses captured source context switches after project prototype mutation", async () => {

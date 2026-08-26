@@ -47,8 +47,12 @@ const NativeUint8Array = Uint8Array;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
+const DateNow = Date.now;
+const IntrinsicObjectFreeze = Object.freeze;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeTrim = String.prototype.trim;
 type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
 type GetAdapterParamsValidationResult = ReturnType<
   GetAdapterParamsSchema["safeParse"]
@@ -65,6 +69,14 @@ function captureGetAdapterParamsValidator(): void {
 
 function performanceNow(): number {
   return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function formatDuration(durationMs: number): string {
+  return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
+function currentTime(): number {
+  return IntrinsicReflectApply(DateNow, Date, []) as number;
 }
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
@@ -108,6 +120,7 @@ interface ProxyFSAdapterManagerConfig {
   maxAdapters?: number;
   cleanupIntervalMs?: number;
   maxIdleMs?: number;
+  now?: () => number;
 }
 
 export class ProxyFSAdapterManager {
@@ -118,6 +131,7 @@ export class ProxyFSAdapterManager {
   private maxAdapters: number;
   private maxIdleMs: number;
   private cleanupTimer?: ReturnType<typeof setInterval>;
+  #now: () => number;
 
   constructor(config: ProxyFSAdapterManagerConfig) {
     captureGetAdapterParamsValidator();
@@ -129,6 +143,7 @@ export class ProxyFSAdapterManager {
       "maxAdapters",
     );
     this.maxIdleMs = config.maxIdleMs ?? DEFAULT_MAX_IDLE_MS;
+    this.#now = config.now ?? currentTime;
 
     if (config.cleanupIntervalMs) {
       this.cleanupTimer = setInterval(
@@ -161,10 +176,13 @@ export class ProxyFSAdapterManager {
     const effectiveReleaseId = effectiveProductionMode ? (releaseId ?? null) : null;
     const effectiveEnvironmentName = environmentName || null;
     const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
+    const canonicalProjectId = projectId === undefined
+      ? undefined
+      : IntrinsicReflectApply(StringPrototypeTrim, projectId, []) as string;
 
     if (
       this.baseConfig.veryfront?.proxyMode === true &&
-      (!projectId?.trim() || projectId !== projectId.trim())
+      (!canonicalProjectId || projectId !== canonicalProjectId)
     ) {
       throw INVALID_ARGUMENT.create({
         detail: "[ProxyFSAdapterManager] Hosted proxy adapters require a canonical project ID",
@@ -215,7 +233,7 @@ export class ProxyFSAdapterManager {
     }
 
     const credentialPrincipal = await hashCredentialPrincipal(token);
-    const identity: ProxyAdapterIdentity = Object.freeze({
+    const identity: ProxyAdapterIdentity = IntrinsicObjectFreeze({
       projectSlug,
       projectId: projectId ?? null,
       credentialPrincipal,
@@ -248,7 +266,7 @@ export class ProxyFSAdapterManager {
 
     const existing = this.#adapters.get(cacheKey);
     if (existing) {
-      existing.lastAccessed = Date.now();
+      existing.lastAccessed = this.#now();
 
       const existingContext = existing.adapter.getContentContext();
       logger.debug("REUSING_CACHED_ADAPTER", {
@@ -300,8 +318,8 @@ export class ProxyFSAdapterManager {
 
       logger.debug("Pending adapter ready", {
         cacheKey: diagnosticCacheKey,
-        waitDuration: `${(performanceNow() - waitStartTime).toFixed(2)}ms`,
-        totalDuration: `${(performanceNow() - getAdapterStartTime).toFixed(2)}ms`,
+        waitDuration: formatDuration(performanceNow() - waitStartTime),
+        totalDuration: formatDuration(performanceNow() - getAdapterStartTime),
       });
 
       onResolved?.(true);
@@ -325,7 +343,7 @@ export class ProxyFSAdapterManager {
     logger.debug("Creating new adapter", {
       cacheKey: diagnosticCacheKey,
       projectSlug,
-      elapsedBeforeCreate: `${(performanceNow() - getAdapterStartTime).toFixed(2)}ms`,
+      elapsedBeforeCreate: formatDuration(performanceNow() - getAdapterStartTime),
     });
 
     const adapter = await this.#createAdapter(
@@ -523,7 +541,7 @@ export class ProxyFSAdapterManager {
 
     adapter.setContentContext(context);
 
-    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now(), identity };
+    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: this.#now(), identity };
 
     // Defer initialization until after its promise is registered. This makes
     // capacity admission atomic even when initialize() throws synchronously.
@@ -542,7 +560,7 @@ export class ProxyFSAdapterManager {
         logger.debug("Adapter initialization DONE", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performanceNow() - initStartTime).toFixed(2)}ms`,
+          duration: formatDuration(performanceNow() - initStartTime),
         });
 
         this.#adapters.set(cacheKey, projectAdapter);
@@ -551,7 +569,7 @@ export class ProxyFSAdapterManager {
         logger.error("Adapter initialization failed", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performanceNow() - initStartTime).toFixed(2)}ms`,
+          duration: formatDuration(performanceNow() - initStartTime),
           error: error instanceof Error ? error.message : String(error),
         });
 
@@ -602,7 +620,7 @@ export class ProxyFSAdapterManager {
   }
 
   private cleanupIdleAdapters(): void {
-    const now = Date.now();
+    const now = this.#now();
 
     for (const [cacheKey, adapter] of this.#adapters) {
       if (now - adapter.lastAccessed <= this.maxIdleMs) continue;

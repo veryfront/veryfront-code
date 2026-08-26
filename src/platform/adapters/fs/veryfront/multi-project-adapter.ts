@@ -32,8 +32,10 @@ const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
 const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
@@ -52,6 +54,10 @@ function performanceNow(): number {
   return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
 }
 
+function formatDuration(durationMs: number): string {
+  return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
 function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
   return IntrinsicReflectApply(
     ObjectPrototypeIsPrototypeOf,
@@ -68,16 +74,39 @@ function isConcreteProxyFSAdapterManager(manager: unknown): boolean {
   ) as boolean;
 }
 
+let enableManagerTestAccess: (adapter: MultiProjectFSAdapter) => void = (_adapter) => {
+  throw new Error("Multi-project manager test access is unavailable");
+};
+
+/** @internal Test-only compatibility for existing manager fakes. */
+export function __enableMultiProjectManagerTestAccess(adapter: MultiProjectFSAdapter): void {
+  enableManagerTestAccess(adapter);
+}
+
 export class MultiProjectFSAdapter implements FSAdapter {
+  static {
+    enableManagerTestAccess = (adapter) => {
+      IntrinsicObjectDefineProperty(adapter, "manager", {
+        configurable: true,
+        get(this: MultiProjectFSAdapter): ProxyFSAdapterManager {
+          return this.#manager;
+        },
+        set(this: MultiProjectFSAdapter, manager: ProxyFSAdapterManager) {
+          this.#manager = manager;
+        },
+      });
+    };
+  }
+
   readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly symlinkSemantics = "none" as const;
-  private manager: ProxyFSAdapterManager;
+  #manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
   private readonly sourceSnapshotAdapterGenerations = new WeakMap<VeryfrontFSAdapter, number>();
   private nextSourceSnapshotAdapterGeneration = 1;
 
   constructor(config: FSAdapterConfig) {
-    this.manager = new ProxyFSAdapterManager({
+    this.#manager = new ProxyFSAdapterManager({
       baseConfig: config,
       maxAdapters: DEFAULT_MAX_ADAPTERS,
       cleanupIntervalMs: DEFAULT_CLEANUP_INTERVAL_MS,
@@ -129,7 +158,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }, async () => {
       logger.debug("Inside asyncLocalStorage.run callback", {
         projectSlug,
-        duration: `${(performanceNow() - startTime).toFixed(2)}ms`,
+        duration: formatDuration(performanceNow() - startTime),
       });
 
       // Release asset manifest fetchers are registered by the concrete adapter.
@@ -142,7 +171,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
       logger.debug("runWithContext callback complete", {
         projectSlug,
-        totalDuration: `${(performanceNow() - startTime).toFixed(2)}ms`,
+        totalDuration: formatDuration(performanceNow() - startTime),
       });
 
       return result;
@@ -203,17 +232,17 @@ export class MultiProjectFSAdapter implements FSAdapter {
       context.branch,
       onResolved,
     ] as const;
-    const adapter = isConcreteProxyFSAdapterManager(this.manager)
+    const adapter = isConcreteProxyFSAdapterManager(this.#manager)
       ? await IntrinsicReflectApply(
         ProxyFSAdapterManagerGetAdapter,
-        this.manager,
+        this.#manager,
         args,
       ) as VeryfrontFSAdapter
-      : await this.manager.getAdapter(...args);
+      : await this.#manager.getAdapter(...args);
 
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
-      duration: `${(performanceNow() - startTime).toFixed(2)}ms`,
+      duration: formatDuration(performanceNow() - startTime),
     });
 
     return adapter;
@@ -415,14 +444,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
-    this.manager.dispose();
+    this.#manager.dispose();
     this.defaultAdapter?.dispose();
     this.defaultAdapter = undefined;
     logger.debug("Disposed");
   }
 
   getManagerStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {
-    return this.manager.getStats();
+    return this.#manager.getStats();
   }
 
   async getProjectData(): Promise<ReturnType<VeryfrontFSAdapter["getProjectData"]> | undefined> {

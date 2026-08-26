@@ -9,7 +9,10 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import {
+  __enableMultiProjectManagerTestAccess,
+  MultiProjectFSAdapter,
+} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
 import type {
@@ -27,6 +30,10 @@ import {
   runWithExactSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import {
+  runWithCacheKeyContext,
+  tryGetCacheKeyContext,
+} from "#veryfront/cache/cache-key-builder.ts";
 
 const baseConfig = {
   veryfront: {
@@ -123,6 +130,13 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
               getActiveSourceIntegrationPolicy,
             ),
             policy,
+          );
+          assertEquals(
+            runWithCacheKeyContext(
+              { projectId: "project-id", mode: "preview", versionId: "main" },
+              tryGetCacheKeyContext,
+            ),
+            { projectId: "project-id", mode: "preview", versionId: "main" },
           );
         },
       );
@@ -277,8 +291,11 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
 
   it("keeps credential-bearing adapter lookup independent of mutable timing hooks", async () => {
     const adapter = new MultiProjectFSAdapter(baseConfig);
+    __enableMultiProjectManagerTestAccess(adapter);
     const manager = new ProxyFSAdapterManager({
-      baseConfig,
+      baseConfig: {
+        veryfront: { ...baseConfig.veryfront, proxyMode: true },
+      },
       adapterFactory: (config) => {
         const selectedAdapter = new VeryfrontFSAdapter(config);
         selectedAdapter.initialize = () => Promise.resolve();
@@ -291,6 +308,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     const originalManager = internals.manager;
     internals.manager = manager;
     const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+    const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
     let poisonedCalls = 0;
 
     Object.defineProperty(performance, "now", {
@@ -300,15 +318,24 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         throw new Error("project timing hook must not run");
       },
     });
+    Object.defineProperty(String.prototype, "trim", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("project string hook must not run");
+      },
+    });
     try {
       await adapter.runWithContext(
         "my-slug",
         "signed-user-token",
         () => adapter.getSourceSnapshotFingerprint(),
+        "project-id",
       );
     } finally {
       if (originalNow) Object.defineProperty(performance, "now", originalNow);
       else Reflect.deleteProperty(performance, "now");
+      Object.defineProperty(String.prototype, "trim", originalTrim);
       internals.manager = originalManager;
       manager.dispose();
       adapter.dispose();

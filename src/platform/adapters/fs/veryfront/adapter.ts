@@ -58,8 +58,9 @@ import {
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
-export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES = 32 * 1_024 * 1_024;
-export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES = 10_000;
+export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES = 64 * 1_024 * 1_024;
+export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES = 50_000;
+const SOURCE_SNAPSHOT_FINGERPRINT_CHUNK_BYTES = 1_024 * 1_024;
 const ArrayPrototypeSort = Array.prototype.sort;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -101,6 +102,11 @@ type SourceSnapshotRecord = readonly [
   string | number | null,
   string | number | null,
 ];
+interface PreparedSourceSnapshotRecord {
+  record: SourceSnapshotRecord;
+  characters: number;
+  utf8Bytes: number;
+}
 
 function getOwnSourceSnapshotValue(
   file: SourceSnapshotFile,
@@ -217,12 +223,43 @@ function sourceSnapshotFrameSize(value: string | number | null): {
   };
 }
 
+function compareSourceSnapshotValues(
+  left: string | number | null,
+  right: string | number | null,
+): number {
+  if (left === right) return 0;
+  if (left === null) return -1;
+  if (right === null) return 1;
+  if (typeof left !== typeof right) return typeof left === "number" ? -1 : 1;
+  const leftSerialized = typeof left === "number" ? `${left}` : left;
+  const rightSerialized = typeof right === "number" ? `${right}` : right;
+  return leftSerialized < rightSerialized ? -1 : leftSerialized > rightSerialized ? 1 : 0;
+}
+
+function compareSourceSnapshotRecords(
+  left: PreparedSourceSnapshotRecord,
+  right: PreparedSourceSnapshotRecord,
+): number {
+  for (let index = 0; index < left.record.length; index++) {
+    const comparison = compareSourceSnapshotValues(left.record[index]!, right.record[index]!);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+}
+
 async function computeSourceSnapshotFingerprint(
   files: SourceSnapshotFile[],
 ): Promise<string | undefined> {
-  if (files.length > MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES) return undefined;
+  if (files.length > MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES) {
+    logger.warn("Source snapshot fingerprint unavailable", {
+      reason: "file-limit",
+      totalFiles: files.length,
+      maximumFiles: MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES,
+    });
+    return undefined;
+  }
 
-  const recordDigests: string[] = [];
+  const records: PreparedSourceSnapshotRecord[] = [];
   let totalBytes = 0;
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
@@ -236,22 +273,58 @@ async function computeSourceSnapshotFingerprint(
     const recordPrefixBytes = 2 + `${recordCharacters}`.length;
     const framedRecordBytes = recordPrefixBytes + recordBytes;
     if (framedRecordBytes > MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES - totalBytes) {
+      logger.warn("Source snapshot fingerprint unavailable", {
+        reason: "byte-limit",
+        totalFiles: files.length,
+        maximumBytes: MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES,
+      });
       return undefined;
     }
     totalBytes += framedRecordBytes;
-
-    IntrinsicObjectDefineProperty(recordDigests, recordDigests.length, {
+    IntrinsicObjectDefineProperty(records, records.length, {
       configurable: true,
       enumerable: true,
-      value: await computeHash(serializeSourceSnapshotRecord(record)),
+      value: { record, characters: recordCharacters, utf8Bytes: framedRecordBytes },
       writable: true,
     });
   }
-  IntrinsicReflectApply(ArrayPrototypeSort, recordDigests, []);
+  IntrinsicReflectApply(ArrayPrototypeSort, records, [compareSourceSnapshotRecords]);
 
-  let canonicalDigests = "";
-  for (let index = 0; index < recordDigests.length; index++) {
-    const digest = recordDigests[index]!;
+  const chunkDigests: string[] = [];
+  const appendChunkDigest = async (chunk: string): Promise<void> => {
+    IntrinsicObjectDefineProperty(chunkDigests, chunkDigests.length, {
+      configurable: true,
+      enumerable: true,
+      value: await computeHash(chunk),
+      writable: true,
+    });
+  };
+  let chunk = "";
+  let chunkBytes = 0;
+  for (let index = 0; index < records.length; index++) {
+    const prepared = records[index]!;
+    const serialized = serializeSourceSnapshotRecord(prepared.record);
+    const framed = `r${prepared.characters}:${serialized}`;
+    if (
+      chunkBytes > 0 &&
+      prepared.utf8Bytes > SOURCE_SNAPSHOT_FINGERPRINT_CHUNK_BYTES - chunkBytes
+    ) {
+      await appendChunkDigest(chunk);
+      chunk = "";
+      chunkBytes = 0;
+    }
+    if (prepared.utf8Bytes > SOURCE_SNAPSHOT_FINGERPRINT_CHUNK_BYTES) {
+      await appendChunkDigest(framed);
+      continue;
+    }
+    chunk += framed;
+    chunkBytes += prepared.utf8Bytes;
+  }
+  if (chunkBytes > 0) await appendChunkDigest(chunk);
+
+  let canonicalDigests = `f${files.length}:b${totalBytes}:`;
+  for (let index = 0; index < chunkDigests.length; index++) {
+    const digest = chunkDigests[index]!;
     canonicalDigests += `h${digest.length}:${digest}`;
   }
   return await computeHash(canonicalDigests);

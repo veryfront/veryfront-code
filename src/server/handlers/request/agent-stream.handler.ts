@@ -133,6 +133,8 @@ const IntrinsicReflectApply = Reflect.apply;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const FSAdapterWrapperPrototype = FSAdapterWrapper.prototype;
 const FSAdapterWrapperGetUnderlyingAdapter = FSAdapterWrapperPrototype.getUnderlyingAdapter;
+const FSAdapterWrapperIsMultiProjectMode = FSAdapterWrapperPrototype.isMultiProjectMode;
+const FSAdapterWrapperRunWithContext = FSAdapterWrapperPrototype.runWithContext;
 const MultiProjectFSAdapterPrototype = MultiProjectFSAdapter.prototype;
 const MultiProjectFSAdapterRunWithContext = MultiProjectFSAdapterPrototype.runWithContext;
 
@@ -756,6 +758,15 @@ function runWithCapturedSourceContext<T>(
       return IntrinsicReflectApply(
         MultiProjectFSAdapterRunWithContext,
         underlying,
+        args,
+      ) as Promise<T>;
+    }
+    if (
+      IntrinsicReflectApply(FSAdapterWrapperIsMultiProjectMode, fsWrapper, []) === true
+    ) {
+      return IntrinsicReflectApply(
+        FSAdapterWrapperRunWithContext,
+        fsWrapper,
         args,
       ) as Promise<T>;
     }
