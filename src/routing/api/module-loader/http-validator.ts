@@ -1150,9 +1150,9 @@ function readDynamicImportSpecifierInto(
     accumulator.hasUnconstrainedDynamicImport = true;
     return;
   }
-
   const afterLiteral = skipWhitespaceAndComments(source, literal.end);
   if (source[afterLiteral] === ")") {
+    accumulator.requiresBundling = true;
     accumulator.specifiers.push(literal.value);
     return;
   }
@@ -1163,11 +1163,15 @@ function readDynamicImportSpecifierInto(
 
   const argumentIndex = skipWhitespaceAndComments(source, afterLiteral + 1);
   if (source[argumentIndex] === ")") {
+    accumulator.requiresBundling = true;
     accumulator.specifiers.push(literal.value);
     return;
   }
   const attributesEnd = readStaticImportAttributesArgument(source, argumentIndex);
   if (attributesEnd !== null && source[skipWhitespaceAndComments(source, attributesEnd)] === ")") {
+    // A literal dynamic import can execute after validation. Bundle it so every
+    // local dependency is captured immutably instead of read from disk later.
+    accumulator.requiresBundling = true;
     accumulator.specifiers.push(literal.value);
     return;
   }

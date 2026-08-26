@@ -1032,7 +1032,13 @@ function normalizeImportMapScope(prefix: string, baseDir: string): string | null
     const resolved = resolveImportMapTargetPath(prefix, baseDir);
     return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
   }
-  if (!/^file:/i.test(prefix)) return prefix;
+  if (!/^file:/i.test(prefix)) {
+    try {
+      return new URL(prefix).href;
+    } catch {
+      return prefix;
+    }
+  }
 
   try {
     const url = new URL(prefix);
