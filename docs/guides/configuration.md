@@ -332,7 +332,7 @@ deliberately.
 | ----------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
 | `VERYFRONT_FILE_CACHE_L1_TTL_MS`          | `5000`     | How long a held entry is served without consulting the backend, up to `60000`. |
 | `VERYFRONT_FILE_CACHE_L1_MAX_ENTRIES`     | `2000`     | How many entries the tier holds.                                               |
-| `VERYFRONT_FILE_CACHE_L1_MAX_VALUE_BYTES` | `524288`   | The largest single value the tier will hold.                                   |
+| `VERYFRONT_FILE_CACHE_L1_MAX_VALUE_BYTES` | `524288`   | The largest single value the tier holds.                                       |
 | `VERYFRONT_FILE_CACHE_L1_MAX_TOTAL_BYTES` | `67108864` | Total bytes held across every project and credential.                          |
 
 Set any of them to `0` to turn the tier off. `VERYFRONT_FILE_CACHE_L1_TTL_MS=0`
