@@ -165,7 +165,11 @@ Deno.test("DiskCacheBackend", async (t) => {
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await new Promise((r) => setTimeout(r, 5));
+      await waitFor(() => debugCapture.entries.length > 0, {
+        interval: 1,
+        timeout: 1_000,
+        message: "expired-entry cleanup diagnostic was not emitted",
+      });
 
       assertEquals(debugCapture.entries.length, 1);
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
