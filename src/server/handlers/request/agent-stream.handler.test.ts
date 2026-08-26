@@ -1311,6 +1311,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
       forwardedProps: {
         runtimeOverrides: {
           allowedTools: ["gmail__search_emails", "gmail__get_email"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__search_emails",
+              description: "Search email",
+              inputSchema: { type: "object" },
+            },
+            {
+              name: "gmail__get_email",
+              description: "Get an email",
+              inputSchema: { type: "object" },
+            },
+          ],
         },
       },
     });
@@ -1339,6 +1351,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
       runtimeOverrides.allowedTools,
       ["gmail__search_emails"],
       "the canonical remote name of an aliased source tool must stay authorized",
+    );
+    assertEquals(
+      runtimeOverrides.integrationToolDefinitions,
+      [
+        {
+          name: "gmail__get_email",
+          description: "Get an email",
+          inputSchema: { type: "object" },
+        },
+      ],
+      "the canonical-name forwarded definition must not stay callable next to its alias",
     );
   });
 
@@ -1746,7 +1769,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200);
-      assertEquals(capturedAllowedRemoteTools, undefined);
+      assertEquals(
+        capturedAllowedRemoteTools,
+        [],
+        "rejecting the self-asserted Studio grant must preserve a deny-all remote filter",
+      );
       assertEquals(capturedRemoteToolNames, []);
     } finally {
       restoreMockFetch();

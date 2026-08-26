@@ -182,6 +182,7 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   availableToolNames: string[];
   sourceAuthorizesAllTools: boolean;
   sourceAuthorizedToolNames: ReadonlySet<string>;
+  aliasedCanonicalToolNames: ReadonlySet<string>;
   allowedStudioRuntimeToolNames: ReadonlySet<string>;
 }): Record<string, unknown> | undefined {
   const forwardedProps = input.forwardedProps;
@@ -192,44 +193,64 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   const runtimeOverrides = isRecord(forwardedProps.runtimeOverrides)
     ? forwardedProps.runtimeOverrides
     : null;
-  if (!runtimeOverrides || !Object.hasOwn(runtimeOverrides, "allowedTools")) {
+  if (!runtimeOverrides) {
     return forwardedProps;
   }
+
+  const nextRuntimeOverrides: Record<string, unknown> = { ...runtimeOverrides };
+  let sanitized = false;
 
   const allowedTools = runtimeOverrides.allowedTools;
   if (
-    !Array.isArray(allowedTools) || !allowedTools.every((toolName) => typeof toolName === "string")
+    Object.hasOwn(runtimeOverrides, "allowedTools") &&
+    Array.isArray(allowedTools) &&
+    allowedTools.every((toolName) => typeof toolName === "string")
   ) {
-    return forwardedProps;
-  }
-
-  const availableToolNames = new Set(input.availableToolNames);
-  // Platform remote tools are gated separately by the child agent config in
-  // withVeryfrontPlatformRemoteTools. Studio-only runtime tool names are
-  // preserved only when the resolved agent config itself declares the tool for
-  // a Studio-capable client; self-asserted Studio client metadata alone never
-  // widens the forwarded allowlist. Every other forwarded name must be covered
-  // by the source-resolved agent configuration: a `tools: true` selector
-  // authorizes the scoped catalog (still bounded downstream by the source
-  // integration policy), while explicit tool maps authorize their non-disabled
-  // entries under both local and canonical remote names.
-  const sanitizedAllowedTools = allowedTools.filter((toolName) => {
-    if (STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName)) {
+    const availableToolNames = new Set(input.availableToolNames);
+    // Platform remote tools are gated separately by the child agent config in
+    // withVeryfrontPlatformRemoteTools. Studio-only runtime tool names are
+    // preserved only when the resolved agent config itself declares the tool for
+    // a Studio-capable client; self-asserted Studio client metadata alone never
+    // widens the forwarded allowlist. Every other forwarded name must be covered
+    // by the source-resolved agent configuration: a `tools: true` selector
+    // authorizes the scoped catalog (still bounded downstream by the source
+    // integration policy), while explicit tool maps authorize their non-disabled
+    // entries under both local and canonical remote names.
+    const sanitizedAllowedTools = allowedTools.filter((toolName) => {
+      if (STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName)) {
+        return availableToolNames.has(toolName) ||
+          input.allowedStudioRuntimeToolNames.has(toolName);
+      }
       return availableToolNames.has(toolName) ||
-        input.allowedStudioRuntimeToolNames.has(toolName);
+        input.sourceAuthorizesAllTools ||
+        input.sourceAuthorizedToolNames.has(toolName);
+    });
+    if (sanitizedAllowedTools.length !== allowedTools.length) {
+      nextRuntimeOverrides.allowedTools = sanitizedAllowedTools;
+      sanitized = true;
     }
-    return availableToolNames.has(toolName) ||
-      input.sourceAuthorizesAllTools ||
-      input.sourceAuthorizedToolNames.has(toolName);
-  });
-  if (sanitizedAllowedTools.length === allowedTools.length) {
-    return forwardedProps;
   }
 
-  const nextRuntimeOverrides: Record<string, unknown> = {
-    ...runtimeOverrides,
-    allowedTools: sanitizedAllowedTools,
-  };
+  // An aliased source tool is only callable through its local alias: the
+  // canonical remote name stays authorized so the runtime's canonical
+  // allowlist keeps the materialized alias, but the forwarded fallback
+  // definition for that canonical name must not be exposed as a second
+  // callable tool that would bypass the configured alias.
+  const forwardedDefinitions = runtimeOverrides.integrationToolDefinitions;
+  if (Array.isArray(forwardedDefinitions) && input.aliasedCanonicalToolNames.size > 0) {
+    const sanitizedDefinitions = forwardedDefinitions.filter((definition) =>
+      !(isRecord(definition) && typeof definition.name === "string" &&
+        input.aliasedCanonicalToolNames.has(definition.name))
+    );
+    if (sanitizedDefinitions.length !== forwardedDefinitions.length) {
+      nextRuntimeOverrides.integrationToolDefinitions = sanitizedDefinitions;
+      sanitized = true;
+    }
+  }
+
+  if (!sanitized) {
+    return forwardedProps;
+  }
 
   const nextForwardedProps: Record<string, unknown> = {
     ...forwardedProps,
@@ -242,12 +263,16 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   return Object.keys(nextForwardedProps).length > 0 ? nextForwardedProps : undefined;
 }
 
-function getAgentDeclaredToolNames(agent: Agent): Set<string> {
+function getAgentDeclaredToolNames(agent: Agent): {
+  declaredToolNames: Set<string>;
+  aliasedCanonicalToolNames: Set<string>;
+} {
+  const declaredToolNames = new Set<string>();
+  const aliasedCanonicalToolNames = new Set<string>();
   const tools = agent.config.tools;
   if (!isRecord(tools)) {
-    return new Set();
+    return { declaredToolNames, aliasedCanonicalToolNames };
   }
-  const declaredToolNames = new Set<string>();
   for (const [toolName, entry] of Object.entries(tools)) {
     // `false` disables the tool explicitly; a disabled entry never authorizes
     // a forwarded allowlist name.
@@ -257,13 +282,22 @@ function getAgentDeclaredToolNames(agent: Agent): Set<string> {
     declaredToolNames.add(toolName);
     // Aliased source tools are keyed by their local alias while forwarded
     // allowlists and remote execution use the canonical remote name carried by
-    // trusted provenance; authorize both spellings of the same declared tool.
+    // trusted provenance; authorize both spellings of the same declared tool,
+    // but record canonical names that only exist behind an alias so their
+    // forwarded fallback definitions can be suppressed.
     const canonicalRemoteToolName = getRemoteToolProvenance(entry);
     if (canonicalRemoteToolName !== undefined) {
       declaredToolNames.add(canonicalRemoteToolName);
+      if (
+        canonicalRemoteToolName !== toolName &&
+        !(Object.hasOwn(tools, canonicalRemoteToolName) &&
+          tools[canonicalRemoteToolName] !== false)
+      ) {
+        aliasedCanonicalToolNames.add(canonicalRemoteToolName);
+      }
     }
   }
-  return declaredToolNames;
+  return { declaredToolNames, aliasedCanonicalToolNames };
 }
 
 function sanitizeRuntimeRunAgentInput(
@@ -271,7 +305,7 @@ function sanitizeRuntimeRunAgentInput(
   agent: Agent,
 ): RuntimeRunAgentInput {
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
-  const declaredToolNames = getAgentDeclaredToolNames(agent);
+  const { declaredToolNames, aliasedCanonicalToolNames } = getAgentDeclaredToolNames(agent);
 
   return {
     ...input,
@@ -280,6 +314,7 @@ function sanitizeRuntimeRunAgentInput(
       availableToolNames: input.tools.map((tool) => tool.name),
       sourceAuthorizesAllTools: agent.config.tools === true,
       sourceAuthorizedToolNames: declaredToolNames,
+      aliasedCanonicalToolNames,
       allowedStudioRuntimeToolNames: clientAllowsStudioMcp(clientProfile)
         ? declaredToolNames
         : new Set(),
