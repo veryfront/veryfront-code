@@ -301,8 +301,8 @@ async function computeSourceSnapshotFingerprint(
   files: SourceSnapshotFile[],
 ): Promise<string | undefined> {
   // A modular sum of cryptographic per-record digests is independent of list
-  // order and keeps working memory constant. The final hash also binds the
-  // record count, so duplicate files remain significant.
+  // order and keeps working memory constant. Reject invalid or repeated paths
+  // before hashing because filesystem indexing requires one record per path.
   const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
   const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
   const seenPaths = new IntrinsicMap<string, true>();
