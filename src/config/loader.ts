@@ -1655,7 +1655,7 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"']*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
+const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"]*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
 // The interior of a parenthesised segment is `[^\s"']*`, not `[^\s"'()]*`: a
 // flat interior matches one nesting level, so `/a((TOKEN))` ended the token at
 // the first `(` and left `((TOKEN))` in the caller-visible detail -- a URL path
@@ -1663,6 +1663,12 @@ const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"']*@)?(?:[^\s"'()]|
 // interior backtracks to the last `)` in the run, so any nesting depth is
 // consumed in one pass. A token with no `(` at all is unaffected, which is what
 // still leaves a trailing prose `)` outside the match.
+// The userinfo run excludes only whitespace and a double quote, not an
+// apostrophe: RFC 3986 puts `'` in sub-delims, so `user'name@registry.internal`
+// is a legal authority, and stopping at the apostrophe left the hostname in the
+// caller-visible detail. The tail still excludes `'`, so a quoted config
+// message such as `Cannot find module 'some-pkg'` is unaffected and the quoted
+// path and quoted URL regressions keep their delimiters.
 // Userinfo gets its own permissive run up to `@`, rather than relying on the
 // balanced-parentheses alternative that covers the rest of the token. That
 // alternative matches one flat `(...)` pair, so a legal nested userinfo such as
@@ -1678,7 +1684,7 @@ const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"']*@)?(?:[^\s"'()]|
 // The scheme needs at least two characters here, which is what keeps a genuine
 // `C:/Users/...` out -- a drive letter is always exactly one.
 const MALFORMED_SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"']*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"]*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']*\))+/g;

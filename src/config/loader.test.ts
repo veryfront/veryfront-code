@@ -1028,6 +1028,20 @@ export default config as const;
         assertEquals(error.message.includes("((x))"), false);
       });
 
+      it("redacts a URL whose userinfo contains an apostrophe", async () => {
+        const error = await loadFailure(
+          "vf-config-apostrophe-userinfo-",
+          `throw new Error("Fetch https://user'name:<TOKEN>@registry.internal/config.ts failed");\n`,
+        );
+
+        // `'` is an RFC 3986 sub-delim, so this is a legal authority. The tail of
+        // the token still stops at an apostrophe, which is what keeps quoted
+        // config messages intact.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("user'name"), false);
+      });
+
       it("redacts a URL whose path nests parentheses", async () => {
         const error = await loadFailure(
           "vf-config-nested-paren-path-",
