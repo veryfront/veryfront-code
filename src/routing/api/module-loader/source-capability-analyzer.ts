@@ -4154,9 +4154,11 @@ function applySubprocessReferenceCapability(
   parents: WeakMap<ASTNode, ParentLink>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
+  if (node.type === "Identifier" && !isIdentifierReference(node, parents)) return;
   if (
     resolvesToDenoCommand(node, scope, nodeScopes) &&
     !isNewExpressionCallee(node, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
     !isAliasInitializerUse(node, parents) &&
     !isBindingIdentifier(node, parents) &&
     !isMutationTarget(node, parents)
@@ -4172,6 +4174,7 @@ function applyPrototypeMutatorReferenceCapability(
   parents: WeakMap<ASTNode, ParentLink>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
+  if (node.type === "Identifier" && !isIdentifierReference(node, parents)) return;
   if (
     resolvesToPrototypeMutator(node, scope, nodeScopes) &&
     !isCallExpressionCallee(node, parents) &&

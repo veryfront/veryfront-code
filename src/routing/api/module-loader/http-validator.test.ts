@@ -1209,6 +1209,11 @@ describe("routing/api/module-loader/http-validator", () => {
           ` objectSupport, reflectSupport, sameImplementation });`,
         [],
       );
+      await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` export const support = { setProto: typeof setProto === "function" };`,
+        [],
+      );
       for (
         const inspection of [
           `Object.setPrototypeOf == Reflect.setPrototypeOf`,
@@ -1901,6 +1906,16 @@ describe("routing/api/module-loader/http-validator", () => {
           `Bun.${method} can execute an unchecked module loader`,
         );
       }
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` export const support = { Command: typeof Command === "function" };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` export const supported = typeof Command === "function";`,
+        [],
+      );
       for (
         const source of [
           `const getCommand = () => Deno.Command;` +
