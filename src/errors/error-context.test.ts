@@ -816,6 +816,53 @@ describe("error-context", () => {
       }
     });
 
+    it("redacts inspected control-character paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        ["C:\\private-read\x01marker\\nope", "'C:\\\\private-read\\x01marker\\\\nope'"],
+        ["D:\\private-stat\x01marker\\nope", "'D:\\\\private-stat\\x01marker\\\\nope'"],
+        ["E:\\private-directory\x01marker\\nope", "'E:\\\\private-directory\\x01marker\\\\nope'"],
+      ] as const;
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(`read failed ${cases[0][1]}`)) } },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(`stat failed ${cases[1][1]}`)) } },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(new Error(`directory failed ${cases[2][1]}`));
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
     it("redacts Node null-byte path aliases in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;

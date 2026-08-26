@@ -97,6 +97,7 @@ const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
 const ASCII_LOWERCASE_OFFSET = 32;
 const MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS = 8;
 const FILESYSTEM_DIAGNOSTIC_FALLBACK = "Filesystem operation failed";
+const UPPERCASE_HEX_DIGITS = "0123456789ABCDEF";
 const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
   ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
   : undefined;
@@ -594,7 +595,40 @@ function normalizePosixDoubleSeparatorPathForDiagnostic(path: string): string | 
   return normalizeFilesystemPathForDiagnostic(`/${sliceString(path, cursor)}`);
 }
 
-/** Derive the path spelling Node uses when reporting embedded NUL bytes. */
+/** Derive the path spelling Node uses when inspecting backslashes and controls. */
+function nodeInspectedFilesystemPath(path: string): string | undefined {
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < path.length; index++) {
+    const codeUnit = charCodeAtString(path, index);
+    let escape: string | undefined;
+    if (codeUnit === BACKSLASH_CODE_UNIT) {
+      escape = "\\\\";
+    } else if (codeUnit === 8) {
+      escape = "\\b";
+    } else if (codeUnit === 9) {
+      escape = "\\t";
+    } else if (codeUnit === 10) {
+      escape = "\\n";
+    } else if (codeUnit === 12) {
+      escape = "\\f";
+    } else if (codeUnit === 13) {
+      escape = "\\r";
+    } else if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
+      escape = `\\x${UPPERCASE_HEX_DIGITS[(codeUnit >>> 4) & 0xf]}${
+        UPPERCASE_HEX_DIGITS[codeUnit & 0xf]
+      }`;
+    }
+    if (escape === undefined) continue;
+    apply(arrayPush, parts, [sliceString(path, segmentStart, index), escape]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return undefined;
+  apply(arrayPush, parts, [sliceString(path, segmentStart)]);
+  return apply(arrayJoin, parts, [""]);
+}
+
+/** Derive the path spelling Node uses in unquoted invalid-NUL diagnostics. */
 function nodeNullEscapedFilesystemPath(path: string): string | undefined {
   const parts: string[] = [];
   let segmentStart = 0;
@@ -792,6 +826,7 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
     normalizationSource,
   );
+  const nodeInspectedPath = nodeInspectedFilesystemPath(path);
   const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
   const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
   const rawNormalizedPlatformPath = normalizationSource === normalizedPath
@@ -883,7 +918,10 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (quoteIndependentEscapedPath !== path) {
     redacted = redactPathFromText(redacted, quoteIndependentEscapedPath, replacement);
   }
-  if (nodeNullEscapedPath !== undefined) {
+  if (nodeInspectedPath !== undefined) {
+    redacted = redactPathFromText(redacted, nodeInspectedPath, replacement);
+  }
+  if (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeInspectedPath) {
     redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
   }
   if (normalizationSource !== path) {
@@ -928,7 +966,9 @@ export function snapshotThrowableDiagnosticRedactingPath(
     containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
     (quoteIndependentEscapedPath !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, quoteIndependentEscapedPath)) ||
-    (nodeNullEscapedPath !== undefined &&
+    (nodeInspectedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeInspectedPath)) ||
+    (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeInspectedPath &&
       containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
     (normalizationSource !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
