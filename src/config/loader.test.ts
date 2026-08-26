@@ -877,6 +877,33 @@ export default config as const;
         assertStringIncludes(error.message, "left-pad");
       });
 
+      it("contains a config that poisons RegExp Symbol.replace", async () => {
+        const originalReplace = RegExp.prototype[Symbol.replace];
+        for (
+          const [message, expectedSlug] of [
+            [
+              "Cannot find package 'left-pad' imported from /app/veryfront.config.ts",
+              DEPENDENCY_MISSING_SLUG,
+            ],
+            ["ordinary project failure", CONFIG_PARSE_ERROR_SLUG],
+          ] as const
+        ) {
+          let error: VeryfrontError;
+          try {
+            error = await loadFailure(
+              "vf-config-poisoned-regexp-replace-",
+              `const failure = new Error(${JSON.stringify(message)});\n` +
+                'RegExp.prototype[Symbol.replace] = function () { throw new Error("poisoned replace"); };\n' +
+                "throw failure;\n",
+            );
+          } finally {
+            RegExp.prototype[Symbol.replace] = originalReplace;
+          }
+
+          assertEquals(error.slug, expectedSlug);
+        }
+      });
+
       it("classifies Bun resolver objects that do not inherit from Error", async () => {
         const error = await loadFailure(
           "vf-config-bun-resolve-object-",
@@ -1355,6 +1382,11 @@ export default config as const;
           "a package name containing whitespace",
           "vf-config-malformed-package-",
           `throw new Error("Cannot find package 'foo bar' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "an unscoped package name beginning with underscore",
+          "vf-config-leading-underscore-",
+          `throw new Error("Cannot find package '_foo' imported from /app/veryfront.config.ts");\n`,
         ],
         [
           "the npm-reserved node_modules root",

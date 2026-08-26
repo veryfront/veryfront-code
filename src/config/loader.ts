@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
-import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
+import { dirname, extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   isExtendedFSAdapter,
@@ -89,7 +89,6 @@ const ReflectApply = Reflect.apply;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ReflectGet = Reflect.get;
 const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeReplace = String.prototype.replace;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -1609,6 +1608,33 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 
+function replaceMatchesWithCapturedExec(
+  value: string,
+  pattern: RegExp,
+  replacement: string,
+): string {
+  pattern.lastIndex = 0;
+  let output = "";
+  let offset = 0;
+  try {
+    while (true) {
+      const match = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
+        | RegExpExecArray
+        | null;
+      if (match === null) break;
+      const matched = match[0];
+      if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
+      output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
+      output += replacement;
+      offset = pattern.lastIndex;
+    }
+    output += ReflectApply(StringPrototypeSlice, value, [offset]) as string;
+    return output;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
 /**
  * Return the one-line summary of `error`, or `undefined` when it has none.
  *
@@ -1626,11 +1652,17 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     : undefined;
   if (message === undefined) return undefined;
   const redacted = sanitizeUrlCredentials(message);
-  const firstLine = redacted.split("\n", 1)[0]?.replace(CONTROL_CHARACTERS, " ").trim() ?? "";
-  if (firstLine.length === 0) return undefined;
-  return firstLine.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
-    ? `${firstLine.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
-    : firstLine;
+  const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
+    "";
+  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
+  const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
+  if (clean.length === 0) return undefined;
+  return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
+    ? `${ReflectApply(StringPrototypeSlice, clean, [
+      0,
+      MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1,
+    ]) as string}…`
+    : clean;
 }
 
 /**
@@ -1723,18 +1755,18 @@ function missingPackageName(specifier: string): string | undefined {
     return undefined;
   }
 
-  const replaced = ReflectApply(
-    StringPrototypeReplace,
+  const replaced = replaceMatchesWithCapturedExec(
     sanitizeUrlCredentials(parsed.packageName),
-    [CONTROL_CHARACTERS, " "],
-  ) as string;
+    CONTROL_CHARACTERS,
+    " ",
+  );
   const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
   if (clean.length === 0) return undefined;
   return clean;
 }
 
 const LEGACY_NPM_PACKAGE_NAME_PATTERN =
-  /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
+  /^(?:[A-Za-z0-9-][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
 const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
 
 /** Accept existing npm names without broadening server-external configuration. */
@@ -2201,11 +2233,8 @@ function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefin
   const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
   if (lines.length < 2) return undefined;
   for (let index = 1; index < lines.length; index += 1) {
-    const stripped = ReflectApply(StringPrototypeReplace, lines[index]!, [
-      CONTROL_CHARACTERS,
-      "",
-    ]) as string;
-    const line = ReflectApply(StringPrototypeReplace, stripped, [SGR_RESIDUE, ""]) as string;
+    const stripped = replaceMatchesWithCapturedExec(lines[index]!, CONTROL_CHARACTERS, "");
+    const line = replaceMatchesWithCapturedExec(stripped, SGR_RESIDUE, "");
     if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
     if (ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null) {
       return undefined;
@@ -2260,6 +2289,7 @@ async function loadConfigFromTempFile(
   source: string,
   configPath: string,
   loadUrl: (tempFile: string) => string,
+  options: { readonly temporaryParent?: string } = {},
 ): Promise<unknown> {
   const fs = createFileSystem();
   const originalExt = extname(configPath) || ".mjs";
@@ -2272,7 +2302,10 @@ async function loadConfigFromTempFile(
     ? await transpileConfigSourceForImport(source, configPath)
     : source;
 
-  const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
+  const tempDir = options.temporaryParent === undefined
+    ? await fs.makeTempDir({ prefix: "vf-config-" })
+    : join(options.temporaryParent, `.veryfront-config-${crypto.randomUUID()}`);
+  if (options.temporaryParent !== undefined) await fs.mkdir(tempDir);
   const tempFile = join(tempDir, `config${extension}`);
 
   try {
@@ -2504,6 +2537,9 @@ async function loadAndMergeConfig(
       source,
       configPath,
       (tempFile) => toFileUrl(tempFile).href,
+      // Bun resolves bare imports relative to the copied module. Keep that
+      // module beneath the project so its node_modules ancestry is preserved.
+      { temporaryParent: isBun ? dirname(resolve(configPath)) : undefined },
     );
     logger.debug("Successfully loaded config via temp file", {
       configPath,
