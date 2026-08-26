@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   API_CLIENT_ERROR,
@@ -22,17 +22,17 @@ import {
 import type { ErrorCategory } from "./types.ts";
 
 /**
- * Every error slug published as of this list being written.
+ * Every error slug the registry publishes.
  *
- * Slugs are part of the public surface: callers match on them, so removing one
- * is a breaking change while adding one is routine. This guards the breaking
- * direction only, which is also why it is a list rather than a count. An exact
- * count made every error-adding pull request edit the same line, so two of them
- * were each green alone and the second died in the merge queue -- that happened
- * at 120, 121 and again at 122. Adding a slug now touches nothing here.
+ * Slugs are public surface: callers match on them, so retiring one is a
+ * breaking change that should be deliberate and visible in review.
  *
- * Removing a slug is meant to fail. Delete the entry deliberately, in the same
- * change that retires the error.
+ * This is an exhaustive list rather than a count on purpose. A count put every
+ * error-adding pull request on one shared line, each changing it to a different
+ * value, so two of them were green alone and the second died in the merge queue
+ * -- that happened at 120, 121 and again at 122. Adding a slug here appends its
+ * own line instead, which merges cleanly alongside an unrelated addition. Keep
+ * the list sorted so appends stay spread out.
  */
 const PUBLISHED_ERROR_SLUGS: readonly string[] = Object.freeze([
   "agent-error",
@@ -190,13 +190,13 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("keeps every published error slug registered", () => {
-      const slugs = new Set<string>(getAllSlugs());
-      const missing = PUBLISHED_ERROR_SLUGS.filter((slug) => !slugs.has(slug));
+    it("publishes exactly the recorded slugs", () => {
+      // Exhaustive, not a subset: a subset would stop covering every slug added
+      // after the list was written, so a later removal would go unnoticed.
       assertEquals(
-        missing,
-        [],
-        `Published error slug(s) no longer registered: ${missing.join(", ")}`,
+        [...getAllSlugs()].sort(),
+        [...PUBLISHED_ERROR_SLUGS],
+        "Update PUBLISHED_ERROR_SLUGS: add a line for a new error, delete one only when retiring it",
       );
     });
 
@@ -340,7 +340,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 14);
+      assertNotEquals(errors.length, 0);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -348,7 +348,7 @@ describe("error-registry", () => {
 
     it("should return BUILD errors", () => {
       const errors = getErrorsByCategory("BUILD");
-      assertEquals(errors.length, 9);
+      assertNotEquals(errors.length, 0);
       for (const error of errors) {
         assertEquals(error.category, "BUILD");
       }
@@ -495,14 +495,21 @@ describe("error-registry", () => {
       assertEquals(empty, [], `Categories with no registered errors: ${empty.join(", ")}`);
     });
 
-    it("partitions the registry across categories", () => {
-      // Catches an error that is registered but unreachable by category, which
-      // a per-category count cannot see once the expected number is also wrong.
-      const categorized = ERROR_CATEGORIES.reduce(
-        (total, category) => total + getErrorsByCategory(category).length,
-        0,
-      );
-      assertEquals(categorized, getAllSlugs().length);
+    it("routes every registered error to exactly one category", () => {
+      // Cardinality alone would miss two lookups swapping contents, so check
+      // which slugs come back and that each declares the category it came from.
+      const routed: string[] = [];
+      const misrouted: string[] = [];
+      for (const category of ERROR_CATEGORIES) {
+        for (const error of getErrorsByCategory(category)) {
+          routed.push(error.slug);
+          if (error.category !== category) {
+            misrouted.push(`${error.slug} returned for ${category} but declares ${error.category}`);
+          }
+        }
+      }
+      assertEquals(misrouted, [], `Misrouted errors: ${misrouted.join("; ")}`);
+      assertEquals(routed.sort(), [...getAllSlugs()].sort());
     });
   });
 
