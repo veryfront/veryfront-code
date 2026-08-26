@@ -10,6 +10,7 @@ import {
   ensurePreviewSourceSnapshotFresh,
   finishPreviewDocumentSourceSnapshot,
   preparePreviewDocumentSourceSnapshot,
+  runWithRetainedPreviewDocumentSourceSnapshot,
   seedPreviewDocumentSourceSnapshot,
 } from "./source-snapshot-freshness.ts";
 
@@ -214,6 +215,28 @@ it("fails closed when config and routing would observe different generations", a
 
   assertInstanceOf(rejection, VeryfrontError);
   assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+});
+
+it("preserves the operation failure when final snapshot validation also fails", async () => {
+  let version = 1;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => version;
+  const ctx = makePreviewCtx(adapter);
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:preview-project:main",
+    version,
+  });
+  const operationFailure = new Error("operation failed");
+
+  const rejection = await assertRejects(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(ctx, () => {
+      version++;
+      return Promise.reject(operationFailure);
+    })
+  );
+
+  assertEquals(rejection, operationFailure);
 });
 
 it("reclassifies when the source generation changes without changing identity", async () => {

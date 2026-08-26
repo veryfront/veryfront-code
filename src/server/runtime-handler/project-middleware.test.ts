@@ -360,7 +360,7 @@ describe("ProjectMiddlewareRuntime", () => {
     );
   });
 
-  it("retains the config marker until a streamed response body closes", async () => {
+  it("validates the config marker before forwarding a streamed response chunk", async () => {
     let sourceVersion = 1;
     let releaseBody!: () => void;
     const bodyGate = new Promise<void>((resolve) => {
@@ -407,8 +407,9 @@ describe("ProjectMiddlewareRuntime", () => {
         ),
     );
 
+    const reader = response!.body!.getReader();
     releaseBody();
-    const rejection = await assertRejects(() => response!.text());
+    const rejection = await assertRejects(() => reader.read());
     assertInstanceOf(rejection, Error);
     assertEquals(
       rejection.message.includes("changed after request configuration was derived"),

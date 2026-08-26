@@ -123,21 +123,29 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
     if (beforeOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
   }
 
+  const validate = async (): Promise<void> => {
+    if (
+      retained?.configBound === true &&
+      !(await preparedDocumentSnapshotMatches(ctx, retained))
+    ) {
+      throwConfigSnapshotChanged(ctx);
+    }
+    const afterOperation = await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
+    if (afterOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
+  };
   let finalization: Promise<void> | undefined;
   const finalize = (): Promise<void> => {
     finalization ??= (async () => {
-      if (
-        retained?.configBound === true &&
-        !(await preparedDocumentSnapshotMatches(ctx, retained))
-      ) {
-        throwConfigSnapshotChanged(ctx);
+      try {
+        await validate();
+      } finally {
+        preparedDocumentSnapshots.delete(ctx);
       }
-      const afterOperation = await finishPreviewDocumentSourceSnapshot(ctx);
-      if (afterOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
     })();
     return finalization;
   };
   let finalizationTransferredToBody = false;
+  let primaryFailure = false;
   try {
     const result = await operation();
     if (
@@ -150,51 +158,60 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
       result instanceof Response && result.body !== null &&
       (retained !== undefined || preparedDocumentSnapshots.has(ctx))
     ) {
-      const response = retainPreviewSnapshotThroughResponseBody(result, finalize);
+      const response = retainPreviewSnapshotThroughResponseBody(result, validate, finalize);
       finalizationTransferredToBody = true;
       return response as T;
     }
     await finalize();
     return result;
+  } catch (error) {
+    primaryFailure = true;
+    throw error;
   } finally {
-    if (!finalizationTransferredToBody) await finalize();
+    if (!finalizationTransferredToBody) {
+      if (primaryFailure) await finalizeAfterPrimaryFailure(finalize);
+      else await finalize();
+    }
   }
 }
 
 function retainPreviewSnapshotThroughResponseBody(
   response: Response,
+  validate: () => Promise<void>,
   finalize: () => Promise<void>,
 ): Response {
   const reader = response.body!.getReader();
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
+        await validate();
         const chunk = await reader.read();
         if (!chunk.done) {
+          await validate();
           controller.enqueue(chunk.value);
           return;
         }
         await finalize();
         controller.close();
       } catch (error) {
-        try {
-          await finalize();
-        } catch (finalizationError) {
-          controller.error(finalizationError);
-          return;
-        }
+        await finalizeAfterPrimaryFailure(finalize);
         controller.error(error);
       }
     },
     async cancel(reason) {
       let cancellationError: unknown;
+      let cancellationFailed = false;
       try {
         await reader.cancel(reason);
       } catch (error) {
+        cancellationFailed = true;
         cancellationError = error;
       }
+      if (cancellationFailed) {
+        await finalizeAfterPrimaryFailure(finalize);
+        throw cancellationError;
+      }
       await finalize();
-      if (cancellationError !== undefined) throw cancellationError;
     },
   });
   return new Response(body, {
@@ -202,6 +219,14 @@ function retainPreviewSnapshotThroughResponseBody(
     statusText: response.statusText,
     headers: response.headers,
   });
+}
+
+async function finalizeAfterPrimaryFailure(finalize: () => Promise<void>): Promise<void> {
+  try {
+    await finalize();
+  } catch {
+    return;
+  }
 }
 
 function throwConfigSnapshotChanged(ctx: HandlerContext): never {
