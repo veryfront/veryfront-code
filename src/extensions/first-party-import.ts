@@ -16,6 +16,12 @@ const FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN =
   /^@veryfront\/ext-[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*)?$/;
 const SAFE_RELATIVE_PATH_FRAGMENT_PATTERN =
   /^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_-][A-Za-z0-9._-]*)+$/;
+const ReflectApply = Reflect.apply;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeTrim = String.prototype.trim;
 
 /** Optional non-root entry point for a first-party extension import. */
 export interface FirstPartyExtensionImportOptions {
@@ -308,12 +314,18 @@ const RUNTIME_TRAILER_LINE =
  * before the shape is tested.
  */
 function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
-  const lines = message.split("\n");
+  const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
   if (lines.length < 2) return undefined;
   for (let index = 1; index < lines.length; index += 1) {
-    const line = lines[index]!.split(ESCAPE_CHARACTER).join("").replace(SGR_RESIDUE, "");
-    if (line.trim().length === 0) continue;
-    if (!RUNTIME_TRAILER_LINE.test(line)) return undefined;
+    const withoutEscape = ReflectApply(StringPrototypeReplaceAll, lines[index]!, [
+      ESCAPE_CHARACTER,
+      "",
+    ]) as string;
+    const line = ReflectApply(StringPrototypeReplace, withoutEscape, [SGR_RESIDUE, ""]) as string;
+    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
+    if (!(ReflectApply(RegExpPrototypeTest, RUNTIME_TRAILER_LINE, [line]) as boolean)) {
+      return undefined;
+    }
   }
   return lines[0];
 }
@@ -383,7 +395,8 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
   for (
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
-      /^(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:(?:\s+imported from\s+.+)|\.)?$/,
+      /^(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+imported from\s+(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+$/,
+      /^Module not found\s+["']([^"']+)["']\.$/,
       // Deno, when the importer itself resolves out of the npm cache. The
       // trailing parenthetical names the owning package when the referrer
       // lives in the global Deno npm cache (`deno add npm:veryfront`).

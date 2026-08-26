@@ -1159,6 +1159,18 @@ export default config as const;
         assertStringIncludes(error.message, "@scope/_plugin");
       });
 
+      it("preserves the full accepted package name in diagnostics", async () => {
+        const packageName = "a".repeat(214);
+        const error = await loadFailure(
+          "vf-config-long-package-",
+          `throw new Error("Cannot find package '${packageName}' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, packageName);
+        assertEquals(error.context?.packageName, packageName);
+      });
+
       it("keeps a secret in a subpath out of any package claim", async () => {
         // Falling through to the parse error routes the text through
         // summarizeConfigLoadCause, which redacts and bounds it; the
@@ -1272,6 +1284,16 @@ export default config as const;
           "the project-module alias",
           "vf-config-alias-",
           'import "@/lib/config";\nexport default {};\n',
+        ],
+        [
+          "a single-line application module error without a runtime suffix",
+          "vf-config-plain-module-error-",
+          `throw new Error("Cannot find module 'db'");\n`,
+        ],
+        [
+          "a single-line application package error with an arbitrary from suffix",
+          "vf-config-plain-from-error-",
+          `throw new Error("Cannot find package 'db' from initialization");\n`,
         ],
         [
           "an ordinary error that merely quotes a resolver phrase",

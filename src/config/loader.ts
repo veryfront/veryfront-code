@@ -1722,12 +1722,7 @@ function missingPackageName(specifier: string): string | undefined {
   ) as string;
   const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
   if (clean.length === 0) return undefined;
-  return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
-    ? `${ReflectApply(StringPrototypeSlice, clean, [
-      0,
-      MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1,
-    ]) as string}…`
-    : clean;
+  return clean;
 }
 
 const LEGACY_NPM_PACKAGE_NAME_PATTERN =
@@ -2198,11 +2193,12 @@ function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefin
 
 /** Anchored resolution-failure formats, per runtime. */
 const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
-  // Node (`imported from <path>`), Bun (`from '<path>'`, sometimes prefixed
-  // `ResolveMessage:`), and Deno's `Module not found "file:///…".` form. Only
-  // that one literal prefix is tolerated, so an ordinary error that happens to
-  // quote a resolver phrase still fails to match.
-  /^(?:ResolveMessage:\s+)?(?:Cannot find package|Cannot find module|Module not found)\s+["']([^"']+)["'](?:\s+(?:imported\s+)?from\s+.+|\.)?$/,
+  // Node (`imported from <path>`) and Bun (`from '<path>'`, sometimes prefixed
+  // `ResolveMessage:`). The importer suffix is required so ordinary application
+  // errors like `Cannot find module 'db'` do not masquerade as resolver output.
+  /^(?:ResolveMessage:\s+)?(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+(?:imported\s+from\s+(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+|from\s+["'](?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\)[^"']+["'])$/,
+  // Deno's complete single-line form.
+  /^Module not found\s+["']([^"']+)["']\.$/,
   // Deno, when the importer resolves out of the global npm cache.
   /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
   // Deno, for a specifier no import map or node_modules entry claims.
