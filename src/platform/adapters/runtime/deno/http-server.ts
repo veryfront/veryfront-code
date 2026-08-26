@@ -15,6 +15,24 @@ type DenoRequestHandler = (
   request: Request,
 ) => Promise<Response> | Response;
 
+/**
+ * Whether `error` is a failure to bind the requested address.
+ *
+ * Matched on `name` and `code` rather than `instanceof Deno.errors.AddrInUse`.
+ * The error is constructed in the host realm, so a cross-realm `instanceof`
+ * is unreliable -- the same reason `isErrorAcrossRealms` exists in this file.
+ * `AddrNotAvailable` is included because a stale bind address fails the same
+ * way from the caller's point of view: the listener never came up at that
+ * host and port.
+ */
+function isAddressBindFailure(error: unknown): boolean {
+  if (!isErrorAcrossRealms(error)) return false;
+  const { name } = error;
+  if (name === "AddrInUse" || name === "AddrNotAvailable") return true;
+  const code = (error as { code?: unknown }).code;
+  return code === "EADDRINUSE" || code === "EADDRNOTAVAIL";
+}
+
 export interface DenoNativeHttpServer {
   readonly addr: unknown;
   readonly finished: Promise<void>;
@@ -174,24 +192,46 @@ export async function createDenoServerWithRuntime(
     : handler;
   const NativeResponse = getNativeResponse();
 
-  const nativeServer = runtime.serve({
-    port,
-    hostname,
-    signal: controller.signal,
-    handler: async (request, info) => {
-      try {
-        recordDenoServeRequestPeer(request, info);
-        const response = await wrappedHandler(request);
-        return toNativeResponse(response, NativeResponse);
-      } catch (error) {
-        serverLogger.error("Deno request handler failed", { error });
-        return new NativeResponse("Internal Server Error", { status: 500 });
-      }
-    },
-    // Suppress Deno's default console output. The portable callback runs only
-    // after the bound address has been validated and ownership is established.
-    onListen: () => {},
-  });
+  let nativeServer: DenoNativeHttpServer;
+  try {
+    nativeServer = runtime.serve({
+      port,
+      hostname,
+      signal: controller.signal,
+      handler: async (request, info) => {
+        try {
+          recordDenoServeRequestPeer(request, info);
+          const response = await wrappedHandler(request);
+          return toNativeResponse(response, NativeResponse);
+        } catch (error) {
+          serverLogger.error("Deno request handler failed", { error });
+          return new NativeResponse("Internal Server Error", { status: 500 });
+        }
+      },
+      // Suppress Deno's default console output. The portable callback runs only
+      // after the bound address has been validated and ownership is established.
+      onListen: () => {},
+    });
+  } catch (error) {
+    // `Deno.serve()` throws synchronously when the address cannot be bound, and
+    // the raw `AddrInUse: Address already in use (os error 98)` carried no
+    // hostname or port -- so an operator saw which process died but not which
+    // address collided (veryfront-issue-inbox#806).
+    //
+    // Only a bind failure is relabelled. Catching everything here would report
+    // an unrelated startup fault as an address collision, which is worse than
+    // the raw error it replaces, so anything else is rethrown untouched.
+    if (!isAddressBindFailure(error)) throw error;
+    throw INITIALIZATION_ERROR.create({
+      detail: `Deno.serve() could not bind ${hostname}:${port}`,
+      context: { platform: "deno", operation: "serve", hostname, port },
+      cause: error,
+    });
+  }
+
+  // Nothing is leaked when the bind fails: the AbortController above is never
+  // armed, no DenoServer exists yet, and ManagedServerRegistry.start awaits
+  // createServer before track(), so a throwing start never enters its map.
 
   const address = readBoundAddress(nativeServer.addr);
   const server = new DenoServer(
