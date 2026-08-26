@@ -10,6 +10,8 @@ describe("veryfront/utils/logger public export surface", () => {
 
   it("does not expose process-wide registration or reset hooks", () => {
     assertEquals("__registerRequestContextGetter" in publicLogger, false);
+    assertEquals("__registerTraceContextGetter" in publicLogger, false);
     assertEquals("__resetLogRecordEmitterForTests" in publicLogger, false);
+    assertEquals("__resetTraceContextGetterForTests" in publicLogger, false);
   });
 });

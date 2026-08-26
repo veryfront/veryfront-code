@@ -31,7 +31,6 @@ const expectedRuntimeExports = [
   "initMetrics",
   "initTracing",
   "initializeOTLP",
-  "initializeApplicationErrorReporter",
   "injectContext",
   "instrument",
   "instrumentBatch",
@@ -40,7 +39,6 @@ const expectedRuntimeExports = [
   "instrumentHttpHandler",
   "instrumentReactRender",
   "instrumentSync",
-  "interceptConsole",
   "isAutoInstrumentEnabled",
   "isMetricsEnabled",
   "isOTLPEnabled",
@@ -100,6 +98,8 @@ describe("veryfront/observability public export surface", () => {
   });
 
   it("does not expose test resets or mutable metrics state", () => {
+    assertEquals("initializeApplicationErrorReporter" in observability, false);
+    assertEquals("interceptConsole" in observability, false);
     assertEquals("_resetShimForTests" in observability, false);
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);

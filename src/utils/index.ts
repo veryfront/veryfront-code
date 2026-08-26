@@ -21,8 +21,6 @@ export {
 } from "./runtime-guards.ts";
 
 export {
-  __registerTraceContextGetter,
-  __registerTraceContextGetter as registerTraceContextGetter,
   agentLogger,
   bundlerLogger,
   cliLogger,

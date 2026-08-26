@@ -468,9 +468,7 @@ export {
   loadHostedAgentServiceEnvFiles,
 } from "./service/env-files.ts";
 export {
-  initializeNodeAgentServiceOpenTelemetry,
   type InitializeNodeAgentServiceTelemetryOptions,
-  initializeNodeHostedAgentServiceOpenTelemetry,
   type InitializeNodeHostedAgentServiceTelemetryOptions,
   type NodeAgentServiceInstrumentationConfig,
   type NodeAgentServiceTelemetryConfig,

@@ -151,7 +151,6 @@ export {
 
 export {
   getLogBuffer,
-  interceptConsole,
   LogBuffer,
   type LogEntry,
   type LogFilter as LogBufferFilter,
@@ -177,5 +176,4 @@ export {
   type ApplicationErrorReporterSession,
   captureApplicationError,
   flushApplicationErrors,
-  initializeApplicationErrorReporter,
 } from "./application-errors.ts";
