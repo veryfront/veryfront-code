@@ -231,6 +231,14 @@ function isCompleteSourceSnapshotMarker(
   return marker?.identity !== undefined && marker.version !== undefined;
 }
 
+async function renewPreviewConfigSourceSnapshot(adapter: RuntimeAdapter): Promise<void> {
+  if (adapter.fs.ensureSourceSnapshotFresh) {
+    await adapter.fs.ensureSourceSnapshotFresh("config-load");
+    return;
+  }
+  await adapter.fs.refreshSourceSnapshot?.("config-load");
+}
+
 async function resolvePreviewConfigFreshness(
   opts: AdapterResolutionOptions,
   projectDir: string,
@@ -257,7 +265,7 @@ async function resolvePreviewConfigFreshness(
   // Renew the normal lease before classifying static ownership. Refreshing the
   // adapter after this probe could remove a public file and let the request
   // fall through to document rendering without strict snapshot binding.
-  await adapter.fs.ensureSourceSnapshotFresh?.("config-load");
+  await renewPreviewConfigSourceSnapshot(adapter);
   const beforeProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
   const staticOwned = await hasPublishedStaticFile(projectDir, adapter, pathname);
   const afterProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
@@ -440,7 +448,7 @@ export async function resolveAdapter(
               opts.projectSlug!,
             );
           } else if (previewConfigFreshness === "normal") {
-            await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
+            await renewPreviewConfigSourceSnapshot(effectiveAdapter);
           }
 
           try {

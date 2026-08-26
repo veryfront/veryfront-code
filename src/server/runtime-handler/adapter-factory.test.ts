@@ -985,7 +985,8 @@ describe("adapter-factory", () => {
     });
 
     it("keeps extensionless build-output files on the normal freshness lease", async () => {
-      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      let buildFileExists = false;
+      const freshnessCalls: Array<string | undefined> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
         "/base/project/dist/robots": { isDirectory: false, isFile: true },
@@ -995,7 +996,6 @@ describe("adapter-factory", () => {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => false,
-        sourceSnapshotFreshnessOptionsVersion: 1 as const,
         runWithContext: (
           _slug: string,
           _token: string,
@@ -1008,12 +1008,19 @@ describe("adapter-factory", () => {
             environmentName?: string | null;
           },
         ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
-        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
-          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+        refreshSourceSnapshot: (reason?: string) => {
+          freshnessCalls.push(reason);
+          buildFileExists = true;
           return Promise.resolve();
         },
         getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
         getSourceSnapshotVersion: () => 1,
+        stat: (path: string) => {
+          if (path === "/base/project/dist/robots" && !buildFileExists) {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return base.fs.stat(path);
+        },
         readFile: (path: string) => {
           if (path !== "/veryfront.config.ts") {
             return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
@@ -1048,7 +1055,7 @@ describe("adapter-factory", () => {
         prepareHostedConfigContext: preparePreviewHostedConfigContext,
       });
 
-      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+      assertEquals(freshnessCalls, ["config-load"]);
       assertEquals(result.previewDocumentSourceSnapshot, {
         identity: "branch:mutable-config-project:main",
         version: 1,
