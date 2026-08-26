@@ -1015,6 +1015,19 @@ export function createEncryptedTokenStore(
       );
     },
 
+    async compareAndClearTokens(
+      serviceId: string,
+      userId: string,
+      expectedRevision: string,
+    ): Promise<boolean> {
+      if (typeof expectedRevision !== "string" || expectedRevision.length === 0) {
+        throw new TypeError("Expected OAuth token revision must be a non-empty string");
+      }
+      const current = await readTokenEntry(serviceId, userId);
+      if (!current || current.entry.revision !== expectedRevision) return false;
+      return backend.compareAndSwap(current.key, current.raw, null);
+    },
+
     withTokenRefreshLock<T>(
       serviceId: string,
       userId: string,
