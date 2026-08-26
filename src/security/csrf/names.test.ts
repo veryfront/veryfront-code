@@ -48,6 +48,11 @@ describe("security/csrf/names advertisement", () => {
       "reserved",
       "a caller must not configure a name inside the internal HTTP token namespace",
     );
+    assertEquals(
+      requireNonReservedCsrfCookieName("vf_csrf_http_forbidden"),
+      "vf_csrf_http_forbidden",
+      "an existing public name that cannot decode as a derived token must stay valid",
+    );
   });
 
   it("gives each origin its own advertisement cookie", () => {

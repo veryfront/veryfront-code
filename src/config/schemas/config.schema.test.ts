@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS } from "#veryfront/integrations/limits.ts";
-import { csrfNamesCookieName } from "#veryfront/security/csrf/names.ts";
+import { csrfHttpTokenCookieName, csrfNamesCookieName } from "#veryfront/security/csrf/names.ts";
 import {
   MAX_CORS_ORIGIN_COUNT,
   MAX_CORS_ORIGIN_LENGTH,
@@ -780,6 +780,15 @@ describe("configSchema", () => {
       validateVeryfrontConfig({ security: { csrf } }).security?.csrf,
       csrf,
     );
+    const prefixedCompatibilityConfig = {
+      ...csrf,
+      cookieName: "vf_csrf_http_forbidden",
+    };
+    assertEquals(
+      validateVeryfrontConfig({ security: { csrf: prefixedCompatibilityConfig } }).security?.csrf,
+      prefixedCompatibilityConfig,
+      "a pre-existing public prefix name remains valid when it cannot collide with a derived token",
+    );
   });
 
   it("rejects CSRF names and exclusion paths that are unsafe or non-canonical", () => {
@@ -812,7 +821,7 @@ describe("configSchema", () => {
         { cookieName: "csrf\r\nInjected" },
         { cookieName: "vf_csrf_names" },
         { cookieName: csrfNamesCookieName("https://example.test") },
-        { cookieName: "vf_csrf_http_forbidden" },
+        { cookieName: csrfHttpTokenCookieName("vf_csrf", "http://example.test") },
         { cookieName: "x".repeat(257) },
         { headerName: "" },
         { headerName: "x csrf" },

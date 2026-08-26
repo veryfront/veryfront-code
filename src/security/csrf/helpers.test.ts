@@ -1235,6 +1235,32 @@ describe("applyCsrfCookie name advertisement", () => {
     assertEquals(token.includes("Secure"), false);
   });
 
+  it("preserves a configured name that only resembles the derived HTTP namespace", () => {
+    const origin = "http://example.test:3000";
+    const configuredName = "vf_csrf_http_forbidden";
+    const tokenName = csrfHttpTokenCookieName(configuredName, origin);
+    const headers = new Headers();
+    applyCsrfCookie(
+      new Request(`${origin}/`, { headers: { accept: "text/html" } }),
+      headers,
+      { cookieName: configuredName, headerName: "x-custom-csrf" },
+    );
+
+    const tokenCookie = headers.getSetCookie().find((cookie) => cookie.startsWith(`${tokenName}=`));
+    assertExists(tokenCookie, "the compatible configured prefix must receive its HTTP token");
+    const token = tokenCookie.slice(tokenName.length + 1).split(";", 1)[0]!;
+    assertEquals(
+      validateCsrf(
+        new Request(`${origin}/api`, {
+          method: "POST",
+          headers: { cookie: `${tokenName}=${token}`, "x-custom-csrf": token },
+        }),
+        { cookieName: configuredName, headerName: "x-custom-csrf" },
+      ),
+      true,
+    );
+  });
+
   it("isolates an HTTP token when an HTTPS sibling owns the configured Secure name", () => {
     const httpsOrigin = "https://example.test:4000";
     const httpOrigin = "http://example.test:3000";

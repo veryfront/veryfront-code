@@ -7,6 +7,7 @@ import { deriveSecurityContext } from "../config.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { csrfHttpTokenCookieName } from "#veryfront/security/csrf/names.ts";
 
 function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
   return {
@@ -477,7 +478,7 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(body.includes("security.csrf"), false);
     });
 
-    it("names the configured cookie, header and helper in the local 403 body", async () => {
+    it("names the issued HTTP cookie, configured header and helper in the local 403 body", async () => {
       const ctx = createCtx();
       ctx.securityConfig = deriveSecurityContext(
         { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
@@ -488,7 +489,8 @@ describe("security/http/csrf/csrf-handler", () => {
       const result = await handler.handle(loopbackRequest("/api/cases"), ctx);
       const body = await result.response!.text();
 
-      assertStringIncludes(body, "my_csrf", "the local body must name the cookie in effect");
+      const tokenCookieName = csrfHttpTokenCookieName("my_csrf", "http://localhost:8000");
+      assertStringIncludes(body, tokenCookieName, "the local body must name the cookie in effect");
       assertStringIncludes(body, "x-my-csrf", "the local body must name the header in effect");
       assertStringIncludes(body, "csrfMutationHeaders");
       assertStringIncludes(body, "veryfront/index.client");
@@ -498,6 +500,24 @@ describe("security/http/csrf/csrf-handler", () => {
         false,
         "a project with configured names must not be told to use the default cookie",
       );
+    });
+
+    it("names a retained configured HTTP cookie when the request carries it", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const result = await handler.handle(
+        loopbackRequest("/api/cases", { cookie: "my_csrf=legacy-token" }),
+        ctx,
+      );
+      const body = await result.response!.text();
+
+      assertStringIncludes(body, "my_csrf", "the diagnostic must match retained legacy issuance");
+      assertEquals(body.includes("vf_csrf_http_"), false);
     });
 
     it("names the default cookie and header when the project configures neither", async () => {

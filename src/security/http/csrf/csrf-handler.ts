@@ -55,8 +55,10 @@ import { browserFacingOrigin, validateCsrf } from "../../csrf/helpers.ts";
 import {
   defaultCsrfCookieNameForOrigin,
   effectiveCsrfCookieNameForOrigin,
+  effectiveCsrfTokenCookieNameForOrigin,
   resolveCsrfNames,
 } from "../../csrf/names.ts";
+import { parseCookiesFromHeaders } from "#veryfront/utils/cookie-utils.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import type {
   HandlerContext,
@@ -114,6 +116,7 @@ function csrfValidationOptions(csrfConfig: CsrfSetting, req: Request) {
   const configured = typeof csrfConfig === "object" ? csrfConfig : undefined;
   const origin = browserFacingOrigin(req, isProxyTopologyTrusted());
   return {
+    origin,
     cookieName: effectiveCsrfCookieNameForOrigin(configured?.cookieName, origin),
     headerName: configured?.headerName,
   };
@@ -136,6 +139,17 @@ function localDevelopmentCsrfBody(csrfConfig: CsrfSetting, req: Request): string
         defaultCsrfCookieNameForOrigin(new URL(req.url).origin),
       headerName: configured?.headerName,
     }));
+    let cookies: Record<string, string>;
+    try {
+      cookies = parseCookiesFromHeaders(req.headers);
+    } catch {
+      cookies = {};
+    }
+    cookieName = effectiveCsrfTokenCookieNameForOrigin(
+      cookieName,
+      configured.origin,
+      Boolean(cookies[cookieName]),
+    );
   } catch {
     // Unusable names are a configuration error, not something to describe back.
     return CSRF_FORBIDDEN_BODY;

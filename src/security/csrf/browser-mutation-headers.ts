@@ -11,10 +11,10 @@
 
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 import {
-  csrfHttpTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
   effectiveCsrfCookieNameForOrigin,
+  effectiveCsrfTokenCookieNameForOrigin,
   resolveCsrfNames,
 } from "./names.ts";
 
@@ -89,12 +89,13 @@ export function csrfMutationHeadersFor(
     const resolvedUrl = new URL(requestUrl, facts.baseURI);
     if (resolvedUrl.origin !== facts.origin) return headers;
     let token = cookies[cookieName];
-    if (
-      !token && options.cookieName !== undefined &&
-      !cookieName.startsWith("__Host-") && !cookieName.startsWith("__Secure-") &&
-      new URL(facts.origin).protocol === "http:"
-    ) {
-      token = cookies[csrfHttpTokenCookieName(cookieName, facts.origin)];
+    if (!token) {
+      const tokenCookieName = effectiveCsrfTokenCookieNameForOrigin(
+        cookieName,
+        facts.origin,
+        false,
+      );
+      token = cookies[tokenCookieName];
     }
     if (token) headers.set(headerName, token);
   } catch {

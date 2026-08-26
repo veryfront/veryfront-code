@@ -167,6 +167,25 @@ describe("csrfMutationHeadersFor", () => {
     assertEquals(headers.get("x-explicit"), "tok-explicit");
   });
 
+  it("recovers a derived HTTP default when its advertisement is missing", () => {
+    const origin = "http://app.test";
+    const cookieName = csrfHttpTokenCookieName("vf_csrf", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${cookieName}=tok-http`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+    );
+
+    assertEquals(
+      headers.get(DEFAULT_CSRF_HEADER_NAME),
+      "tok-http",
+      "evicting discovery must not strand an otherwise valid deterministic HTTP token",
+    );
+  });
+
   it("normalizes an explicit documented default for a plain HTTP origin", () => {
     const origin = "http://app.test";
     const headers = csrfMutationHeadersFor(

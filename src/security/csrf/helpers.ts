@@ -21,6 +21,7 @@ import {
   DEFAULT_CSRF_COOKIE_NAME,
   DEFAULT_CSRF_HEADER_NAME,
   effectiveCsrfCookieNameForOrigin,
+  effectiveCsrfTokenCookieNameForOrigin,
   encodeCsrfNamesAdvertisement,
   requireCsrfName,
   requireNonReservedCsrfCookieName,
@@ -238,13 +239,13 @@ export function applyCsrfCookie(
     /* expected: malformed cookie header — issue a fresh token */
     cookies = {};
   }
-  const browserProtocol = new URL(browserOrigin).protocol;
   const configuredToken = cookies[configuredCookieName];
-  const cookieName = configuredToken || browserProtocol !== "http:" ||
-      configuredCookieName.startsWith("__Host-") ||
-      configuredCookieName.startsWith("__Secure-")
-    ? configuredCookieName
-    : csrfHttpTokenCookieName(configuredCookieName, browserOrigin);
+  const cookieName = effectiveCsrfTokenCookieNameForOrigin(
+    configuredCookieName,
+    browserOrigin,
+    Boolean(configuredToken),
+  );
+  const browserProtocol = new URL(browserOrigin).protocol;
   const secureAdvertisement = cookieName.startsWith("__Host-") ||
     browserProtocol === "https:";
   const secureToken = cookieName.startsWith("__Secure-") || secureAdvertisement;
