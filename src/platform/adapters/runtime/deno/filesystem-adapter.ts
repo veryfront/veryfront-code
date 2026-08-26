@@ -142,7 +142,10 @@ function createClosedWatcher(): FileWatcher {
 
 export class DenoFileSystemAdapter implements FileSystemAdapter {
   constructor(options: DenoFileSystemCapabilityOptions = {}) {
-    const nodeCompatible = new NodeCompatibleFileSystemAdapter(undefined, options);
+    const nodeCompatible = new NodeCompatibleFileSystemAdapter(undefined, {
+      ...options,
+      windowsSnapshotIdentity: true,
+    });
     if (Object.hasOwn(nodeCompatible, "readFileSnapshotWithinLimit")) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {
         value: nodeCompatible.readFileSnapshotWithinLimit,

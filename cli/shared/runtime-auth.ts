@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "veryfront/platform";
+import { getEnv, setEnv } from "#cli/process-env";
 import { readToken } from "../auth/token-store.ts";
 import { readConfigFile } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";

@@ -7,12 +7,8 @@
  * @module cli/shared/update-check
  */
 
-import {
-  createFileSystem,
-  type FileSystem,
-  type HostRuntime,
-  liveHostRuntime,
-} from "veryfront/platform";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import { join } from "veryfront/platform/path";
 import { getEnvironmentConfig } from "veryfront/config";
 import { isJsonMode } from "./json-output.ts";

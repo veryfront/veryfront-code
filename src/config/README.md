@@ -195,7 +195,7 @@ src/config/
 
 ```typescript
 import { getConfig } from "#veryfront/config";
-import { runtime } from "#veryfront/platform";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const config = await getConfig(projectDir, await runtime.get());
 ```

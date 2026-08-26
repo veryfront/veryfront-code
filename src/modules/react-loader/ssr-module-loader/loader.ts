@@ -65,7 +65,6 @@ import {
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
-import { registerCSSImport } from "../css-import-collector.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
 import {
@@ -78,6 +77,14 @@ import { composeAbortSignals } from "#veryfront/extensions/abort-signal.ts";
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
 const MAX_REJECTED_IN_PROGRESS_RETRIES = 1;
+const reflectApply = Reflect.apply;
+const arrayPush = Array.prototype.push;
+
+function appendArrayValues<T>(target: T[], values: readonly T[]): void {
+  for (let index = 0; index < values.length; index++) {
+    reflectApply(arrayPush, target, [values[index]!]);
+  }
+}
 
 class InProgressTransformWaitTimeoutError extends Error {
   constructor(filePath: string) {
@@ -990,12 +997,12 @@ export class SSRModuleLoader {
 
         // Register CSS imports for later inclusion in HTML output.
         // CSS files are not JS modules — skip them in the dependency graph.
-        for (const cssImport of parseResult.cssImports) {
-          registerCSSImport(cssImport.absolutePath);
+        for (let index = 0; index < parseResult.cssImports.length; index++) {
+          this.depValidator.registerContainedCSSImport(parseResult.cssImports[index]!);
         }
 
         if (parseResult.missing.length > 0) {
-          this.depValidator.missingDependencies.push(...parseResult.missing);
+          appendArrayValues(this.depValidator.missingDependencies, parseResult.missing);
         }
 
         if (parseResult.imports.length > 0) {
@@ -1011,7 +1018,7 @@ export class SSRModuleLoader {
               missing: preflightMissing.map((m) => m.specifier),
               depth,
             });
-            this.depValidator.missingDependencies.push(...preflightMissing);
+            appendArrayValues(this.depValidator.missingDependencies, preflightMissing);
             parseResult = { ...parseResult, imports: validImports };
           }
         }

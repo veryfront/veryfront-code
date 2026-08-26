@@ -14,7 +14,17 @@ import {
   snapshotCacheRevisionResult,
 } from "./capabilities.ts";
 import type { CacheBackend, RevisionedCacheBackend } from "./types.ts";
+import type {
+  CacheReadOptions as PublicCacheReadOptions,
+  ResolvedCacheAuthority as PublicResolvedCacheAuthority,
+} from "veryfront/extensions/distributed/cache-support";
 import * as distributedCacheSupport from "../extensions/distributed/cache-support.ts";
+
+const verifyPublicCacheSupportTypes = (
+  options: PublicCacheReadOptions,
+  authority: PublicResolvedCacheAuthority,
+): void => options.onAuthority?.(authority);
+void verifyPublicCacheSupportTypes;
 
 function createOrdinaryBackend(): CacheBackend {
   return {

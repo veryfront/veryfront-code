@@ -9,7 +9,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
   refreshLoggerConfig,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import { SecurityConfigLoader } from "../http/config.ts";
 
 const testSuite = isDeno ? describe : describe.skip;

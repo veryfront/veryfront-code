@@ -64,6 +64,7 @@ describe("tracing", () => {
     });
 
     it("should add an error event without raw diagnostic text", () => {
+      const attributeCalls: Array<Record<string, string | number>> = [];
       const eventCalls: Array<{
         name: string;
         attributes: Record<string, string | number>;
@@ -71,7 +72,9 @@ describe("tracing", () => {
 
       const mockSpan: Span = {
         setStatus: () => {},
-        setAttributes: () => {},
+        setAttributes: (attributes: unknown) => {
+          attributeCalls.push(attributes as Record<string, string | number>);
+        },
         addEvent: (name: string, attributes?: unknown) => {
           eventCalls.push({
             name,
@@ -93,6 +96,18 @@ describe("tracing", () => {
       assertEquals(event.attributes["error.detail"], undefined);
       assertEquals(event.attributes["error.suggestion"], undefined);
       assertEquals(JSON.stringify(eventCalls).includes("Component threw during render"), false);
+
+      const attributes = firstCall(attributeCalls);
+      assertEquals(
+        Object.keys(attributes).sort(),
+        ["error.category", "error.slug", "error.status"],
+        "span attributes must carry identity fields only",
+      );
+      assertEquals(
+        JSON.stringify(attributeCalls).includes("Component threw during render"),
+        false,
+        "span attributes must not carry raw diagnostic text",
+      );
     });
 
     it("should handle errors without detail or suggestion", () => {

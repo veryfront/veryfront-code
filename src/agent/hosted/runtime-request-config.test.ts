@@ -179,6 +179,49 @@ Deno.test("resolveHostedRuntimeRequestConfig prefers request model over forwarde
   assertEquals(result.requestedModel, "veryfront-cloud/openai/gpt-5.2");
 });
 
+describe("explicit hosted runtime tool denials", () => {
+  it("resolveHostedRuntimeRequestConfig carries explicit tool denials through", () => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { forwardedProps: {} },
+      agentConfig: createAgentConfig({
+        deniedTools: ["execute_skill_script", "load_skill", "load_skill_reference"],
+      }),
+      resolveModelId: (model) => model,
+    });
+
+    assertEquals(result.deniedToolNames, [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  });
+
+  it("resolveHostedRuntimeRequestConfig fails closed for tools true with denials", () => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { forwardedProps: {} },
+      agentConfig: createAgentConfig({
+        tools: true,
+        deniedTools: ["update_file"],
+      }),
+      resolveModelId: (model) => model,
+    });
+
+    assertEquals(result.requestedAllowedTools, []);
+    assertEquals(result.includeRuntimeEssentialToolsWhenEmpty, false);
+    assertEquals(result.deniedToolNames, ["update_file"]);
+  });
+
+  it("resolveHostedRuntimeRequestConfig resolves no denials when none are configured", () => {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { forwardedProps: {} },
+      agentConfig: createAgentConfig(),
+      resolveModelId: (model) => model,
+    });
+
+    assertEquals(result.deniedToolNames, undefined);
+  });
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig resolves overrides, thinking, max steps, and client profile", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: {

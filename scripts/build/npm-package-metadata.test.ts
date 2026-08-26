@@ -82,7 +82,7 @@ it("keeps host environment controls outside public platform exports", async () =
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
   const paths = tsconfig.compilerOptions.paths as Record<string, string[]>;
-  const publicEnvModule = "./src/platform/compat/process/env-public.ts";
+  const publicEnvModule = "./src/platform/env.ts";
 
   assertEquals(exports["./platform/env"], publicEnvModule);
   assertEquals(imports["veryfront/platform/env"], publicEnvModule);
@@ -811,6 +811,11 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "CodeParser was not registered");
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
+    assertStringIncludes(source, "deno eval --node-modules-dir=auto");
+    assertStringIncludes(
+      source,
+      "Deno could not load the packed bundler extension",
+    );
     assertStringIncludes(source, "app/page.tsx");
     assertStringIncludes(source, "materializeScaffold");
     assertStringIncludes(source, "template: 'ai-agent'");

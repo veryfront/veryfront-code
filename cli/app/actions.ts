@@ -12,7 +12,8 @@
 
 import { openBrowser } from "../auth/browser.ts";
 import { createFileSystem } from "veryfront/platform";
-import { getOsType, runCommand } from "veryfront/platform";
+import { getOsType } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import { formatError } from "../utils/string.ts";
 import { dirname, join } from "veryfront/platform/path";
 import type { ProjectInfo } from "./state.ts";

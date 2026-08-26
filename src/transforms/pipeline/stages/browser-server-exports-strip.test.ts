@@ -11,7 +11,10 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
-import { getErrorCollector, resetErrorCollector } from "#veryfront/observability";
+import {
+  getErrorCollector,
+  resetErrorCollector,
+} from "#veryfront/observability/error-collector.ts";
 import {
   browserServerExportsStripInternals,
   browserServerExportsStripPlugin,

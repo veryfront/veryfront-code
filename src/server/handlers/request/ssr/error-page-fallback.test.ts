@@ -264,27 +264,21 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
     it("renders with the React version configured for the project", async () => {
       const adapter = await getAdapter();
       const statPaths: string[] = [];
-      const fsWithProjectRelativeResolution = new Proxy(adapter.fs, {
-        get(target, property, receiver) {
-          if (property === "resolveFile") {
-            return () => Promise.resolve("src/error-pages/404.tsx");
-          }
-          if (property === "stat") {
-            return (path: string) => {
-              statPaths.push(path);
-              return target.stat(path);
-            };
-          }
-          const value = Reflect.get(target, property, receiver);
-          return typeof value === "function" ? value.bind(target) : value;
+      const fsWithProjectRelativeResolution = Object.create(adapter.fs, {
+        resolveFile: {
+          value: () => Promise.resolve("src/error-pages/404.tsx"),
+          enumerable: true,
+        },
+        stat: {
+          value: (path: string) => {
+            statPaths.push(path);
+            return adapter.fs.stat(path);
+          },
+          enumerable: true,
         },
       });
-      const adapterWithoutResolveFile = new Proxy(adapter, {
-        get(target, property, receiver) {
-          if (property === "fs") return fsWithProjectRelativeResolution;
-          const value = Reflect.get(target, property, receiver);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
+      const adapterWithoutResolveFile = Object.create(adapter, {
+        fs: { value: fsWithProjectRelativeResolution, enumerable: true },
       }) as RuntimeAdapter;
       const loadedVersions: string[] = [];
       const server = (marker: string) => ({

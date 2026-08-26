@@ -111,6 +111,33 @@ describe("wrap-unknown", () => {
       assertEquals(context.action, "fetch");
     });
 
+    it("should redact credentials and detach the caller context", () => {
+      const callerContext: Record<string, unknown> = {
+        authorization: "Bearer <TOKEN>",
+        userId: 1,
+      };
+      const wrapped = wrapUnknownError(new Error("boom"), callerContext);
+
+      callerContext.userId = 2;
+      const context = getContext(wrapped);
+
+      assertEquals(
+        context.authorization,
+        "[REDACTED]",
+        "credential-bearing context keys must be redacted before attachment",
+      );
+      assertEquals(
+        context.userId,
+        1,
+        "the attached context must be a detached snapshot, not the caller's object",
+      );
+      assertEquals(
+        context === callerContext,
+        false,
+        "the error must not retain the caller's object identity",
+      );
+    });
+
     it("should preserve Error cause", () => {
       const originalError = new Error("Original");
       const wrapped = wrapUnknownError(originalError);
@@ -213,6 +240,64 @@ describe("wrap-unknown", () => {
 
       assertEquals(wrapped.slug, "config-not-found");
       assertEquals(wrapped.detail, "Build failed: Missing file");
+      assertEquals(wrapped.status, 404, "wrapped error keeps the original HTTP status");
+      assertEquals(wrapped.category, "CONFIG", "wrapped error keeps the original category");
+      assertEquals(
+        wrapped.title,
+        "Configuration file not found",
+        "wrapped error keeps the registry title",
+      );
+    });
+
+    it("should preserve the remaining identity fields of a VeryfrontError", () => {
+      const error = new VeryfrontError("boom", {
+        slug: "test-error",
+        category: "GENERAL",
+        status: 503,
+        title: "Test",
+        suggestion: "Retry",
+        exitCode: 2,
+        instance: "/custom/instance",
+      });
+
+      const wrapped = wrapWithContext(error, "Build failed");
+
+      assertEquals(wrapped.status, 503, "wrapped error keeps the original HTTP status");
+      assertEquals(wrapped.suggestion, "Retry", "wrapped error keeps the original suggestion");
+      assertEquals(wrapped.exitCode, 2, "wrapped error keeps the original CLI exit code");
+      assertEquals(
+        wrapped.instance,
+        "/custom/instance",
+        "wrapped error keeps the original instance",
+      );
+    });
+
+    it("should degrade a tampered VeryfrontError to unknown-error", () => {
+      const error = new VeryfrontError("boom", {
+        slug: "config-not-found",
+        category: "CONFIG",
+        status: 404,
+        title: "Configuration file not found",
+      });
+      Object.defineProperty(error, "status", { get: () => 500, configurable: true });
+
+      const wrapped = wrapWithContext(error, "Build failed", { step: "init" });
+
+      assertEquals(
+        wrapped.slug,
+        "unknown-error",
+        "a tampered VeryfrontError must degrade to unknown-error",
+      );
+      assertEquals(
+        wrapped.detail,
+        "Build failed: Unknown error",
+        "detail must keep the caller message",
+      );
+      assertEquals(
+        getContext(wrapped).step,
+        "init",
+        "supplied context must survive the degradation branch",
+      );
     });
 
     it("should treat proxied VeryfrontErrors as opaque without reading fields", () => {
@@ -243,6 +328,33 @@ describe("wrap-unknown", () => {
       const wrapped = wrapWithContext(error, "Operation failed", { step: "init" });
 
       assertEquals(getContext(wrapped).step, "init");
+    });
+
+    it("should redact credentials and detach the caller context", () => {
+      const callerContext: Record<string, unknown> = {
+        authorization: "Bearer <TOKEN>",
+        userId: 1,
+      };
+      const wrapped = wrapWithContext(new Error("boom"), "Operation failed", callerContext);
+
+      callerContext.userId = 2;
+      const context = getContext(wrapped);
+
+      assertEquals(
+        context.authorization,
+        "[REDACTED]",
+        "credential-bearing context keys must be redacted before attachment",
+      );
+      assertEquals(
+        context.userId,
+        1,
+        "the attached context must be a detached snapshot, not the caller's object",
+      );
+      assertEquals(
+        context === callerContext,
+        false,
+        "the error must not retain the caller's object identity",
+      );
     });
 
     it("should preserve existing context in VeryfrontError", () => {

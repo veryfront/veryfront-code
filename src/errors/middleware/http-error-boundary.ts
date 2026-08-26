@@ -105,11 +105,14 @@ export function errorToRFC9457Response(
 
   const body = createSafeProblemDetails(error, instance);
 
+  // A cause can carry arbitrary upstream payloads the diagnostic sanitizer
+  // cannot make safe, so responses omit it in every environment.
+  delete body.cause;
+
   // Apply environment-specific filtering
   if (!isDev) {
     // Production: omit stack
     delete body.stack;
-    delete body.cause;
 
     // Production: omit detail for 5xx errors (may contain sensitive info)
     if (body.status >= 500) {

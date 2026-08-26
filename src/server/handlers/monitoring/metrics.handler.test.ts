@@ -4,10 +4,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { MetricsHandler } from "./metrics.handler.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { metrics } from "#veryfront/observability";
 
-function createHandler(): MetricsHandler {
-  return new MetricsHandler();
+function createHandler(
+  metricsRuntime?: ConstructorParameters<typeof MetricsHandler>[0],
+): MetricsHandler {
+  return new MetricsHandler(metricsRuntime);
 }
 
 function createLoopbackRequest(input: string | URL, init?: RequestInit): Request {
@@ -92,22 +93,17 @@ describe("server/handlers/monitoring/metrics", () => {
     });
 
     it("should return 500 when gathering metrics fails", async () => {
-      const handler = createHandler();
+      const handler = createHandler({
+        snapshot: () => {
+          throw new Error("snapshot unavailable");
+        },
+      });
       const req = createLoopbackRequest("http://localhost/_metrics");
-      const originalSnapshot = metrics.snapshot;
-      metrics.snapshot = () => {
-        throw new Error("snapshot unavailable");
-      };
+      const result = await handler.handle(req, localCtx);
 
-      try {
-        const result = await handler.handle(req, localCtx);
-
-        assertExists(result.response);
-        assertEquals(result.response.status, 500, "a snapshot failure must surface as 500");
-        assertEquals(await result.response.text(), "Failed to gather metrics");
-      } finally {
-        metrics.snapshot = originalSnapshot;
-      }
+      assertExists(result.response);
+      assertEquals(result.response.status, 500, "a snapshot failure must surface as 500");
+      assertEquals(await result.response.text(), "Failed to gather metrics");
     });
   });
 });

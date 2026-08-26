@@ -14,7 +14,7 @@ import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { resetInteractiveMode, setNonInteractive } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { setLoggerPreset } from "veryfront/utils/logger";
+import { setLoggerPreset } from "#cli/logger-config";
 import type {
   DeployEvent,
   DeployPlan,

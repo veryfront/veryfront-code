@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "#veryfront/utils";
+import { createHash, type Hash } from "node:crypto";
 import { createError, toError } from "#veryfront/errors";
 import type {
   CacheStats,
@@ -11,7 +12,11 @@ import type {
   StyleCallbacks,
   StylePregenerationFile,
 } from "./types.ts";
-import type { FileInfo, ResolveFileOptions } from "../../base.ts";
+import type {
+  FileInfo,
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -54,9 +59,55 @@ import {
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
+const SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS = 32 * 1_024;
+const SOURCE_SNAPSHOT_YIELD_CODE_UNITS = 2 * 1_024 * 1_024;
+const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
+const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
+const DateNow = Date.now;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicPerformance = performance;
+const PerformanceNow = IntrinsicPerformance.now;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
+const IntrinsicMap = Map;
+const IntrinsicUint8Array = Uint8Array;
+const IntrinsicPromise = Promise;
+const PromiseAll = IntrinsicPromise.all;
+const PromisePrototypeCatch = IntrinsicPromise.prototype.catch;
+const PromisePrototypeThen = IntrinsicPromise.prototype.then;
+const PromiseResolve = IntrinsicPromise.resolve;
+const IntrinsicSetTimeout = globalThis.setTimeout;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const SourceSnapshotHashPrototype = IntrinsicReflectApply(
+  IntrinsicObjectGetPrototypeOf,
+  Object,
+  [createHash("sha256")],
+) as Hash;
+const HashPrototypeUpdate = SourceSnapshotHashPrototype.update;
+const HashPrototypeDigest = SourceSnapshotHashPrototype.digest;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
+
+function currentTime(): number {
+  return IntrinsicReflectApply(DateNow, Date, []) as number;
+}
+
+function performanceNow(): number {
+  return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function formatDuration(durationMs: number): string {
+  return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
+function ignorePromiseRejection(promise: Promise<unknown>): void {
+  IntrinsicReflectApply(PromisePrototypeCatch, promise, [() => undefined]);
+}
 
 function nextSourceSnapshotGeneration(): number {
   if (sourceSnapshotGeneration >= Number.MAX_SAFE_INTEGER) {
@@ -76,23 +127,241 @@ interface SourceSnapshotFile {
   updated_at?: string;
 }
 
+type SourceSnapshotFileKey = keyof SourceSnapshotFile;
+type SourceSnapshotRecord = readonly [
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+];
+function getOwnSourceSnapshotValue(
+  file: SourceSnapshotFile,
+  key: SourceSnapshotFileKey,
+): string | number | null {
+  const descriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [file, key],
+  ) as PropertyDescriptor | undefined;
+  if (!descriptor || !("value" in descriptor)) return null;
+  return typeof descriptor.value === "string" || typeof descriptor.value === "number"
+    ? descriptor.value
+    : null;
+}
+
 function sourceSnapshotsEqual(
   previous: SourceSnapshotFile[] | undefined,
   next: SourceSnapshotFile[],
 ): boolean {
   if (!previous || previous.length !== next.length) return false;
 
-  const previousByPath = new Map(previous.map((file) => [file.path, file]));
-  return next.every((file) => {
-    const prior = previousByPath.get(file.path);
-    return prior !== undefined &&
-      prior.id === file.id &&
-      prior.version_id === file.version_id &&
-      prior.content === file.content &&
-      prior.type === file.type &&
-      prior.size === file.size &&
-      prior.updated_at === file.updated_at;
+  const previousByPath = new IntrinsicMap<string, SourceSnapshotFile>();
+  for (let index = 0; index < previous.length; index++) {
+    const file = previous[index]!;
+    const path = getOwnSourceSnapshotValue(file, "path");
+    if (typeof path !== "string") return false;
+    IntrinsicReflectApply(MapPrototypeSet, previousByPath, [path, file]);
+  }
+  for (let index = 0; index < next.length; index++) {
+    const file = next[index]!;
+    const path = getOwnSourceSnapshotValue(file, "path");
+    if (typeof path !== "string") return false;
+    const prior = IntrinsicReflectApply(MapPrototypeGet, previousByPath, [path]) as
+      | SourceSnapshotFile
+      | undefined;
+    if (
+      prior === undefined ||
+      getOwnSourceSnapshotValue(prior, "id") !== getOwnSourceSnapshotValue(file, "id") ||
+      getOwnSourceSnapshotValue(prior, "version_id") !==
+        getOwnSourceSnapshotValue(file, "version_id") ||
+      getOwnSourceSnapshotValue(prior, "content") !==
+        getOwnSourceSnapshotValue(file, "content") ||
+      getOwnSourceSnapshotValue(prior, "type") !== getOwnSourceSnapshotValue(file, "type") ||
+      getOwnSourceSnapshotValue(prior, "size") !== getOwnSourceSnapshotValue(file, "size") ||
+      getOwnSourceSnapshotValue(prior, "updated_at") !==
+        getOwnSourceSnapshotValue(file, "updated_at")
+    ) return false;
+    IntrinsicReflectApply(MapPrototypeDelete, previousByPath, [path]);
+  }
+  return true;
+}
+
+function captureSourceSnapshotRecord(file: SourceSnapshotFile): SourceSnapshotRecord {
+  return [
+    getOwnSourceSnapshotValue(file, "path"),
+    getOwnSourceSnapshotValue(file, "id"),
+    getOwnSourceSnapshotValue(file, "version_id"),
+    getOwnSourceSnapshotValue(file, "content"),
+    getOwnSourceSnapshotValue(file, "type"),
+    getOwnSourceSnapshotValue(file, "size"),
+    getOwnSourceSnapshotValue(file, "updated_at"),
+  ];
+}
+
+interface SourceSnapshotHashBudget {
+  codeUnits: number;
+}
+
+function yieldSourceSnapshotTask(): Promise<void> {
+  return new IntrinsicPromise((resolve) => {
+    IntrinsicSetTimeout(resolve, 0);
   });
+}
+
+async function continueSourceSnapshotHashString(
+  hash: Hash,
+  value: string,
+  start: number,
+  budget: SourceSnapshotHashBudget,
+): Promise<void> {
+  await yieldSourceSnapshotTask();
+  budget.codeUnits = 0;
+  for (let chunkStart = start; chunkStart < value.length;) {
+    const remaining = value.length - chunkStart;
+    const codeUnitCount = SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS < remaining
+      ? SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS
+      : remaining;
+    const bytes = new IntrinsicUint8Array(codeUnitCount * 2);
+    for (let offset = 0; offset < codeUnitCount; offset++) {
+      const codeUnit = IntrinsicReflectApply(
+        StringPrototypeCharCodeAt,
+        value,
+        [chunkStart + offset],
+      ) as number;
+      bytes[offset * 2] = codeUnit >>> 8;
+      bytes[offset * 2 + 1] = codeUnit & 0xff;
+    }
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [bytes]);
+    chunkStart += codeUnitCount;
+    budget.codeUnits += codeUnitCount;
+    if (budget.codeUnits >= SOURCE_SNAPSHOT_YIELD_CODE_UNITS && chunkStart < value.length) {
+      await yieldSourceSnapshotTask();
+      budget.codeUnits = 0;
+    }
+  }
+}
+
+function updateSourceSnapshotHashString(hash: Hash, value: string): void {
+  for (let start = 0; start < value.length; start += SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS) {
+    const remaining = value.length - start;
+    const codeUnitCount = SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS < remaining
+      ? SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS
+      : remaining;
+    const bytes = new IntrinsicUint8Array(codeUnitCount * 2);
+    for (let offset = 0; offset < codeUnitCount; offset++) {
+      const codeUnit = IntrinsicReflectApply(
+        StringPrototypeCharCodeAt,
+        value,
+        [start + offset],
+      ) as number;
+      bytes[offset * 2] = codeUnit >>> 8;
+      bytes[offset * 2 + 1] = codeUnit & 0xff;
+    }
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [bytes]);
+  }
+}
+
+function updateSourceSnapshotHashStringBounded(
+  hash: Hash,
+  value: string,
+  budget: SourceSnapshotHashBudget,
+): Promise<void> | undefined {
+  for (let start = 0; start < value.length; start += SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS) {
+    const remaining = value.length - start;
+    const codeUnitCount = SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS < remaining
+      ? SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS
+      : remaining;
+    const bytes = new IntrinsicUint8Array(codeUnitCount * 2);
+    for (let offset = 0; offset < codeUnitCount; offset++) {
+      const codeUnit = IntrinsicReflectApply(
+        StringPrototypeCharCodeAt,
+        value,
+        [start + offset],
+      ) as number;
+      bytes[offset * 2] = codeUnit >>> 8;
+      bytes[offset * 2 + 1] = codeUnit & 0xff;
+    }
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [bytes]);
+    budget.codeUnits += codeUnitCount;
+    if (budget.codeUnits >= SOURCE_SNAPSHOT_YIELD_CODE_UNITS) {
+      return continueSourceSnapshotHashString(hash, value, start + codeUnitCount, budget);
+    }
+  }
+  return undefined;
+}
+
+function addSourceSnapshotDigest(
+  accumulator: Uint8Array,
+  digest: Uint8Array,
+): void {
+  let carry = 0;
+  for (let index = SOURCE_SNAPSHOT_DIGEST_BYTES - 1; index >= 0; index--) {
+    const sum = accumulator[index]! + digest[index]! + carry;
+    accumulator[index] = sum & 0xff;
+    carry = sum >>> 8;
+  }
+}
+
+async function computeSourceSnapshotFingerprint(
+  files: SourceSnapshotFile[],
+): Promise<string | undefined> {
+  // A modular sum of cryptographic per-record digests is independent of list
+  // order and keeps working memory constant. Reject invalid or repeated paths
+  // before hashing because filesystem indexing requires one record per path.
+  const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
+  const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
+  const seenPaths = new IntrinsicMap<string, true>();
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const record = captureSourceSnapshotRecord(files[fileIndex]!);
+    const path = record[0];
+    if (
+      typeof path !== "string" ||
+      IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
+    ) {
+      return undefined;
+    }
+    IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
+    const recordHash = createHash("sha256");
+    updateSourceSnapshotHashString(recordHash, "r");
+    for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
+      const value = record[valueIndex]!;
+      if (value === null) {
+        const pending = updateSourceSnapshotHashStringBounded(recordHash, "z", budget);
+        if (pending) await pending;
+        continue;
+      }
+      const serialized = `${value}`;
+      let pending = updateSourceSnapshotHashStringBounded(
+        recordHash,
+        typeof value === "number" ? "n" : "s",
+        budget,
+      );
+      if (pending) await pending;
+      pending = updateSourceSnapshotHashStringBounded(
+        recordHash,
+        `${serialized.length}:`,
+        budget,
+      );
+      if (pending) await pending;
+      pending = updateSourceSnapshotHashStringBounded(recordHash, serialized, budget);
+      if (pending) await pending;
+    }
+    const digest = IntrinsicReflectApply(HashPrototypeDigest, recordHash, []) as Uint8Array;
+    addSourceSnapshotDigest(accumulator, digest);
+    if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
+      await yieldSourceSnapshotTask();
+      budget.codeUnits = 0;
+    }
+  }
+  await yieldSourceSnapshotTask();
+  const fingerprintHash = createHash("sha256");
+  updateSourceSnapshotHashString(fingerprintHash, "veryfront-source-snapshot-multiset-v1");
+  updateSourceSnapshotHashString(fingerprintHash, `${files.length}:`);
+  IntrinsicReflectApply(HashPrototypeUpdate, fingerprintHash, [accumulator]);
+  return IntrinsicReflectApply(HashPrototypeDigest, fingerprintHash, ["hex"]) as string;
 }
 
 interface BranchSnapshotRecoveryOptions<T> {
@@ -115,6 +384,7 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
   readonly projectContextSemantics: "fixed" | undefined;
@@ -125,6 +395,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
+  private initializationGeneration = 0;
   private exactReadInitializationPromise: Promise<void> | null = null;
   private exactReadInitializationGeneration = 0;
 
@@ -165,8 +437,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private sourceSnapshotVersion = nextSourceSnapshotGeneration();
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
+  private sourceSnapshotFingerprint:
+    | { version: number; value: Promise<string | undefined> }
+    | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
-  private sourceSnapshotMutationTail: Promise<void> = Promise.resolve();
+  private sourceSnapshotMutationTail: Promise<void> = IntrinsicReflectApply(
+    PromiseResolve,
+    IntrinsicPromise,
+    [],
+  ) as Promise<void>;
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -192,7 +471,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.contentContext ? buildFileListCacheKey(this.contentContext) : undefined;
   }
 
-  private getCurrentSourceSnapshotIdentity(): string | undefined {
+  #getCurrentSourceSnapshotIdentity(): string | undefined {
     const context = this.contentContext;
     if (!context) return undefined;
 
@@ -273,7 +552,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       cacheKey,
       files,
       snapshotVersion: this.sourceSnapshotVersion,
-      retainedAt: Date.now(),
+      retainedAt: currentTime(),
     };
   }
 
@@ -301,7 +580,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
-    if (Date.now() - retained.retainedAt > this.fileListRetentionMs) {
+    if (currentTime() - retained.retainedAt > this.fileListRetentionMs) {
       logger.debug("Retained file list expired", { cacheKey });
       this.clearRetainedFileList();
       return undefined;
@@ -396,9 +675,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         );
         return Array.isArray(cached?.files);
       },
-      isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
+      isPersistentCacheInvalidated: (prefix: string) => this.#isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
-        this.isPersistentCacheInvalidated(
+        this.#isPersistentCacheInvalidated(
           buildFileCacheKeyPrefix({
             sourceType: "release",
             projectSlug: this.projectSlug,
@@ -465,7 +744,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
-    const initStartTime = performance.now();
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+
+    const initialization = this.#performInitialization();
+    const initializationGeneration = ++this.initializationGeneration;
+    this.initializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationGeneration === initializationGeneration) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  async #performInitialization(): Promise<void> {
+    const initStartTime = performanceNow();
     const projectSlug = this.client.getProjectSlug();
 
     logger.debug("initialize START", {
@@ -479,22 +776,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const fileListReadyPromise = new Promise<void>((resolve) => {
+    const fileListReadyPromise = new IntrinsicPromise<void>((resolve) => {
       this.fileListReadyResolve = resolve;
     });
     this.readOps.setFileListReadyPromise(fileListReadyPromise);
 
     logger.debug("Step 1: client.initialize START", { projectSlug });
-    const step1Start = performance.now();
+    const step1Start = performanceNow();
     await this.client.initialize();
     logger.debug("Step 1: client.initialize DONE", {
       projectSlug,
-      duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
+      duration: formatDuration(performanceNow() - step1Start),
     });
 
     const projectId = this.client.getProjectId();
     logger.debug("Step 2: getProject START", { projectSlug, projectId });
-    const step2Start = performance.now();
+    const step2Start = performanceNow();
 
     const cachedProject = this.client.getCachedProject();
     this.projectData = cachedProject ?? (await this.client.getProject(projectId));
@@ -505,13 +802,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
         projectSlug,
         provider: this.projectData.provider,
         layout: this.projectData.layout,
-        duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+        duration: formatDuration(performanceNow() - step2Start),
       },
     );
 
     if (!this.contentContext) {
       logger.debug("Step 3: resolveContentSource START", { projectSlug });
-      const step3Start = performance.now();
+      const step3Start = performanceNow();
       const resolvedContext = await resolveContentContext(
         this.client,
         this.contentSource,
@@ -521,7 +818,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       logger.debug("Step 3: resolveContentSource DONE", {
         projectSlug,
         sourceType: resolvedContext.sourceType,
-        duration: `${(performance.now() - step3Start).toFixed(2)}ms`,
+        duration: formatDuration(performanceNow() - step3Start),
       });
     } else {
       logger.debug("Step 3: Content context already set", {
@@ -549,7 +846,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     const cacheKey = buildFileListCacheKey(contentContext);
-    const initializationIdentity = this.getCurrentSourceSnapshotIdentity();
+    const initializationIdentity = this.#getCurrentSourceSnapshotIdentity();
     const initializationSnapshotVersion = this.sourceSnapshotVersion;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
@@ -557,10 +854,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const files = await fetchFileListForContext(this.client, contentContext);
       const fileSummary = summarizeFileList(files);
 
-      const initialSnapshotApplied = await this.runSourceSnapshotMutation(async () => {
+      const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
         const isSnapshotSuperseded = () =>
           this.contentContext !== contentContext ||
-          this.getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
+          this.#getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
           this.sourceSnapshotVersion !== initializationSnapshotVersion;
         if (isSnapshotSuperseded()) return false;
 
@@ -601,9 +898,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         fileSummary.sourceFilesWithContent > 0 &&
         this.shouldBackgroundPregenerateStyles()
       ) {
-        this.triggerCSSPregeneration(files).catch(() => {
-          // Error already logged in triggerCSSPregeneration
-        });
+        ignorePromiseRejection(this.triggerCSSPregeneration(files));
       }
 
       this.initialized = true;
@@ -611,7 +906,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       logger.debug("initialize COMPLETE", {
         projectSlug,
         fileCount: initialSnapshotApplied ? files.length : 0,
-        totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+        totalDuration: formatDuration(performanceNow() - initStartTime),
       });
 
       const initializedContext = this.contentContext;
@@ -647,7 +942,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private isPersistentCacheInvalidated(prefix: string): boolean {
+  #isPersistentCacheInvalidated(prefix: string): boolean {
     return isPrefixBeingInvalidated(prefix);
   }
 
@@ -658,23 +953,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
-  private getBranchMissRecoveryKey(path: string): string {
+  #getBranchMissRecoveryKey(path: string): string {
     const normalizedPath = this.normalizer.normalize(path);
     const branch = this.requestBranch ?? this.contentContext?.branch ?? "main";
     return `${this.projectSlug}:${branch}:${normalizedPath}`;
   }
 
-  private hasRecentBranchMissRecoveryFailure(key: string): boolean {
+  #hasRecentBranchMissRecoveryFailure(key: string): boolean {
     const failedAt = this.branchMissRecoveryFailures.get(key);
     if (!failedAt) return false;
 
-    if (Date.now() - failedAt < BRANCH_MISS_RECOVERY_FAILURE_TTL_MS) return true;
+    if (currentTime() - failedAt < BRANCH_MISS_RECOVERY_FAILURE_TTL_MS) return true;
 
     this.branchMissRecoveryFailures.delete(key);
     return false;
   }
 
-  private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
+  #shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
     // The index was built from a listing already fetched for this snapshot, and
@@ -689,11 +984,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // that window before recovery turns back on by itself.
     if (this.statOps.isIndexAuthoritative()) return false;
 
-    const recoveryKey = this.getBranchMissRecoveryKey(path);
-    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+    const recoveryKey = this.#getBranchMissRecoveryKey(path);
+    return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  private shouldRecoverBranchMissResult<T>(
+  #shouldRecoverBranchMissResult<T>(
     path: string,
     result: T,
     options?: BranchSnapshotRecoveryOptions<T>,
@@ -702,23 +997,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!options?.isRecoverableMissResult?.(result)) return false;
     if (
       options.requirePendingSourceInvalidation &&
-      !this.isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
+      !this.#isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
     ) {
       return false;
     }
 
-    const recoveryKey = this.getBranchMissRecoveryKey(path);
-    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+    const recoveryKey = this.#getBranchMissRecoveryKey(path);
+    return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  private async refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+  async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
     let recoveryPromise = this.branchMissRecoveryPromise;
     let ownsRecovery = false;
     let recoveryGeneration = this.branchMissRecoveryGeneration;
 
     if (!recoveryPromise) {
       const normalizedPath = this.normalizer.normalize(path);
-      recoveryPromise = this.refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
+      recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
       this.branchMissRecoveryPromise = recoveryPromise;
       recoveryGeneration = ++this.branchMissRecoveryGeneration;
       ownsRecovery = true;
@@ -733,20 +1028,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private async withBranchSnapshotRecovery<T>(
+  async #withBranchSnapshotRecovery<T>(
     path: string,
     operation: () => Promise<T>,
     options?: BranchSnapshotRecoveryOptions<T>,
   ): Promise<T> {
     try {
       const result = await operation();
-      if (!this.shouldRecoverBranchMissResult(path, result, options)) return result;
+      if (!this.#shouldRecoverBranchMissResult(path, result, options)) return result;
 
-      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after result miss", {
           path: this.normalizer.normalize(path),
           projectSlug: this.projectSlug,
@@ -758,17 +1053,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const retryResult = await operation();
       if (options?.isRecoverableMissResult?.(retryResult)) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
       }
       return retryResult;
     } catch (error) {
-      if (!this.shouldRecoverBranchMiss(path, error)) throw error;
+      if (!this.#shouldRecoverBranchMiss(path, error)) throw error;
 
-      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after not-found miss", {
           path: this.normalizer.normalize(path),
           projectSlug: this.projectSlug,
@@ -782,7 +1077,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return await operation();
       } catch (retryError) {
         if (isNotFoundLikeError(retryError)) {
-          this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+          this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         }
         throw retryError;
       }
@@ -835,7 +1130,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // the pre-poke listing would roll both the cache and this caller's
         // answer back to the older draft, so the write is serialized against
         // snapshot mutations and stands down when one won the race.
-        const applied = await this.runSourceSnapshotMutation(async () => {
+        const applied = await this.#runSourceSnapshotMutation(async () => {
           if (
             this.contentContext !== warmupContext ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion
@@ -875,9 +1170,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const fileSummary = summarizeFileList(files);
 
         if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
-          this.triggerCSSPregeneration(files).catch(() => {
-            // Error already logged in triggerCSSPregeneration
-          });
+          ignorePromiseRejection(this.triggerCSSPregeneration(files));
         }
 
         logger.debug("File list warmup complete", {
@@ -907,7 +1200,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupPromise = warmupPromise;
     this.fileListWarmupKey = effectiveCacheKey;
     // That collaborator only needs completion, not the payload.
-    this.readOps.setFileListReadyPromise(warmupPromise.then(() => {}));
+    this.readOps.setFileListReadyPromise(
+      IntrinsicReflectApply(PromisePrototypeThen, warmupPromise, [() => undefined]) as Promise<
+        void
+      >,
+    );
   }
 
   /**
@@ -921,6 +1218,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // listing arrives. Advance the generation immediately so an older warmup
     // cannot repopulate the cache or answer a waiting read in that window.
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
+    this.sourceSnapshotFingerprint = undefined;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -929,22 +1230,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private markSourceSnapshotChanged(
     files: SourceSnapshotFile[],
-    identity = this.getCurrentSourceSnapshotIdentity(),
+    identity = this.#getCurrentSourceSnapshotIdentity(),
   ): void {
     this.sourceSnapshotFiles = files;
     this.sourceSnapshotIdentity = identity;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
-    this.sourceSnapshotCheckedAt = Date.now();
+    this.sourceSnapshotCheckedAt = currentTime();
   }
 
-  private runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const mutation = this.sourceSnapshotMutationTail
-      .catch(() => undefined)
-      .then(operation);
-    this.sourceSnapshotMutationTail = mutation.then(
-      () => undefined,
-      () => undefined,
-    );
+  #runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const recovered = IntrinsicReflectApply(
+      PromisePrototypeCatch,
+      this.sourceSnapshotMutationTail,
+      [() => undefined],
+    ) as Promise<void>;
+    const mutation = IntrinsicReflectApply(PromisePrototypeThen, recovered, [operation]) as Promise<
+      T
+    >;
+    this.sourceSnapshotMutationTail = IntrinsicReflectApply(
+      PromisePrototypeThen,
+      mutation,
+      [() => undefined, () => undefined],
+    ) as Promise<void>;
     return mutation;
   }
 
@@ -954,7 +1261,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     expectedSnapshotVersion = this.sourceSnapshotVersion,
   ): Promise<number | undefined> {
     const expectedContext = this.contentContext;
-    return this.runSourceSnapshotMutation(async () => {
+    return this.#runSourceSnapshotMutation(async () => {
       if (
         !expectedContext ||
         this.contentContext !== expectedContext ||
@@ -994,7 +1301,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  private async invalidateDerivedSourceCaches(): Promise<void> {
+  async #invalidateDerivedSourceCaches(): Promise<void> {
     const projectId = this.client.getProjectId();
     const invalidations: Array<void | Promise<void>> = [];
 
@@ -1021,12 +1328,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       (invalidation): invalidation is Promise<void> => invalidation !== undefined,
     );
     if (pendingInvalidations.length > 0) {
-      await Promise.all(pendingInvalidations);
+      await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [pendingInvalidations]);
     }
   }
 
-  private async performSourceSnapshotRefresh(reason: string): Promise<void> {
-    await this.ensureInitialized();
+  async #performSourceSnapshotRefresh(reason: string): Promise<void> {
+    await this.#ensureInitialized();
 
     if (!this.contentContext) {
       logger.debug("Skipping source snapshot refresh without content context", {
@@ -1038,14 +1345,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const cacheKey = buildFileListCacheKey(this.contentContext);
     const refreshContext = this.contentContext;
-    const refreshIdentity = this.getCurrentSourceSnapshotIdentity();
+    const refreshIdentity = this.#getCurrentSourceSnapshotIdentity();
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
     const files = await fetchFileListForContext(this.client, refreshContext);
-    const result = await this.runSourceSnapshotMutation(async () => {
+    const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
-        this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
+        this.#getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
         this.sourceSnapshotVersion !== previousVersion;
       if (isSnapshotSuperseded()) {
         return { applied: false, sourceChanged: false };
@@ -1060,12 +1367,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.statOps.clearIndex();
         this.dirOps.clearTree();
 
-        await Promise.all([
+        await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [[
           this.cache.deleteByPrefixAsync(buildFileCacheKeyPrefix(refreshContext)),
           this.cache.deleteByPrefixAsync(buildStatCacheKeyPrefix(refreshContext)),
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
           this.cache.deleteAsync(cacheKey),
-        ]);
+        ]]);
         if (isSnapshotSuperseded()) {
           return { applied: false, sourceChanged: false };
         }
@@ -1078,7 +1385,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
 
       if (sourceChanged) {
-        await this.invalidateDerivedSourceCaches();
+        await this.#invalidateDerivedSourceCaches();
         if (isSnapshotSuperseded()) {
           await this.cache.deleteAsync(cacheKey);
           return { applied: false, sourceChanged: false };
@@ -1088,9 +1395,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // to the refresh singleflight until this point.
         this.markSourceSnapshotChanged(files, refreshIdentity);
       } else {
-        this.sourceSnapshotFiles = files;
+        // Equal listings keep the published array identity. A fingerprint may
+        // still be hashing this exact snapshot, and replacing an equal array
+        // would make that valid digest resolve unavailable without advancing
+        // the version that keys its cache.
         this.sourceSnapshotIdentity = refreshIdentity;
-        this.sourceSnapshotCheckedAt = Date.now();
+        this.sourceSnapshotCheckedAt = currentTime();
         // The API just confirmed this listing is current, so the index built
         // from it may answer "absent" on its own again. Skipping this leaves
         // the index expired after the first probe past
@@ -1121,9 +1431,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       fileSummary.sourceFilesWithContent > 0 &&
       this.shouldBackgroundPregenerateStyles()
     ) {
-      this.triggerCSSPregeneration(files).catch(() => {
-        // Error already logged in triggerCSSPregeneration
-      });
+      ignorePromiseRejection(this.triggerCSSPregeneration(files));
     }
 
     logger.info("Refreshed source snapshot", {
@@ -1141,11 +1449,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
-    await this.ensureInitialized();
+  async #refreshSourceSnapshot(reason: string): Promise<void> {
+    await this.#ensureInitialized();
 
     while (true) {
-      this.sourceSnapshotRefreshPromise ??= this.performSourceSnapshotRefresh(reason);
+      this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
       const refresh = this.sourceSnapshotRefreshPromise;
 
       try {
@@ -1156,7 +1464,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
       }
 
-      const currentIdentity = this.getCurrentSourceSnapshotIdentity();
+      const currentIdentity = this.#getCurrentSourceSnapshotIdentity();
       if (
         currentIdentity === undefined ||
         this.sourceSnapshotIdentity === currentIdentity
@@ -1164,22 +1472,86 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
-    await this.ensureInitialized();
+  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+    await this.#refreshSourceSnapshot(reason);
+  }
+
+  async ensureSourceSnapshotFresh(
+    reason = "freshness-check",
+    options?: SourceSnapshotFreshnessOptions,
+    initializedByManager = false,
+  ): Promise<void> {
+    const initializedNow = initializedByManager || await this.#ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
 
+    // The snapshot identity only names the branch, so an edit to a draft file
+    // never changes it. The lease age is therefore the only thing that can
+    // detect a content change, and a caller that cannot tolerate a stale render
+    // asks for maxAgeMs: 0 to bypass it.
+    const maxAgeMs = options?.maxAgeMs ?? BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS;
+
+    // Cold initialization just fetched and installed the complete listing for
+    // this branch. That authority check happened inside this call, so it also
+    // satisfies a zero-age caller without immediately listing the same source
+    // tree a second time.
     if (
-      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
-      Date.now() - this.sourceSnapshotCheckedAt < BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS
+      initializedNow &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
+      this.sourceSnapshotCheckedAt > 0
     ) {
       return;
     }
 
-    await this.refreshSourceSnapshot(reason);
+    // A non-positive budget bypasses the lease unconditionally. Comparing the
+    // age against it would not: a backward wall-clock step makes the age
+    // negative, and a negative age is below every budget, so the caller that
+    // asked to accept no lease at all would silently be handed one.
+    if (
+      maxAgeMs > 0 &&
+      this.sourceSnapshotIdentity === this.#getCurrentSourceSnapshotIdentity() &&
+      currentTime() - this.sourceSnapshotCheckedAt < maxAgeMs
+    ) {
+      return;
+    }
+
+    await this.#refreshSourceSnapshot(reason);
   }
 
   getSourceSnapshotVersion(): number {
     return this.sourceSnapshotVersion;
+  }
+
+  getSourceSnapshotFingerprint(): Promise<string | undefined> {
+    const files = this.sourceSnapshotFiles;
+    if (!files) {
+      return IntrinsicReflectApply(PromiseResolve, IntrinsicPromise, [undefined]) as Promise<
+        undefined
+      >;
+    }
+
+    const version = this.sourceSnapshotVersion;
+    if (this.sourceSnapshotFingerprint?.version === version) {
+      return this.sourceSnapshotFingerprint.value;
+    }
+
+    const value = (async () => {
+      const fingerprint = await computeSourceSnapshotFingerprint(files);
+      return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
+        ? fingerprint
+        : undefined;
+    })();
+    this.sourceSnapshotFingerprint = { version, value };
+    return value;
+  }
+
+  /**
+   * Names the branch/environment/release the snapshot currently targets, so a
+   * caller that established freshness earlier in a request can detect a
+   * context change (for example `setRequestBranch` on this reused adapter)
+   * before trusting that establishment.
+   */
+  getSourceSnapshotIdentity(): string | undefined {
+    return this.#getCurrentSourceSnapshotIdentity();
   }
 
   getPokeMetrics(): {
@@ -1192,37 +1564,37 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
     const admittedLimit = requireBoundedFileReadLimit(byteLimit);
-    await this.ensureExactReadInitialized();
-    return this.withBranchSnapshotRecovery(
+    await this.#ensureExactReadInitialized();
+    return this.#withBranchSnapshotRecovery(
       path,
       () => this.readOps.readFileBytesWithinLimit(path, admittedLimit),
     );
   }
 
   async readTextFile(path: string): Promise<string> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(
       path,
       () => this.dirOps.readdir(path),
       {
@@ -1233,14 +1605,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
   }
 
   async exists(path: string): Promise<boolean> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     try {
-      await this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
+      await this.#withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
       return true;
     } catch (_) {
       return false;
@@ -1251,8 +1623,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     basePath: string,
     options?: ResolveFileOptions,
   ): Promise<string | null> {
-    await this.ensureInitialized();
-    return this.withBranchSnapshotRecovery(
+    await this.#ensureInitialized();
+    return this.#withBranchSnapshotRecovery(
       basePath,
       () => this.statOps.resolveFile(basePath, options),
       {
@@ -1264,6 +1636,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   dispose(): void {
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
+    this.sourceSnapshotFingerprint = undefined;
+    this.sourceSnapshotRefreshPromise = null;
     this.wsManager.dispose();
     this.manifestFetcherCleanup?.();
     this.manifestFetcherCleanup = null;
@@ -1271,6 +1648,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.initializationGeneration++;
+    this.initializationPromise = null;
     this.exactReadInitializationPromise = null;
     this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
@@ -1528,12 +1907,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.client;
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  async #ensureInitialized(): Promise<boolean> {
+    if (this.initialized) return false;
     await this.initialize();
+    return true;
   }
 
-  private async ensureExactReadInitialized(): Promise<void> {
+  async #ensureExactReadInitialized(): Promise<void> {
     if (this.client.isInitialized() && this.contentContext) return;
     if (this.exactReadInitializationPromise) {
       await this.exactReadInitializationPromise;

@@ -8,7 +8,7 @@
  * @module cli/shared/interactive
  */
 
-import { type HostRuntime, liveHostRuntime } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 
 let _nonInteractive = false;
 let _autoConfirm = false;

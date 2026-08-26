@@ -1,9 +1,17 @@
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { dirname, join, relative } from "#veryfront/compat/path";
+import {
+  dirname,
+  fromFileUrl,
+  join,
+  normalize,
+  posix,
+  relative,
+  resolve,
+} from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import {
   isFrameworkSourcePath,
   resolveRelativeFrameworkSourceImport,
@@ -12,10 +20,21 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
 import { parseImports } from "./lexer.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { isWindowsPlatform } from "#veryfront/platform/compat/process/runtime-process.ts";
 
 export interface LocalImport {
   specifier: string;
+  /** Exact specifier present in transformed code when it differs from authored source. */
+  rewriteSpecifier?: string;
   absolutePath: string;
+  /** Lexical project path the author addressed, used for metadata and CSS identity. */
+  requestedPath?: string;
+  /** Lexical filename selected by extension or directory-index resolution. */
+  resolvedPath?: string;
+  /** True when canonical project containment approved absolutePath. */
+  projectContained?: true;
 }
 
 export interface CrossProjectImport {
@@ -40,6 +59,112 @@ interface ParseLocalImportsResult {
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
+
+// Tenant SSR code executes in this realm before later parses run, so the
+// containment decision must not dispatch through mutable prototype methods or
+// inherited adapter properties. Capture the intrinsics it depends on at module
+// initialization, as the path compatibility layer does for its own operations.
+const ReflectApply = Reflect.apply;
+const ArrayJoin = Array.prototype.join;
+const ArrayPush = Array.prototype.push;
+const PromiseConstructor = Promise;
+const PromiseAll = Promise.all;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const SymbolIterator: typeof Symbol.iterator = Symbol.iterator;
+const universalObjectPrototype = Object.prototype;
+const RegExpTest = RegExp.prototype.test;
+const StringEndsWith = String.prototype.endsWith;
+const StringLastIndexOf = String.prototype.lastIndexOf;
+const StringReplace = String.prototype.replace;
+const StringReplaceAll = String.prototype.replaceAll;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
+const windowsHost = isWindowsPlatform();
+
+/**
+ * Records a parse result through the captured push intrinsic. Which imports a
+ * parse reports is a security decision: a replaced Array.prototype.push that
+ * selectively drops an approved dependency would leave the compiled parent's
+ * original `file://` import without a bound read or rewrite entry.
+ */
+function arrayPush<T>(target: T[], value: T): void {
+  ReflectApply(ArrayPush, target, [value]);
+}
+
+function arrayJoin(values: readonly string[], separator: string): string {
+  return ReflectApply(ArrayJoin, values, [separator]) as string;
+}
+
+function regExpTest(pattern: RegExp, value: string): boolean {
+  return ReflectApply(RegExpTest, pattern, [value]) as boolean;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringEndsWith, value, [search]) as boolean;
+}
+
+function stringLastIndexOf(value: string, search: string): number {
+  return ReflectApply(StringLastIndexOf, value, [search]) as number;
+}
+
+function stringReplaceAll(value: string, search: string, replacement: string): string {
+  return ReflectApply(StringReplaceAll, value, [search, replacement]) as string;
+}
+
+function stringReplace(value: string, search: string | RegExp, replacement: string): string {
+  return ReflectApply(StringReplace, value, [search, replacement]) as string;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
+
+function isDriveRootedPath(path: string): boolean {
+  const first = path[0];
+  return path[1] === ":" && path[2] === "/" &&
+    ((first !== undefined && first >= "A" && first <= "Z") ||
+      (first !== undefined && first >= "a" && first <= "z"));
+}
+
+function normalizeProjectRoot(projectDir: string): string {
+  if (projectDir === "") return "/";
+  return windowsHost || isDriveRootedPath(projectDir)
+    ? normalize(projectDir)
+    : posix.normalize(projectDir);
+}
+
+function joinProjectPath(root: string, path: string): string {
+  return windowsHost || isDriveRootedPath(root) ? join(root, path) : posix.join(root, path);
+}
+
+function isFileUrlSpecifier(value: string): boolean {
+  return stringStartsWith(value, "file://");
+}
+
+function indexedIterable<T>(values: readonly T[]): Iterable<T> {
+  return {
+    [SymbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<T> {
+          if (index >= values.length) return { done: true, value: undefined };
+          const value = values[index]!;
+          index++;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
+function promiseAll<T>(values: readonly (T | PromiseLike<T>)[]): Promise<T[]> {
+  return ReflectApply(PromiseAll, PromiseConstructor, [indexedIterable(values)]) as Promise<T[]>;
+}
 
 /**
  * Compiled MDX, keyed by project, file and content hash.
@@ -86,7 +211,10 @@ export async function parseLocalImports(
   // runtime, which this parser discards, so the answer for a `.md` file is
   // always "no dependencies". Compiling one to learn that is pure cost on a
   // path that runs per render.
-  if (filePath.endsWith(".css") || filePath.endsWith(".json") || /\.md$/i.test(filePath)) {
+  if (
+    stringEndsWith(filePath, ".css") || stringEndsWith(filePath, ".json") ||
+    regExpTest(/\.md$/i, filePath)
+  ) {
     return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
   }
 
@@ -96,7 +224,7 @@ export async function parseLocalImports(
   // content to JSX first, exactly as the transform pipeline's parse stage does,
   // then read the imports out of that.
   let parseSource = code;
-  if (/\.mdx$/i.test(filePath)) {
+  if (regExpTest(/\.mdx$/i, filePath)) {
     parseSource = await compileMdxForParsing(code, filePath, projectDir);
   }
 
@@ -118,8 +246,10 @@ export async function parseLocalImports(
   const cssImports: LocalImport[] = [];
   const crossProjectImports: CrossProjectImport[] = [];
   const missingImports: MissingImport[] = [];
+  const containment = createContainmentContext(projectDir, adapter);
 
-  for (const imp of imports) {
+  for (let importIndex = 0; importIndex < imports.length; importIndex++) {
+    const imp = imports[importIndex]!;
     const specifier = imp.n;
     if (!specifier) continue;
 
@@ -128,61 +258,75 @@ export async function parseLocalImports(
     // sees it. Without this branch those dependencies match none of the shapes
     // below and are dropped without even being reported as missing, so an MDX
     // file's sibling components are never recursively transformed.
-    if (specifier.startsWith("file://")) {
+    if (isFileUrlSpecifier(specifier)) {
       const targetPath = fileUrlToPath(specifier);
       // A rewritten specifier carries a server path the author never wrote, and
       // this record is read back verbatim in the "Component has missing
       // dependencies" build error. Report what the author wrote instead.
       const authoredSpecifier = toAuthoredSpecifier(targetPath, specifier, filePath);
-      const resolved = targetPath ? await resolveExistingFilePath(targetPath, adapter) : null;
+      const resolved = targetPath ? await resolveContainedFilePath(targetPath, containment) : null;
 
       if (resolved) {
-        const entry = { specifier: authoredSpecifier, absolutePath: resolved };
-        if (resolved.endsWith(".css")) cssImports.push(entry);
-        else localImports.push(entry);
+        const entry = {
+          specifier: authoredSpecifier,
+          rewriteSpecifier: specifier,
+          absolutePath: resolved.absolutePath,
+          requestedPath: resolved.requestedPath,
+          resolvedPath: resolved.resolvedPath,
+          projectContained: true as const,
+        };
+        // An in-project symlink may canonicalize to a target whose suffix
+        // differs from the link's. The import keeps the type the author
+        // addressed; the canonical path is only what gets read.
+        if (stringEndsWith(resolved.requestedPath, ".css")) arrayPush(cssImports, entry);
+        else arrayPush(localImports, entry);
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier: authoredSpecifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
+        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
       });
       continue;
     }
 
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
       if (resolved) {
-        if (resolved.endsWith(".css")) {
-          cssImports.push({ specifier, absolutePath: resolved });
+        if (stringEndsWith(resolved, ".css")) {
+          arrayPush(cssImports, { specifier, absolutePath: resolved });
         } else {
-          localImports.push({ specifier, absolutePath: resolved });
+          arrayPush(localImports, { specifier, absolutePath: resolved });
         }
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
+        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
       });
       continue;
     }
 
-    if (specifier.startsWith("@/")) {
-      const aliasPath = specifier.slice(2);
-      const resolved = await resolveAliasImportPath(aliasPath, projectDir, adapter);
+    if (stringStartsWith(specifier, "@/")) {
+      const aliasPath = stringSlice(specifier, 2);
+      const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
-        if (resolved.endsWith(".css")) {
-          cssImports.push({ specifier, absolutePath: resolved });
-        } else {
-          localImports.push({ specifier, absolutePath: resolved });
-        }
+        const entry = {
+          specifier,
+          absolutePath: resolved.absolutePath,
+          requestedPath: resolved.requestedPath,
+          resolvedPath: resolved.resolvedPath,
+          projectContained: true as const,
+        };
+        if (stringEndsWith(resolved.requestedPath, ".css")) arrayPush(cssImports, entry);
+        else arrayPush(localImports, entry);
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
         reason: `Alias path not found: @/${aliasPath}`,
@@ -195,7 +339,7 @@ export async function parseLocalImports(
     const parsed = parseCrossProjectImport(specifier);
     if (!parsed) continue;
 
-    crossProjectImports.push({
+    arrayPush(crossProjectImports, {
       specifier,
       projectSlug: parsed.projectSlug,
       version: parsed.version,
@@ -204,6 +348,181 @@ export async function parseLocalImports(
   }
 
   return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
+}
+
+function isPathWithinProject(path: string, projectDir: string): boolean {
+  // This predicate is the containment decision, so it runs on captured string
+  // intrinsics: tenant code that replaced String.prototype.replaceAll or
+  // startsWith must not be able to make an escaping path look contained.
+  const projectRelativePath = windowsHost
+    ? stringReplaceAll(relative(projectDir, path), "\\", "/")
+    : posix.relative(projectDir, path);
+  const first = projectRelativePath[0];
+  const driveQualified = windowsHost && projectRelativePath[1] === ":" &&
+    projectRelativePath[2] === "/" &&
+    ((first !== undefined && first >= "A" && first <= "Z") ||
+      (first !== undefined && first >= "a" && first <= "z"));
+  return projectRelativePath !== ".." &&
+    !stringStartsWith(projectRelativePath, "../") &&
+    !stringStartsWith(projectRelativePath, "/") &&
+    !driveQualified;
+}
+
+/** @internal Test seams for portable containment rules. */
+export const importParserInternals = Object.freeze({
+  isFileUrlSpecifier,
+  isPathWithinProject,
+  fileUrlToPath,
+  resolveRelative,
+  toAuthoredSpecifier,
+});
+
+/**
+ * Everything one parse needs to decide containment, captured once per parse:
+ * the normalized project root, the adapter's own symlink-free contract, the
+ * canonicalization capability, and a shared canonical project root so accepted
+ * imports do not repeat `realPath(projectDir)` per dependency per render.
+ */
+interface ContainmentContext {
+  readonly projectDir: string;
+  readonly adapter?: RuntimeAdapter;
+  readonly symlinkFree: boolean;
+  readonly canonicalize: ((path: string) => Promise<string>) | null;
+  canonicalProjectDir(): Promise<string>;
+}
+
+function createContainmentContext(
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): ContainmentContext {
+  // Strip trailing separators but preserve filesystem roots without changing
+  // path flavor: "/" must not become "" (which realPath rejects), a portable
+  // Windows drive root such as "C:/" must not become the drive-relative "C:",
+  // and a POSIX root containing "\" must keep that filename character.
+  const normalizedProjectDir = normalizeProjectRoot(projectDir);
+  const fs = adapter?.fs;
+  // Symlink-free semantics are authority, so only an own data property
+  // counts, exactly as FSAdapterWrapper captures it: an inherited value (for
+  // example Object.prototype pollution with "none") must not switch the
+  // canonical check off.
+  const semantics = fs === undefined
+    ? undefined
+    : ObjectGetOwnPropertyDescriptor(fs, "symlinkSemantics");
+  const symlinkFree = semantics !== undefined && "value" in semantics &&
+    semantics.value === "none";
+  const realPathMethod = fs === undefined ? undefined : captureRealPath(fs);
+  let canonicalize: ((path: string) => Promise<string>) | null;
+  if (realPathMethod !== undefined) {
+    canonicalize = (path: string) => ReflectApply(realPathMethod, fs, [path]) as Promise<string>;
+  } else {
+    canonicalize = adapter === undefined ? realPath : null;
+  }
+  let canonicalRoot: Promise<string> | undefined;
+  return {
+    projectDir: normalizedProjectDir,
+    adapter,
+    symlinkFree,
+    canonicalize,
+    canonicalProjectDir(): Promise<string> {
+      canonicalRoot ??= canonicalize!(normalizedProjectDir);
+      return canonicalRoot;
+    },
+  };
+}
+
+/**
+ * The adapter's realPath as a data property from its own prototype chain.
+ * Canonicalization is authority, so a value inherited from Object.prototype
+ * (pollution) or served by an accessor is never used; absence fails closed in
+ * the caller. Captured once per parse instead of being looked up per import.
+ */
+function captureRealPath(
+  fs: RuntimeAdapter["fs"],
+): ((path: string) => Promise<string>) | undefined {
+  let owner: object | null = fs;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === universalObjectPrototype) return undefined;
+    const descriptor = ObjectGetOwnPropertyDescriptor(owner, "realPath");
+    if (descriptor !== undefined) {
+      return "value" in descriptor && typeof descriptor.value === "function"
+        ? descriptor.value as (path: string) => Promise<string>
+        : undefined;
+    }
+    owner = ObjectGetPrototypeOf(owner);
+  }
+  return undefined;
+}
+
+interface ContainedImportPath {
+  /** Canonical path callers must record and later read. */
+  absolutePath: string;
+  /** Lexically resolved path naming what the author addressed. */
+  requestedPath: string;
+  /** Existing lexical filename after extension and directory-index probing. */
+  resolvedPath: string;
+}
+
+async function resolveContainedFilePath(
+  targetPath: string,
+  containment: ContainmentContext,
+): Promise<ContainedImportPath | null> {
+  if (!isPathWithinProject(targetPath, containment.projectDir)) return null;
+
+  const resolved = await resolveExistingFilePath(targetPath, containment.adapter);
+  if (!resolved) return null;
+  return await toContainedImportPath(resolved, containment, targetPath);
+}
+
+/**
+ * The canonical (symlink-free) form of `resolved` paired with the requested
+ * path, or null when the canonical form escapes the project. The canonical
+ * path is what callers must record and later read: returning the lexical path
+ * instead would let a symlink retargeted between this check and the eventual
+ * `readFile` escape containment (TOCTOU). The requested path travels with it
+ * because it, not the link target's name, says whether the author imported a
+ * stylesheet or a module.
+ */
+async function toContainedImportPath(
+  resolved: string,
+  containment: ContainmentContext,
+  requestedPath = resolved,
+): Promise<ContainedImportPath | null> {
+  if (containment.symlinkFree) {
+    // Hosted adapters return paths in their project-relative namespace. Check
+    // that namespace against the already-approved project root, but preserve
+    // the adapter path for its later read.
+    if (!isPathWithinProject(resolve(containment.projectDir, resolved), containment.projectDir)) {
+      return null;
+    }
+    return {
+      absolutePath: resolved,
+      requestedPath,
+      resolvedPath: resolve(containment.projectDir, resolved),
+    };
+  }
+  if (containment.canonicalize === null) return null;
+
+  let canonicalPaths: string[];
+  try {
+    canonicalPaths = await promiseAll([
+      containment.canonicalProjectDir(),
+      containment.canonicalize(resolved),
+    ]);
+  } catch (error) {
+    if (isExpectedCanonicalizationRace(error)) return null;
+    throw error;
+  }
+  const canonicalProjectDir = canonicalPaths[0]!;
+  const canonicalResolved = canonicalPaths[1]!;
+  if (!isPathWithinProject(canonicalResolved, canonicalProjectDir)) return null;
+  return { absolutePath: canonicalResolved, requestedPath, resolvedPath: resolved };
+}
+
+function isExpectedCanonicalizationRace(error: unknown): boolean {
+  if (isCanonicalNotFoundError(error)) return true;
+  if (!isNativeErrorWithoutHooks(error)) return false;
+  const code = ObjectGetOwnPropertyDescriptor(error, "code");
+  return code !== undefined && "value" in code && code.value === "ELOOP";
 }
 
 /**
@@ -216,10 +535,12 @@ function toAuthoredSpecifier(
   specifier: string,
   fromFile: string,
 ): string {
-  if (!targetPath) return `./${specifier.slice(specifier.lastIndexOf("/") + 1)}`;
+  if (!targetPath) {
+    return `./${stringSlice(specifier, stringLastIndexOf(specifier, "/") + 1)}`;
+  }
 
   const relativePath = relative(dirname(fromFile), targetPath);
-  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+  return stringStartsWith(relativePath, ".") ? relativePath : `./${relativePath}`;
 }
 
 /** Filesystem path behind a `file://` specifier, or null when it is not one. */
@@ -227,7 +548,12 @@ function fileUrlToPath(specifier: string): string | null {
   try {
     const url = new URL(specifier);
     if (url.protocol !== "file:") return null;
-    return decodeURIComponent(url.pathname);
+    // The rest of the transform graph uses portable slash-separated paths.
+    // `fromFileUrl()` returns native backslashes on Windows, and retaining
+    // those in requestedPath makes recursive relative imports resolve from
+    // the filesystem root instead of the dependency's directory.
+    const path = fromFileUrl(url);
+    return windowsHost ? stringReplaceAll(path, "\\", "/") : path;
   } catch (_) {
     /* expected: not a well-formed URL */
     return null;
@@ -258,7 +584,8 @@ async function resolveLocalImportPath(
     if (resolvedFrameworkImport) return resolvedFrameworkImport;
   }
 
-  const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
+  const lastSeparator = stringLastIndexOf(fromFile, "/");
+  const fromDir = stringSlice(fromFile, 0, lastSeparator < 0 ? 0 : lastSeparator);
   return await resolveExistingFilePath(resolveRelative(fromDir, importSpecifier), adapter);
 }
 
@@ -274,7 +601,7 @@ async function resolveExistingFilePath(
 ): Promise<string | null> {
   if (adapter?.fs.resolveFile) {
     try {
-      const normalizedPath = basePath.replace(/^\/+/, "");
+      const normalizedPath = stringReplace(basePath, /^\/+/, "");
       const resolved = await adapter.fs.resolveFile(normalizedPath);
       if (resolved) return resolved;
     } catch (_) {
@@ -283,17 +610,17 @@ async function resolveExistingFilePath(
     }
   }
 
-  if (HAS_EXTENSION_RE.test(basePath)) {
+  if (regExpTest(HAS_EXTENSION_RE, basePath)) {
     return (await checkFileExists(basePath, adapter)) ? basePath : null;
   }
 
-  for (const ext of EXTENSIONS) {
-    const candidate = basePath + ext;
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    const candidate = basePath + EXTENSIONS[extensionIndex]!;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
-  for (const ext of EXTENSIONS) {
-    const candidate = `${basePath}/index${ext}`;
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    const candidate = `${basePath}/index${EXTENSIONS[extensionIndex]!}`;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
@@ -302,72 +629,86 @@ async function resolveExistingFilePath(
 
 async function resolveAliasImportPath(
   basePath: string,
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<string | null> {
-  const normalizedPath = basePath.replace(/^\/+/, "");
-  const fs = createFileSystem();
-  const projectNormalizedDir = projectDir.replace(/\/+$/, "");
+  containment: ContainmentContext,
+): Promise<ContainedImportPath | null> {
+  const normalizedPath = stringReplace(basePath, /^\/+/, "");
+  const lexicalPath = joinProjectPath(containment.projectDir, normalizedPath);
+  if (!isPathWithinProject(lexicalPath, containment.projectDir)) return null;
 
+  const adapter = containment.adapter;
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) return resolved;
+      if (resolved) {
+        return await toContainedImportPath(
+          resolved,
+          containment,
+          containment.symlinkFree ? resolve(containment.projectDir, resolved) : resolved,
+        );
+      }
     } catch (_) {
       /* expected: resolveFile may not be supported */
       // Fall through to manual resolution
     }
   }
 
-  if (HAS_EXTENSION_RE.test(normalizedPath)) {
-    const absolutePath = join(projectNormalizedDir, normalizedPath);
-    try {
-      const stat = await fs.stat(absolutePath);
-      return stat.isFile ? absolutePath : null;
-    } catch (_) {
-      /* expected: file may not exist */
-      return null;
-    }
+  if (regExpTest(HAS_EXTENSION_RE, normalizedPath)) {
+    return await resolveContainedFilePath(lexicalPath, containment);
   }
 
-  const candidates = [
-    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath + ext)),
-    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath, "index" + ext)),
-  ];
+  const candidates: string[] = [];
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    arrayPush(
+      candidates,
+      joinProjectPath(containment.projectDir, normalizedPath + EXTENSIONS[extensionIndex]!),
+    );
+  }
+  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+    arrayPush(
+      candidates,
+      joinProjectPath(
+        joinProjectPath(containment.projectDir, normalizedPath),
+        "index" + EXTENSIONS[extensionIndex]!,
+      ),
+    );
+  }
 
-  return await findFirstExistingFile(candidates, fs);
+  const resolved = await findFirstExistingFile(candidates, createFileSystem());
+  if (!resolved) return null;
+  return await toContainedImportPath(resolved, containment);
 }
 
 async function findFirstExistingFile(
   paths: string[],
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<string | null> {
-  const results = await Promise.all(
-    paths.map(async (path) => {
-      try {
-        const stat = await fs.stat(path);
-        return stat.isFile ? path : null;
-      } catch (_) {
-        /* expected: file may not exist */
-        return null;
-      }
-    }),
-  );
+  const pending: Array<Promise<string | null>> = [];
+  for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
+    const path = paths[pathIndex]!;
+    arrayPush(
+      pending,
+      (async () => {
+        try {
+          const stat = await fs.stat(path);
+          return stat.isFile ? path : null;
+        } catch (_) {
+          /* expected: file may not exist */
+          return null;
+        }
+      })(),
+    );
+  }
+  const results = await promiseAll(pending);
 
-  return results.find((r) => r !== null) ?? null;
+  for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+    const result = results[resultIndex];
+    if (result !== null && result !== undefined) return result;
+  }
+  return null;
 }
 
 function resolveRelative(fromDir: string, importPath: string): string {
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = importPath.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    if (part !== ".") parts.push(part);
-  }
-
-  return "/" + parts.join("/");
+  return windowsHost || isDriveRootedPath(fromDir)
+    ? resolve(fromDir, importPath)
+    : posix.resolve(fromDir, importPath);
 }

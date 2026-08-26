@@ -7,6 +7,7 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
@@ -26,7 +27,8 @@ import {
 } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
+import { __resetLogRecordEmitterForTests } from "#veryfront/utils/logger/logger.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -555,6 +557,209 @@ Deno.test("hosted child project agents keep load_skill for a non-empty exact ski
     }, { allowedSkillIds: ["extraction-agent--extract"] }),
     ["get_file", "load_skill"],
   );
+});
+
+describe("hosted child tool denials", () => {
+  it("hosted child project agents preserve an explicit load_skill denial", () => {
+    const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: ["get_file"],
+      deniedTools: ["load_skill"],
+    }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+    assertEquals(toolNames, ["get_file"]);
+    const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      {} as never,
+      {
+        childAgentId: "extraction-agent",
+        childConfig: {
+          system: "Use exact child policy",
+          toolNames,
+          availableSkillIds: ["extraction-agent--extract"],
+          skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+          skillSourcePaths: {},
+        },
+        childToolContext: {} as never,
+      },
+    );
+    assertEquals("load_skill" in hostTools, false);
+  });
+
+  it("hosted child project agents keep load_skill for an unrestricted tool selector", () => {
+    const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: true,
+    }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+    assertEquals(toolNames, undefined, "an unrestricted selector stays unrestricted");
+    const context = {
+      projectSteeringByAgentId: new Map([["extraction-agent", {
+        createLoadSkillTool: () =>
+          tool({
+            id: "load_skill",
+            description: "Load skill",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => ({ ok: true }),
+          }),
+      }]]),
+    } as never;
+    const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      context,
+      {
+        childAgentId: "extraction-agent",
+        childConfig: {
+          system: "Use unrestricted child policy",
+          availableSkillIds: ["extraction-agent--extract"],
+          skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+          skillSourcePaths: {},
+        },
+        childToolContext: { agentId: "extraction-agent" } as never,
+      },
+    );
+    assertEquals(
+      "load_skill" in hostTools,
+      true,
+      "an undefined selector authorizes the loader when it is not denied",
+    );
+  });
+
+  it("hosted child project agents fail closed for tools true with denials", () => {
+    const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "extraction-agent",
+      name: "Extraction agent",
+      description: "Extract an application",
+      instructions: "Extract the application.",
+      skills: ["extract"],
+      tools: true,
+      deniedTools: ["load_skill"],
+    }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+    assertEquals(toolNames, []);
+  });
+
+  it("hosted child project agents deny load_skill under an unrestricted tool selector", () => {
+    const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+      {} as never,
+      {
+        childAgentId: "extraction-agent",
+        childConfig: {
+          system: "Use unrestricted child policy",
+          deniedToolNames: ["load_skill"],
+          availableSkillIds: ["extraction-agent--extract"],
+          skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+          skillSourcePaths: {},
+        },
+        childToolContext: {} as never,
+      },
+    );
+    assertEquals("load_skill" in hostTools, false);
+  });
+
+  it("hosted child execution config suppresses skill prompts for a denied loader", async () => {
+    try {
+      toolRegistryInternal.registerShared(
+        "get_file",
+        tool({
+          id: "get_file",
+          description: "Get file",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+      );
+      const childAgent = {
+        id: "extraction-agent",
+        name: "Extraction agent",
+        description: "Extract job applications",
+        instructions: "Extract the application.",
+        skills: ["extract"],
+        tools: ["get_file"],
+        deniedTools: ["load_skill"],
+      };
+      const context = {
+        options: { mcpServers: [] },
+        discoveryResult: { agents: new Map([["extraction-agent", null]]) },
+        agentConfigs: new Map([["extraction-agent", childAgent]]),
+        projectSteeringByAgentId: new Map([["extraction-agent", {
+          getProjectInstructions: () => Promise.resolve("Use extraction policy."),
+          getSkillsConfig: () =>
+            Promise.resolve([{
+              id: "extraction-agent--extract",
+              name: "Extract",
+              description: "Extract skill",
+              instructions: "Extract with skill.",
+              allowedTools: [],
+              ownerAgentId: "extraction-agent",
+              shortName: "extract",
+              sourcePath: "agents/extraction-agent/skills/extract/SKILL.md",
+            }]),
+          createLoadSkillTool: () =>
+            tool({
+              id: "load_skill",
+              description: "Load skill",
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => ({ ok: true }),
+            }),
+        }]]),
+        trace: (_name: string, operation: () => unknown) => operation(),
+      } as never;
+      const config = await veryfrontCloudAgentServiceInternals
+        .resolveHostedChildAgentExecutionConfig(
+          context,
+          {
+            authToken: "token-1",
+            projectId: "project-1",
+            branchId: "branch-1",
+            agentId: "orchestrator",
+          },
+          "extraction-agent",
+          "project-1",
+        );
+
+      assertEquals(config?.toolNames, ["get_file"]);
+      assertEquals(config?.deniedToolNames, ["load_skill"]);
+      assertEquals(
+        config?.availableSkillIds,
+        [],
+        "a denied loader must not advertise loadable skill ids to the child fork",
+      );
+      assertEquals(
+        systemIncludes(config?.system, "extraction-agent--extract"),
+        false,
+        "a denied loader must not render the skill catalog in the child prompt",
+      );
+
+      const childToolContext = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
+        {
+          authToken: "token-1",
+          projectId: "project-1",
+          branchId: "branch-1",
+          agentId: "orchestrator",
+        },
+        "extraction-agent",
+        config,
+      );
+      const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+        context,
+        {
+          childAgentId: "extraction-agent",
+          childConfig: config,
+          childToolContext,
+        },
+      );
+      assertEquals("get_file" in hostTools, true);
+      assertEquals("load_skill" in hostTools, false);
+    } finally {
+      toolRegistryInternal.clearAll();
+    }
+  });
 });
 
 Deno.test("startAgentService keeps application-error reporting active after readiness and cleans up on graceful shutdown", async () => {
@@ -1477,7 +1682,7 @@ Deno.test("Veryfront MCP server helpers create explicit server configs", () => {
 Deno.test("hosted MCP resolver preserves default behavior without a service ceiling", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers({}),
-    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+    [{ kind: "veryfront-api" }],
   );
 
   assertEquals(
@@ -1512,7 +1717,7 @@ Deno.test("hosted MCP resolver binds deployment-owned transports to first-party 
 
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers({ createRemoteToolSource }),
-    [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
+    [{ kind: "veryfront-api" }],
   );
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveMcpServers(

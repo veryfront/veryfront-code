@@ -82,7 +82,8 @@ export async function POST(request: Request) {
 
 ```ts
 import { APIRouteHandler } from "#api";
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const adapter = await runtime.get();
 const handler = new APIRouteHandler({

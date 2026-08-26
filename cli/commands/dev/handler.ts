@@ -4,10 +4,12 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
-import { cwd, type HostRuntime, liveHostRuntime, setEnv } from "veryfront/platform";
+import { cwd } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import { createFileSystem } from "veryfront/platform";
+import { setEnv } from "#cli/process-env";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, logWarning, showHeader } from "#cli/utils";
-import { refreshLoggerConfig } from "veryfront/utils";
+import { refreshLoggerConfig } from "#cli/logger-config";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { isValidPortEnv, parsePortEnv, resolveEnvironmentPort } from "#cli/shared/port-env";

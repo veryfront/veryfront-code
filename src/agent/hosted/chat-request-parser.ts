@@ -155,6 +155,10 @@ async function withVerifiedRunEventAppendToken(
   parsedRequest: ParsedHostedChatRequest,
   verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
   trustServerEnvelope: boolean,
+  verifiedContext?: Pick<
+    ChatRequestContext,
+    "runtimeTargetKind" | "runtimeTargetEnvironmentId"
+  >,
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
@@ -189,6 +193,9 @@ async function withVerifiedRunEventAppendToken(
   const verifiedRequest: ParsedHostedChatRequest = {
     ...parsedRequest,
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    ...(verifiedContext
+      ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
+      : {}),
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
@@ -428,14 +435,18 @@ async function verifyHostedChatProjectAccess(input: {
 }
 
 /** Request payload for build parsed hosted chat. */
-export async function buildParsedHostedChatRequest(input: {
+type BuildParsedHostedChatRequestInput = {
   chatRequest: HostedChatRequest;
   agentId?: string;
   agentConfig?: RuntimeAgentMarkdownDefinition;
   authToken: string;
   userId: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
-}): Promise<ParsedHostedChatRequest | Response> {
+};
+
+async function buildParsedHostedChatRequestInternal(
+  input: BuildParsedHostedChatRequestInput,
+): Promise<ParsedHostedChatRequest | Response> {
   const {
     messages,
     context: chatContext,
@@ -480,8 +491,13 @@ export async function buildParsedHostedChatRequest(input: {
     return access;
   }
   const verifiedProjectSlug = access.projectSlug;
+  const {
+    runtimeTargetKind: _runtimeTargetKind,
+    runtimeTargetEnvironmentId: _runtimeTargetEnvironmentId,
+    ...publicChatContext
+  } = chatContext;
   const validatedContext: ChatRequestContext = {
-    ...chatContext,
+    ...publicChatContext,
     projectSlug: verifiedProjectSlug,
   };
 
@@ -506,6 +522,13 @@ export async function buildParsedHostedChatRequest(input: {
     persistLatestUserMessageBeforeDurableRun: false,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
   };
+}
+
+/** Builds a public hosted chat request without trusting client-supplied runtime targets. */
+export function buildParsedHostedChatRequest(
+  input: BuildParsedHostedChatRequestInput,
+): Promise<ParsedHostedChatRequest | Response> {
+  return buildParsedHostedChatRequestInternal(input);
 }
 
 /** Request payload for parse hosted chat request from. */
@@ -578,7 +601,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     });
   }
 
-  const parsedRequest = await buildParsedHostedChatRequest({
+  const parsedRequest = await buildParsedHostedChatRequestInternal({
     authToken: authenticatedRequest.authToken,
     userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
@@ -601,10 +624,26 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     );
   }
 
-  return await withVerifiedRunEventAppendToken(
+  const verifiedRequest = await withVerifiedRunEventAppendToken(
     request,
     parsedRequest,
     options.verifyRunEventAppendToken,
     true,
+    {
+      runtimeTargetKind: chatRequest.data.context.runtimeTargetKind,
+      runtimeTargetEnvironmentId: chatRequest.data.context.runtimeTargetEnvironmentId,
+    },
   );
+  if (verifiedRequest instanceof Response) {
+    return verifiedRequest;
+  }
+
+  // Request-scoped agent definitions may only come from the trusted control plane.
+  if (verifiedRequest.agentConfig && verifiedRequest.serverEnvelopeVerified !== true) {
+    return Response.json(
+      { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
+      { status: 403 },
+    );
+  }
+  return verifiedRequest;
 }

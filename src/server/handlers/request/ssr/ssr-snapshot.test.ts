@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
@@ -8,7 +9,7 @@ import {
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
-import { createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
+import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
 import { SSRHandler } from "./ssr.handler.ts";
 
 const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
@@ -22,8 +23,65 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
+  it("sheds preview requests without refreshing source and retains dependency pinning", async () => {
+    // This fails if strict whole-tree snapshot freshness moves ahead of the
+    // memory-pressure decision: the rejected response must not do refresh work.
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-ssr-shed-pins-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let refreshCalls = 0;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        checkMemoryPressure: () => ({
+          shouldReject: true,
+          heapUsedMB: 450,
+          heapLimitMB: 500,
+          heapUsedPercent: 90,
+        }),
+      }));
+
+      const result = await handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          projectDir,
+          adapter,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(refreshCalls, 0, "a shed request must not refresh the source snapshot");
+      assertEquals(
+        result.response?.headers.get(DEPENDENCY_PINNING_RESPONSE_HEADER)?.startsWith("on:"),
+        true,
+        "the shed response must retain the dependency snapshot header",
+      );
+    } finally {
+      restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("keeps explicit history exact, captures current for new documents, and rejects bad tokens", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-ssr-pins-" });
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-ssr-pins-" });
     const packageJsonPath = `${projectDir}/package.json`;
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     const observedOptions: SSRRenderOptions[] = [];
@@ -163,7 +221,7 @@ describe("server/handlers/request/ssr/ssr snapshot boundary", () => {
   });
 
   it("keeps application pins visible and adds no snapshot header while disabled", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-ssr-pins-off-" });
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-ssr-pins-off-" });
     const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
     let observedOptions: SSRRenderOptions | undefined;
 

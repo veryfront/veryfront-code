@@ -16,10 +16,10 @@
 import {
   type AttributeValue,
   type Counter,
-  getGlobalMetricsAPI,
   type Histogram,
   type ObservableGauge,
 } from "#veryfront/observability";
+import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";

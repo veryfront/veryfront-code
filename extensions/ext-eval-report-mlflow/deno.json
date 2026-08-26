@@ -49,7 +49,7 @@
     "veryfront/eval": "../../src/eval/index.ts",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/eval": "../../src/extensions/eval/index.ts",
-    "veryfront/platform/env": "../../src/platform/compat/process/env.ts"
+    "veryfront/platform/env": "../../src/platform/env.ts"
   },
   "tasks": {
     "test": "deno test --no-check --allow-all src/"

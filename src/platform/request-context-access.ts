@@ -26,6 +26,9 @@ let accessor: (() => RequestContext | null) | undefined;
 export function registerRequestContextAccessor(
   fn: () => RequestContext | null,
 ): void {
+  if (accessor !== undefined && accessor !== fn) {
+    throw new TypeError("The hosted request context accessor is already registered");
+  }
   accessor = fn;
 }
 

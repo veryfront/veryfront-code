@@ -4,7 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { httpErrorBoundary, wrapHandlerWithErrorBoundary } from "./http-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
@@ -12,7 +12,8 @@ import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 import type { Handler, HandlerContext } from "#veryfront/types";
 import { HandlerPriority } from "#veryfront/types";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
-import { trace } from "#veryfront/observability/tracing/api-shim.ts";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
+import { SpanStatusCode, trace } from "#veryfront/observability/tracing/api-shim.ts";
 
 /**
  * Create a mock HandlerContext for testing
@@ -113,6 +114,44 @@ describe("http-error-boundary", () => {
       assertEquals(body.detail, "Something went wrong");
     });
 
+    it("should record an error metric for every boundary error", async () => {
+      const recorder = metricsManager.getRecorder();
+      assertExists(recorder);
+      const originalRecordError = recorder.recordError;
+      const recorded: Array<Record<string, string> | undefined> = [];
+      recorder.recordError = (attributes?: Record<string, string>) => {
+        recorded.push(attributes);
+      };
+
+      try {
+        const unknownHandler = httpErrorBoundary(async () => {
+          throw new Error("handler failed");
+        });
+        await unknownHandler(createMockRequest(), createMockContext());
+
+        assertEquals(recorded.length, 1, "the HTTP boundary records exactly one error metric");
+        assertEquals(
+          recorded[0],
+          { slug: "unknown-error", category: "GENERAL", status: "500" },
+          "unknown errors are recorded with their boundary identity",
+        );
+
+        const registeredHandler = httpErrorBoundary(async () => {
+          throw CONFIG_NOT_FOUND.create();
+        });
+        await registeredHandler(createMockRequest(), createMockContext());
+
+        assertEquals(recorded.length, 2, "each boundary error records its own metric");
+        assertEquals(
+          recorded[1],
+          { slug: "config-not-found", category: "CONFIG", status: "404" },
+          "registered errors are recorded with their registry identity",
+        );
+      } finally {
+        recorder.recordError = originalRecordError;
+      }
+    });
+
     it("should return the intended response when metrics recording throws", async () => {
       const recorder = metricsManager.getRecorder();
       assertExists(recorder);
@@ -138,7 +177,9 @@ describe("http-error-boundary", () => {
 
     it("should return the intended response when tracing throws", async () => {
       const originalGetActiveSpan = trace.getActiveSpan;
+      let consulted = false;
       trace.getActiveSpan = () => {
+        consulted = true;
         throw new Error("tracing failed");
       };
 
@@ -152,6 +193,46 @@ describe("http-error-boundary", () => {
         assertEquals(result.response.status, 500);
         const body = await result.response.json();
         assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
+        assert(consulted, "boundary must consult the tracer even though it throws");
+      } finally {
+        trace.getActiveSpan = originalGetActiveSpan;
+      }
+    });
+
+    it("should attach the error to the active span", async () => {
+      const statusCalls: Array<{ code: number; message: string }> = [];
+      const activeSpan = {
+        setStatus: (status: { code: number; message?: string }) => {
+          statusCalls.push({ code: status.code, message: status.message ?? "" });
+        },
+        setAttributes: () => {},
+        addEvent: () => {},
+      } as unknown as Span;
+      const originalGetActiveSpan = trace.getActiveSpan;
+      trace.getActiveSpan = () => activeSpan;
+
+      try {
+        const handler = httpErrorBoundary(async () => {
+          throw new Error("handler failed");
+        });
+        const result = await handler(createMockRequest(), createMockContext());
+
+        assertExists(result.response);
+        assertEquals(
+          statusCalls.length,
+          1,
+          "the boundary attaches the error to the active span exactly once",
+        );
+        assertEquals(
+          statusCalls[0]?.code,
+          SpanStatusCode.ERROR,
+          "the active span is marked as errored",
+        );
+        assertEquals(
+          statusCalls[0]?.message,
+          "unknown-error",
+          "the span status message carries the boundary error slug",
+        );
       } finally {
         trace.getActiveSpan = originalGetActiveSpan;
       }
@@ -400,6 +481,30 @@ describe("http-error-boundary", () => {
       assertEquals(body.cause, undefined);
     });
 
+    it("should omit string causes from dev 5xx responses", async () => {
+      const handler = httpErrorBoundary(async () => {
+        throw new VeryfrontError("Internal error", {
+          slug: "internal-error",
+          category: "GENERAL",
+          status: 500,
+          title: "Internal Server Error",
+          cause: "provider payload with customer record",
+        });
+      });
+
+      const result = await handler(createMockRequest(), createMockContext(true));
+
+      assertExists(result.response);
+      const text = await result.response.text();
+      const body = JSON.parse(text);
+      assertEquals(body.cause, undefined, "dev responses must not echo the cause");
+      assertEquals(
+        text.includes("provider payload with customer record"),
+        false,
+        "the raw cause payload must not reach the response body",
+      );
+    });
+
     it("should pretty-print JSON in dev mode", async () => {
       const handler = httpErrorBoundary(async () => {
         throw new Error("Dev error");
@@ -501,6 +606,33 @@ describe("http-error-boundary", () => {
       assertEquals(result.response.status, 500);
       const body = await result.response.json();
       assertEquals(body.type, "https://veryfront.com/docs/code/guides/errors#unknown-error");
+    });
+
+    it("should preserve the handler receiver when wrapping", async () => {
+      const handler: Handler = {
+        metadata: {
+          name: "receiver-handler",
+          priority: HandlerPriority.MEDIUM,
+        },
+        async handle() {
+          return { response: new Response(this.metadata.name) };
+        },
+      };
+
+      const wrapped = wrapHandlerWithErrorBoundary(handler);
+      const result = await wrapped.handle(createMockRequest(), createMockContext());
+
+      assertExists(result.response);
+      assertEquals(
+        result.response.status,
+        200,
+        "a this-using handler must not be converted into an error response",
+      );
+      assertEquals(
+        await result.response.text(),
+        "receiver-handler",
+        "wrapping must preserve the handler receiver",
+      );
     });
 
     it("should preserve handler metadata", async () => {

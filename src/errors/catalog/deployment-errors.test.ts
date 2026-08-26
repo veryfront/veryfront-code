@@ -21,8 +21,16 @@ describe("errors/catalog/deployment-errors", () => {
     it("should have correct structure for each entry", () => {
       for (const [slug, solution] of Object.entries(DEPLOYMENT_ERROR_CATALOG)) {
         assertEquals(solution.slug, slug, `slug mismatch for ${slug}`);
-        assertEquals(typeof solution.title, "string", `title should be string for ${slug}`);
-        assertEquals(typeof solution.message, "string", `message should be string for ${slug}`);
+        assertEquals(
+          solution.title.trim().length > 0,
+          true,
+          `title should be non-empty for ${slug}`,
+        );
+        assertEquals(
+          solution.message.trim().length > 0,
+          true,
+          `message should be non-empty for ${slug}`,
+        );
         assertEquals(typeof solution.docs, "string", `docs should be string for ${slug}`);
         assertEquals(Array.isArray(solution.steps), true, `steps should be array for ${slug}`);
         assertEquals(
@@ -35,6 +43,14 @@ describe("errors/catalog/deployment-errors", () => {
 
     it("should have 4 entries", () => {
       assertEquals(Object.keys(DEPLOYMENT_ERROR_CATALOG).length, 4);
+    });
+
+    it("exposes an immutable catalog fragment", () => {
+      assertEquals(
+        Object.isFrozen(DEPLOYMENT_ERROR_CATALOG),
+        true,
+        "DEPLOYMENT_ERROR_CATALOG must be frozen",
+      );
     });
 
     it("production-build-required should mention building first", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { cliLogger } from "#veryfront/utils/logger/logger.ts";
 import { wrapErrorHandler } from "./error-wrapper.ts";
@@ -23,18 +23,55 @@ describe("wrapErrorHandler", () => {
     const fn = () => {
       throw new Error("test failure");
     };
-    const wrapped = wrapErrorHandler(fn);
+    const calls: unknown[][] = [];
+    const originalLogError = cliLogger.error;
+    cliLogger.error = (...args: unknown[]) => {
+      calls.push(args);
+    };
 
-    await assertRejects(() => wrapped(), Error, "test failure");
+    try {
+      const wrapped = wrapErrorHandler(fn);
+
+      await assertRejects(() => wrapped(), Error, "test failure");
+
+      assertEquals(calls.length, 1, "the boundary logs the caught error exactly once");
+      assert(
+        calls[0]!.join(" ").includes("test failure"),
+        "the logged output carries the formatted user error message",
+      );
+      assert(
+        calls[0]!.join(" ").includes("veryfront doctor"),
+        "native Errors are logged through formatUserError",
+      );
+    } finally {
+      cliLogger.error = originalLogError;
+    }
   });
 
   it("should re-throw non-Error values", async () => {
     const fn = () => {
       throw "string error";
     };
-    const wrapped = wrapErrorHandler(fn);
+    const calls: unknown[][] = [];
+    const originalLogError = cliLogger.error;
+    cliLogger.error = (...args: unknown[]) => {
+      calls.push(args);
+    };
 
-    await assertRejects(() => wrapped(), undefined, "string error");
+    try {
+      const wrapped = wrapErrorHandler(fn);
+
+      const thrown = await assertRejects(() => wrapped());
+
+      assertEquals(thrown, "string error", "non-Error throwables must be re-thrown unchanged");
+      assertEquals(calls.length, 1, "the boundary logs the caught throwable exactly once");
+      assert(
+        calls[0]!.join(" ").includes("Unknown error"),
+        "non-Error throwables are logged through the sanitized snapshot branch",
+      );
+    } finally {
+      cliLogger.error = originalLogError;
+    }
   });
 
   it("should preserve the original error when logging fails", async () => {

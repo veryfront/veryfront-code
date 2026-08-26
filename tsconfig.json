@@ -61,6 +61,7 @@
       "react-dom/server": ["./npm/node_modules/react-dom/server.node.js"],
       "veryfront": ["./src/index.ts"],
       "veryfront/*": ["./src/*"],
+      "veryfront/metrics": ["./src/metrics/public.ts"],
       "veryfront/workflow/registry": ["./src/workflow/registry-public.ts"],
       "veryfront/provider/openai-reasoning": ["./src/provider/shared/openai-reasoning.ts"],
       "veryfront/head": ["./src/react/runtime/core.ts"],
@@ -89,7 +90,7 @@
       "veryfront/platform/dynamic-import": [
         "./src/platform/compat/dynamic-import.ts"
       ],
-      "veryfront/platform/env": ["./src/platform/compat/process/env-public.ts"],
+      "veryfront/platform/env": ["./src/platform/env.ts"],
       "veryfront/platform/path": ["./src/platform/compat/path/index.ts"],
       "veryfront/platform/http": ["./src/platform/compat/http/index.ts"],
       "veryfront/platform/runtime": ["./src/platform/compat/runtime.ts"],

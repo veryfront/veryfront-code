@@ -5,6 +5,12 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  createPublicContext,
+  createPublicSpan,
+  unwrapPublicContext,
+  unwrapPublicSpan,
+} from "./api-shim.ts";
 import { tracingManager } from "./manager.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -48,14 +54,37 @@ function getContextProp(): ReturnType<typeof tracingManager.getContextPropagatio
   return tracingManager.getContextPropagation();
 }
 
+function exposeSpan(span: Span | null): Span | null {
+  return span ? createPublicSpan(span) : null;
+}
+
+function restoreSpan(span: Span | null): Span | null {
+  return span ? unwrapPublicSpan(span) : null;
+}
+
+function exposeContext(ctx: Context | undefined): Context | undefined {
+  return ctx ? createPublicContext(ctx) : undefined;
+}
+
+function restoreContext(ctx: Context): Context {
+  return unwrapPublicContext(ctx);
+}
+
+function restoreSpanOptions(options: SpanOptions): SpanOptions {
+  if (!options.parent) return options;
+  const spanParent = unwrapPublicSpan(options.parent as Span);
+  const parent = spanParent === options.parent ? unwrapPublicContext(options.parent) : spanParent;
+  return parent === options.parent ? options : { ...options, parent };
+}
+
 /** Starts span. */
 export function startSpan(name: string, options: SpanOptions = {}): Span | null {
-  return getSpanOps()?.startSpan(name, options) ?? null;
+  return exposeSpan(getSpanOps()?.startSpan(name, restoreSpanOptions(options)) ?? null);
 }
 
 /** End an active tracing span. */
 export function endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
-  getSpanOps()?.endSpan(span, ...failure);
+  getSpanOps()?.endSpan(restoreSpan(span), ...failure);
 }
 
 /** Sets span attributes. */
@@ -63,7 +92,7 @@ export function setSpanAttributes(
   span: Span | null,
   attributes: Record<string, string | number | boolean>,
 ): void {
-  getSpanOps()?.setAttributes(span, attributes);
+  getSpanOps()?.setAttributes(restoreSpan(span), attributes);
 }
 
 /** Event emitted for add span. */
@@ -72,7 +101,7 @@ export function addSpanEvent(
   name: string,
   attributes?: Record<string, string | number | boolean>,
 ): void {
-  getSpanOps()?.addEvent(span, name, attributes);
+  getSpanOps()?.addEvent(restoreSpan(span), name, attributes);
 }
 
 /** Create child span. */
@@ -81,29 +110,35 @@ export function createChildSpan(
   name: string,
   options: SpanOptions = {},
 ): Span | null {
-  return getSpanOps()?.createChildSpan(parentSpan, name, options) ?? null;
+  return exposeSpan(
+    getSpanOps()?.createChildSpan(
+      restoreSpan(parentSpan),
+      name,
+      restoreSpanOptions(options),
+    ) ?? null,
+  );
 }
 
 /** Context for extract. */
 export function extractContext(headers: Headers): Context | undefined {
-  return getContextProp()?.extractContext(headers);
+  return exposeContext(getContextProp()?.extractContext(headers));
 }
 
 /** Context for inject. */
 export function injectContext(context: Context, headers: Headers): void {
-  getContextProp()?.injectContext(context, headers);
+  getContextProp()?.injectContext(restoreContext(context), headers);
 }
 
 /** Context for get active. */
 export function getActiveContext(): Context | undefined {
-  return getContextProp()?.getActiveContext();
+  return exposeContext(getContextProp()?.getActiveContext());
 }
 
 /** Applies active span. */
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
   const contextProp = getContextProp();
   if (!contextProp) return fn();
-  return contextProp.withActiveSpan(span, fn);
+  return contextProp.withActiveSpan(restoreSpan(span), fn);
 }
 
 /** Applies span. */
@@ -119,8 +154,8 @@ export async function withSpan<T>(
 
   return contextProp.withSpanAsync(
     name,
-    fn,
-    (n) => spanOps.startSpan(n, options),
+    (span) => fn(exposeSpan(span)),
+    (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
     (s: Span | null, ...failure: [] | [error: unknown]) => {
       if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
       else spanOps.endSpan(s);
@@ -141,8 +176,8 @@ export function withSpanSync<T>(
 
   return contextProp.withSpan(
     name,
-    fn,
-    (n) => spanOps.startSpan(n, options),
+    (span) => fn(exposeSpan(span)),
+    (n) => spanOps.startSpan(n, restoreSpanOptions(options)),
     (s: Span | null, ...failure: [] | [error: unknown]) => {
       if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
       else spanOps.endSpan(s);

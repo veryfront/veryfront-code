@@ -1,7 +1,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { constants as fsConstants } from "node:fs";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
-import { logger } from "#veryfront/utils";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import type { CacheBackend } from "../types.ts";
 import { assertCacheReadMaximumBytes, CacheValueTooLargeError } from "../bounded-read.ts";

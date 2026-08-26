@@ -1,4 +1,5 @@
-import { cwd, getEnv, onGlobalError } from "veryfront/platform";
+import { onGlobalError } from "#cli/process-lifecycle";
+import { cwd, getEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { isAbsolute, join, resolve } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";

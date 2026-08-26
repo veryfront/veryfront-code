@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   API_CLIENT_ERROR,
@@ -21,6 +21,185 @@ import {
 } from "./error-registry.ts";
 import type { ErrorCategory } from "./types.ts";
 
+/**
+ * Every error slug the registry publishes.
+ *
+ * Slugs are public surface: callers match on them, so retiring one is a
+ * breaking change that should be deliberate and visible in review.
+ *
+ * This is an exhaustive list rather than a count on purpose. A count put every
+ * error-adding pull request on one shared line, each changing it to a different
+ * value, so two of them were green alone and the second died in the merge queue
+ * -- that happened at 120, 121 and again at 122. Adding a slug here appends its
+ * own line instead, which merges cleanly alongside an unrelated addition. Keep
+ * the list sorted so appends stay spread out.
+ */
+const PUBLISHED_ERROR_SLUGS: readonly string[] = Object.freeze([
+  "agent-error",
+  "agent-intent-error",
+  "agent-not-found",
+  "agent-timeout",
+  "already-exists",
+  "api-client-error",
+  "api-error",
+  "api-route-error",
+  "asset-optimization-error",
+  "authentication-required",
+  "branch-not-found",
+  "build-failed",
+  "bundle-error",
+  "cache-error",
+  "cache-invariant-violation",
+  "cache-path-mismatch",
+  "circuit-breaker-open",
+  "circular-dependency",
+  "client-boundary-violation",
+  "client-only-in-server",
+  "compilation-error",
+  "component-error",
+  "config-invalid",
+  "config-not-deployable",
+  "config-not-found",
+  "config-parse-error",
+  "config-type-error",
+  "config-validation-error",
+  "config-validation-failed",
+  "cors-config-invalid",
+  "cost-limit-exceeded",
+  "default-model-credential-mismatch",
+  "dependency-missing",
+  "deployment-error",
+  "deployment-verification-timeout",
+  "dev-server-error",
+  "durable-run-event-persistence-failed",
+  "dynamic-route-error",
+  "embedding-provider-unavailable",
+  "env-var-missing",
+  "environment-not-found",
+  "environment-not-routable",
+  "error-overlay-error",
+  "fallback-exhausted",
+  "fast-refresh-error",
+  "file-not-found",
+  "file-watch-error",
+  "hmr-error",
+  "hydration-mismatch",
+  "import-map-invalid",
+  "import-resolution-error",
+  "initialization-error",
+  "input-validation-failed",
+  "invalid-argument",
+  "invalid-import",
+  "invalid-route-file",
+  "invalid-use-client",
+  "invalid-use-server",
+  "layout-not-found",
+  "local-integration-config-invalid",
+  "local-integration-credential-unavailable",
+  "local-integration-credentials-missing",
+  "local-integration-request-failed",
+  "local-integration-request-invalid",
+  "local-integration-response-invalid",
+  "lockfile-format-mismatch",
+  "lockfile-read-error",
+  "markdown-compile-error",
+  "mdx-compile-error",
+  "middleware-error",
+  "module-not-found",
+  "nested-cwd-scope",
+  "network-error",
+  "not-supported",
+  "orchestration-error",
+  "page-not-found",
+  "permission-denied",
+  "platform-error",
+  "port-in-use",
+  "preview-hostname-too-long",
+  "production-build-required",
+  "project-execution-unavailable",
+  "project-source-empty",
+  "push-conflict",
+  "push-receipt-missing",
+  "rag-store-corrupt",
+  "rag-store-unavailable",
+  "redirect-destination-not-allowed",
+  "release-build-timeout",
+  "release-missing-version",
+  "release-not-found",
+  "render-error",
+  "request-error",
+  "resource-not-found",
+  "route-conflict",
+  "route-handler-invalid",
+  "route-params-error",
+  "rsc-payload-error",
+  "schedule-config-invalid",
+  "security-violation",
+  "semaphore-timeout",
+  "server-only-in-client",
+  "server-start-error",
+  "service-overloaded",
+  "source-digest-mismatch",
+  "source-map-error",
+  "source-snapshot-freshness-unavailable",
+  "sourcemap-error",
+  "ssg-generation-error",
+  "ssr-output-limit-exceeded",
+  "sync-state-invalid",
+  "template-not-found",
+  "timeout-error",
+  "token-storage-error",
+  "tool-id-conflict",
+  "trigger-config-invalid",
+  "trigger-execution-failed",
+  "trigger-not-supported",
+  "trigger-target-not-found",
+  "typescript-error",
+  "unknown-error",
+  "version-mismatch",
+  "webhook-config-invalid",
+]);
+
+/**
+ * Every category an error may declare.
+ *
+ * Category names are pinned here; per-category totals are not. Those totals
+ * used to be, which put every error-adding pull request on the same line and
+ * made two of them collide in the merge queue even though each was green
+ * alone. Adding a category is a deliberate, rare change and belongs here;
+ * adding an error does not.
+ */
+const ERROR_CATEGORIES = [
+  "CONFIG",
+  "BUILD",
+  "RUNTIME",
+  "ROUTE",
+  "MODULE",
+  "SERVER",
+  "BOUNDARY",
+  "DEV",
+  "DEPLOY",
+  "AGENT",
+  "GENERAL",
+] as const satisfies readonly ErrorCategory[];
+
+/**
+ * Fails to compile when `ErrorCategory` gains a member this list omits.
+ *
+ * `as const` above is what makes this work: typed as `readonly ErrorCategory[]`
+ * the element type would widen back to the whole union and the check would
+ * always be `never`, so a missing category would go unasserted. The constraint
+ * has to be `extends never` too -- assigning to an array of the leftover union
+ * compiles fine for an empty array, which makes that form vacuous.
+ */
+/** Widened for membership checks; the tuple above stays narrow for the type assertion. */
+const KNOWN_ERROR_CATEGORIES: ReadonlySet<string> = new Set(ERROR_CATEGORIES);
+
+type AssertNever<T extends never> = T;
+type _EveryErrorCategoryListed = AssertNever<
+  Exclude<ErrorCategory, typeof ERROR_CATEGORIES[number]>
+>;
+
 describe("error-registry", () => {
   describe("slug uniqueness", () => {
     it("should have unique slugs across all errors", () => {
@@ -29,9 +208,14 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 123 registered errors", () => {
-      const slugs = getAllSlugs();
-      assertEquals(slugs.length, 123);
+    it("publishes exactly the recorded slugs", () => {
+      // Exhaustive, not a subset: a subset would stop covering every slug added
+      // after the list was written, so a later removal would go unnoticed.
+      assertEquals(
+        [...getAllSlugs()].sort(),
+        [...PUBLISHED_ERROR_SLUGS].sort(),
+        "Update PUBLISHED_ERROR_SLUGS: add a line for a new error, delete one only when retiring it",
+      );
     });
 
     it("registers every local integration boundary error", () => {
@@ -91,25 +275,11 @@ describe("error-registry", () => {
   });
 
   describe("error definitions", () => {
-    const validCategories: ErrorCategory[] = [
-      "CONFIG",
-      "BUILD",
-      "RUNTIME",
-      "ROUTE",
-      "MODULE",
-      "SERVER",
-      "BOUNDARY",
-      "DEV",
-      "DEPLOY",
-      "AGENT",
-      "GENERAL",
-    ];
-
     it("should have valid category for all errors", () => {
       const errors = Object.values(ERROR_REGISTRY);
       for (const error of errors) {
         assertEquals(
-          validCategories.includes(error.category),
+          KNOWN_ERROR_CATEGORIES.has(error.category),
           true,
           `Error "${error.slug}" has invalid category "${error.category}"`,
         );
@@ -157,8 +327,20 @@ describe("error-registry", () => {
       assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
-    it("classifies invalid sync metadata as a runtime error", () => {
-      assertEquals(getErrorBySlug("sync-state-invalid")?.exitCode, undefined);
+    it("classifies invalid sync metadata as a deploy error without a CLI exit code", () => {
+      const error = getErrorBySlug("sync-state-invalid");
+      assertExists(error, "sync-state-invalid must stay registered");
+      assertEquals(error.category, "DEPLOY", "sync metadata failures are deploy errors");
+      assertEquals(
+        error.status,
+        400,
+        "invalid local sync metadata is a client-side precondition failure",
+      );
+      assertEquals(
+        error.exitCode,
+        undefined,
+        "sync-state-invalid must not carry a CLI usage exit code",
+      );
     });
 
     it("should return correct error for all slugs", () => {
@@ -188,7 +370,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 15);
+      assertNotEquals(errors.length, 0);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -196,7 +378,7 @@ describe("error-registry", () => {
 
     it("should return BUILD errors", () => {
       const errors = getErrorsByCategory("BUILD");
-      assertEquals(errors.length, 9);
+      assertNotEquals(errors.length, 0);
       for (const error of errors) {
         assertEquals(error.category, "BUILD");
       }
@@ -336,34 +518,29 @@ describe("error-registry", () => {
   });
 
   describe("error categories coverage", () => {
-    const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 15,
-      BUILD: 9,
-      RUNTIME: 14,
-      ROUTE: 6,
-      MODULE: 8,
-      SERVER: 19,
-      BOUNDARY: 8,
-      DEV: 5,
-      DEPLOY: 16,
-      AGENT: 9,
-      GENERAL: 14,
-    };
+    it("keeps every category populated", () => {
+      const empty = ERROR_CATEGORIES.filter(
+        (category) => getErrorsByCategory(category).length === 0,
+      );
+      assertEquals(empty, [], `Categories with no registered errors: ${empty.join(", ")}`);
+    });
 
-    for (
-      const [category, count] of Object.entries(
-        expectedCategoryCounts,
-      ) as Array<[ErrorCategory, number]>
-    ) {
-      it(`should have ${count} errors in ${category} category`, () => {
-        const errors = getErrorsByCategory(category);
-        assertEquals(
-          errors.length,
-          count,
-          `Expected ${count} ${category} errors, got ${errors.length}`,
-        );
-      });
-    }
+    it("routes every registered error to exactly one category", () => {
+      // Cardinality alone would miss two lookups swapping contents, so check
+      // which slugs come back and that each declares the category it came from.
+      const routed: string[] = [];
+      const misrouted: string[] = [];
+      for (const category of ERROR_CATEGORIES) {
+        for (const error of getErrorsByCategory(category)) {
+          routed.push(error.slug);
+          if (error.category !== category) {
+            misrouted.push(`${error.slug} returned for ${category} but declares ${error.category}`);
+          }
+        }
+      }
+      assertEquals(misrouted, [], `Misrouted errors: ${misrouted.join("; ")}`);
+      assertEquals(routed.sort(), [...getAllSlugs()].sort());
+    });
   });
 
   // =========================================================================

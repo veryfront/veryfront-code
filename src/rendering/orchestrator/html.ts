@@ -50,6 +50,7 @@ import {
   resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
+import type { CSSImportReference } from "#veryfront/modules/react-loader/css-import-collector.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
@@ -916,7 +917,7 @@ export class HTMLGenerator {
    */
   private async mergeImportedCSS(
     globalCSS: string | undefined,
-    cssImports: string[] | undefined,
+    cssImports: Array<string | CSSImportReference> | undefined,
     stylesheetPath: string,
   ): Promise<string | undefined> {
     return mergeImportedProjectCss({

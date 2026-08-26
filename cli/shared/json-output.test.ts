@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { refreshLoggerConfig } from "veryfront/utils";
+import { refreshLoggerConfig } from "#cli/logger-config";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,

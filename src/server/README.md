@@ -111,7 +111,8 @@ console.log("Production server running on http://0.0.0.0:8000");
 ```ts
 import { createHandler } from "#server";
 import { getConfig } from "#config";
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
 const adapter = await runtime.get();

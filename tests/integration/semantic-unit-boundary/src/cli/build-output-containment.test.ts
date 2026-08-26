@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, mkdir, remove, symlink } from "#veryfront/platform/compat/fs.ts";
-import { runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import { join } from "veryfront/platform/path";
 import { assertConfiguredBuildOutputPhysicallyContained } from "../../../../../cli/commands/build/command.ts";
 

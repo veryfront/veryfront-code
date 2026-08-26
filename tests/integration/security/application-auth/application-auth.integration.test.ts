@@ -25,7 +25,7 @@ import {
   __resetLogRecordEmitterForTests,
   __subscribeLogRecordEmitter,
   type LogEntry,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import {
   createMockOidcProvider,
   type MockOidcKeyName,

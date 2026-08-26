@@ -1,7 +1,7 @@
 import { analyzeProjectChunks, generateChunkManifest } from "veryfront/rendering";
 import { cliLogger } from "#cli/utils";
+import { exit } from "#cli/process-lifecycle";
 import { createFileSystem } from "veryfront/platform";
-import { exit } from "veryfront/platform";
 
 export interface AnalyzeChunksOptions {
   projectDir: string;

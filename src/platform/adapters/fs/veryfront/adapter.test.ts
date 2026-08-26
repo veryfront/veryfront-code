@@ -4,6 +4,7 @@ import {
   assertExists,
   assertNotEquals,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -117,6 +118,7 @@ describe("VeryfrontFSAdapter", () => {
       "refreshSourceSnapshot",
       "ensureSourceSnapshotFresh",
       "getSourceSnapshotVersion",
+      "getSourceSnapshotFingerprint",
     ] as const;
 
     for (const method of methods) {
@@ -124,6 +126,115 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(typeof (createAdapter() as any)[method], "function");
       });
     }
+  });
+
+  describe("credential-bearing read dispatch", () => {
+    it("does not expose the adapter to a project-mutated recovery hook", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        initialized: boolean;
+        readOps: { readTextFile(path: string): Promise<string> };
+      };
+      internals.initialized = true;
+      internals.readOps.readTextFile = () => Promise.resolve("safe content");
+
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const previousRecovery = Object.getOwnPropertyDescriptor(
+        prototype,
+        "withBranchSnapshotRecovery",
+      );
+      let observedToken: string | undefined;
+      Object.defineProperty(prototype, "withBranchSnapshotRecovery", {
+        configurable: true,
+        writable: true,
+        value: async function (
+          this: { activeRequestToken?: string },
+          _path: string,
+          operation: () => Promise<string>,
+        ): Promise<string> {
+          observedToken = this.activeRequestToken;
+          return await operation();
+        },
+      });
+
+      try {
+        assertEquals(await adapter.readTextFile("veryfront.config.ts"), "safe content");
+      } finally {
+        if (previousRecovery) {
+          Object.defineProperty(prototype, "withBranchSnapshotRecovery", previousRecovery);
+        } else {
+          Reflect.deleteProperty(prototype, "withBranchSnapshotRecovery");
+        }
+      }
+
+      assertEquals(observedToken, undefined);
+    });
+
+    it("keeps initialization independent of project-mutated internal capabilities", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize(): Promise<void>;
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      internals.client.initialize = () => Promise.resolve();
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const capabilityNames = ["performInitialization", "runSourceSnapshotMutation"];
+      const originalCapabilities = capabilityNames.map((name) =>
+        [name, Object.getOwnPropertyDescriptor(prototype, name)] as const
+      );
+      let poisonedCalls = 0;
+      Object.defineProperty(performance, "now", {
+        configurable: true,
+        value: () => {
+          poisonedCalls += 1;
+          throw new Error("project performance hook must not run");
+        },
+      });
+      for (const name of capabilityNames) {
+        Object.defineProperty(prototype, name, {
+          configurable: true,
+          value: () => {
+            poisonedCalls += 1;
+            throw new Error(`project ${name} hook must not run`);
+          },
+        });
+      }
+      try {
+        await adapter.initialize();
+      } finally {
+        if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
+        else Object.defineProperty(performance, "now", originalNow);
+        for (const [name, descriptor] of originalCapabilities) {
+          if (descriptor === undefined) Reflect.deleteProperty(prototype, name);
+          else Object.defineProperty(prototype, name, descriptor);
+        }
+        adapter.dispose();
+      }
+
+      assertEquals(poisonedCalls, 0);
+    });
   });
 
   describe("bounded byte reads", () => {
@@ -167,20 +278,24 @@ describe("VeryfrontFSAdapter", () => {
       const exactCalls: Array<[string, number]> = [];
       let refreshCalls = 0;
       const internals = adapter as unknown as {
+        initialized: boolean;
         readOps: {
           readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
         };
+        client: {
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
       };
+      internals.initialized = true;
       internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
         exactCalls.push([path, byteLimit]);
         return exactCalls.length === 1
           ? Promise.reject(new Error(`404 Not Found: ${path}`))
           : Promise.resolve(new Uint8Array([9, 8]));
       };
-      adapter.refreshSourceSnapshot = (reason) => {
+      internals.client.listAllFiles = () => {
         refreshCalls++;
-        assertEquals(reason, "branch-miss:manifest.json");
-        return Promise.resolve();
+        return Promise.resolve([]);
       };
 
       assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [9, 8]);
@@ -251,7 +366,6 @@ describe("VeryfrontFSAdapter", () => {
 
       const internals = adapter as unknown as {
         getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
-        getCurrentSourceSnapshotIdentity(): string | undefined;
         initialized: boolean;
         sourceSnapshotCheckedAt: number;
         sourceSnapshotIdentity: string | undefined;
@@ -259,26 +373,19 @@ describe("VeryfrontFSAdapter", () => {
         sourceSnapshotRefreshPromise: Promise<void> | null;
       };
       internals.initialized = true;
-      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
       internals.sourceSnapshotCheckedAt = Date.now();
       internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
       internals.sourceSnapshotRefreshPromise = new Promise(() => {});
       assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
 
-      let refreshCalls = 0;
-      adapter.refreshSourceSnapshot = () => {
-        refreshCalls++;
-        return Promise.resolve();
-      };
       const before = adapter.getSourceSnapshotVersion();
 
       adapter.setRequestToken("tenant-token");
       assertEquals(internals.getCachedFileListSync(), undefined);
       assertEquals(internals.sourceSnapshotRefreshPromise, null);
-      await adapter.ensureSourceSnapshotFresh("new-authority");
       adapter.setRequestToken("static-token");
 
-      assertEquals(refreshCalls, 1);
       assertEquals(adapter.getSourceSnapshotVersion() > before, true);
     });
   });
@@ -716,12 +823,12 @@ describe("VeryfrontFSAdapter", () => {
       const readStarted = Promise.withResolvers<void>();
       const releaseRead = Promise.withResolvers<void>();
       const internals = adapter as unknown as {
-        ensureExactReadInitialized(): Promise<void>;
+        client: { isInitialized(): boolean };
         readOps: {
           readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
         };
       };
-      internals.ensureExactReadInitialized = () => Promise.resolve();
+      internals.client.isInitialized = () => true;
       internals.readOps.readFileBytesWithinLimit = async () => {
         readStarted.resolve();
         await releaseRead.promise;
@@ -783,6 +890,266 @@ describe("VeryfrontFSAdapter", () => {
       adapter.setRequestBranch(null);
       assertEquals(adapter.getRequestBranch(), null);
     });
+
+    it("names the snapshot identity after the per-request branch", () => {
+      const adapter = createAdapter();
+      assertEquals(
+        adapter.getSourceSnapshotIdentity(),
+        undefined,
+        "without a content context there is no identity to name",
+      );
+
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
+
+      // A request-scoped branch override retargets the snapshot, so freshness
+      // established for the previous identity must be detectable as stale.
+      adapter.setRequestBranch("feature");
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:feature");
+
+      adapter.clearRequestBranch();
+      assertEquals(adapter.getSourceSnapshotIdentity(), "branch:test-project:main");
+    });
+  });
+
+  describe("source snapshot fingerprints", () => {
+    it("identifies snapshot contents independently of file-list order", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{
+          path: string;
+          version_id?: string;
+          content?: string;
+        }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "pages/index.tsx", version_id: "version-1", content: "first" },
+        { path: "veryfront.config.ts", version_id: "version-2", content: "second" },
+      ];
+      const first = await adapter.getSourceSnapshotFingerprint();
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = [...internals.sourceSnapshotFiles].reverse();
+      const reordered = await adapter.getSourceSnapshotFingerprint();
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles[0] = {
+        ...internals.sourceSnapshotFiles[0],
+        path: internals.sourceSnapshotFiles[0]!.path,
+        version_id: "version-3",
+      };
+      const changed = await adapter.getSourceSnapshotFingerprint();
+
+      assertEquals(reordered, first);
+      assertNotEquals(changed, first);
+    });
+
+    it("does not consult project-mutated Array serialization hooks", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      const previousToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let first: string | undefined;
+      let changed: string | undefined;
+
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => ["constant-fingerprint"],
+      });
+      try {
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
+        first = await adapter.getSourceSnapshotFingerprint();
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
+        changed = await adapter.getSourceSnapshotFingerprint();
+      } finally {
+        if (previousToJSON) {
+          Object.defineProperty(Array.prototype, "toJSON", previousToJSON);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "toJSON");
+        }
+      }
+
+      assertNotEquals(changed, first);
+    });
+
+    it("does not populate fingerprint records through inherited array setters", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      const previousIndex = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let setterCalls = 0;
+      let firstHash: Promise<string | undefined> | undefined;
+      let changedHash: Promise<string | undefined> | undefined;
+
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set: () => {
+          setterCalls += 1;
+        },
+      });
+      try {
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
+        firstHash = adapter.getSourceSnapshotFingerprint();
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
+        changedHash = adapter.getSourceSnapshotFingerprint();
+      } finally {
+        if (previousIndex) {
+          Object.defineProperty(Array.prototype, "0", previousIndex);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "0");
+        }
+      }
+
+      if (!firstHash || !changedHash) throw new Error("Fingerprint hashing did not start");
+      assertNotEquals(await changedHash, await firstHash);
+      assertEquals(setterCalls, 0);
+    });
+
+    it("does not iterate through a mutable source-list hook", async () => {
+      const adapter = createAdapter();
+      const files = [{ path: "pages/index.tsx", content: "source" }];
+      Object.defineProperty(files, Symbol.iterator, {
+        configurable: true,
+        value: () => {
+          throw new Error("source-list iterator must not run");
+        },
+      });
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = files;
+
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+    });
+
+    it("does not read source snapshot fields through inherited accessors", async () => {
+      const adapter = createAdapter();
+      let inheritedGetterCalls = 0;
+      const inheritedFields = {
+        get path(): string {
+          inheritedGetterCalls += 1;
+          return "pages/inherited.tsx";
+        },
+        get content(): string {
+          inheritedGetterCalls += 1;
+          return "inherited source";
+        },
+      };
+      const file = Object.create(inheritedFields) as { path: string; content?: string };
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = [file];
+
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+      assertEquals(inheritedGetterCalls, 0);
+    });
+
+    it("fingerprints a snapshot larger than the former aggregate byte cap", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = [{
+        path: "pages/oversized.tsx",
+        content: "x".repeat(32 * 1_024 * 1_024),
+      }];
+
+      let timerRan = false;
+      const timer = setTimeout(() => {
+        timerRan = true;
+      }, 0);
+      try {
+        assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+        assertEquals(timerRan, true, "large source contents must yield to the task queue");
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
+    it("fingerprints a snapshot larger than the former file-count cap", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = Array.from({ length: 10_001 }, (_, index) => ({
+        path: `pages/generated-${index}.tsx`,
+      }));
+
+      let timerRan = false;
+      const timer = setTimeout(() => {
+        timerRan = true;
+      }, 0);
+      try {
+        assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+        assertEquals(timerRan, true, "large fingerprints must yield to the task queue");
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
+    it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const internals = adapter as unknown as {
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
+        sourceSnapshotIdentity: string | undefined;
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      };
+      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "old source" }];
+      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
+      internals.sourceSnapshotCheckedAt = Date.now();
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+
+      internals.wsManager.deps.clearMemoryCaches();
+
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+      assertEquals(internals.sourceSnapshotFiles, undefined);
+      assertEquals(internals.sourceSnapshotIdentity, undefined);
+      assertEquals(internals.sourceSnapshotCheckedAt, 0);
+      assertEquals(internals.sourceSnapshotFingerprint, undefined);
+    });
+
+    it("withholds an in-flight fingerprint invalidated by a POKE", async () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      };
+      internals.sourceSnapshotFiles = [{
+        path: "pages/index.tsx",
+        content: "source being hashed",
+      }];
+
+      const pendingFingerprint = adapter.getSourceSnapshotFingerprint();
+      internals.wsManager.deps.clearMemoryCaches();
+
+      assertEquals(await pendingFingerprint, undefined);
+    });
   });
 
   describe("dispose", () => {
@@ -831,6 +1198,16 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "hello");
 
       const versionBeforeDispose = adapter.getSourceSnapshotVersion();
+      const internals = adapter as unknown as {
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotIdentity: string | undefined;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
+      };
+      internals.sourceSnapshotCheckedAt = Date.now();
+      internals.sourceSnapshotIdentity = "branch:test-project:main";
+      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "hello" }];
+      await adapter.getSourceSnapshotFingerprint();
       assertEquals(
         adapter.getCacheStats().cache.size > 0,
         true,
@@ -846,6 +1223,10 @@ describe("VeryfrontFSAdapter", () => {
         versionBeforeDispose,
         "dispose bumps the source snapshot generation",
       );
+      assertEquals(internals.sourceSnapshotCheckedAt, 0);
+      assertEquals(internals.sourceSnapshotIdentity, undefined);
+      assertEquals(internals.sourceSnapshotFiles, undefined);
+      assertEquals(internals.sourceSnapshotFingerprint, undefined);
 
       await adapter.initialize();
       assertEquals(
@@ -1240,6 +1621,331 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
     });
 
+    it("does not reuse a freshness lease when the draft content changed", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v1",
+        "initialization must load the draft that existed at startup",
+      );
+
+      // The author edits the draft. The branch identity is unchanged, so the
+      // lease clock is the only thing between that edit and the next render.
+      draftContent = "v2";
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "a strict freshness check must consult the source authority instead of reusing the lease",
+      );
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v2",
+        "a strict freshness check must expose the edited draft, not the pre-edit snapshot",
+      );
+    });
+
+    it("uses cold initialization as the zero-age source snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "the listing fetched during cold initialization already satisfies this zero-age check",
+      );
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
+
+      draftContent = "v2";
+      (adapter as unknown as {
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      }).wsManager.deps.clearMemoryCaches();
+      await adapter.ensureSourceSnapshotFresh(
+        "invalidated-cold-document",
+        { maxAgeMs: 0 },
+        true,
+      );
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "an invalidation must prevent the cold-initialization shortcut from accepting old authority",
+      );
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
+    });
+
+    it("singleflights concurrent cold strict initialization", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      const listingStarted = Promise.withResolvers<void>();
+      const releaseListing = Promise.withResolvers<void>();
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = async () => {
+        listAllFilesCalls++;
+        const observedContent = draftContent;
+        if (listAllFilesCalls === 1) {
+          listingStarted.resolve();
+          await releaseListing.promise;
+        }
+        return [{
+          path: "pages/index.tsx",
+          version_id: observedContent,
+          content: observedContent,
+        }];
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      const first = adapter.ensureSourceSnapshotFresh("first-cold-document", { maxAgeMs: 0 });
+      const second = adapter.ensureSourceSnapshotFresh("second-cold-document", { maxAgeMs: 0 });
+      await listingStarted.promise;
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "concurrent cold documents must join one initialization authority request",
+      );
+
+      releaseListing.resolve();
+      await Promise.all([first, second]);
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
+
+      draftContent = "v2";
+      await adapter.ensureSourceSnapshotFresh("later-strict-document", { maxAgeMs: 0 });
+      assertEquals(listAllFilesCalls, 2, "only joined cold callers may reuse initialization");
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
+    });
+
+    it("reuses a fresh lease when the caller accepts the default snapshot age", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: "v1",
+          content: "v1",
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      // Sub-resource requests inside one page load must not fan out into a
+      // fresh listing each: the default lease still absorbs them.
+      await adapter.ensureSourceSnapshotFresh("preview-request-routing");
+      await adapter.ensureSourceSnapshotFresh("preview-request-routing");
+
+      assertEquals(
+        listAllFilesCalls,
+        1,
+        "default-strictness callers must reuse the lease rather than re-list the source tree",
+      );
+    });
+
+    it("refuses the lease under a zero age budget even when the clock steps backward", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      let draftContent = "v1";
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          version_id: draftContent,
+          content: draftContent,
+        }]);
+      };
+
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+
+      // A backward wall-clock step (NTP correction, host suspend) leaves the
+      // recorded check in the future, so the measured lease age is negative.
+      // A negative age is below every budget, so an age comparison alone would
+      // hand a zero-budget caller the lease it refused.
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt =
+        Date.now() + 60_000;
+      draftContent = "v2";
+
+      await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "a zero age budget must bypass the lease unconditionally, not by comparing ages",
+      );
+      assertEquals(
+        await adapter.readTextFile("pages/index.tsx"),
+        "v2",
+        "a backward clock step must not let a strict caller serve the pre-edit snapshot",
+      );
+    });
+
     it("discards an in-flight refresh when the request branch changes", async () => {
       const adapter = createAdapter({
         veryfront: {
@@ -1434,6 +2140,9 @@ describe("VeryfrontFSAdapter", () => {
       await adapter.initialize();
 
       const initialSnapshotVersion = adapter.getSourceSnapshotVersion();
+      const initialSnapshotFiles = (adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; version_id?: string; content?: string }>;
+      }).sourceSnapshotFiles;
       assertEquals(initialSnapshotVersion > 0, true);
       assertEquals(listAllFilesCalls, 1);
 
@@ -1446,6 +2155,11 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(listAllFilesCalls, 2);
       assertEquals(adapter.getSourceSnapshotVersion(), initialSnapshotVersion);
+      assertStrictEquals(
+        (adapter as unknown as { sourceSnapshotFiles: unknown }).sourceSnapshotFiles,
+        initialSnapshotFiles,
+      );
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
       assertEquals(routerInvalidations, 0);
       assertEquals(ssrInvalidations, 0);
 
@@ -1456,6 +2170,166 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(adapter.getSourceSnapshotVersion() > initialSnapshotVersion, true);
       assertEquals(routerInvalidations, 1);
       assertEquals(ssrInvalidations, 1);
+    });
+
+    it("treats a repeated path that omits another file as a changed snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const initialFiles = [
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+        { path: "pages/b.tsx", version_id: "version-b", content: "b" },
+      ];
+      const repeatedPathFiles = [
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+      ];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls += 1;
+        return Promise.resolve(listAllFilesCalls === 1 ? initialFiles : repeatedPathFiles);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const initialVersion = adapter.getSourceSnapshotVersion();
+      const initialFingerprint = await adapter.getSourceSnapshotFingerprint();
+      assertEquals(typeof initialFingerprint, "string");
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const originalInvalidation = Object.getOwnPropertyDescriptor(
+        prototype,
+        "invalidateDerivedSourceCaches",
+      );
+      const originalIdentityLookup = Object.getOwnPropertyDescriptor(
+        prototype,
+        "getCurrentSourceSnapshotIdentity",
+      );
+      let poisonedInvalidations = 0;
+      let poisonedIdentityLookups = 0;
+      Object.defineProperty(prototype, "invalidateDerivedSourceCaches", {
+        configurable: true,
+        value: () => {
+          poisonedInvalidations += 1;
+          throw new Error("project invalidation hook must not run");
+        },
+      });
+      Object.defineProperty(prototype, "getCurrentSourceSnapshotIdentity", {
+        configurable: true,
+        value: () => {
+          poisonedIdentityLookups += 1;
+          throw new Error("project identity hook must not run");
+        },
+      });
+      try {
+        await adapter.ensureSourceSnapshotFresh("duplicate-path-refresh");
+      } finally {
+        if (originalInvalidation === undefined) {
+          Reflect.deleteProperty(prototype, "invalidateDerivedSourceCaches");
+        } else {
+          Object.defineProperty(
+            prototype,
+            "invalidateDerivedSourceCaches",
+            originalInvalidation,
+          );
+        }
+        if (originalIdentityLookup === undefined) {
+          Reflect.deleteProperty(prototype, "getCurrentSourceSnapshotIdentity");
+        } else {
+          Object.defineProperty(
+            prototype,
+            "getCurrentSourceSnapshotIdentity",
+            originalIdentityLookup,
+          );
+        }
+      }
+
+      assertEquals(listAllFilesCalls, 2);
+      assertEquals(poisonedInvalidations, 0);
+      assertEquals(poisonedIdentityLookups, 0);
+      assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+    });
+
+    it("detects changed branch snapshots when Array.prototype.every is replaced", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/review.tsx",
+          version_id: `version-${listAllFilesCalls}`,
+          content: `export const version = ${listAllFilesCalls};`,
+        }]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const initialVersion = adapter.getSourceSnapshotVersion();
+      const initialFingerprint = await adapter.getSourceSnapshotFingerprint();
+      const previousEvery = Object.getOwnPropertyDescriptor(Array.prototype, "every");
+      try {
+        Object.defineProperty(Array.prototype, "every", {
+          configurable: true,
+          writable: true,
+          value: () => true,
+        });
+        (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+        await adapter.ensureSourceSnapshotFresh("prototype-sensitive-refresh");
+      } finally {
+        if (previousEvery) Object.defineProperty(Array.prototype, "every", previousEvery);
+      }
+
+      assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(), initialFingerprint);
     });
 
     it("keeps freshness followers attached until SSR invalidation completes", async () => {

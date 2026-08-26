@@ -1182,6 +1182,7 @@ function createHostedConfigFlight(
   payload: PreparedDeclarativeConfigWorkerPayload,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): HostedConfigFlight {
   const controller = createHostedAbortController();
   const controllerSignal = getAbortControllerSignal(controller);
@@ -1198,7 +1199,8 @@ function createHostedConfigFlight(
       signal: controllerSignal,
     });
     throwIfHostedConfigAborted(controllerSignal);
-    const merged = deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
+    const validate = () => deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
+    const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);
     if (usePersistentCache && cacheRevision === revisionAtStart) {
       configCacheByProject.set(hostedCacheKey, {
@@ -1245,6 +1247,7 @@ function getOrCreateHostedConfigFlight(
   payload: PreparedDeclarativeConfigWorkerPayload,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): HostedConfigFlight {
   const flightKey = buildHostedConfigFlightKey(hostedCacheKey, revisionAtStart);
   const existing = mapGet(hostedConfigFlights, flightKey);
@@ -1266,6 +1269,7 @@ function getOrCreateHostedConfigFlight(
     payload,
     usePersistentCache,
     revisionAtStart,
+    validationBoundary,
   );
 }
 
@@ -1628,9 +1632,183 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+// A colorized cause arrives as ESC + "[31m" + text. Dropping only the ESC as a
+// control character leaves the "[31m" behind, and that residue sits between the
+// start of the token and the path -- which defeats any pattern anchored on what
+// precedes a path. Remove the whole sequence so the path patterns see the text
+// a plain terminal would.
+//
+// Matches the full CSI grammar rather than the colour sequences alone:
+// parameter bytes 0x30-0x3F, intermediate bytes 0x20-0x2F, one final byte
+// 0x40-0x7E. Accepting only digits and semicolons missed the colon-separated
+// form a true-colour sequence uses (`ESC[38:2:255:0:0m`), whose residue then
+// defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
+// deno-lint-ignore no-control-regex
+const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// A CSI introducer, with any parameter and intermediate bytes it carries,
+// immediately followed by a path start. Removed before the full CSI pass so
+// that pass cannot consume the path's first characters; see
+// summarizeConfigLoadCause for why the path itself is not redacted here.
+//
+// The parameter and intermediate runs are part of the match, not just the bare
+// introducer: `ESC[31C:\\Users\\alice` is a legal CUF sequence whose final byte
+// is the drive letter, and `ESC[31/home/alice` is a legal sequence whose
+// intermediate is the leading `/` and whose final byte is the `h`. Matching only
+// the introducer left `:\\Users\\alice` and `ome/alice` behind, which no later
+// path pattern recognises.
+//
+// The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
+// 0x2F is `/` -- the first character of the path this pass exists to preserve.
+//
+// The final byte is optional so a *completed* sequence is covered too, not only
+// an introducer. `Failed at` + `ESC[3~` + `/home/alice/x` is a legal CSI whose
+// final byte is `~`; removing it during de-colorization joined `at` to the path,
+// POSIX_ABSOLUTE_PATH's lookbehind then refused the slash, and the path reached
+// the caller. Optional rather than required, because `ESC[/home` has no final
+// byte before the path at all.
+//
+// The backslash branch of the lookahead requires *both* UNC separators, not one.
+// A backslash is 0x5C, inside the final-byte range, so in an introducer followed by
+// a UNC path the optional final byte ate the first separator while the lookahead was
+// satisfied by the second. The pass then emitted a single-separator path, which
+// WINDOWS_ABSOLUTE_PATH does not recognise -- it requires a doubled separator or a
+// drive letter -- so the UNC path reached the caller. `origin/main` redacts that same
+// input, so this pre-pass introduced the leak rather than inheriting it. Demanding
+// both separators makes the engine backtrack the optional final byte to zero width
+// and leave the prefix whole. A forward slash needs no such care: 0x2F sits below the
+// final-byte range, and the intermediate run already stops at 0x2E to protect it.
+//
+// The sequence is taken here rather than by making de-colorization emit a space
+// instead of nothing. That pass must keep emitting nothing: `sk-` + `ESC[0m` +
+// `ABCD1234EFGH5678` only rejoins into a contiguous credential if the removal
+// leaves no gap, and the sanitiser that runs after it matches nothing otherwise.
+// Fixing a path boundary must not reopen that.
+const CSI_GLUED_PATH =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=\\\\|\/|[A-Za-z]:[\\/])/g;
+// The same pre-pass for a special-scheme URL start, which the CSI grammar eats
+// exactly as it eats a path. In `ESC[https:registry.internal/x`, `h` is a legal
+// final byte, so the CSI pass left `ttps:registry.internal/x`:
+// ZERO_SLASH_SCHEME_URL no longer recognises the damaged scheme, and
+// POSIX_ABSOLUTE_PATH refuses the `/x` that follows a hostname, so the private
+// host reached the caller. `wss`, `ftp`, the 8-bit introducer, a parameterized
+// introducer and an uppercase scheme all leaked the same way; the single-slash
+// form survived but emitted `ttp[path]`, the path-as-URL mislabel this PR
+// exists to remove.
+//
+// A separate constant rather than a third alternative in the one above. The two
+// share a prefix, so folding them together is the obvious move -- and it is what
+// took SonarCloud's maintainability rating on new code to B. Splitting a dense
+// alternation into plain per-shape constants is what cleared the same gate
+// earlier in this PR, when `REMOTE_URL` became SCHEME_URL and
+// MALFORMED_SCHEME_URL. Each pass reads as one rule.
+//
+// The list is every scheme the redactor itself recognises: the special schemes
+// of MALFORMED_SCHEME_URL and ZERO_SLASH_SCHEME_URL, plus `file`, which
+// FILE_URL_ABSOLUTE_PATH claims. `file` is here because `f` is a legal final
+// byte, so `ESC[file:///home/alice/x` lost `ESC[f` and SCHEME_URL read the
+// remaining `ile:///home/alice/x` as a remote URL -- reporting `[url]` for a
+// local path. Keep this list in sync with those three. A generic
+// `[A-Za-z][A-Za-z0-9+.-]*:` lookahead cannot be used: it matches the prose in
+// `ESC[0mError: cannot find module`, which would strip `ESC[0` and leave a
+// stray `m` in an ordinary diagnostic. A generic `scheme://` needs no help
+// here, because SCHEME_URL still matches the damaged `ttps://host/x`.
+//
+// `i` is safe on the whole pattern: every other class is either explicitly
+// both cases (`[A-Za-z]`) or contains no letters at all.
+const CSI_GLUED_URL =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=(?:https?|wss?|ftp|file):)/gi;
+// The scheme needs at least two characters: `C://Users/alice` is a drive path
+// that Node normalises, not a URL with the one-letter scheme `C`, and matching it
+// here reintroduced the path-as-URL mislabel this PR exists to remove. No
+// registered scheme is a single character.
+// A remote config URL is redacted whole rather than picked apart: AGENTS.md
+// counts private hostnames among the values user-facing output must not carry,
+// and the caller cannot tell an internal registry from a public CDN by looking
+// at it (veryfront-issue-inbox#836).
+//
+// The ordinary form. Unanchored on the left so a scheme glued to preceding
+// text (`3https://host/x`) is still recognised rather than falling through to
+// the Windows pattern.
+//
+// The scheme length is bounded because this runs over the whole message before
+// the 200-character cap applies. Unbounded, the greedy prefix rescans to the
+// end of the input at every position starting with a letter, so a long
+// alphabetic message with no colon costs O(n^2) -- 100k characters measured at
+// ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
+const SCHEME_URL =
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+// Both the userinfo run and the parenthesised interior are length-bounded, and
+// the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
+// greedy interior rescans the rest of the message from every `(` that never
+// finds a `)`, so `"a://(".repeat(20_000)` cost 2.6s and grew 4x per doubling --
+// quadratic, and reachable from a project-authored error because
+// summarizeConfigLoadCause runs this before the 200-character cap. Bounded, the
+// same input is 42ms and grows 2x per doubling. `/` cannot appear unencoded in
+// userinfo (it terminates the authority), so excluding it costs nothing and
+// keeps that run inside the authority rather than the whole message.
+//
+// The interior of a parenthesised segment is `[^\s"']*`, not `[^\s"'()]*`: a
+// flat interior matches one nesting level, so `/a((TOKEN))` ended the token at
+// the first `(` and left `((TOKEN))` in the caller-visible detail -- a URL path
+// or query fragment, which can carry the value it was redacting. A greedy
+// interior backtracks to the last `)` in the run, so any nesting depth is
+// consumed in one pass. A token with no `(` at all is unaffected, which is what
+// still leaves a trailing prose `)` outside the match.
+// The userinfo run excludes only whitespace and a double quote, not an
+// apostrophe: RFC 3986 puts `'` in sub-delims, so `user'name@registry.internal`
+// is a legal authority, and stopping at the apostrophe left the hostname in the
+// caller-visible detail. The tail still excludes `'`, so a quoted config
+// message such as `Cannot find module 'some-pkg'` is unaffected and the quoted
+// path and quoted URL regressions keep their delimiters.
+// Userinfo gets its own permissive run up to `@`, rather than relying on the
+// balanced-parentheses alternative that covers the rest of the token. That
+// alternative matches one flat `(...)` pair, so a legal nested userinfo such as
+// `u((x))y@registry.internal` ended the match at the first `(` and left the
+// hostname in the caller-visible detail. RFC 3986 puts `(` and `)` in
+// sub-delims, so nesting there is valid rather than exotic. `[^\s"']*` cannot
+// cross whitespace or a quote, so the run stays inside one URL token and a
+// trailing prose `)` is still left behind.
+// The malformed single-slash form, kept separate from SCHEME_URL rather than
+// folded in as an alternation: two plain patterns read more clearly than one
+// branching expression, and each stays independently checkable.
+//
+// Restricted to the WHATWG special schemes, like the zero-slash form below and
+// for a sharper version of the same reason. A generic `[A-Za-z][...]{1,31}:`
+// shape claimed `atC` in `Failed atC:/Users/alice/x` -- reporting `Failed [url]`,
+// which both mislabels a local path and eats the word `at`. A two-character
+// minimum is not enough to separate a scheme from prose glued to a drive letter.
+// A glued *URL* still redacts: the match simply starts later in the token, so
+// `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
+const MALFORMED_SCHEME_URL =
+  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+// The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
+// parses to `https://registry.internal/x`, so the hostname is just as real as in
+// the two-slash form, but neither pattern above matches it -- both require at
+// least one slash -- and POSIX_ABSOLUTE_PATH refuses `/x` because it follows an
+// alphanumeric. Restricted to the special schemes rather than the generic
+// `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
+// (`warning:something`) and, at one character, drive letters.
+//
+// The `i` flag is load-bearing rather than tidy. A URL scheme is
+// case-insensitive, and the two patterns above get that free from `[A-Za-z]`; a
+// literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
+// and the hostname survived into the caller-visible detail.
+const ZERO_SLASH_SCHEME_URL =
+  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
+// Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
+// past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
+// home directory was redacted either way -- but it reported a local path as a
+// remote URL, which is this PR's original misclassification running backwards.
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+// Unanchored on the left. A boundary here refuses a path glued to preceding
+// text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
+// backslash form, so the path would reach the caller intact. The scheme match in
+// SCHEME_URL and MALFORMED_SCHEME_URL is what keeps `https:/` away from the
+// drive-letter alternative, so the boundary is not needed for that either.
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
@@ -1661,10 +1839,39 @@ function replaceMatchesWithCapturedExec(
   }
 }
 
+/**
+ * Replace machine-identifying locations in a diagnostic with stable markers.
+ *
+ * The order is load-bearing, narrowest first. Each pass consumes its matches
+ * before the next runs, so an earlier pattern is what keeps a later, greedier
+ * one away from text it would mis-read:
+ *
+ * 1. the quoted forms, whose surrounding quotes bound the match precisely;
+ * 2. `file:///`, which is a path wearing a URL and is reported as `[path]`;
+ * 3. `SCHEME_URL`, then `MALFORMED_SCHEME_URL`, each reported as `[url]` --
+ *    together these are also what keep `https:/` away from step 4, whose
+ *    drive-letter alternative would otherwise match the `s:/` inside it and
+ *    emit `http[path]`;
+ * 4. unquoted Windows drive and UNC paths;
+ * 5. unquoted POSIX paths.
+ *
+ * Callers must strip ANSI sequences first -- `summarizeConfigLoadCause` does,
+ * before it sanitises credentials. Colorized text leaves `[31m` style residue
+ * directly in front of a path once the escape itself is gone, which defeats the
+ * boundary lookbehind step 5 relies on.
+ *
+ * That caller also removes a CSI introducer glued to a path start beforehand
+ * (`CSI_GLUED_PATH`), because the CSI grammar would otherwise consume the path's
+ * own first characters. It removes only the introducer, so this function still
+ * runs exactly once and still runs after de-colorization.
+ */
 function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
@@ -1685,7 +1892,39 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
-  const redacted = sanitizeUrlCredentials(message);
+  // Sanitize on both sides of de-colorization. A sequence inside a credential
+  // can make it noncontiguous before removal, while a CSI final byte can also
+  // consume the first character of a key such as API_KEY. Either ordering alone
+  // can therefore expose a usable value after the transformation.
+  const initiallyRedacted = sanitizeUrlCredentials(message);
+  // Drop a CSI introducer that is glued to the start of a path, before the CSI
+  // pass can eat into the path itself. `/` is a valid intermediate byte and `h`
+  // a valid final, so `ESC[/home/alice/x` would lose `ESC[/h` and leave
+  // `ome/alice/x`, which no later path pattern recognises; `ESC[C:\\Users` would
+  // lose the drive letter the same way. Both are legal CSI sequences, so no
+  // tightening of the grammar separates them from a path.
+  //
+  // Replaced with a space, not with nothing. `Failed at` + `ESC[` + `/home/alice`
+  // would otherwise become `Failed at/home/alice`, and POSIX_ABSOLUTE_PATH's
+  // lookbehind refuses a slash that follows an alphanumeric -- so removing the
+  // introducer cleanly would manufacture the one adjacency that defeats the very
+  // pass meant to catch it. A doubled space when the text already ended in one is
+  // the whole cost.
+  //
+  // Only the introducer is removed, not the path: redacting here instead would
+  // produce `ESC[[path]`, and `[` is itself a valid CSI final byte, so the pass
+  // below would eat the marker's opening bracket and emit `path]`. Removing just
+  // the introducer leaves the path intact for the single redaction pass at the
+  // end, which keeps `redactMachinePaths` running exactly once and after
+  // de-colorization -- the precondition its own docstring states.
+  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
+  const ungluedUrl = replaceMatchesWithCapturedExec(unglued, CSI_GLUED_URL, " ");
+  const deColorized = replaceMatchesWithCapturedExec(
+    ungluedUrl,
+    ANSI_CSI_SEQUENCE,
+    "",
+  );
+  const redacted = sanitizeUrlCredentials(deColorized);
   const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
     "";
   const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
@@ -2564,6 +2803,7 @@ function loadHostedConfigFromSource(
   signal: AbortSignal | undefined,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): Promise<VeryfrontConfig> {
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
@@ -2601,6 +2841,7 @@ function loadHostedConfigFromSource(
         payload,
         usePersistentCache,
         revisionAtStart,
+        validationBoundary,
       );
       return await waitForHostedConfigFlight(flight, signal);
     },
@@ -2752,6 +2993,7 @@ export interface HostedConfigOptions {
   readonly sourceContext: VirtualConfigSourceContext;
   readonly preparedContext: PreparedDeclarativeConfigContext;
   readonly signal?: AbortSignal;
+  readonly validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig;
 }
 
 /**
@@ -2793,6 +3035,7 @@ interface InternalGetConfigOptions extends GetConfigOptions {
   readonly hosted?: Readonly<{
     preparedContext: PreparedDeclarativeConfigContext;
     signal?: AbortSignal;
+    validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig;
   }>;
 }
 
@@ -3105,6 +3348,7 @@ function getConfigInternal(
                   hosted.signal,
                   usePersistentCache,
                   revisionAtStart,
+                  hosted.validationBoundary,
                 );
                 const provenance = configFileProvenance(configFile);
                 logger.debug("Successfully loaded config", {
@@ -3267,6 +3511,7 @@ export function getHostedConfig(
       hosted: {
         preparedContext: options.preparedContext,
         signal: options.signal,
+        validationBoundary: options.validationBoundary,
       },
     }),
     (result) => result.config,

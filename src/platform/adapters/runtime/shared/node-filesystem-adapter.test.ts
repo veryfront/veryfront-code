@@ -228,6 +228,62 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     );
   });
 
+  it("preserves a literal POSIX backslash through snapshot resolution", async () => {
+    const source = new Uint8Array([7]);
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 1n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const realPaths: string[] = [];
+    const lstatPaths: string[] = [];
+    const openedPaths: string[] = [];
+    const operations = {
+      realpath: (path: string) => {
+        realPaths.push(path);
+        return Promise.resolve(path);
+      },
+      lstat: (path: string) => {
+        lstatPaths.push(path);
+        return Promise.resolve(stat);
+      },
+      open: (path: string) => {
+        openedPaths.push(path);
+        return Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: (buffer: Uint8Array) => {
+            buffer.set(source);
+            return Promise.resolve({ bytesRead: source.byteLength });
+          },
+          writeFile: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+        });
+      },
+    };
+    const candidate = String.raw`/root/a\b.tsx`;
+
+    assertEquals(
+      [
+        ...await readNodeFileSnapshotWithinLimit(
+          operations,
+          "posix",
+          0x20000,
+          candidate,
+          "/root",
+          1,
+        ),
+      ],
+      [7],
+    );
+    assertEquals(realPaths, ["/root", candidate, candidate]);
+    assertEquals(lstatPaths, [candidate, candidate, candidate]);
+    assertEquals(openedPaths, [candidate]);
+  });
+
   it("rejects a Windows lexical containment escape before candidate filesystem access", async () => {
     let operationCalls = 0;
     const operations = {

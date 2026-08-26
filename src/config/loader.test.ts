@@ -10,7 +10,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
 const CONFIG_FILE_NAME = "veryfront.config.js";
@@ -444,7 +444,7 @@ export default config as const;
 
     it("reports file provenance even when a present config matches default values", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({
+      const projectDir = await makeTempDir({
         prefix: "vf-config-provenance-",
       });
       const configPath = `${projectDir}/veryfront.config.js`;
@@ -627,20 +627,46 @@ export default config as const;
 
     it("should cache separately for different project directories", async () => {
       const adapter = setup();
+      const dirA = await makeTempDir({ prefix: "vf-config-project-a-" });
+      const dirB = await makeTempDir({ prefix: "vf-config-project-b-" });
+      const sourceA = 'export default { title: "A" };';
+      const sourceB = 'export default { title: "B" };';
 
-      const configA = await getConfig("/project-a", adapter);
-      const configB = await getConfig("/project-b", adapter);
+      try {
+        await Deno.writeTextFile(`${dirA}/veryfront.config.js`, sourceA);
+        adapter.fs.files.set(`${dirA}/veryfront.config.js`, sourceA);
+        await Deno.writeTextFile(`${dirB}/veryfront.config.js`, sourceB);
+        adapter.fs.files.set(`${dirB}/veryfront.config.js`, sourceB);
 
-      assert(configA !== null);
-      assert(configB !== null);
-      assertEquals(configA.title, "Veryfront App");
-      assertEquals(configB.title, "Veryfront App");
+        const configA = await getConfig(dirA, adapter);
+        const configB = await getConfig(dirB, adapter);
+
+        assertEquals(configA.title, "A", "project A keeps its own config");
+        assertEquals(
+          configB.title,
+          "B",
+          "project B must not read project A's cached config",
+        );
+        assertStrictEquals(
+          getCachedConfigSync(dirA),
+          configA,
+          "the sync cache serves project A the config it loaded",
+        );
+        assertStrictEquals(
+          getCachedConfigSync(dirB),
+          configB,
+          "the sync cache serves project B the config it loaded",
+        );
+      } finally {
+        await Deno.remove(dirA, { recursive: true });
+        await Deno.remove(dirB, { recursive: true });
+      }
     });
 
     describe("trusted config single-flight", () => {
       it("executes one exact concurrent config module once and shares its identity", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-single-flight-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -679,7 +705,7 @@ export default config as const;
 
       it("evicts rejected flights so a later request can retry", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-single-flight-retry-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -734,7 +760,7 @@ export default config as const;
         // checking syntax that was never the problem. `cause` is attached but
         // nothing on the way to the terminal reads it, at any log level.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-load-cause-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -969,6 +995,615 @@ export default config as const;
         assertStringIncludes(error.message, "[path]");
         assertEquals(error.message.includes("/home/example"), false);
         assertEquals(error.message.includes("C:\\Users\\example"), false);
+      });
+
+      it("redacts a hosted config URL cleanly instead of mangling it into a path", async () => {
+        const error = await loadFailure(
+          "vf-config-url-redaction-",
+          `throw new Error("Failed to fetch https://cdn.example.test/hosted/config.ts from /home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // The drive-letter alternative matches the `s:/` inside `https:/`, so an
+        // unguarded pass reported `http[path]` -- neither the URL nor an honest
+        // redaction marker. AGENTS.md counts private hostnames among the values
+        // user-facing output must not carry, so the URL is redacted whole rather
+        // than preserved (veryfront-issue-inbox#836).
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("http[path]"), false);
+        assertEquals(error.message.includes("cdn.example.test"), false);
+        // The machine path on the same line is still redacted separately.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+      });
+
+      it("redacts a URL whose scheme is glued to preceding text", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-url-",
+          `throw new Error("Attempt 3https://registry.internal/config.ts failed");\n`,
+        );
+
+        // SCHEME_URL is unanchored on the left for this: with a left boundary
+        // the glued scheme is not recognised as a URL, and the hostname survives
+        // into a caller-visible detail.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("redacts a URL with parenthesized userinfo without consuming trailing prose", async () => {
+        const error = await loadFailure(
+          "vf-config-parenthesized-userinfo-",
+          `throw new Error("Fetch https://user(name):<TOKEN>@registry.internal/config.ts) failed");\n`,
+        );
+
+        assertStringIncludes(error.message, "Fetch [url]) failed");
+        assertEquals(error.message.includes("user(name)"), false);
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("redacts a URL whose userinfo nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-userinfo-",
+          `throw new Error("Fetch https://u((x))y@registry.internal/config.ts failed");\n`,
+        );
+
+        // The balanced-pair alternative matches one flat `(...)`, so a nested
+        // userinfo ended the token at the first `(` and left the hostname behind.
+        // RFC 3986 sub-delims include `(` and `)`, so this is a legal authority.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("((x))"), false);
+      });
+
+      it("keeps a left boundary when a CSI introducer is glued to preceding text", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-between-text-and-path-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // The introducer is replaced with a space, not removed. Removing it would
+        // join `at` to `/home/alice`, and POSIX_ABSOLUTE_PATH's lookbehind refuses
+        // a slash following an alphanumeric -- manufacturing the exact adjacency
+        // that defeats the pass meant to catch it.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message.includes("at/home"), false);
+      });
+
+      it("treats a drive letter with a doubled separator as a path, not a URL", async () => {
+        const error = await loadFailure(
+          "vf-config-drive-double-slash-",
+          `throw new Error("Load " + String.fromCharCode(67) + "://Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // Node normalises `C://Users/...` as an absolute drive path. A one-letter
+        // scheme would claim it as a URL, which is the path-as-URL mislabel this
+        // PR exists to remove; no registered scheme is a single character.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("alice"), false);
+      });
+
+      it("redacts a zero-slash special-scheme URL", async () => {
+        const error = await loadFailure(
+          "vf-config-zero-slash-scheme-",
+          `throw new Error("Fetch https:registry.internal/config.ts failed");\n`,
+        );
+
+        // `https:host/x` parses to `https://host/x`, so the hostname is as real
+        // as in the two-slash form. Both URL patterns above require a slash, and
+        // POSIX_ABSOLUTE_PATH refuses `/config.ts` after an alphanumeric.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("redacts a zero-slash URL and a file URL whatever the scheme's case", async () => {
+        const upper = await loadFailure(
+          "vf-config-uppercase-zero-slash-",
+          `throw new Error("Fetch HTTPS:registry.internal/config.ts failed");\n`,
+        );
+
+        // A URL scheme is case-insensitive. The sibling patterns get that free
+        // from `[A-Za-z]`; a literal scheme list does not.
+        assertStringIncludes(upper.message, "[url]");
+        assertEquals(upper.message.includes("registry.internal"), false);
+
+        const fileUrl = await loadFailure(
+          "vf-config-uppercase-file-url-",
+          `throw new Error("Load FILE:///home/alice/veryfront.config.ts");\n`,
+        );
+
+        // Reported as a path, not a URL: an uppercase scheme previously fell
+        // past FILE_URL_ABSOLUTE_PATH to SCHEME_URL and came back as `[url]`.
+        assertStringIncludes(fileUrl.message, "[path]");
+        assertEquals(fileUrl.message.includes("alice"), false);
+      });
+
+      it("does not treat a drive letter or ordinary prose as a zero-slash URL", async () => {
+        const drive = await loadFailure(
+          "vf-config-zero-slash-drive-",
+          `throw new Error("Load " + String.fromCharCode(67) + ":/Users/alice/veryfront.config.ts");\n`,
+        );
+
+        assertStringIncludes(drive.message, "[path]");
+        assertEquals(drive.message.includes("alice"), false);
+
+        // The scheme list is closed for exactly this reason: a generic
+        // `scheme:` shape would claim prose, and at one character, drive letters.
+        const prose = await loadFailure(
+          "vf-config-zero-slash-prose-",
+          `throw new Error("warning:something happened");\n`,
+        );
+
+        assertStringIncludes(prose.message, "warning:something happened");
+      });
+
+      it("redacts a URL whose userinfo contains an apostrophe", async () => {
+        const error = await loadFailure(
+          "vf-config-apostrophe-userinfo-",
+          `throw new Error("Fetch https://user'name:<TOKEN>@registry.internal/config.ts failed");\n`,
+        );
+
+        // `'` is an RFC 3986 sub-delim, so this is a legal authority. The tail of
+        // the token still stops at an apostrophe, which is what keeps quoted
+        // config messages intact.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("user'name"), false);
+      });
+
+      it("redacts a URL whose path nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-path-",
+          `throw new Error("Fetch https://registry.internal/a((TOKENVALUE1234)) failed");\n`,
+        );
+
+        // The residue here is a URL path fragment, not decoration: whatever sat
+        // inside the parentheses survived into the caller-visible detail.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("TOKENVALUE1234"), false);
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("redacts a file URL whose path nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-file-url-",
+          `throw new Error("Fetch file:///home/alice/a((TOKENVALUE1234)) failed");\n`,
+        );
+
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("TOKENVALUE1234"), false);
+        assertEquals(error.message.includes("/home/alice"), false);
+      });
+
+      it("redacts a single-slash URL-like token without misclassifying Windows paths", async () => {
+        const error = await loadFailure(
+          "vf-config-single-slash-url-",
+          `throw new Error("Fetch https:/registry.internal/config.ts beside C:/Users/alice/config.ts");\n`,
+        );
+
+        assertStringIncludes(error.message, "Fetch [url] beside [path]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("C:/Users"), false);
+        assertEquals(error.message.includes("http[path]"), false);
+      });
+
+      it("redacts a machine path glued to the preceding diagnostic text", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-path-",
+          `throw new Error("Failed at" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // A left boundary on WINDOWS_ABSOLUTE_PATH refuses this, and neither
+        // SCHEME_URL nor MALFORMED_SCHEME_URL can claim a backslash form, so the
+        // path would reach the caller.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+      });
+
+      /**
+       * Fastest of `runs` timed `loadFailure` calls, with the error it raised.
+       *
+       * A single timing is the wrong instrument here. `loadFailure` writes a temp
+       * file and loads a module, which costs tens of milliseconds before any
+       * redaction runs, while the backtracking these two tests exist to catch
+       * costs about 16ms at 100k characters when it is bounded. The signal is
+       * therefore smaller than the harness noise, and one scheduler hiccup on a
+       * shared runner is enough to fail the ratio: this went red at
+       * `probe 5450ms vs control 39ms` on a change measured to leave every
+       * pattern's cost byte-identical.
+       *
+       * Noise only ever adds time, so the minimum of several runs is the closest
+       * available estimate of the true cost. Unbounded backtracking is not
+       * intermittent -- it is paid on every run -- so taking the minimum cannot
+       * hide the thing being guarded against, which is what makes this safe
+       * rather than a way of making a red test green.
+       */
+      async function fastestLoad(
+        prefix: string,
+        source: string,
+        runs = 3,
+      ): Promise<{ ms: number; error: VeryfrontError }> {
+        const start = Date.now();
+        let error = await loadFailure(prefix, source);
+        let ms = Date.now() - start;
+        for (let run = 1; run < runs; run += 1) {
+          const runStart = Date.now();
+          error = await loadFailure(prefix, source);
+          ms = Math.min(ms, Date.now() - runStart);
+        }
+
+        return { ms, error };
+      }
+
+      it("summarizes a very long cause in time proportional to its length", async () => {
+        // A wall-clock bound would couple this to runner speed, and a partial
+        // reintroduction of backtracking that stayed under it would pass
+        // silently. Instead time two inputs of the SAME length on the SAME
+        // machine, differing only in whether the pathological retry can start:
+        // digits cannot begin a scheme, letters can, so the ratio isolates the
+        // backtracking cost from the harness overhead both inputs pay.
+        //
+        // That overhead is the same in expectation but NOT run to run, which is
+        // why each side is the fastest of several runs -- see `fastestLoad`. A
+        // single pair of timings failed here once at 5450ms vs 39ms on a change
+        // measured to leave every pattern's cost unchanged.
+        const size = 100000;
+
+        const control = await fastestLoad(
+          "vf-config-long-control-",
+          `throw new Error("1".repeat(${size}));\n`,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-long-probe-",
+          `throw new Error("a".repeat(${size}));\n`,
+        );
+
+        // Bounded, the two are within noise of each other. Unbounded, the probe
+        // measured ~17.9s against an unchanged control.
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("summarizes many failed URL starts in time proportional to length", async () => {
+        // A different pathological shape from the long-alphabetic case above: here
+        // every `a://` starts a URL match that then fails on `(`, and an unbounded
+        // parenthesised interior rescans the rest of the message from each one.
+        // Measured unbounded: 2.6s for 20k repeats, growing 4x per doubling.
+        // Bounded: 47ms, growing 2x. Same control/probe ratio method -- a digit
+        // cannot begin a scheme, so the control never starts a match at all.
+        //
+        // Two characters, not one: SCHEME_URL requires a scheme of at least two,
+        // so `a://` stops matching entirely and the probe measures nothing. That
+        // is how this guard silently went vacuous once, and why it is `ab://`.
+        const repeats = 20000;
+
+        const control = await fastestLoad(
+          "vf-config-starts-control-",
+          `throw new Error("1b://(".repeat(${repeats}));\n`,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-starts-probe-",
+          `throw new Error("ab://(".repeat(${repeats}));\n`,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("redacts a path with a CSI introducer glued to its first character", async () => {
+        const posix = await loadFailure(
+          "vf-config-csi-glued-posix-",
+          `throw new Error(String.fromCharCode(27) + "[/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `/` is a valid CSI intermediate byte and `h` a valid final, so the CSI
+        // pass consumes `ESC[/h` and leaves `ome/alice/...`, which no later path
+        // pattern recognises. Both are legal CSI sequences, so the grammar cannot
+        // tell them from a path -- the path has to be matched while still intact.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("ome/alice"), false);
+        // Assert the marker, not only the absence of the secret. Redacting the
+        // path before the CSI pass instead of removing just the introducer
+        // produced `ESC[[path]`, and `[` is a valid CSI final byte, so the pass
+        // ate the marker's own bracket and emitted `path]`.
+        assertStringIncludes(posix.message, "[path]");
+
+        const drive = await loadFailure(
+          "vf-config-csi-glued-drive-",
+          `throw new Error(String.fromCharCode(27) + "[" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // Same shape: `C` is a valid final byte, so the drive letter is consumed
+        // and `:\Users\alice` no longer matches WINDOWS_ABSOLUTE_PATH.
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+      });
+
+      it("keeps a path intact when CSI parameter or intermediate bytes precede it", async () => {
+        const drive = await loadFailure(
+          "vf-config-csi-param-drive-",
+          `throw new Error(String.fromCharCode(27) + "[31" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // `ESC[31C` is a legal cursor-forward sequence whose final byte is the
+        // drive letter itself. Removing only the bare introducer left `:\Users`
+        // behind, which WINDOWS_ABSOLUTE_PATH does not match -- so the parameter
+        // run has to be part of what the pre-pass removes.
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+
+        const posix = await loadFailure(
+          "vf-config-csi-param-posix-",
+          `throw new Error(String.fromCharCode(27) + "[31/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // Same sequence shape, POSIX side: `31` are parameter bytes, `/` an
+        // intermediate and `h` the final, so the CSI pass ate `ESC[31/h` and
+        // emitted `ome/alice/...`.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("ome/alice"), false);
+        assertStringIncludes(posix.message, "[path]");
+
+        const intermediate = await loadFailure(
+          "vf-config-csi-intermediate-posix-",
+          `throw new Error(String.fromCharCode(27) + "['/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // An intermediate byte can precede the path with no parameters at all
+        // (`'` is 0x27), which is why the pre-pass carries both runs.
+        assertEquals(intermediate.message.includes("alice"), false);
+        assertEquals(intermediate.message.includes("ome/alice"), false);
+        assertStringIncludes(intermediate.message, "[path]");
+
+        const colorized = await loadFailure(
+          "vf-config-csi-param-sgr-",
+          `throw new Error(String.fromCharCode(27) + "[38:2:255:0:0m/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // The widened pre-pass must not claim an ordinary colour sequence: its
+        // final byte `m` is not a path start, so the sequence still falls through
+        // to the full CSI pass and the path is redacted after de-colorization.
+        assertEquals(colorized.message.includes("alice"), false);
+        assertEquals(colorized.message.includes("38:2"), false);
+        assertStringIncludes(colorized.message, "[path]");
+      });
+
+      it("keeps a special-scheme URL intact when a CSI introducer precedes it", async () => {
+        const zeroSlash = await loadFailure(
+          "vf-config-csi-zero-slash-url-",
+          `throw new Error(String.fromCharCode(27) + "[https:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // `h` is a legal CSI final byte, so the CSI pass consumed `ESC[h` and left
+        // `ttps:registry.internal/...`. ZERO_SLASH_SCHEME_URL no longer recognises
+        // the damaged scheme, and POSIX_ABSOLUTE_PATH refuses a `/` that follows a
+        // hostname, so the private host reached the caller-visible error.
+        assertEquals(zeroSlash.message.includes("registry.internal"), false);
+        assertStringIncludes(zeroSlash.message, "[url]");
+
+        const upper = await loadFailure(
+          "vf-config-csi-zero-slash-upper-",
+          `throw new Error(String.fromCharCode(27) + "[WSS:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // Every special scheme leaks the same way, and schemes are case-insensitive.
+        assertEquals(upper.message.includes("registry.internal"), false);
+        assertStringIncludes(upper.message, "[url]");
+
+        const eightBit = await loadFailure(
+          "vf-config-csi-zero-slash-8bit-",
+          `throw new Error(String.fromCharCode(155) + "ftp:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(eightBit.message.includes("registry.internal"), false);
+        assertStringIncludes(eightBit.message, "[url]");
+
+        const singleSlash = await loadFailure(
+          "vf-config-csi-single-slash-url-",
+          `throw new Error(String.fromCharCode(27) + "[https:/registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // This form did not leak -- the damaged `ttp` still hit the drive-letter
+        // alternative -- but it emitted `ttp[path]`, the path-as-URL mislabel this
+        // change exists to remove.
+        assertEquals(singleSlash.message.includes("registry.internal"), false);
+        assertEquals(singleSlash.message.includes("[path]"), false);
+        assertStringIncludes(singleSlash.message, "[url]");
+
+        const prose = await loadFailure(
+          "vf-config-csi-reset-prose-",
+          `throw new Error(String.fromCharCode(27) + "[0mError: cannot find module");\n`,
+        );
+
+        // The scheme lookahead is restricted to the special schemes for this case:
+        // a generic `[A-Za-z][A-Za-z0-9+.-]*:` would match the `mError:` prose here,
+        // strip `ESC[0`, and leave a stray `m` in an ordinary diagnostic.
+        assertStringIncludes(prose.message, "Error: cannot find module");
+        assertEquals(prose.message.includes("mError"), false);
+      });
+
+      it("keeps a boundary when a completed CSI sequence sits before a path", async () => {
+        const posix = await loadFailure(
+          "vf-config-csi-final-byte-posix-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `ESC[3~` is a complete, legal CSI whose final byte is `~`. Removing it
+        // during de-colorization joined `at` to the path, and POSIX_ABSOLUTE_PATH's
+        // lookbehind refuses a slash after an alphanumeric -- so the whole local
+        // path reached the caller-visible error.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("at/home"), false);
+        assertStringIncludes(posix.message, "[path]");
+
+        const drive = await loadFailure(
+          "vf-config-csi-final-byte-drive-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~C:\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+
+        const url = await loadFailure(
+          "vf-config-csi-final-byte-url-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[3~https:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(url.message.includes("registry.internal"), false);
+        assertStringIncludes(url.message, "[url]");
+
+        const credential = await loadFailure(
+          "vf-config-csi-final-byte-credential-",
+          `throw new Error("Using token sk-" + String.fromCharCode(27) + "[0mABCD1234EFGH5678");\n`,
+        );
+
+        // The counterpart that pins why this is a pre-pass and not a change to
+        // de-colorization itself. That pass must keep replacing with nothing: a
+        // sequence inside a credential only rejoins into a contiguous secret if
+        // removal leaves no gap, and the sanitiser after it matches nothing
+        // otherwise. Emitting a space there would fix the path boundary above and
+        // reopen this.
+        assertEquals(credential.message.includes("ABCD1234EFGH5678"), false);
+      });
+
+      it("keeps both UNC separators when a CSI introducer precedes them", async () => {
+        const unc = await loadFailure(
+          "vf-config-csi-unc-",
+          `throw new Error(String.fromCharCode(27) + "[\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        // A backslash is 0x5C, inside the CSI final-byte range, so the optional
+        // final byte consumed the first of the two separators while the lookahead
+        // was satisfied by the second. The pre-pass emitted a single-separator
+        // path, WINDOWS_ABSOLUTE_PATH requires a doubled one, and the whole UNC
+        // path reached the caller. `origin/main` redacts this input, so the
+        // pre-pass introduced the leak rather than inheriting it.
+        assertEquals(unc.message.includes("server"), false);
+        assertEquals(unc.message.includes("share"), false);
+        assertStringIncludes(unc.message, "[path]");
+
+        const eightBit = await loadFailure(
+          "vf-config-csi-unc-eight-bit-",
+          `throw new Error(String.fromCharCode(155) + "\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(eightBit.message.includes("server"), false);
+        assertStringIncludes(eightBit.message, "[path]");
+
+        // The completed form already worked: `m` is consumed as the final byte, so
+        // both separators survived. Pinned so a later change cannot regress the
+        // half that was never broken while fixing the half that was.
+        const completed = await loadFailure(
+          "vf-config-csi-unc-completed-",
+          `throw new Error(String.fromCharCode(27) + "[31m\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(completed.message.includes("server"), false);
+        assertStringIncludes(completed.message, "[path]");
+      });
+
+      it("reports a CSI-glued file URL as a path, not a remote URL", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-glued-file-url-",
+          `throw new Error(String.fromCharCode(27) + "[file:///home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `f` is a legal CSI final byte, so the pass consumed `ESC[f` and SCHEME_URL
+        // read the remaining `ile:///home/alice/...` as a remote URL. Nothing leaked,
+        // but a local path was reported as `[url]` -- the path-as-URL mislabel this
+        // change exists to remove, arrived at from the other direction.
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message.includes("[url]"), false);
+        assertStringIncludes(error.message, "[path]");
+      });
+
+      it("classifies a drive path glued to diagnostic text as a path, not a URL", async () => {
+        const drive = await loadFailure(
+          "vf-config-glued-fwd-drive-",
+          `throw new Error("Failed at" + String.fromCharCode(67) + ":/Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // A generic scheme shape claimed `atC` here, reporting `Failed [url]` --
+        // mislabelling a local path and eating the word `at`. The single-slash
+        // form is restricted to the special schemes for exactly this reason.
+        assertStringIncludes(drive.message, "Failed at[path]");
+        assertEquals(drive.message.includes("alice"), false);
+
+        const url = await loadFailure(
+          "vf-config-glued-single-slash-url-",
+          `throw new Error("Failed athttps:/registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // The glued URL still redacts; the match just starts later in the token,
+        // so the diagnostic keeps `at` instead of losing it.
+        assertStringIncludes(url.message, "Failed at[url]");
+        assertEquals(url.message.includes("registry.internal"), false);
+      });
+
+      it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-truecolor-sgr-",
+          `throw new Error("Failed to load ${escape}[38:2:255:0:0m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // A true-colour sequence separates its parameters with colons. Matching
+        // only [0-9;] left "[38:2:255:0:0m" in front of the path, which defeats
+        // POSIX_ABSOLUTE_PATH's boundary exactly as an unstripped "[31m" would.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("38:2"), false);
+      });
+
+      it("strips an eight-bit CSI sequence before redacting a machine path", async () => {
+        const csi = String.fromCharCode(0x9b);
+        const error = await loadFailure(
+          "vf-config-eight-bit-csi-path-",
+          `throw new Error("Failed to load ${csi}31m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("31m"), false);
+      });
+
+      it("redacts credentials both before and after stripping CSI sequences", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-ansi-credential-",
+          `throw new Error("${escape}[API_KEY=<TOKEN>");\n`,
+        );
+
+        assertEquals(error.message.includes("<TOKEN>"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
+      });
+
+      it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-ansi-path-",
+          `throw new Error("Failed to load ${escape}[31m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // Dropping only the ESC as a control character leaves `[31m` sitting
+        // between the boundary and the path, which defeats any pattern anchored
+        // on what precedes it. The whole SGR sequence is removed first.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("31m"), false);
       });
 
       it("classifies Bun resolver objects that do not inherit from Error", async () => {
@@ -1502,7 +2137,7 @@ export default config as const;
 
       it("carries a thrown config's own message through to the reader", async () => {
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-throw-cause-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1531,7 +2166,7 @@ export default config as const;
         // must not become a paste surface for an arbitrarily long, arbitrarily
         // formatted string, so the summary is one line and bounded.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-cause-bound-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1574,7 +2209,7 @@ export default config as const;
         // 190 and the `@` sits at 209, so an unredacted cut keeps nine
         // characters of the secret and loses the marker that identifies it.
         const adapter = setup();
-        const projectDir = await Deno.makeTempDir({
+        const projectDir = await makeTempDir({
           prefix: "vf-config-cause-credential-",
         });
         const configPath = `${projectDir}/veryfront.config.js`;
@@ -1641,7 +2276,7 @@ export default config as const;
 
     it("should load and validate a JS config file", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-js-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-js-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { title: "JS Project" };';
 
@@ -1658,7 +2293,7 @@ export default config as const;
 
     it("loads config paths containing URL-significant characters", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf config #project-" });
+      const projectDir = await makeTempDir({ prefix: "vf config #project-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { title: "Encoded Path Project" };';
 
@@ -2672,23 +3307,31 @@ export default config as const;
         },
       });
 
-      await assertRejects(() =>
-        runWithRequestContext(
-          {
-            projectSlug: "demo",
-            projectId: "project-1",
-            token: "token",
-            branch: "feature/missing-hosted-context",
-          },
-          () =>
-            getConfig("/missing-hosted-context", adapter, {
-              cacheKey: "project-1",
-              sourceContext: {
-                productionMode: false,
-                branch: "feature/missing-hosted-context",
-              },
-            }),
-        )
+      const error = await assertRejects(
+        () =>
+          runWithRequestContext(
+            {
+              projectSlug: "demo",
+              projectId: "project-1",
+              token: "token",
+              branch: "feature/missing-hosted-context",
+            },
+            () =>
+              getConfig("/missing-hosted-context", adapter, {
+                cacheKey: "project-1",
+                sourceContext: {
+                  productionMode: false,
+                  branch: "feature/missing-hosted-context",
+                },
+              }),
+          ),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(
+        error.slug,
+        "cache-invariant-violation",
+        "hosted multi-project getConfig without context must fail as a cache invariant violation",
       );
       assertEquals(existsCalls, 0);
       assertEquals(readCalls, 0);
@@ -4987,7 +5630,7 @@ export default config as const;
 
     it("should try multiple config file names", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-mjs-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-mjs-" });
       const configPath = `${projectDir}/veryfront.config.mjs`;
       const source = 'export default { title: "MJS Project" };';
 
@@ -5018,7 +5661,7 @@ export default config as const;
 
     it("preserves schema validation errors instead of relabeling them as parse failures", async () => {
       const adapter = setup();
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-config-invalid-" });
+      const projectDir = await makeTempDir({ prefix: "vf-config-invalid-" });
       const configPath = `${projectDir}/veryfront.config.js`;
       const source = 'export default { dev: { port: "not-a-port" } };';
 

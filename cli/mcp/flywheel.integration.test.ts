@@ -10,8 +10,8 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#std/assert.ts";
 import { describe, it } from "#std/testing/bdd.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getErrorCollector } from "#cli/observability/error-collector";
+import { getLogBuffer } from "#cli/observability/log-buffer";
 
 describe("Flywheel MCP", () => {
   describe("ErrorCollector", () => {

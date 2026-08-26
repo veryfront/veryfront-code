@@ -1,7 +1,7 @@
 import "../../_helpers/contract-init.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
-import { getAdapter } from "#veryfront/platform";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 import { stop as stopBundler } from "veryfront/extensions/bundler";
 
