@@ -1308,6 +1308,38 @@ describe("applyCsrfCookie name advertisement", () => {
     );
   });
 
+  it("refreshes an isolated HTTP token with its changed advertisement", () => {
+    const httpOrigin = "http://example.test:3000";
+    const configuredCookieName = "vf_csrf";
+    const tokenName = csrfHttpTokenCookieName(configuredCookieName, httpOrigin);
+    const advertisementName = csrfNamesCookieName(httpOrigin);
+    const headers = new Headers();
+    const req = new Request(`${httpOrigin}/page`, {
+      headers: {
+        accept: "text/html",
+        cookie: `${tokenName}=isolated-token; ${advertisementName}=` +
+          `${httpOrigin}:${tokenName}:x-old`,
+      },
+    });
+
+    applyCsrfCookie(req, headers, {
+      cookieName: configuredCookieName,
+      headerName: "x-new",
+      ttlSec: 60,
+    });
+
+    const cookies = setCookies(headers);
+    const token = cookies.find((cookie) => cookie.startsWith(`${tokenName}=`));
+    const advertisement = cookies.find((cookie) => cookie.startsWith(`${advertisementName}=`));
+    assertExists(token, "the isolated token lifetime must follow its discovery cookie");
+    assertStringIncludes(token, `${tokenName}=isolated-token`);
+    assertStringIncludes(token, "Max-Age=60");
+    assertEquals(token.includes("Secure"), false, "plain HTTP must retain an insecure token");
+    assertExists(advertisement, "the changed header name must be advertised");
+    assertStringIncludes(advertisement, encodeURIComponent(`${httpOrigin}:${tokenName}:x-new`));
+    assertStringIncludes(advertisement, "Max-Age=60");
+  });
+
   it("still refreshes an existing HTTPS custom token pair", () => {
     const httpsOrigin = "https://example.test:4000";
     const httpsAdvertisement = csrfNamesCookieName(httpsOrigin);

@@ -60,8 +60,12 @@ The synchronous helpers deliberately deny promise-returning validators.
 
 CSRF uses a double-submit cookie and header comparison. HTTPS and loopback
 origins use `__Host-vf_csrf`, which is host-only, path-scoped to `/`, and always
-secure. Plain-HTTP LAN development uses `vf_csrf`, because browsers discard
-`Secure` `__Host-` cookies there. The default header is `x-csrf-token`.
+secure. Plain-HTTP LAN development uses an origin-scoped
+`vf_csrf_http_<encoded-origin-and-config>` physical cookie, because browsers
+discard `Secure` `__Host-` cookies there and an HTTP sibling must not collide
+with an HTTPS token. Its companion `vf_csrf_names_<encoded-origin>` cookie lets
+`csrfMutationHeaders` discover that physical name; application code should not
+read or construct it directly. The default header is `x-csrf-token`.
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion
@@ -88,9 +92,9 @@ if (!response.ok) {
 ```
 
 Custom names need no options either. When `security.csrf` sets `cookieName` or
-`headerName`, the server publishes both in a companion `vf_csrf_names` cookie
-and the helper discovers them, so the call above is unchanged and the names stay
-defined in one place.
+`headerName`, the server publishes both in an origin-specific
+`vf_csrf_names_<encoded-origin>` cookie and the helper discovers them, so the
+call above is unchanged and the names stay defined in one place.
 
 Pass them explicitly only to override that discovery:
 

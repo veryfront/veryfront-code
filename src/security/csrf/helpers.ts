@@ -281,7 +281,7 @@ export function applyCsrfCookie(
     // sibling. Updating only this origin's advertisement is still safe: it
     // immediately restores the configured header, and a later missing token
     // causes the normal fresh-pair path to align both lifetimes again.
-    if (!canRefreshExistingCsrfPair(cookieName, secureAdvertisement)) return;
+    if (!canRefreshExistingCsrfPair(cookieName, configuredCookieName, secureAdvertisement)) return;
     if (advertisement !== null) {
       appendSiblingCsrfNamesCookies(
         responseHeaders,
@@ -352,8 +352,13 @@ function appendSiblingCsrfNamesCookies(
 
 function canRefreshExistingCsrfPair(
   tokenCookieName: string,
+  configuredCookieName: string,
   secureAdvertisement: boolean,
 ): boolean {
+  // A different physical name is the origin-isolated HTTP token derived by
+  // effectiveCsrfTokenCookieNameForOrigin. Unlike a shared configured name,
+  // this response owns its lifetime and can refresh it with its advertisement.
+  if (tokenCookieName !== configuredCookieName) return true;
   if (tokenCookieName.startsWith("__Host-") || tokenCookieName.startsWith("__Secure-")) {
     return true;
   }
