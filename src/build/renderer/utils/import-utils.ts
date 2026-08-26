@@ -24,6 +24,7 @@ interface MdxExpressionState {
   inJsxTag: boolean;
   jsxQuote?: string;
   canStartRegexAtLineStart: boolean;
+  lineStartRequiresExpression: boolean;
   pendingControlFlowCondition: boolean;
   readonly controlFlowParentheses: boolean[];
   readonly statementBlocks: JavaScriptBlockContext[];
@@ -70,6 +71,7 @@ interface JavaScriptBlockContext {
 function delimiterCloseIndexes(
   line: string,
   pendingControlFlowCondition = false,
+  lineStartRequiresExpression = false,
 ): DelimiterCloseIndexes {
   const parentheses: Array<{ controlFlow: boolean }> = [];
   const blocks: JavaScriptBlockContext[] = [];
@@ -137,7 +139,9 @@ function delimiterCloseIndexes(
       continue;
     }
     if (current === "{") {
-      blocks.push(javascriptBlockContext(line, index, blocks));
+      blocks.push(
+        javascriptBlockContext(line, index, blocks, lineStartRequiresExpression),
+      );
       continue;
     }
     if (current === "}" && blocks.pop()?.closeStartsRegex) statementBlockCloses.add(index);
@@ -149,8 +153,9 @@ function javascriptBlockContext(
   line: string,
   openIndex: number,
   enclosingBlocks: readonly JavaScriptBlockContext[] = [],
+  lineStartRequiresExpression = false,
 ): JavaScriptBlockContext {
-  const previousIndex = previousSignificantIndex(line, openIndex);
+  const previousIndex = previousJavaScriptTokenIndex(line, openIndex);
   const previous = line[previousIndex];
   const word = previousIndex < 0 ? "" : precedingWord(line, previousIndex);
   const classBody = /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test(
@@ -176,7 +181,8 @@ function javascriptBlockContext(
   const callableExpressionBody = functionExpressionBody ||
     (previous === ">" && line[previousIndex - 1] === "=");
   const expressionBody = callableExpressionBody || classExpressionBody;
-  const statementBody = previousIndex < 0 || previous === ")" || previous === ";" ||
+  const statementBody = (previousIndex < 0 && !lineStartRequiresExpression) || previous === ")" ||
+    previous === ";" ||
     (classBody && !classExpressionBody) || labeledBlock || word === "catch" || word === "class" ||
     word === "do" || word === "else" || word === "finally" || word === "static" || word === "try";
   return {
@@ -195,8 +201,13 @@ function regexLineContext(
   line: string,
   canStartAtLineStart = true,
   pendingControlFlowCondition = false,
+  lineStartRequiresExpression = false,
 ): RegexLineContext {
-  const closes = delimiterCloseIndexes(line, pendingControlFlowCondition);
+  const closes = delimiterCloseIndexes(
+    line,
+    pendingControlFlowCondition,
+    lineStartRequiresExpression,
+  );
   return {
     controlFlowCloses: closes.controlFlow,
     statementBlockCloses: closes.statementBlocks,
@@ -210,6 +221,42 @@ function previousSignificantIndex(line: ArrayLike<string>, before: number): numb
   return index;
 }
 
+function previousJavaScriptTokenIndex(line: string, before: number): number {
+  let index = previousSignificantIndex(line, before);
+  while (index > 0 && line[index] === "/" && line[index - 1] === "*") {
+    const commentOpen = line.lastIndexOf("/*", index - 2);
+    if (commentOpen < 0) return -1;
+    index = previousSignificantIndex(line, commentOpen);
+  }
+  return index;
+}
+
+function requiresExpressionAfter(line: ArrayLike<string>, endIndex: number): boolean {
+  const previous = line[endIndex];
+  if (!previous) return false;
+  if (previous === ">" && line[endIndex - 1] === "=") return false;
+  if (
+    (previous === "+" || previous === "-") && line[endIndex - 1] === previous
+  ) {
+    return false;
+  }
+  // A trailing slash may be either division or the end of a regex literal;
+  // callers track division separately, so do not infer it from this character.
+  if ("([=,!?&|+-*%^~<>".includes(previous)) return true;
+  if (
+    previous === "." && line[endIndex - 1] === "." && line[endIndex - 2] === "."
+  ) {
+    return true;
+  }
+  let wordStart = endIndex;
+  while (wordStart >= 0 && /[\w$]/.test(line[wordStart]!)) wordStart--;
+  let word = "";
+  for (let index = wordStart + 1; index <= endIndex; index++) word += line[index];
+  return word === "await" || word === "delete" || word === "extends" || word === "in" ||
+    word === "instanceof" || word === "new" || word === "of" || word === "typeof" ||
+    word === "void";
+}
+
 function precedingWord(line: string, endIndex: number): string {
   let start = endIndex;
   while (start >= 0 && /[\w$]/.test(line[start]!)) start--;
@@ -221,7 +268,7 @@ function canStartRegexLiteral(
   slashIndex: number,
   context: RegexLineContext,
 ): boolean {
-  const previousIndex = previousSignificantIndex(line, slashIndex);
+  const previousIndex = previousJavaScriptTokenIndex(line, slashIndex);
   if (previousIndex < 0) return context.canStartAtLineStart;
   const previous = line[previousIndex]!;
   if (
@@ -288,25 +335,32 @@ function findRegexLiteralEndAt(
   if (!context) {
     const previousIndex = previousSignificantIndex(contextCharacters, lineStart);
     let canStartAtLineStart = true;
+    let lineStartRequiresExpression = false;
     if (previousIndex >= 0) {
       const previousLineStart = code.lastIndexOf("\n", previousIndex - 1) + 1;
       const previousLineEndIndex = code.indexOf("\n", previousIndex);
       const previousLineEnd = previousLineEndIndex < 0 ? code.length : previousLineEndIndex;
       const previousLine = contextCharacters.slice(previousLineStart, previousLineEnd).join("");
+      const previousLineIndex = previousIndex - previousLineStart;
       canStartAtLineStart = canStartRegexLiteral(
         previousLine,
-        previousIndex - previousLineStart + 1,
+        previousLineIndex + 1,
         regexLineContext(
           previousLine,
           true,
           hasControlFlowKeywordBefore(contextCharacters, previousLineStart),
         ),
       );
+      lineStartRequiresExpression = requiresExpressionAfter(
+        previousLine,
+        previousLineIndex,
+      );
     }
     context = regexLineContext(
       line,
       canStartAtLineStart,
       hasControlFlowKeywordBefore(contextCharacters, lineStart),
+      lineStartRequiresExpression,
     );
     contextCache.set(lineStart, context);
   }
@@ -438,7 +492,14 @@ function scanMdxExpressionLine(
     }
     if (current === "{") {
       state.depth++;
-      state.statementBlocks.push(javascriptBlockContext(line, index, state.statementBlocks));
+      state.statementBlocks.push(
+        javascriptBlockContext(
+          line,
+          index,
+          state.statementBlocks,
+          state.lineStartRequiresExpression,
+        ),
+      );
     }
     if (current === "}") {
       if (state.statementBlocks.pop()?.closeStartsRegex) statementBlockCloses.add(index);
@@ -456,6 +517,7 @@ function scanMdxExpressionLine(
     state.quote = undefined;
     state.inBlockComment = false;
     state.canStartRegexAtLineStart = true;
+    state.lineStartRequiresExpression = false;
     state.pendingControlFlowCondition = false;
     state.controlFlowParentheses.length = 0;
     state.statementBlocks.length = 0;
@@ -468,6 +530,7 @@ function scanMdxExpressionLine(
         lastSignificantIndex + 1,
         regexContext,
       );
+    state.lineStartRequiresExpression = requiresExpressionAfter(line, lastSignificantIndex);
   }
 }
 
@@ -496,6 +559,7 @@ function findMdxExpressionCharacters(code: string, jsxTagCharacters?: boolean[])
     inBlockComment: false,
     inJsxTag: false,
     canStartRegexAtLineStart: true,
+    lineStartRequiresExpression: false,
     pendingControlFlowCondition: false,
     controlFlowParentheses: [],
     statementBlocks: [],
@@ -732,6 +796,7 @@ function maskMarkdownCode(
       inBlockComment: false,
       inJsxTag: false,
       canStartRegexAtLineStart: true,
+      lineStartRequiresExpression: false,
       pendingControlFlowCondition: false,
       controlFlowParentheses: [],
       statementBlocks: [],
@@ -1141,11 +1206,15 @@ function maskComments(code: string, markdownCode: boolean): string {
     }
     if (templateDepthIndex >= 0 && current === "{") {
       templateExpressionDepths[templateDepthIndex]!++;
+      const lineStart = code.lastIndexOf("\n", index - 1) + 1;
+      const previousIndex = previousSignificantIndex(characters, index);
       statementBlocks.push(
         javascriptBlockContext(
-          code.slice(code.lastIndexOf("\n", index - 1) + 1, index + 1),
-          index - code.lastIndexOf("\n", index - 1) - 1,
+          code.slice(lineStart, index + 1),
+          index - lineStart,
           statementBlocks,
+          previousIndex >= 0 && previousIndex < lineStart &&
+            requiresExpressionAfter(characters, previousIndex),
         ),
       );
       continue;
@@ -1178,11 +1247,14 @@ function maskComments(code: string, markdownCode: boolean): string {
     }
     if (inJavaScript && current === "{") {
       const lineStart = code.lastIndexOf("\n", index - 1) + 1;
+      const previousIndex = previousSignificantIndex(characters, index);
       statementBlocks.push(
         javascriptBlockContext(
           code.slice(lineStart, index + 1),
           index - lineStart,
           statementBlocks,
+          previousIndex >= 0 && previousIndex < lineStart &&
+            requiresExpressionAfter(characters, previousIndex),
         ),
       );
       continue;

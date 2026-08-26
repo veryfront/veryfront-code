@@ -439,6 +439,14 @@ describe("build/renderer/services/mdx-bundler", () => {
             '{(() => { if /* note */ (ok) /"/.test(value); return import("./missing.js"); })()}',
           ],
           [
+            "commented-regex-operand",
+            '{(() => { return /* note */ /"/.test(value); return import("./missing.js"); })()}',
+          ],
+          [
+            "line-leading-object-literal",
+            '{(() => { const ratio =\n{} / value; return import("./missing.js"); })()}',
+          ],
+          [
             "list-continuation",
             '- item\n\n    {import("./missing.js")}',
           ],
@@ -1631,6 +1639,40 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(delete loaded.default.layout, true);
         assertEquals(loaded.default.readLayout(), undefined);
         assertEquals("layout" in loaded.default, false);
+      });
+    });
+
+    it("preserves source-backed statics when the proxy becomes non-extensible", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const sourceModule = moduleDataUrl(
+        'class Content { static #layout = "layout"; static title = "Page"; ' +
+          "static getLayout() { return this.#layout; } } export default Content;",
+      );
+      const staticProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: `export { default } from ${JSON.stringify(sourceModule)};`,
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", staticProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Source statics",
+          filePath: "/tmp/source-static-freeze-default.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code) as unknown as {
+          default: { title: string; getLayout(): string };
+        };
+        Object.freeze(loaded.default);
+        assertEquals(Object.isFrozen(loaded.default), true);
+        assertEquals(Object.keys(loaded.default).includes("title"), true);
+        assertEquals(loaded.default.title, "Page");
+        assertEquals(loaded.default.getLayout(), "layout");
       });
     });
 

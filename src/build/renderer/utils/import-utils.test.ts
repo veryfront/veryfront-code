@@ -167,6 +167,26 @@ describe("build/renderer/utils/import-utils", () => {
       );
     });
 
+    it("keeps imports after regex literals preceded by block comments", () => {
+      assertEquals(
+        extractImports(
+          '{(() => { return /* note */ /"/.test(value); return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
+    });
+
+    it("carries expression context into line-leading object literals", () => {
+      assertEquals(
+        extractImports(
+          '{(() => { const ratio =\n{} / value; return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
+    });
+
     it("keeps imports after statement-position regex literals", () => {
       for (
         const [statement, child] of [
@@ -188,13 +208,14 @@ describe("build/renderer/utils/import-utils", () => {
     });
 
     it("recognizes labeled statement blocks in regex context", () => {
-      assertEquals(
-        extractImports(
+      for (
+        const code of [
           '{(() => { label: {} /"/.test(value); return import("./child.mdx"); })()}',
-          { markdownCode: true },
-        ),
-        ["./child.mdx"],
-      );
+          '{(() => { label:\n{}\n/"/.test(value); return import("./child.mdx"); })()}',
+        ]
+      ) {
+        assertEquals(extractImports(code, { markdownCode: true }), ["./child.mdx"]);
+      }
     });
 
     it("distinguishes function-expression bodies from statement blocks", () => {
@@ -221,6 +242,7 @@ describe("build/renderer/utils/import-utils", () => {
       for (
         const code of [
           '{(() => { const ratio = value++ / divisor; return import("./child.mdx"); })()}',
+          '{(() => { value++\n{}\n/"/.test(value); return import("./child.mdx"); })()}',
           '{(() => { const ratio = object.return / divisor; return import("./child.mdx"); })()}',
           '{(() => { const ratio = object?.return / divisor; return import("./child.mdx"); })()}',
         ]
@@ -1191,6 +1213,8 @@ describe("build/renderer/utils/import-utils", () => {
           '{(() => { if\n(ok)\n/"/.test(value); return import("./child.mdx"); })()}',
           '{(() => { if (\nok)\n/"/.test(value); return import("./child.mdx"); })()}',
           '{(() => { if /* note */ (ok) /"/.test(value); return import("./child.mdx"); })()}',
+          '{(() => { return /* note */ /"/.test(value); return import("./child.mdx"); })()}',
+          '{(() => { const ratio =\n{} / value; return import("./child.mdx"); })()}',
           `{import(${" ".repeat(200)}"./child.mdx")}`,
           '<Widget label="`" child={import("./child.mdx")} />\n\n`later`',
           'export /* note */ const child = import("./child.mdx")',

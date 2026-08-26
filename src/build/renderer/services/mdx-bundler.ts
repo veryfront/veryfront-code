@@ -825,6 +825,7 @@ async function componentBackedProviderProxy(
           ...object.getOwnPropertyNames(target),
           ...object.getOwnPropertySymbols(target),
         ];
+        if (!object.isExtensible(target)) return targetKeys;
         return [
           ...targetKeys,
           ...object.getOwnPropertyNames(${originalName}).filter((key) => !targetKeys.includes(key)),
@@ -835,6 +836,7 @@ async function componentBackedProviderProxy(
         const object = ({}).constructor;
         const targetDescriptor = object.getOwnPropertyDescriptor(target, key);
         if (targetDescriptor) return targetDescriptor;
+        if (!object.isExtensible(target)) return undefined;
         const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
         if (sourceDescriptor) {
           sourceDescriptor.configurable = true;
@@ -849,6 +851,26 @@ async function componentBackedProviderProxy(
           }
         }
         return sourceDescriptor;
+      },
+      preventExtensions(target) {
+        const object = ({}).constructor;
+        const sourceKeys = [
+          ...object.getOwnPropertyNames(${originalName}),
+          ...object.getOwnPropertySymbols(${originalName}),
+        ];
+        for (const key of sourceKeys) {
+          if (object.getOwnPropertyDescriptor(target, key)) continue;
+          const descriptor = object.getOwnPropertyDescriptor(${originalName}, key);
+          if (!descriptor) continue;
+          if (descriptor.get) descriptor.get = ${bindMethodName}(descriptor.get);
+          if (descriptor.set) descriptor.set = ${bindMethodName}(descriptor.set);
+          if (typeof descriptor.value === "function") {
+            descriptor.value = ${bindMethodName}(descriptor.value);
+          }
+          object.defineProperty(target, key, descriptor);
+        }
+        object.preventExtensions(target);
+        return true;
       },
     });
     export { ${proxyName} as default };
