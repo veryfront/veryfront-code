@@ -33,7 +33,6 @@ export {
 } from "./tracing/index.ts";
 
 export {
-  getMetricsState,
   isMetricsEnabled,
   type MetricsConfig,
   recordBuild,

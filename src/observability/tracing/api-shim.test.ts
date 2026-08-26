@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
@@ -16,6 +21,7 @@ import {
   installGlobalTelemetryAPI,
   type MetricsAPI,
   propagation,
+  publicTrace,
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalMetricsAPI,
@@ -98,6 +104,32 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(getTracer("svc", "2.0"), fakeTracer);
       assertEquals(trace.getTracer("svc2"), fakeTracer);
       assertEquals(calls, [["svc", "2.0"], ["svc2", undefined]]);
+    });
+
+    it("wraps provider-owned tracers returned by the public facade", () => {
+      const span = {} as Span;
+      const providerTracer = {
+        startSpan(this: unknown) {
+          assertStrictEquals(this, providerTracer);
+          return span;
+        },
+        startActiveSpan(this: unknown, _name: string, callback: (span: Span) => unknown) {
+          assertStrictEquals(this, providerTracer);
+          return callback(span);
+        },
+      } as Tracer;
+      setGlobalTracerProvider({ getTracer: () => providerTracer });
+
+      const publicTracer = publicTrace.getTracer("veryfront-http");
+
+      assertNotStrictEquals(publicTracer, providerTracer);
+      assertEquals(Object.isFrozen(publicTracer), true);
+      assertEquals(Reflect.set(publicTracer, "startSpan", () => span), false);
+      assertStrictEquals(publicTracer.startSpan("request"), span);
+      assertStrictEquals(
+        publicTracer.startActiveSpan("request", (activeSpan) => activeSpan),
+        span,
+      );
     });
 
     it("_resetShimForTests restores the no-op provider", () => {

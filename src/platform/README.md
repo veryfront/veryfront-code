@@ -32,8 +32,8 @@ Provides unified abstractions for platform-specific APIs:
 ## Quick Start
 
 ```typescript
-// Automatic platform detection
-import { runtime } from "veryfront/platform";
+// Internal framework code only.
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
 const adapter = await runtime.get();
 console.log(adapter.id); // 'deno' | 'node' | 'bun' | 'cloudflare'

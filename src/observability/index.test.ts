@@ -20,7 +20,6 @@ const expectedRuntimeExports = [
   "endSpan",
   "extractContext",
   "getActiveContext",
-  "getMetricsState",
   "getTraceContext",
   "flushApplicationErrors",
   "injectContext",
@@ -93,6 +92,7 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("snapshot" in observability.metrics, false);
     assertEquals("getRequestCount" in observability.metrics, false);
     assertEquals("getGlobalMetricsAPI" in observability, false);
+    assertEquals("getMetricsState" in observability, false);
     assertEquals(Object.isFrozen(observability.metrics), true);
     assertEquals(Reflect.set(observability.metrics, "incRequest", () => {}), false);
     for (

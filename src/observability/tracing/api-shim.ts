@@ -22,6 +22,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
+const IntrinsicObjectFreeze = Object.freeze;
+const IntrinsicReflectApply = Reflect.apply;
+
 // ---------------------------------------------------------------------------
 // Tracing types
 // ---------------------------------------------------------------------------
@@ -641,8 +644,47 @@ export const trace = {
  */
 export const publicTrace: Readonly<
   Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
-> = Object.freeze({
-  getTracer: trace.getTracer,
+> = IntrinsicObjectFreeze({
+  getTracer(name: string, version?: string): Tracer {
+    const providerTracer = telemetryState.tracerProvider.getTracer(name, version);
+    const startActiveSpan = ((
+      spanName: string,
+      second: unknown,
+      third?: unknown,
+      fourth?: unknown,
+    ): unknown => {
+      if (fourth !== undefined) {
+        return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+          spanName,
+          second,
+          third,
+          fourth,
+        ]);
+      }
+      if (third !== undefined) {
+        return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+          spanName,
+          second,
+          third,
+        ]);
+      }
+      return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
+        spanName,
+        second,
+      ]);
+    }) as Tracer["startActiveSpan"];
+
+    return IntrinsicObjectFreeze({
+      startSpan(spanName: string, options?: SpanStartOptions, activeContext?: Context): Span {
+        return IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
+          spanName,
+          options,
+          activeContext,
+        ]);
+      },
+      startActiveSpan,
+    });
+  },
   setSpan: trace.setSpan,
   getSpan: trace.getSpan,
   getActiveSpan: trace.getActiveSpan,

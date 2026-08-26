@@ -145,7 +145,6 @@ All duration arguments are milliseconds. Attributes are
 | `recordBuild`, `recordDataFetch`                                                           | `(durationMs, attributes?) => void`                                   |
 | `recordBundle`                                                                             | `(sizeKb, attributes?) => void`                                       |
 | `recordDataFetchError`, `recordCorsRejection`, `recordSecurityHeaders`, `recordErrorCount` | `(attributes?) => void`                                               |
-| `getMetricsState()`                                                                        | Returns initialization, cache-size, and active-request state          |
 | `isMetricsEnabled()`                                                                       | Returns whether a real meter is installed                             |
 
 Non-finite and negative measurements are normalized before recording. Active
