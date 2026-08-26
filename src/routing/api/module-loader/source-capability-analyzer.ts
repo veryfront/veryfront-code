@@ -17,6 +17,8 @@ interface Binding {
   hasAliasAssignment: boolean;
   prototypeMutated: boolean;
   enumerableProtoPropertyDefined: boolean;
+  processModuleObjectImport: boolean;
+  processExecveImport: boolean;
 }
 
 interface Scope {
@@ -49,6 +51,7 @@ const COMMENT_KEYS = new Set([
 ]);
 const METADATA_KEYS = new Set(["loc", "start", "end", "extra", "errors", "tokens"]);
 const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "self", "window", "global"]);
+const PROCESS_MODULE_SPECIFIERS = new Set(["node:process", "process"]);
 const WELL_KNOWN_SYMBOL_NAMES = new Set([
   "asyncDispose",
   "asyncIterator",
@@ -174,6 +177,8 @@ function ensureBinding(scope: Scope, name: string): Binding {
     hasAliasAssignment: false,
     prototypeMutated: false,
     enumerableProtoPropertyDefined: false,
+    processModuleObjectImport: false,
+    processExecveImport: false,
   };
   scope.bindings.set(name, binding);
   return binding;
@@ -373,11 +378,37 @@ function registerImportBindings(scope: Scope, node: ASTNode): void {
   if (node.type !== "ImportDeclaration" || node.importKind === "type") return;
   const specifiers = node.specifiers;
   if (!Array.isArray(specifiers)) return;
+  const moduleSpecifier = isNode(node.source)
+    ? staticString(node.source)?.toLowerCase()
+    : undefined;
   for (const specifier of specifiers) {
     if (isNode(specifier) && specifier.importKind !== "type" && isNode(specifier.local)) {
       registerPattern(scope, specifier.local);
+      if (
+        moduleSpecifier !== undefined && PROCESS_MODULE_SPECIFIERS.has(moduleSpecifier) &&
+        specifier.local.type === "Identifier" && typeof specifier.local.name === "string"
+      ) {
+        const binding = ensureBinding(scope, specifier.local.name);
+        const importedName = importedBindingName(specifier);
+        binding.processModuleObjectImport ||= importedName === null || importedName === "default" ||
+          importedName === "process";
+        binding.processExecveImport ||= importedName === "execve";
+      }
     }
   }
+}
+
+function importedBindingName(specifier: ASTNode): string | null {
+  if (
+    specifier.type === "ImportDefaultSpecifier" || specifier.type === "ImportNamespaceSpecifier"
+  ) {
+    return null;
+  }
+  if (!isNode(specifier.imported)) return null;
+  if (specifier.imported.type === "Identifier" && typeof specifier.imported.name === "string") {
+    return specifier.imported.name;
+  }
+  return staticString(specifier.imported);
 }
 
 function registerVariableBinding(
@@ -434,10 +465,19 @@ function buildScopes(program: ASTNode): {
       registerPattern(scope, node.id);
       if (
         node.id.type === "Identifier" && typeof node.id.name === "string" &&
-        isNode(node.moduleReference) &&
-        node.moduleReference.type !== "TSExternalModuleReference"
+        isNode(node.moduleReference)
       ) {
-        ensureBinding(scope, node.id.name).initializers.push(node.moduleReference);
+        const binding = ensureBinding(scope, node.id.name);
+        if (
+          node.moduleReference.type === "TSExternalModuleReference" &&
+          isNode(node.moduleReference.expression)
+        ) {
+          binding.processModuleObjectImport ||= isProcessModuleSpecifier(
+            staticString(node.moduleReference.expression),
+          );
+        } else {
+          binding.initializers.push(node.moduleReference);
+        }
       }
     }
     const handled = registerVariableBinding(
@@ -2231,7 +2271,7 @@ function applyCallCapability(
   applyReflectGetCapability(node, callee, scope, nodeScopes, analysis);
   applyDynamicRequireCapability(node, callee, scope, nodeScopes, analysis);
   applyGetBuiltinModuleCapability(node, scope, nodeScopes, analysis);
-  applyDenoRunCapability(node, scope, nodeScopes, analysis);
+  applySubprocessCallCapability(node, scope, nodeScopes, analysis);
   applyDescriptorReadCapability(node, scope, nodeScopes, analysis);
 }
 
@@ -2290,9 +2330,13 @@ function applyDynamicRequireCapability(
 const RESTRICTED_BUILTIN_MODULES = new Set([
   "child_process",
   "cluster",
+  "inspector",
+  "inspector/promises",
   "module",
   "node:child_process",
   "node:cluster",
+  "node:inspector",
+  "node:inspector/promises",
   "node:module",
   "node:vm",
   "node:worker_threads",
@@ -2337,7 +2381,111 @@ function resolvesToBunSubprocess(
   );
 }
 
-function applyDenoRunCapability(
+function resolvesToBunShell(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  return resolvesToGlobalIntrinsicMember(node, "Bun", "$", scope, nodeScopes);
+}
+
+function resolvesToProcessExecve(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.processExecveImport || binding.memberInitializers.some((initializer) =>
+      (initializer.propertyName === null || initializer.propertyName === "execve") &&
+      resolvesToProcessObject(
+        initializer.objectInitializer,
+        nodeScopes.get(initializer.objectInitializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    ) || binding.initializers.some((initializer) =>
+      resolvesToProcessExecve(
+        initializer,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    );
+  }
+  if (isMemberExpressionWithObject(expression) && memberPropertyName(expression) === "execve") {
+    return resolvesToProcessObject(expression.object, scope, nodeScopes, seen);
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return resolvesToProcessExecve(expression.right, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  return branches !== null &&
+    (resolvesToProcessExecve(branches[0], scope, nodeScopes, new Set(seen)) ||
+      resolvesToProcessExecve(branches[1], scope, nodeScopes, new Set(seen)));
+}
+
+function resolvesToProcessObject(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (resolvesToGlobalIntrinsic(expression, "process", scope, nodeScopes, new Set(seen))) {
+    return true;
+  }
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.processModuleObjectImport ||
+      binding.initializers.some((initializer) =>
+        resolvesToProcessObject(
+          initializer,
+          nodeScopes.get(initializer) ?? binding.scope,
+          nodeScopes,
+          new Set(seen),
+        )
+      );
+  }
+  if (expression.type === "AwaitExpression" && isNode(expression.argument)) {
+    return resolvesToProcessObject(expression.argument, scope, nodeScopes, seen);
+  }
+  const imported = dynamicImportSpecifier(expression);
+  if (imported !== undefined) return isProcessModuleSpecifier(imported);
+  if (
+    expression.type === "TSExternalModuleReference" && isNode(expression.expression)
+  ) {
+    return isProcessModuleSpecifier(staticString(expression.expression));
+  }
+  const args = argumentsForResolvedCall(
+    expression,
+    (candidate) =>
+      resolvesToUnboundIdentifier(candidate, "require", scope, nodeScopes) ||
+      resolvesToMemberNamed(candidate, "getBuiltinModule", scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args !== undefined) return args !== null && isProcessModuleSpecifier(staticString(args[0]));
+  if (isAliasAssignmentExpression(expression)) {
+    return resolvesToProcessObject(expression.right, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  return branches !== null &&
+    (resolvesToProcessObject(branches[0], scope, nodeScopes, new Set(seen)) ||
+      resolvesToProcessObject(branches[1], scope, nodeScopes, new Set(seen)));
+}
+
+function isProcessModuleSpecifier(specifier: string | null): boolean {
+  return specifier !== null && PROCESS_MODULE_SPECIFIERS.has(specifier.toLowerCase());
+}
+
+function applySubprocessCallCapability(
   node: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
@@ -2348,11 +2496,27 @@ function applyDenoRunCapability(
     (candidate) =>
       resolvesToGlobalIntrinsicMember(candidate, "Deno", "run", scope, nodeScopes) ||
       resolvesToDenoCommand(candidate, scope, nodeScopes) ||
-      resolvesToBunSubprocess(candidate, scope, nodeScopes),
+      resolvesToBunSubprocess(candidate, scope, nodeScopes) ||
+      resolvesToBunShell(candidate, scope, nodeScopes) ||
+      resolvesToProcessExecve(candidate, scope, nodeScopes),
     scope,
     nodeScopes,
   );
   if (args !== undefined) analysis.hasDynamicCodeGeneration = true;
+}
+
+function applyTaggedTemplateCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (
+    node.type === "TaggedTemplateExpression" && isNode(node.tag) &&
+    resolvesToBunShell(node.tag, scope, nodeScopes)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
 }
 
 function applyDescriptorReadCapability(
@@ -2402,7 +2566,10 @@ function applyObjectPatternCapability(
   const key = staticPropertyKey(node);
   if (!destructuredKeyMayExposeGenerator(key)) return;
   const source = objectPatternSource(node, parents);
-  if (source === undefined) return;
+  if (source === undefined) {
+    analysis.hasDynamicCodeGeneration = true;
+    return;
+  }
   if (isGlobalObject(source, scope, nodeScopes)) {
     analysis.hasDynamicCodeGeneration = true;
     return;
@@ -2413,7 +2580,8 @@ function applyObjectPatternCapability(
 }
 
 function destructuredKeyMayExposeGenerator(key: string | null): boolean {
-  return key === null || key === "eval" || key === "Function" || key === "constructor";
+  return key === null || key === "eval" || key === "Function" || key === "constructor" ||
+    key === "getOwnPropertyDescriptor";
 }
 
 function objectPatternSource(
@@ -2476,6 +2644,8 @@ function isCrossModuleCapabilityAlias(
     resolvesToMemberNamed(node, "getBuiltinModule", scope, nodeScopes) ||
     resolvesToDenoCommand(node, scope, nodeScopes) ||
     resolvesToBunSubprocess(node, scope, nodeScopes) ||
+    resolvesToBunShell(node, scope, nodeScopes) ||
+    resolvesToProcessExecve(node, scope, nodeScopes) ||
     resolvesToUnboundIdentifier(node, "require", scope, nodeScopes) ||
     ["Bun", "Deno", "Object", "Reflect", "process"].some((name) =>
       resolvesToGlobalIntrinsic(node, name, scope, nodeScopes)
@@ -2546,6 +2716,7 @@ export async function analyzeSourceCapabilities(
     applyModuleSpecifierCapability(node, analysis);
     applyMemberCapability(node, scope, nodeScopes, parents, analysis);
     applyCallCapability(node, scope, nodeScopes, analysis);
+    applyTaggedTemplateCapability(node, scope, nodeScopes, analysis);
     applyObjectPatternCapability(node, scope, nodeScopes, parents, analysis);
     applyWorkerConstructionCapability(node, scope, nodeScopes, analysis);
     applySubprocessConstructionCapability(node, scope, nodeScopes, analysis);

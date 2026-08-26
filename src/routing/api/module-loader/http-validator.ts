@@ -1229,7 +1229,14 @@ export function validateModuleSpecifierHosts(specifiers: string[], allowedHosts:
  * exists only inside strings, so a vetted module can run a `new Worker(...)`
  * or `import(...)` this validator never saw.
  */
-const CODE_EVALUATION_MODULES = new Set(["node:vm", "vm"]);
+const CODE_EVALUATION_MODULES = new Set([
+  "inspector",
+  "inspector/promises",
+  "node:inspector",
+  "node:inspector/promises",
+  "node:vm",
+  "vm",
+]);
 
 /**
  * Runtime modules whose exports load other modules outside the graph this
