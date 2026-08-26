@@ -60,6 +60,7 @@ const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
+const APPROVAL_RECOVERY_SCAN_COUNT = 100;
 
 function appendStorageSchemaVersion(base: string): string {
   return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
@@ -1617,7 +1618,18 @@ export class RedisBackend implements WorkflowBackend {
     }
 
     const approvalsPrefix = `${this.storagePrefix()}approvals:`;
-    for (const key of await client.keys(`${approvalsPrefix}*`)) {
+    const approvalKeys = new Set<string>();
+    let cursor = 0;
+    do {
+      const page = await client.scan(cursor, {
+        MATCH: `${approvalsPrefix}*`,
+        COUNT: APPROVAL_RECOVERY_SCAN_COUNT,
+      });
+      cursor = page.cursor;
+      for (const key of page.keys) approvalKeys.add(key);
+    } while (cursor !== 0);
+
+    for (const key of approvalKeys) {
       const claimRunId = key.replace(approvalsPrefix, "");
       for (const approval of await this.getApprovals(claimRunId)) {
         if (approval.reconciliationPending === true) {

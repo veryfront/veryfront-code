@@ -31,6 +31,10 @@ export interface RedisAdapter {
   xack(key: string, group: string, ...ids: string[]): Promise<number>;
 
   keys(pattern: string): Promise<string[]>;
+  scan(
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
+  ): Promise<{ cursor: number; keys: string[] }>;
   exists(...keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
 

@@ -70,6 +70,10 @@ export interface NodeRedisClient {
   >;
   xAck(key: string, group: string, ids: string[]): Promise<number>;
   keys(pattern: string): Promise<string[]>;
+  scan(
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
+  ): Promise<{ cursor: number; keys: string[] }>;
   exists(keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   set(
@@ -318,6 +322,7 @@ const NODE_REDIS_CLIENT_ASYNC_METHODS = [
   "xReadGroup",
   "xAck",
   "keys",
+  "scan",
   "exists",
   "expire",
   "set",

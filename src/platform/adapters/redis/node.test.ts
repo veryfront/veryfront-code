@@ -117,6 +117,10 @@ function createMockClient() {
       calls.push({ method: "keys", args: [pattern] });
       return Promise.resolve(["k1", "k2"]);
     },
+    scan(cursor: number, options?: { MATCH?: string; COUNT?: number }) {
+      calls.push({ method: "scan", args: [cursor, options] });
+      return Promise.resolve({ cursor: 0, keys: ["k1", "k2"] });
+    },
     exists(keys: string[]) {
       calls.push({ method: "exists", args: [keys] });
       return Promise.resolve(1);
@@ -378,6 +382,16 @@ describe("platform/adapters/redis/node", () => {
       const { client } = createMockClient();
       const adapter = new NodeRedisAdapter(client as never);
       assertEquals(await adapter.keys("*"), ["k1", "k2"]);
+    });
+
+    it("should proxy scan options", async () => {
+      const { client, calls } = createMockClient();
+      const adapter = new NodeRedisAdapter(client as never);
+      assertEquals(await adapter.scan(7, { MATCH: "prefix:*", COUNT: 100 }), {
+        cursor: 0,
+        keys: ["k1", "k2"],
+      });
+      assertEquals(firstCall(calls).args, [7, { MATCH: "prefix:*", COUNT: 100 }]);
     });
 
     it("should forward exists keys as an array", async () => {

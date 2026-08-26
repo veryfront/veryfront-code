@@ -50,6 +50,12 @@ class MockRedisAdapter implements RedisAdapter {
   lastArgs: string[] = [];
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
+  keysCallCount = 0;
+  scanPageSize?: number;
+  scanCalls: Array<{
+    cursor: number;
+    options?: { MATCH?: string; COUNT?: number };
+  }> = [];
 
   private applyRunPatchField(
     hash: Map<string, string>,
@@ -559,6 +565,11 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   keys(pattern: string): Promise<string[]> {
+    this.keysCallCount++;
+    return Promise.resolve(this.matchingKeys(pattern));
+  }
+
+  private matchingKeys(pattern: string): string[] {
     const prefix = pattern.replace("*", "");
     const all: string[] = [];
 
@@ -572,7 +583,7 @@ class MockRedisAdapter implements RedisAdapter {
       if (k.startsWith(prefix)) all.push(k);
     }
 
-    return Promise.resolve(all);
+    return all;
   }
 
   xadd(key: string, _id: string, fields: Record<string, string>): Promise<string> {
@@ -732,10 +743,14 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   scan(
-    _cursor: number,
-    _options?: { MATCH?: string; COUNT?: number },
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
   ): Promise<{ cursor: number; keys: string[] }> {
-    return Promise.resolve({ cursor: 0, keys: [] });
+    this.scanCalls.push({ cursor, options });
+    const keys = this.matchingKeys(options?.MATCH ?? "*");
+    const pageSize = Math.max(1, this.scanPageSize ?? options?.COUNT ?? keys.length);
+    const nextCursor = cursor + pageSize < keys.length ? cursor + pageSize : 0;
+    return Promise.resolve({ cursor: nextCursor, keys: keys.slice(cursor, cursor + pageSize) });
   }
 
   quit(): Promise<void> {
@@ -3020,6 +3035,33 @@ describe("RedisBackend", () => {
       );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
+    });
+
+    it("scans approval decision claims without blocking the Redis keyspace", async () => {
+      mockRedis.scanPageSize = 1;
+      for (const runId of ["run-ap-claim-a", "run-ap-claim-b"]) {
+        await backend.createRun(createTestRun(runId));
+        await backend.savePendingApproval(runId, makeApproval(`approval-${runId}`));
+        await backend.updateApproval(runId, `approval-${runId}`, {
+          approved: true,
+          approver: "admin",
+        });
+      }
+
+      const claims = await backend.listApprovalDecisionClaims();
+
+      assertEquals(
+        claims.map(({ runId }) => runId).sort(),
+        ["run-ap-claim-a", "run-ap-claim-b"],
+      );
+      assertEquals(mockRedis.keysCallCount, 0);
+      assertEquals(
+        mockRedis.scanCalls.map(({ cursor, options }) => [cursor, options?.MATCH]),
+        [
+          [0, "test:schema-v1:approvals:*"],
+          [1, "test:schema-v1:approvals:*"],
+        ],
+      );
     });
   });
 

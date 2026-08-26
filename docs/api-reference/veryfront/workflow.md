@@ -168,7 +168,7 @@ Options accepted by parallel.
 | Name               | Description                | Source                                                                                                          |
 | ------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `MemoryBackend`    | Implement memory backend.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L123)            |
-| `RedisBackend`     | Implement redis backend.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/index.ts#L824)       |
+| `RedisBackend`     | Implement redis backend.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/index.ts#L825)       |
 | `WorkflowClient`   | Implement workflow client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L84)         |
 | `WorkflowExecutor` | Workflow Executor class    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L142) |
 
@@ -349,7 +349,7 @@ import {
 | `IterationStartEvent`            | Iteration start event                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L122)                    |
 | `PingCommand`                    | Keepalive ping                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L342)                    |
 | `PongEvent`                      | Pong response to ping                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L423)                    |
-| `RedisEventPublisherConfig`      | Redis Pub/Sub publisher configuration.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L143) |
+| `RedisEventPublisherConfig`      | Redis Pub/Sub publisher configuration.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/redis-runtime-provider.ts#L147) |
 | `TextCompleteEvent`              | Text complete event                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L139)                    |
 | `TextDeltaEvent`                 | Text delta event (streaming text chunk)                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L131)                    |
 | `ThinkingCompleteEvent`          | Thinking complete event                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L211)                    |

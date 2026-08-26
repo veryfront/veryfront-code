@@ -164,6 +164,7 @@ describe("platform/adapters/redis/modules", () => {
       assertEquals(typeof client.subscribe, "function");
       assertEquals(typeof client.unsubscribe, "function");
       assertEquals(typeof client.on, "function");
+      assertEquals(typeof client.scan, "function");
     });
 
     it("should use the pinned npm Redis client in Deno", async () => {

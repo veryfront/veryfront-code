@@ -53,6 +53,7 @@ const NODE_REDIS_CLIENT_METHODS = [
   "xReadGroup",
   "xAck",
   "keys",
+  "scan",
   "exists",
   "expire",
   "set",

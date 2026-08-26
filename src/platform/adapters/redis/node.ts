@@ -106,6 +106,13 @@ export class NodeRedisAdapter implements RedisAdapter {
     return this.client.keys(pattern);
   }
 
+  scan(
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
+  ): Promise<{ cursor: number; keys: string[] }> {
+    return this.client.scan(cursor, options);
+  }
+
   exists(...keys: string[]): Promise<number> {
     return this.client.exists(keys);
   }
