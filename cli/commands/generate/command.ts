@@ -159,12 +159,20 @@ export async function generateCommand(
   await warnIfMdxExtensionMissing(projectDir, result.files.map((file) => file.path));
 }
 
-function scaffoldFailureToError(result: ScaffoldResult): Error {
+export function scaffoldFailureToError(result: ScaffoldResult): Error {
   if (result.failureKind === "conflict") {
     return ALREADY_EXISTS.create({
       detail: result.message,
       context: { paths: result.files.map((file) => file.path) },
     });
+  }
+
+  if (result.failureKind === "filesystem") {
+    return toError(createError({
+      type: "file",
+      message: result.message,
+      context: { operation: "write" },
+    }));
   }
 
   return CONFIG_INVALID.create({ detail: result.message });

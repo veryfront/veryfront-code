@@ -9,6 +9,7 @@ import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { exists, makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { generateCommand } from "./index.ts";
+import { scaffoldFailureToError } from "./command.ts";
 import { type TestContext, withTestContext } from "../../../tests/_helpers/context.ts";
 import {
   __registerLogRecordEmitter,
@@ -39,6 +40,20 @@ async function setRouter(
 }
 
 describe("CLI generate command", () => {
+  it("preserves filesystem scaffold failure classification", () => {
+    const error = scaffoldFailureToError({
+      success: false,
+      files: [],
+      message: "Scaffold filesystem preflight failed",
+      failureKind: "filesystem",
+    });
+    const context = Object.getOwnPropertyDescriptor(error, "context")?.value as
+      | { type?: string }
+      | undefined;
+
+    assertEquals(context?.type, "file");
+  });
+
   it("creates app-router files by default", async () => {
     await withTestContext("generate-files", async (context: TestContext) => {
       await generateCommand(context.projectDir, "page", "docs/intro");

@@ -154,6 +154,7 @@ export function buildMinimalContext(
   securityConfig: SecurityConfig | null,
   debug: boolean | undefined,
   config: VeryfrontConfig | undefined,
+  requestOrigin?: string | null,
 ): HandlerContext {
   return {
     projectDir,
@@ -161,6 +162,7 @@ export function buildMinimalContext(
     securityConfig,
     debug,
     config,
+    requestOrigin,
     applicationIdentity: null,
     applicationIdentityHeaderNames: [],
   };

@@ -1,4 +1,13 @@
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "veryfront/platform/path";
+import {
+  basename,
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
@@ -67,6 +76,10 @@ export interface AuthScaffoldInput {
   failWriteAfterBytesForTesting?: number;
   beforeOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
   afterOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  secureCreateForTesting?: (
+    file: ScaffoldFilePlan,
+    create: () => Promise<void>,
+  ) => Promise<void>;
   identityForTesting?: (info: Deno.FileInfo) => FileIdentity;
   removeForTesting?: (path: string) => Promise<void>;
   realPathForTesting?: (path: string) => Promise<string>;
@@ -292,6 +305,7 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
       failWriteAfterBytes: input.failWriteAfterBytesForTesting,
       beforeOpen: input.beforeOpenForTesting,
       afterOpen: input.afterOpenForTesting,
+      secureCreate: input.secureCreateForTesting,
       identity: input.identityForTesting ?? fileIdentity,
       remove: input.removeForTesting,
       realPath: input.realPathForTesting,
@@ -309,6 +323,10 @@ async function writeGuardedMultiFilePlan(
     failWriteAfterBytes?: number;
     beforeOpen?: (file: ScaffoldFilePlan) => Promise<void>;
     afterOpen?: (file: ScaffoldFilePlan) => Promise<void>;
+    secureCreate?: (
+      file: ScaffoldFilePlan,
+      create: () => Promise<void>,
+    ) => Promise<void>;
     identity?: (info: Deno.FileInfo) => FileIdentity;
     remove?: (path: string) => Promise<void>;
     realPath?: (path: string) => Promise<string>;
@@ -330,7 +348,7 @@ async function writeGuardedMultiFilePlan(
       return failure([], "Unsafe scaffold project root", "unsafe-path");
     }
     rootGuard = {
-      identity: identity(rootStat),
+      identity: fileIdentity(rootStat),
       realPath: await realPath(root),
     };
 
@@ -356,72 +374,59 @@ async function writeGuardedMultiFilePlan(
     };
   }
 
+  const secureRootGuard: SecureRootGuard = { path: root, ...rootGuard };
   const createdFiles: OwnedPath[] = [];
   const createdDirs: OwnedPath[] = [];
   const defaultWriter = async (file: ScaffoldFilePlan) => {
-    await assertRootIdentity(root, rootGuard, identity, realPath);
+    await assertRootIdentity(root, rootGuard, realPath);
+    const relativeParent = relative(root, dirname(file.path));
+    const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
     await options.beforeOpen?.(file);
-    await assertRootIdentity(root, rootGuard, identity, realPath);
-    const unsafe = await findUnsafeExistingPrefix(root, file.path);
-    if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
-    const handle = await Deno.open(file.path, { write: true, createNew: true });
-    let closed = false;
+    let createdIdentity: FileIdentity = null;
+    let createCompleted = false;
+    const create = async () => {
+      createdIdentity = await runSecureScaffoldWriter({
+        operation: "create",
+        rootGuard: secureRootGuard,
+        parentParts,
+        name: basename(file.path),
+        content: file.content,
+        failAfterBytes: options.failWriteAfterBytes,
+      });
+      createCompleted = true;
+    };
     try {
+      if (options.secureCreate) await options.secureCreate(file, create);
+      else await create();
+      if (!createCompleted) throw new Error("Secure scaffold writer did not run");
       await options.afterOpen?.(file);
-      let opened: OwnedPath;
-      try {
-        opened = await verifyOpenedTarget(
-          root,
-          rootGuard,
-          file.path,
-          handle,
-          identity,
-          realPath,
-        );
-      } catch (error) {
-        const handleIdentity = identity(await handle.stat());
-        handle.close();
-        closed = true;
-        await removeUnsafeOpenedTarget(file.path, handleIdentity, identity, removeCreatedPath);
-        throw error;
-      }
-      const content = new TextEncoder().encode(file.content);
+      const opened = await verifySecureCreatedTarget(
+        root,
+        rootGuard,
+        file.path,
+        createdIdentity,
+        identity,
+        realPath,
+      );
       createdFiles.push(opened);
-      const ownedFileIndex = createdFiles.length - 1;
-      let offset = 0;
-      while (offset < content.byteLength) {
-        const remainingBeforeFailure = options.failWriteAfterBytes === undefined
-          ? content.byteLength - offset
-          : options.failWriteAfterBytes - offset;
-        if (remainingBeforeFailure <= 0) throw new Error("simulated partial write failure");
-        const chunk = content.subarray(
-          offset,
-          Math.min(content.byteLength, offset + remainingBeforeFailure),
-        );
-        const written = await handle.write(chunk);
-        if (written === 0) throw new Error("filesystem write made no progress");
-        offset += written;
-        createdFiles[ownedFileIndex] = await verifyOpenedTarget(
-          root,
-          rootGuard,
-          file.path,
-          handle,
-          identity,
-          realPath,
-        );
-        if (options.failWriteAfterBytes !== undefined && offset >= options.failWriteAfterBytes) {
-          throw new Error("simulated partial write failure");
-        }
+    } catch (error) {
+      if (createdIdentity !== null) {
+        await runSecureScaffoldWriter({
+          operation: "remove",
+          rootGuard: secureRootGuard,
+          parentParts,
+          name: basename(file.path),
+          expectedFileIdentity: createdIdentity,
+        }).catch(() => undefined);
       }
-    } finally {
-      if (!closed) handle.close();
+      throw error;
     }
   };
   const removeCreatedPath = options.remove ?? ((path: string) => Deno.remove(path));
 
   try {
     for (const file of normalizedFiles.files) {
-      await assertRootIdentity(root, rootGuard, identity, realPath);
+      await assertRootIdentity(root, rootGuard, realPath);
       await ensureSafeParentDirectories(root, dirname(file.path), createdDirs, identity);
       await options.beforeWrite?.(file);
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
@@ -604,6 +609,33 @@ interface RootGuard {
   realPath: string;
 }
 
+interface SecureRootGuard extends RootGuard {
+  path: string;
+}
+
+type SecureWriterRequest =
+  | {
+    operation: "create";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+    name: string;
+    content: string;
+    failAfterBytes?: number;
+  }
+  | {
+    operation: "remove";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+    name: string;
+    expectedFileIdentity: FileIdentity;
+  };
+
+interface SecureWriterResponse {
+  ok: boolean;
+  code?: string;
+  identity?: FileIdentity;
+}
+
 interface OwnedPath {
   path: string;
   identity: FileIdentity;
@@ -650,17 +682,58 @@ function timeMs(value: Date | null | undefined): number | null {
   return value instanceof Date ? value.getTime() : null;
 }
 
+async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<FileIdentity> {
+  const helperPath = fromFileUrl(new URL("./secure-writer.ts", import.meta.url));
+  const args = Deno.build.standalone
+    ? ["__veryfront_internal_scaffold_writer"]
+    : ["run", "--quiet", "--allow-read", "--allow-write", helperPath];
+  const child = new Deno.Command(Deno.execPath(), {
+    args,
+    cwd: request.rootGuard.path,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify({
+    ...request,
+    rootGuard: {
+      identity: request.rootGuard.identity,
+      realPath: request.rootGuard.realPath,
+    },
+  })));
+  await writer.close();
+  const output = await child.output();
+  if (!output.success) throw new Error("Secure scaffold writer failed");
+
+  let response: SecureWriterResponse;
+  try {
+    response = JSON.parse(new TextDecoder().decode(output.stdout)) as SecureWriterResponse;
+  } catch {
+    throw new Error("Secure scaffold writer failed");
+  }
+  if (!response.ok) {
+    if (response.code === "already-exists") {
+      throw new Deno.errors.AlreadyExists("Scaffold target already exists");
+    }
+    if (response.code === "unsafe-directory" && request.parentParts.length > 0) {
+      throw new Error(`Unsafe scaffold path: ${request.parentParts.join("/")}`);
+    }
+    throw new Error("Secure scaffold writer failed");
+  }
+  return response.identity ?? null;
+}
+
 async function assertRootIdentity(
   root: string,
   expected: RootGuard,
-  identity: (info: Deno.FileInfo) => FileIdentity,
   realPath: (path: string) => Promise<string>,
 ): Promise<void> {
   const current = await Deno.lstat(root);
   if (!current.isDirectory || current.isSymlink) {
     throw new Error("Unsafe scaffold project root");
   }
-  const currentIdentity = identity(current);
+  const currentIdentity = fileIdentity(current);
   if (expected.identity !== null && !sameIdentity(currentIdentity, expected.identity)) {
     throw new Error("Unsafe scaffold project root");
   }
@@ -669,28 +742,28 @@ async function assertRootIdentity(
   }
 }
 
-async function verifyOpenedTarget(
+async function verifySecureCreatedTarget(
   root: string,
   rootGuard: RootGuard,
   path: string,
-  handle: Deno.FsFile,
+  createdIdentity: FileIdentity,
   identity: (info: Deno.FileInfo) => FileIdentity,
   realPath: (path: string) => Promise<string>,
 ): Promise<OwnedPath> {
-  await assertRootIdentity(root, rootGuard, identity, realPath);
+  await assertRootIdentity(root, rootGuard, realPath);
   const targetRealPath = await realPath(path);
   if (!isRealPathInsideRoot(rootGuard.realPath, targetRealPath)) {
     throw new Error("Unsafe scaffold path");
   }
-  const handleIdentity = identity(await handle.stat());
-  const pathIdentity = identity(await Deno.lstat(path));
+  const pathInfo = await Deno.lstat(path);
+  const actualPathIdentity = fileIdentity(pathInfo);
   if (
-    handleIdentity !== null && pathIdentity !== null &&
-    !sameIdentity(handleIdentity, pathIdentity)
+    createdIdentity !== null && actualPathIdentity !== null &&
+    !sameIdentity(createdIdentity, actualPathIdentity)
   ) {
     throw new Error("Unsafe scaffold path");
   }
-  return { path, identity: handleIdentity };
+  return { path, identity: identity(pathInfo) };
 }
 
 async function removeOwnedPath(
@@ -702,7 +775,7 @@ async function removeOwnedPath(
   realPath: (path: string) => Promise<string>,
 ): Promise<boolean> {
   if (owned.identity === null) return false;
-  await assertRootIdentity(root, rootGuard, identity, realPath);
+  await assertRootIdentity(root, rootGuard, realPath);
   const current = await Deno.lstat(owned.path);
   if (!sameIdentity(identity(current), owned.identity)) return false;
   await remove(owned.path);
@@ -718,24 +791,6 @@ function isContainedRelativePath(relativePath: string): boolean {
   if (relativePath === "." || isAbsolute(relativePath)) return false;
   const firstPart = pathParts(relativePath)[0];
   return firstPart !== undefined && firstPart !== "..";
-}
-
-async function removeUnsafeOpenedTarget(
-  path: string,
-  handleIdentity: FileIdentity,
-  identity: (info: Deno.FileInfo) => FileIdentity,
-  remove: (path: string) => Promise<void>,
-): Promise<void> {
-  if (handleIdentity === null) return;
-  let pathIdentity: FileIdentity;
-  try {
-    pathIdentity = identity(await Deno.lstat(path));
-  } catch {
-    return;
-  }
-  if (sameIdentity(handleIdentity, pathIdentity)) {
-    await remove(path);
-  }
 }
 
 async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {

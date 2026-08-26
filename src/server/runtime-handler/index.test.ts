@@ -754,6 +754,83 @@ describe("server/runtime-handler/index", () => {
     assertEquals(response.status, 200);
   });
 
+  it("uses the trusted forwarded origin for OIDC on the monitoring fast path", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    const provider = await createMockOidcProvider({
+      issuer: "https://monitoring-idp.example.test",
+      clientId: "monitoring-client",
+      clientSecret: "monitoring-client-secret",
+      now: Math.floor(Date.now() / 1_000),
+    });
+    const clientId = "monitoring-client";
+    const sessionSecret = "monitoring-session-secret-value-32";
+    const handler = createVeryfrontHandler(
+      "/tmp/test-project",
+      createMockAdapter({
+        APP_URL: "https://app.example.test",
+        OIDC_ISSUER: provider.urls.issuer,
+        OIDC_CLIENT_ID: clientId,
+        OIDC_CLIENT_SECRET: "monitoring-client-secret",
+        OIDC_SESSION_SECRET: sessionSecret,
+      }),
+      {
+        projectDir: "/tmp/test-project",
+        config: {
+          security: {
+            auth: {
+              oidc: {
+                issuerEnvVar: "OIDC_ISSUER",
+                clientIdEnvVar: "OIDC_CLIENT_ID",
+                clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+                sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+                scopes: ["openid"],
+              },
+            },
+          },
+        } satisfies VeryfrontConfig,
+        allowHostProjectCodeExecution: true,
+      },
+    );
+    const forwardedHeaders = {
+      "x-forwarded-host": "app.example.test",
+      "x-forwarded-proto": "https",
+    };
+    const login = await provider.run(() =>
+      handler(
+        new Request("http://runtime.internal/_veryfront/auth/login", {
+          headers: forwardedHeaders,
+        }),
+      )
+    );
+    const publicCallback = new URL(provider.authorize(requireHeader(login, "location")));
+    const callback = await provider.run(() =>
+      handler(
+        new Request(`http://runtime.internal${publicCallback.pathname}${publicCallback.search}`, {
+          headers: {
+            ...forwardedHeaders,
+            cookie: cookiePair(login),
+          },
+        }),
+      )
+    );
+    const applicationSession = requireHeader(callback, "set-cookie").match(
+      /__Host-vf_session=[^;,]+/,
+    )?.[0];
+
+    const response = await handler(
+      new Request("http://runtime.internal/_health", {
+        headers: {
+          ...forwardedHeaders,
+          cookie: applicationSession ?? "missing-session",
+        },
+      }),
+    );
+
+    assertEquals(login.status, 302);
+    assertEquals(callback.status, 303);
+    assertEquals(response.status, 200);
+  });
+
   it("keeps signed control-plane verification separate from application OIDC sessions", async () => {
     const issuer = "https://issuer.example.test";
     const clientId = "control-plane-separation-client";

@@ -511,6 +511,38 @@ describe("scaffold engine", () => {
     });
   });
 
+  it("creates no outside file when the target parent changes before secure open", async () => {
+    await withTempProject(async (projectDir) => {
+      const parent = join(projectDir, "nested");
+      const movedParent = join(projectDir, "nested-original");
+      const outside = await Deno.makeTempDir({ prefix: "vf-scaffold-open-race-" });
+      await Deno.mkdir(parent);
+      try {
+        const result = await scaffoldAuthFiles({
+          projectDir,
+          preset: "oidc",
+          filesForTesting: [{ path: join(parent, "target.txt"), content: "secret" }],
+          secureCreateForTesting: async (_file, create) => {
+            await Deno.rename(parent, movedParent);
+            await Deno.symlink(outside, parent);
+            try {
+              return await create();
+            } finally {
+              await Deno.remove(parent);
+              await Deno.rename(movedParent, parent);
+            }
+          },
+        });
+
+        assertEquals(result.success, false);
+        assertEquals(await exists(join(outside, "target.txt")), false);
+        assertEquals(await exists(join(parent, "target.txt")), false);
+      } finally {
+        await Deno.remove(outside, { recursive: true });
+      }
+    });
+  });
+
   it("rejects symlinked target files without changing their referent", async () => {
     await withTempProject(async (projectDir) => {
       const outside = await Deno.makeTempFile({ prefix: "vf-scaffold-target-" });

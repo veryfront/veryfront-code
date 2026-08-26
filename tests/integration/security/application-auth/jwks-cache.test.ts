@@ -411,7 +411,6 @@ describe("security/application-auth JWKS cache", () => {
     for (
       const [body, message] of [
         [JSON.stringify({ keys: [] }), "1 through 100"],
-        [JSON.stringify({ keys: [RSA_KEY], extra: true }), "top-level"],
         [jwks([{ ...RSA_KEY, kid: undefined }]), "kid"],
         [jwks([{ ...RSA_KEY, kid: "" }]), "kid"],
         [jwks([{ ...RSA_KEY, kid: "k".repeat(257) }]), "kid"],
@@ -424,6 +423,25 @@ describe("security/application-auth JWKS cache", () => {
     ) {
       await expectJwksRejects(body, message);
     }
+  });
+
+  it("ignores additional top-level JWKS members", async () => {
+    await withMockFetch(
+      () =>
+        jsonResponse(
+          JSON.stringify({ keys: [RSA_KEY], issuer: "https://issuer.example.test" }),
+        ),
+      async () => {
+        const cache = createJwksCache();
+        const key = await cache.getKey({
+          jwksUri: JWKS_URI,
+          kid: "rsa-1",
+          alg: "RS256",
+        });
+
+        assertEquals(key.kid, "rsa-1");
+      },
+    );
   });
 
   it("rejects unsupported, private, symmetric, and algorithm-incompatible keys", async () => {

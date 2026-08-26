@@ -27,6 +27,7 @@ import {
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -414,18 +415,30 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
+          !skipsApplicationAuth(req, url.pathname);
+        let requestOrigin: string | null | undefined;
+        if (requiresApplicationAuth) {
+          const preparedMonitoringRequest = await prepareProjectRequest({
+            req,
+            url,
+            isProxyMode,
+          });
+          const trustProxyHeaders = preparedMonitoringRequest.proxyTrust.proxyTrusted ??
+            getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+          requestOrigin = getEffectiveRequestOrigin(req, url, trustProxyHeaders);
+        }
+
         const minimalCtx = buildMinimalContext(
           projectDir,
           adapter,
           securityLoader.getSecurityConfig(),
           isDebugEnabled(),
           config,
+          requestOrigin,
         );
 
-        if (
-          !isPlatformLivenessProbe(req.method, url.pathname) &&
-          !skipsApplicationAuth(req, url.pathname)
-        ) {
+        if (requiresApplicationAuth) {
           const authResult = await handleApplicationAuthRequest(req, minimalCtx);
           if (authResult?.response) return authResult.response;
           minimalCtx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;

@@ -25,7 +25,6 @@ const MapPrototypeHas = NativeMap.prototype.has;
 const MapPrototypeSet = NativeMap.prototype.set;
 const MapSizeGetter = Object.getOwnPropertyDescriptor(NativeMap.prototype, "size")?.get;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectKeys = Object.keys;
 const PromisePrototypeThen = NativePromise.prototype.then;
 const SetPrototypeHas = NativeSet.prototype.has;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -432,10 +431,6 @@ async function parseJwksDocument(
   value: { readonly [key: string]: unknown },
   requestedKid: string | undefined,
 ): Promise<JwksDocument> {
-  const topLevelKeys = ObjectKeys(value);
-  if (topLevelKeys.length !== 1 || topLevelKeys[0] !== "keys") {
-    throw new TypeError("JWKS must contain only the top-level keys field");
-  }
   const keys = value.keys;
   if (!ArrayIsArray(keys) || keys.length < 1 || keys.length > MAX_KEYS) {
     throw new TypeError("JWKS keys must contain 1 through 100 keys");
