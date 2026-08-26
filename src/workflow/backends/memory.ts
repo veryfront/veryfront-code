@@ -869,7 +869,7 @@ export class MemoryBackend implements WorkflowBackend {
       appendRetainedRunEvent(mailbox, {
         ...event,
         _publicationOrder: this.nextRunEventPublicationOrder++,
-      } as RunEventEnvelope);
+      } as RunEventEnvelope, this.runEventClaims.get(runId)?.size ?? 0);
     } catch (error) {
       return Promise.reject(error);
     }

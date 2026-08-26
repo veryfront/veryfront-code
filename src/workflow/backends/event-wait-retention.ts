@@ -60,14 +60,17 @@ export function appendRetainedPendingEventWait(
  * moment a wait takes it. So no entry is safe to evict. Dropping the oldest
  * would silently discard an event published before its node parked, which is
  * the case the mailbox exists to serve, and would leave the run parked forever
- * on a wait whose event was accepted. The publish is refused instead, loudly,
- * the way the event-wait list refuses rather than dropping a pending wait.
+ * on a wait whose event was accepted. Claimed envelopes still reserve their
+ * original slots because rollback must be able to reinsert them. The publish
+ * is refused instead, loudly, the way the event-wait list refuses rather than
+ * dropping a pending wait.
  */
 export function appendRetainedRunEvent(
   mailbox: RunEventEnvelope[],
   event: RunEventEnvelope,
+  reservedEntries = 0,
 ): void {
-  if (mailbox.length >= MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES) {
+  if (mailbox.length + reservedEntries >= MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES) {
     throw ORCHESTRATION_ERROR.create({
       detail: `Run event mailbox full (max: ${MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES}) and no ` +
         `buffered event can be dropped without losing one a wait may still claim. ` +

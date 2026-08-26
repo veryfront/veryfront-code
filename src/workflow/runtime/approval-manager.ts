@@ -18,6 +18,7 @@ import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
 import { unrefTimer } from "#veryfront/compat/process.ts";
 import {
+  assertApprovalDecisionPatchIsolation,
   reconcileWorkflowRunControl,
   type WorkflowRunControlReconcileOutcome,
 } from "./workflow-run-control.ts";
@@ -90,7 +91,18 @@ export async function reconcileApprovalDecisionClaimsBeforeRetry(
     const run = await backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
-    if (run.nodeStates[approval.nodeId]?.status !== "completed") {
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      })
+    ) {
+      finalizedApprovalIds.push(approval.id);
+      continue;
+    }
+
+    if (currentState?.status !== "completed") {
       const outcome = await reconcileWorkflowRunControl({
         backend,
         operation: {
@@ -512,7 +524,20 @@ export class ApprovalManager {
           await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
           continue;
         }
-        if (run.nodeStates[approval.nodeId]?.status === "completed") {
+        const currentState = run.nodeStates[approval.nodeId];
+        if (
+          !isSameWaitNodeExecution(approval, {
+            nodeId: approval.nodeId,
+            waitInstanceId: currentState?._waitInstanceId,
+          })
+        ) {
+          // The old decision already resumed the run far enough to create a
+          // newer execution of this reusable wait. Reapplying it would approve
+          // the new iteration without its own human decision.
+          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+          continue;
+        }
+        if (currentState?.status === "completed") {
           if (decision.approved && run.status === "waiting") {
             if (!this.config.executor) continue;
             await this.config.executor.resume(runId, undefined, run.workerId);
@@ -623,6 +648,11 @@ export class ApprovalManager {
     }
 
     await this.validateDecisionData(runId, approval, decision);
+
+    // Replacement-map backends cannot preserve two dependency-free approval
+    // outcomes that race from the same run snapshot. Fence before either
+    // decision leaves the pending set, while every sibling is still visible.
+    await assertApprovalDecisionPatchIsolation(this.config.backend, runId, approvalId);
 
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another

@@ -1467,6 +1467,46 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     );
   });
 
+  it("refuses concurrent approval outcomes on a replacement-semantics backend", async () => {
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-concurrent-approvals"),
+      status: "waiting",
+      context: { input: {} },
+      nodeStates: {
+        first: { nodeId: "first", status: "running", attempt: 1 },
+        second: { nodeId: "second", status: "running", attempt: 1 },
+      },
+    });
+    backend.getPendingApprovals = () =>
+      Promise.resolve([{
+        id: "approval-second",
+        nodeId: "second",
+        message: "Approve second",
+        requestedAt: new Date(),
+        status: "pending",
+      }]);
+
+    await assertRejects(
+      () =>
+        reconcileWorkflowRunControl({
+          backend,
+          operation: {
+            type: "approval-decision",
+            runId: "reconcile-replacement-concurrent-approvals",
+            approvalId: "approval-first",
+            nodeId: "first",
+            decision: { approved: true, approver: "reviewer" },
+          },
+        }),
+      Error,
+      "key-merge run patches",
+    );
+
+    assertEquals(read().nodeStates.first?.status, "running");
+    assertEquals(read().nodeStates.second?.status, "running");
+    assertEquals(read().context.first, undefined);
+  });
+
   it("rejects event delivery on a backend without key-merge support", async () => {
     const startedAt = new Date("2026-01-01T00:00:00.000Z");
     const waitInput = { eventName: "payment.confirmed", timeout: 60_000 };

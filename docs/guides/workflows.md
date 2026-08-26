@@ -352,7 +352,7 @@ reaches its mailbox:
 
 ```ts
 import { tool } from "veryfront/tool";
-import { createWorkflowClient, step, waitForEvent, workflow } from "veryfront/workflow";
+import { createWorkflowClient, dependsOn, step, waitForEvent, workflow } from "veryfront/workflow";
 
 const fulfillment = tool<
   { orderId: string },
@@ -378,7 +378,10 @@ workflows.register(workflow({
       eventName: "payment.completed",
       timeout: "1h",
     }),
-    step("fulfill", { tool: fulfillment, input: { orderId: "ord_1" } }),
+    dependsOn(
+      step("fulfill", { tool: fulfillment, input: { orderId: "ord_1" } }),
+      "payment-confirmed",
+    ),
   ],
 }));
 

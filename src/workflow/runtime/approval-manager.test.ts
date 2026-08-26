@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { ApprovalManager } from "./approval-manager.ts";
+import { ApprovalManager, reconcileApprovalDecisionClaimsBeforeRetry } from "./approval-manager.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { PersistedPendingApproval } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
@@ -1187,6 +1187,102 @@ describe("ApprovalManager", () => {
       assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
 
+    it("does not apply an old decision claim to a newer wait instance", async () => {
+      const runId = "run-repeated-approval-claim-recovery";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            _waitInstanceId: "wait-2",
+          },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-old-iteration",
+        nodeId: "review",
+        waitInstanceId: "wait-1",
+        message: "approve iteration one",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(runId, "apr-old-iteration", {
+        approved: true,
+        approver: "reviewer",
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-current-iteration",
+        nodeId: "review",
+        waitInstanceId: "wait-2",
+        message: "approve iteration two",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      const resumeCalls: unknown[][] = [];
+      const executor = {
+        resume: (...args: unknown[]) => {
+          resumeCalls.push(args);
+          return Promise.resolve();
+        },
+      } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({
+        backend,
+        executor,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 0,
+      });
+
+      await manager.checkApprovalDecisionClaims();
+
+      const run = await backend.getRun(runId);
+      assertEquals(run?.nodeStates.review?._waitInstanceId, "wait-2");
+      assertEquals(run?.nodeStates.review?.status, "running");
+      assertEquals(run?.context.review, undefined);
+      assertEquals(resumeCalls, []);
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ id }) => id),
+        ["apr-current-iteration"],
+      );
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
+    it("does not replay an old decision claim while preparing a newer wait for retry", async () => {
+      const runId = "run-retry-newer-wait-instance";
+      await backend.createRun(createTestRun(runId, {
+        status: "pending",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            _waitInstanceId: "wait-2",
+          },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-retry-old-iteration",
+        nodeId: "review",
+        message: "approve the old iteration",
+        requestedAt: new Date(),
+        status: "pending",
+        waitInstanceId: "wait-1",
+      });
+      await backend.updateApproval(runId, "apr-retry-old-iteration", {
+        approved: true,
+        approver: "reviewer",
+      });
+
+      await reconcileApprovalDecisionClaimsBeforeRetry(backend, runId);
+
+      const run = await backend.getRun(runId);
+      assertEquals(run?.nodeStates.review?._waitInstanceId, "wait-2");
+      assertEquals(run?.nodeStates.review?.status, "running");
+      assertEquals(run?.context.review, undefined);
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
     it("reschedules a young decision claim when periodic sweeping is disabled", async () => {
       using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
       const runId = "run-young-decision-claim";
@@ -1409,6 +1505,47 @@ describe("ApprovalManager", () => {
         undefined,
         "a refused approver must not record a decision on the run context",
       );
+    });
+
+    it("refuses concurrent approvals before mutating a replacement-semantics backend", async () => {
+      Object.defineProperty(backend, "supportsRunPatchKeyMerge", { value: false });
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-replacement-concurrent-approvals";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          reviewA: { nodeId: "reviewA", status: "running", attempt: 1 },
+          reviewB: { nodeId: "reviewB", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-replacement-a",
+        nodeId: "reviewA",
+        message: "approve A",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-replacement-b",
+        nodeId: "reviewB",
+        message: "approve B",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await assertRejects(
+        () => manager.approve(runId, "apr-replacement-a", "reviewer"),
+        Error,
+        "Concurrent approval outcomes require",
+      );
+
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ status }) => status),
+        ["pending", "pending"],
+      );
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+      assertEquals((await backend.getRun(runId))?.context.reviewA, undefined);
+      assertEquals((await backend.getRun(runId))?.context.reviewB, undefined);
     });
 
     it("refuses a decision on an already-expired approval", async () => {

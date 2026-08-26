@@ -997,7 +997,20 @@ export class EventWaitManager {
         await this.finalizeDelivery(claim.wait, claim.event, delivered);
         continue;
       }
-      if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
+      const currentState = run.nodeStates[claim.wait.nodeId];
+      if (
+        !isSameWaitNodeExecution(claim.wait, {
+          nodeId: claim.wait.nodeId,
+          waitInstanceId: currentState?._waitInstanceId,
+        })
+      ) {
+        // A newer iteration of this wait proves the claimed event already
+        // committed the old one. Finalize the old mailbox reservation; never
+        // restore its envelope into the newer wait.
+        await this.finalizeDelivery(claim.wait, claim.event, true);
+        continue;
+      }
+      if (currentState?.status === "completed") {
         try {
           await this.reconcileCommittedResume(claim.wait, claim.event);
         } catch (error) {
@@ -1049,10 +1062,20 @@ export class EventWaitManager {
         continue;
       }
       const nodeStatus = run?.nodeStates[wait.nodeId]?.status;
+      const currentState = run?.nodeStates[wait.nodeId];
+      const newerExecution = run !== null &&
+        !isSameWaitNodeExecution(wait, {
+          nodeId: wait.nodeId,
+          waitInstanceId: currentState?._waitInstanceId,
+        });
       const committed = wait.waitKind === "delay"
         ? nodeStatus === "completed"
         : nodeStatus === "failed";
       if (!run || run.status === "completed" || run.status === "cancelled") {
+        await this.finalizeTimedWaitClaim(wait);
+        continue;
+      }
+      if (newerExecution) {
         await this.finalizeTimedWaitClaim(wait);
         continue;
       }

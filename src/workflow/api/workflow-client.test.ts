@@ -3547,6 +3547,73 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("finalizes an old delivery claim instead of restoring it into a newer wait", async () => {
+    const sharedBackend = new MemoryBackend();
+    const run: WorkflowRun = {
+      id: "run_old_delivery_new_wait_instance",
+      workflowId: "old-delivery-new-wait-instance",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "running",
+          attempt: 1,
+          _waitInstanceId: "wait-2",
+        },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    };
+    await sharedBackend.createRun(run);
+    await sharedBackend.savePendingEventWait(run.id, {
+      id: "evw-old-iteration",
+      runId: run.id,
+      nodeId: "gate",
+      waitInstanceId: "wait-1",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await sharedBackend.appendRunEvent(run.id, {
+      id: "evt-old-iteration",
+      eventName: "gate.ready",
+      payload: { iteration: 1 },
+      publishedAt: new Date(),
+    });
+    assertExists(
+      await sharedBackend.claimRunEventForWait(
+        run.id,
+        "evw-old-iteration",
+        "gate.ready",
+      ),
+    );
+
+    const recovering = new EventWaitManager({
+      backend: sharedBackend,
+      expirationCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 0,
+    });
+    try {
+      await waitFor(
+        async () => (await sharedBackend.listRunEventDeliveryClaims(run.id)).length === 0,
+        { message: "startup recovery did not finalize the old delivery claim" },
+      );
+      assertEquals(await sharedBackend.getPendingEventWaits(run.id), []);
+      assertEquals(await sharedBackend.peekRunEvent(run.id, "gate.ready"), null);
+      const current = await sharedBackend.getRun(run.id);
+      assertEquals(current?.nodeStates.gate?._waitInstanceId, "wait-2");
+      assertEquals(current?.nodeStates.gate?.status, "running");
+    } finally {
+      recovering.stop();
+    }
+  });
+
   it("recovers an event timeout claimed before the run failure committed", async () => {
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({

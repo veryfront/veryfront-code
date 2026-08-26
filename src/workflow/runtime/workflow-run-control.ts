@@ -1,5 +1,10 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { ensureError, ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import {
+  ensureError,
+  NOT_SUPPORTED,
+  ORCHESTRATION_ERROR,
+  RESOURCE_NOT_FOUND,
+} from "#veryfront/errors";
 import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   hasEventWaitSupport,
@@ -459,10 +464,30 @@ function buildNodeOutcomePatch(
   };
 }
 
-function reconcileApprovalDecision(
+/** Refuse approval outcomes that a replacement-map backend cannot isolate. */
+export async function assertApprovalDecisionPatchIsolation(
+  backend: WorkflowBackend,
+  runId: string,
+  approvalId: string,
+): Promise<void> {
+  if (hasRunPatchKeyMergeSupport(backend)) return;
+
+  const pending = await backend.getPendingApprovals(runId);
+  const claims = await backend.listApprovalDecisionClaims?.(runId) ?? [];
+  const hasSiblingOutcome = pending.some((approval) => approval.id !== approvalId) ||
+    claims.some(({ approval }) => approval.id !== approvalId);
+  if (hasSiblingOutcome) {
+    throw NOT_SUPPORTED.create({
+      detail: "Concurrent approval outcomes require a workflow backend with key-merge run patches",
+    });
+  }
+}
+
+async function reconcileApprovalDecision(
   backend: WorkflowBackend,
   operation: WorkflowRunControlApprovalDecisionOperation,
 ): Promise<WorkflowRunControlReconcileOutcome> {
+  await assertApprovalDecisionPatchIsolation(backend, operation.runId, operation.approvalId);
   const decidedAt = operation.decidedAt ?? new Date();
   const decisionContext = {
     approved: operation.decision.approved,
@@ -472,7 +497,7 @@ function reconcileApprovalDecision(
     decidedAt: decidedAt.toISOString(),
   };
 
-  return reconcileNodeOutcome(backend, {
+  return await reconcileNodeOutcome(backend, {
     runId: operation.runId,
     maxAttempts: operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS,
     shouldResume: operation.decision.approved,

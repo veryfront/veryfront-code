@@ -1056,6 +1056,52 @@ describe("MemoryBackend", () => {
       );
     });
 
+    it("reserves mailbox capacity for in-flight delivery claims", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-capacity-claim"));
+      for (let index = 0; index < MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES; index++) {
+        await backend.appendRunEvent("run-events", {
+          id: `evt-capacity-${index}`,
+          eventName: "payment.confirmed",
+          payload: { seq: index },
+          publishedAt: new Date(index),
+        });
+      }
+      const claimed = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-capacity-claim",
+        "payment.confirmed",
+      );
+      assertExists(claimed);
+
+      await assertRejects(
+        () =>
+          backend.appendRunEvent("run-events", {
+            id: "evt-capacity-overflow",
+            eventName: "payment.confirmed",
+            payload: { overflow: true },
+            publishedAt: new Date(MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES),
+          }),
+        Error,
+        "Run event mailbox full",
+      );
+      assertEquals(
+        await backend.restoreRunEventDelivery(
+          "run-events",
+          "evw-capacity-claim",
+          claimed,
+        ),
+        true,
+      );
+
+      let retained = 0;
+      while (await backend.takeRunEvent("run-events", "payment.confirmed")) retained++;
+      assertEquals(
+        retained,
+        MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+        "rolling back a reserved claim must restore the mailbox to, not beyond, its bound",
+      );
+    });
+
     it("drops orphan mailboxes past the bound but keeps one whose run exists", async () => {
       await backend.appendRunEvent("run-events", {
         id: "evt-6",
