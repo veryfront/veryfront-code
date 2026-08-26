@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applyCsrfCookie, validateCsrf } from "#veryfront/security/csrf/helpers.ts";
 import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
@@ -96,7 +96,9 @@ describe("security/csrf/browser-mutation-headers", () => {
     );
     headers.set("cookie", documentCookie);
 
-    assertEquals(headers.get("x-csrf-token")?.length > 0, true);
+    const token = headers.get("x-csrf-token");
+    assertExists(token);
+    assertEquals(token.length > 0, true);
     assertEquals(
       validateCsrf(
         new Request(`${origin}/api/cases`, {
@@ -131,7 +133,9 @@ describe("security/csrf/browser-mutation-headers", () => {
     );
     headers.set("cookie", documentCookie);
 
-    assertEquals(headers.get(csrf.headerName)?.length > 0, true);
+    const token = headers.get(csrf.headerName);
+    assertExists(token);
+    assertEquals(token.length > 0, true);
     assertEquals(
       validateCsrf(
         new Request(`${origin}/api/cases`, { method: "POST", headers }),

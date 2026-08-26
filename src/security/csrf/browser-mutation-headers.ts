@@ -11,6 +11,7 @@
 
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 import {
+  csrfHttpsTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
   effectiveCsrfCookieNameForOrigin,
@@ -96,6 +97,12 @@ export function csrfMutationHeadersFor(
         false,
       );
       token = cookies[tokenCookieName];
+    }
+    if (
+      !token && resolvedUrl.protocol === "https:" &&
+      !cookieName.startsWith("__Host-") && !cookieName.startsWith("__Secure-")
+    ) {
+      token = cookies[csrfHttpsTokenCookieName(cookieName, facts.origin)];
     }
     if (token) headers.set(headerName, token);
   } catch {

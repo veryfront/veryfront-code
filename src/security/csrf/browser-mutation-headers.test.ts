@@ -98,6 +98,22 @@ describe("csrfMutationHeadersFor", () => {
     );
   });
 
+  it("recovers an HTTPS migration token for an explicit configured name", () => {
+    const configuredName = "vf_explicit";
+    const cookieName = csrfHttpsTokenCookieName(configuredName, ORIGIN);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(`${cookieName}=tok-https`),
+      { cookieName: configuredName, headerName: "x-explicit" },
+    );
+
+    assertEquals(
+      headers.get("x-explicit"),
+      "tok-https",
+      "explicit configuration must retain deterministic migration discovery",
+    );
+  });
+
   it("round-trips percent characters from an encoded advertisement", () => {
     const headers = csrfMutationHeadersFor(
       "/api/cases",
