@@ -2,6 +2,7 @@ import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolve } from "node:path";
 import { getMCPRegistry, registerPrompt, registerResource } from "#veryfront/mcp";
 import { nodeAdapter } from "#veryfront/platform/adapters/node.ts";
@@ -258,55 +259,57 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
   }]);
 });
 
-Deno.test("project agent runtime preserves code agent delegate denials", async () => {
-  const coordinator = agent({
-    id: "restricted-coordinator",
-    system: "Do not call the writer.",
-    skills: [],
-    delegates: ["writer"],
-    tools: { agent_writer: false },
-  });
-
-  const definition = await createRuntimeAgentDefinitionFromAgent(coordinator);
-
-  assertEquals(definition.tools, undefined);
-  assertEquals(definition.deniedTools, ["agent_writer"]);
-  assertEquals(definition.delegates, ["writer"]);
-});
-
-Deno.test("project agent runtime carries explicit skill tool denials into hosted definitions", async () => {
-  registerSkill("triage", {
-    id: "triage",
-    metadata: { name: "triage", description: "Triage requests" },
-    rootPath: "/test/skills/triage",
-  });
-
-  try {
-    const lockedDown = agent({
-      id: "locked-down-hosted",
-      system: "Do not use skill tools.",
-      tools: {
-        load_skill: false,
-        load_skill_reference: false,
-        execute_skill_script: false,
-      },
+describe("project agent runtime tool denials", () => {
+  it("project agent runtime preserves code agent delegate denials", async () => {
+    const coordinator = agent({
+      id: "restricted-coordinator",
+      system: "Do not call the writer.",
+      skills: [],
+      delegates: ["writer"],
+      tools: { agent_writer: false },
     });
 
-    const definition = await createRuntimeAgentDefinitionFromAgent(lockedDown);
+    const definition = await createRuntimeAgentDefinitionFromAgent(coordinator);
 
-    assertEquals(
-      definition.tools,
-      undefined,
-      "an all-denied map has no positive selector to serialize",
-    );
-    assertEquals(definition.deniedTools, [
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ]);
-  } finally {
-    skillRegistryInternal.clearAll();
-  }
+    assertEquals(definition.tools, undefined);
+    assertEquals(definition.deniedTools, ["agent_writer"]);
+    assertEquals(definition.delegates, ["writer"]);
+  });
+
+  it("project agent runtime carries explicit skill tool denials into hosted definitions", async () => {
+    registerSkill("triage", {
+      id: "triage",
+      metadata: { name: "triage", description: "Triage requests" },
+      rootPath: "/test/skills/triage",
+    });
+
+    try {
+      const lockedDown = agent({
+        id: "locked-down-hosted",
+        system: "Do not use skill tools.",
+        tools: {
+          load_skill: false,
+          load_skill_reference: false,
+          execute_skill_script: false,
+        },
+      });
+
+      const definition = await createRuntimeAgentDefinitionFromAgent(lockedDown);
+
+      assertEquals(
+        definition.tools,
+        undefined,
+        "an all-denied map has no positive selector to serialize",
+      );
+      assertEquals(definition.deniedTools, [
+        "execute_skill_script",
+        "load_skill",
+        "load_skill_reference",
+      ]);
+    } finally {
+      skillRegistryInternal.clearAll();
+    }
+  });
 });
 
 Deno.test("project agent runtime serializes code agent thinking config", async () => {

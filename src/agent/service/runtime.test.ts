@@ -152,9 +152,9 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(serviceAgent?.config.providerTools, ["web_fetch"]);
   });
 
-  it("warns when an unrestricted selector with denials fails closed", () => {
+  it("suppresses skill infrastructure when an unrestricted selector with denials fails closed", () => {
     const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
-    createAgentServiceRuntime({
+    const bundle = createAgentServiceRuntime({
       serviceName: "test-agent-service",
       getConfig: () => ({
         VERYFRONT_API_URL: "https://api.example.test",
@@ -168,7 +168,8 @@ describe("agent/agent-service-runtime", () => {
         description: "",
         instructions: "Use every tool except denied tools.",
         tools: true,
-        deniedTools: ["load_skill"],
+        deniedTools: ["update_file"],
+        skills: true,
       }),
       logger: {
         ...createLogger(),
@@ -185,6 +186,9 @@ describe("agent/agent-service-runtime", () => {
       message: "Agent tool selection failed closed",
       metadata: { agent_id: "assistant", denied_tool_count: 1 },
     }]);
+    const serviceAgent = bundle.runtime.contract.agents.assistant;
+    assertEquals(serviceAgent?.config.skills, false);
+    assertEquals(serviceAgent?.config.tools, { update_file: false });
   });
 
   it("starts the node agent service server from the assembled runtime", async () => {

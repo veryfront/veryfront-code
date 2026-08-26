@@ -126,6 +126,25 @@ it("createRuntimeAgentFromMarkdownDefinition keeps denied delegates disabled", (
   assertEquals(typeof tools?.agent_researcher, "object");
 });
 
+it("createRuntimeAgentFromMarkdownDefinition suppresses delegates when all project tools fail closed", () => {
+  toolRegistryInternal.clearAll();
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "fail-closed-delegation-test",
+    name: "Fail Closed Delegation",
+    description: "Does not delegate after a selector failure",
+    instructions: "Do not use project tools.",
+    tools: true,
+    deniedTools: ["update_file"],
+    delegates: ["writer"],
+  });
+
+  const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
+  assertEquals(runtimeAgent.config.delegates, []);
+  assertEquals(tools?.update_file, false);
+  assertEquals(tools?.agent_writer, undefined);
+});
+
 it("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
   toolRegistryInternal.clearAll();
 

@@ -279,10 +279,12 @@ export function createAgentServiceRuntime<
     logger: options.logger,
   });
   const agentConfig = options.getAgentConfig();
-  if (agentConfig.tools === true && agentConfig.deniedTools?.length) {
+  const deniedToolCount = agentConfig.deniedTools?.length ?? 0;
+  const failClosedUnrestrictedSelector = agentConfig.tools === true && deniedToolCount > 0;
+  if (failClosedUnrestrictedSelector) {
     options.logger.warn?.("Agent tool selection failed closed", {
       agent_id: agentConfig.id,
-      denied_tool_count: agentConfig.deniedTools.length,
+      denied_tool_count: deniedToolCount,
     });
   }
   const service = defineAgentService({
@@ -297,7 +299,7 @@ export function createAgentServiceRuntime<
         agentConfig.providerTools,
         agentConfig.deniedTools,
       ),
-      skills: agentConfig.skills,
+      skills: failClosedUnrestrictedSelector ? false : agentConfig.skills,
       tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
     }),
     server: {

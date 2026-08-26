@@ -351,13 +351,10 @@ function resolveToolsConfiguration(input: {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (skillTools === "disable") {
-        delete configuredTools[registration.id];
-        continue;
-      }
-
-      if (skillTools === "omit") {
-        delete configuredTools[registration.id];
+      if (skillTools === "disable" || skillTools === "omit") {
+        if (configuredTools[registration.id] !== false) {
+          delete configuredTools[registration.id];
+        }
         continue;
       }
 

@@ -25,7 +25,7 @@ import {
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
   type HostedProjectRemoteToolSourceRetryPolicy,
 } from "./project-remote-tool-source.ts";
-import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
+import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
@@ -203,19 +203,24 @@ function withoutDeniedHostTools(
  * be null (no filtering), so a denied MCP-backed tool would stay discoverable
  * and executable. The deny wrapper filters listings and rejects execution.
  */
+function withoutDeniedRemoteTool(
+  source: RemoteToolSource,
+  deniedToolNames: readonly string[] | undefined,
+): RemoteToolSource {
+  if (!deniedToolNames?.length) {
+    return source;
+  }
+  const deny = [...deniedToolNames];
+  return wrapRemoteToolSourceWithMcpPolicy(source, { deny }, {
+    deniedDetail: (toolName) => `Tool "${toolName}" is denied by the agent configuration`,
+  });
+}
+
 function withoutDeniedRemoteTools(
   sources: RemoteToolSource[],
   deniedToolNames: readonly string[] | undefined,
 ): RemoteToolSource[] {
-  if (!deniedToolNames?.length) {
-    return sources;
-  }
-  const deny = [...deniedToolNames];
-  return sources.map((source) =>
-    wrapRemoteToolSourceWithMcpPolicy(source, { deny }, {
-      deniedDetail: (toolName) => `Tool "${toolName}" is denied by the agent configuration`,
-    })
-  );
+  return sources.map((source) => withoutDeniedRemoteTool(source, deniedToolNames));
 }
 
 function applyHostedHostToolPolicy(
@@ -407,6 +412,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const localHostTools = input.traceLocalTools
     ? traceHostTools(sortedLocalTools, input.traceLocalTools)
     : sortedLocalTools;
+  const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
 
   const remoteToolSources = withoutDeniedRemoteTools(
     createHostedProjectRemoteToolSources({
@@ -418,7 +424,11 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
         input.serverResolvedIntegrationToolNames,
       ),
       clientProfile: input.taskContext.clientProfile,
-      createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
+      // Project-scoped sources perform retry calls against their input source.
+      // Apply the denial at this inner boundary as well as the returned source
+      // so a retry cannot invoke a denied companion tool.
+      createRemoteToolSource: (config) =>
+        withoutDeniedRemoteTool(createRemoteToolSource(config), input.deniedToolNames),
       defaultProjectId: () => activeProjectId(input.taskContext),
       getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
       getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),

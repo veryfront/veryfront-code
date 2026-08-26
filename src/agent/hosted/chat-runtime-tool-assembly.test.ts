@@ -365,94 +365,138 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit skill tool denials over runtime-essential preservation", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
+describe("explicit hosted runtime tool denials", () => {
+  it("prepareHostedChatRuntimeToolAssembly honors explicit skill tool denials over runtime-essential preservation", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+      availableSkillIds: ["plan"],
+    };
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools: {
-      invoke_agent: localTool("Invoke agent"),
-      load_skill: localTool("Load skill"),
-      load_skill_reference: localTool("Load skill reference"),
-      execute_skill_script: localTool("Execute skill script"),
-      sleep: localTool("Sleep"),
-    },
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["sleep"],
-    deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: {
+        invoke_agent: localTool("Invoke agent"),
+        load_skill: localTool("Load skill"),
+        load_skill_reference: localTool("Load skill reference"),
+        execute_skill_script: localTool("Execute skill script"),
+        sleep: localTool("Sleep"),
+      },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["sleep"],
+      deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.localToolNames, ["sleep"]);
+    assertEquals(taskContext.availableToolNames, ["sleep"]);
   });
 
-  assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(taskContext.availableToolNames, ["sleep"]);
-});
+  it("prepareHostedChatRuntimeToolAssembly keeps denied skill tools out of config-derived empty tool runs", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+      availableSkillIds: ["plan"],
+    };
 
-Deno.test("prepareHostedChatRuntimeToolAssembly keeps denied skill tools out of config-derived empty tool runs", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: {
+        load_skill: localTool("Load skill"),
+        load_skill_reference: localTool("Load skill reference"),
+        execute_skill_script: localTool("Execute skill script"),
+      },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: [],
+      deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools: {
-      load_skill: localTool("Load skill"),
-      load_skill_reference: localTool("Load skill reference"),
-      execute_skill_script: localTool("Execute skill script"),
-    },
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: [],
-    deniedToolNames: ["execute_skill_script", "load_skill", "load_skill_reference"],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    assertEquals(toolAssembly.localToolNames, []);
+    assertEquals(taskContext.availableToolNames, []);
   });
 
-  assertEquals(toolAssembly.localToolNames, []);
-  assertEquals(taskContext.availableToolNames, []);
-});
+  it("prepareHostedChatRuntimeToolAssembly applies explicit denials to remote tool sources", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
 
-Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to remote tool sources", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "anthropic/claude-sonnet-4-6",
-  };
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { sleep: localTool("Sleep") },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["create_file"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools: { sleep: localTool("Sleep") },
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: null,
-    deniedToolNames: ["create_file"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    // A null allowlist disables name filtering, so the deny wrapper is the only
+    // guard: the denied remote tool is neither listed nor executable.
+    assertEquals(toolAssembly.remoteToolNames, []);
+    const [remoteToolSource] = toolAssembly.remoteToolSources;
+    assertExists(remoteToolSource);
+    await assertRejects(async () => await remoteToolSource.executeTool("create_file", {}));
   });
 
-  // A null allowlist disables name filtering, so the deny wrapper is the only
-  // guard: the denied remote tool is neither listed nor executable.
-  assertEquals(toolAssembly.remoteToolNames, []);
-  const [remoteToolSource] = toolAssembly.remoteToolSources;
-  assertExists(remoteToolSource);
-  await assertRejects(async () => await remoteToolSource.executeTool("create_file", {}));
+  it("prepareHostedChatRuntimeToolAssembly applies denials to internal remote retries", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
+    const executions: string[] = [];
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: {},
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["update_file"],
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "source",
+        listTools: () =>
+          Promise.resolve([
+            remoteTool("create_file", "Create a file"),
+            remoteTool("update_file", "Update a file"),
+          ]),
+        executeTool: (toolName) => {
+          executions.push(toolName);
+          return Promise.resolve(toolName === "create_file" ? { exists: true } : { ok: true });
+        },
+      }),
+      shouldRetryWithRemoteTool: ({ toolName, error }) =>
+        toolName === "create_file" &&
+        typeof error === "object" && error !== null && "exists" in error,
+      preloadLatestConversationUserText: false,
+    });
+
+    const [remoteToolSource] = toolAssembly.remoteToolSources;
+    assertExists(remoteToolSource);
+    await assertRejects(async () => await remoteToolSource.executeTool("create_file", {}));
+    assertEquals(executions.includes("create_file"), true);
+    assertEquals(executions.includes("update_file"), false);
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps non-empty public selectors restrictive", async () => {
@@ -825,133 +869,138 @@ Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's configured s
   assertEquals(taskContext.availableToolNames, ["researcher--fetch-paper"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's denied short tool name", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    agentId: "researcher",
-    projectId: "project-1",
-    model: "openai/gpt-5.4-nano",
-  };
+describe("denial-aware eager tool compatibility", () => {
+  it("prepareHostedChatRuntimeToolAssembly resolves an owner's denied short tool name", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      agentId: "researcher",
+      projectId: "project-1",
+      model: "openai/gpt-5.4-nano",
+    };
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools: {
-      "researcher--fetch-paper": {
-        ...localTool("Fetch a paper"),
-        id: "researcher--fetch-paper",
-        ownerAgentId: "researcher",
-        shortName: "fetch-paper",
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: {
+        "researcher--fetch-paper": {
+          ...localTool("Fetch a paper"),
+          id: "researcher--fetch-paper",
+          ownerAgentId: "researcher",
+          shortName: "fetch-paper",
+        },
       },
-    },
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: null,
-    deniedToolNames: ["fetch-paper"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["fetch-paper"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.localToolNames, []);
+    assertEquals(taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(
+      taskContext.availableToolNames?.includes("researcher--fetch-paper") ?? false,
+      false,
+    );
   });
 
-  assertEquals(toolAssembly.localToolNames, []);
-  assertEquals(taskContext.availableToolNames, ["tool_search"]);
-  assertEquals(taskContext.availableToolNames?.includes("researcher--fetch-paper") ?? false, false);
-});
+  it("prepareHostedChatRuntimeToolAssembly applies explicit denials to provider tools", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "anthropic/claude-sonnet-4-6",
+    };
 
-Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to provider tools", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "anthropic/claude-sonnet-4-6",
-  };
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools: { lookup: localTool("Look up project data") },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      allowedProviderToolNames: ["web_search"],
+      sourceProviderToolNames: ["web_search"],
+      deniedToolNames: ["web_search", "tool_search"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools: { lookup: localTool("Look up project data") },
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: null,
-    allowedProviderToolNames: ["web_search"],
-    sourceProviderToolNames: ["web_search"],
-    deniedToolNames: ["web_search", "tool_search"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    assertEquals(
+      toolAssembly.providerToolNames,
+      [],
+      "an explicit denial must remove the provider tool even when it is allowlisted",
+    );
+    assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
+    assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
   });
 
-  assertEquals(
-    toolAssembly.providerToolNames,
-    [],
-    "an explicit denial must remove the provider tool even when it is allowlisted",
-  );
-  assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
-  assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
-});
+  it("prepareHostedChatRuntimeToolAssembly caps eager local runtime schemas", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "openai/gpt-5.4-nano",
+    };
+    const localTools = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `local_tool_${String(index).padStart(3, "0")}`,
+        localTool(`Local tool ${index}`),
+      ]),
+    );
 
-Deno.test("prepareHostedChatRuntimeToolAssembly caps eager local runtime schemas", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "openai/gpt-5.4-nano",
-  };
-  const localTools = Object.fromEntries(
-    Array.from({ length: 129 }, (_, index) => [
-      `local_tool_${String(index).padStart(3, "0")}`,
-      localTool(`Local tool ${index}`),
-    ]),
-  );
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["tool_search"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: null,
-    deniedToolNames: ["tool_search"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(Object.keys(toolAssembly.runtimeTools), toolAssembly.availableToolNames);
+    assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
   });
 
-  assertEquals(toolAssembly.toolLoadingMode, "eager");
-  assertEquals(Object.keys(toolAssembly.runtimeTools), toolAssembly.availableToolNames);
-  assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
-});
+  it("prepareHostedChatRuntimeToolAssembly caps provider tools with eager schemas", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "openai/gpt-5.4-nano",
+    };
+    const localTools = Object.fromEntries(
+      Array.from({ length: 128 }, (_, index) => [
+        `local_tool_${String(index).padStart(3, "0")}`,
+        localTool(`Local tool ${index}`),
+      ]),
+    );
 
-Deno.test("prepareHostedChatRuntimeToolAssembly caps provider tools with eager schemas", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    model: "openai/gpt-5.4-nano",
-  };
-  const localTools = Object.fromEntries(
-    Array.from({ length: 128 }, (_, index) => [
-      `local_tool_${String(index).padStart(3, "0")}`,
-      localTool(`Local tool ${index}`),
-    ]),
-  );
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      allowedProviderToolNames: ["web_search"],
+      sourceProviderToolNames: ["web_search"],
+      deniedToolNames: ["tool_search"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: null,
-    allowedProviderToolNames: ["web_search"],
-    sourceProviderToolNames: ["web_search"],
-    deniedToolNames: ["tool_search"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
+    assertEquals(toolAssembly.providerToolNames, []);
+    assertEquals(toolAssembly.availableToolNames.length, 128);
   });
-
-  assertEquals(toolAssembly.toolLoadingMode, "eager");
-  assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
-  assertEquals(toolAssembly.providerToolNames, []);
-  assertEquals(toolAssembly.availableToolNames.length, 128);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {

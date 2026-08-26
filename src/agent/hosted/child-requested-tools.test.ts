@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { HostToolSet } from "#veryfront/tool";
 import {
   buildDefaultHostedChildForkToolSet,
@@ -134,7 +135,7 @@ Deno.test("sanitizeDefaultHostedChildRequestedTools adds reverse file-writing co
   assertEquals(result, ["update_file", "create_file"]);
 });
 
-Deno.test("sanitizeDefaultHostedChildRequestedTools excludes denied companions", () => {
+it("sanitizeDefaultHostedChildRequestedTools excludes denied companions", () => {
   const result = sanitizeDefaultHostedChildRequestedTools({
     prompt: "Create the requested file",
     requestedTools: ["create_file"],

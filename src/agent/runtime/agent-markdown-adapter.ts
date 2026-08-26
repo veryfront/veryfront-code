@@ -19,6 +19,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
   const deniedToolEntries: Array<[string, false]> = (definition.deniedTools ?? []).map(
     (name) => [name, false as const],
   );
+  const failClosedUnrestrictedSelector = definition.tools === true && deniedToolEntries.length > 0;
   const selectedToolMap: Record<string, boolean> = {
     ...(definition.tools !== undefined && definition.tools !== true
       ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
@@ -28,7 +29,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
   // AgentConfig cannot express "all except". When an unrestricted serialized
   // selector also carries denials, retain the false-only map and fail closed.
   const selectedTools: true | Record<string, boolean> | undefined = definition.tools === true &&
-      deniedToolEntries.length === 0
+      !failClosedUnrestrictedSelector
     ? true
     : Object.keys(selectedToolMap).length > 0
     ? selectedToolMap
@@ -38,7 +39,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     (toolName) => !deniedToolNames.has(toolName),
   );
   const delegates = definition.delegates?.filter(
-    (delegateId) => !deniedToolNames.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`),
+    (delegateId) =>
+      !failClosedUnrestrictedSelector &&
+      !deniedToolNames.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`),
   );
 
   const runtimeAgent = agent({

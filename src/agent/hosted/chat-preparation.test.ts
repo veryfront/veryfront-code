@@ -454,7 +454,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions hides deferred skill tools fr
   assertEquals(system.includes("bash"), false);
 });
 
-Deno.test("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is denied", async () => {
+it("prepareHostedChatRuntimeCreationOptions hides skills when load_skill is denied", async () => {
   let visibleToolNames: readonly string[] | undefined;
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest(),

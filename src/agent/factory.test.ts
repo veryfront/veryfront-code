@@ -445,7 +445,11 @@ description: Excluded skill
       },
     });
 
-    assertEquals(assistant.config.tools, {});
+    assertEquals(assistant.config.tools, {
+      load_skill: false,
+      load_skill_reference: false,
+      execute_skill_script: false,
+    });
     assertEquals(assistant.config.skills, false);
   });
 
