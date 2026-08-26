@@ -96,7 +96,9 @@ const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
+const SymbolToPrimitive = Symbol.toPrimitive;
 const SymbolSpecies = Symbol.species;
+const SymbolToStringTag = Symbol.toStringTag;
 const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
@@ -1807,7 +1809,31 @@ function isBunResolveMessagePrototypeAccessor(
     !("value" in descriptor);
 }
 
-function hasOnlyBunResolveMessagePrototypeKeys(prototype: object): boolean {
+function isBunResolveMessagePrototypeData(
+  descriptor: PropertyDescriptor | undefined,
+  options: Readonly<{
+    type: "function" | "string";
+    writable: boolean;
+    enumerable: boolean;
+    configurable: boolean;
+    value?: string;
+  }>,
+): boolean {
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    descriptor.writable !== options.writable ||
+    descriptor.enumerable !== options.enumerable ||
+    descriptor.configurable !== options.configurable ||
+    typeof descriptor.value !== options.type
+  ) {
+    return false;
+  }
+
+  return options.value === undefined || descriptor.value === options.value;
+}
+
+function hasReducedBunResolveMessagePrototypeSurface(prototype: object): boolean {
   const keys = ownKeys(prototype);
   if (keys.length !== 3) return false;
 
@@ -1830,6 +1856,158 @@ function hasOnlyBunResolveMessagePrototypeKeys(prototype: object): boolean {
   return hasCode && hasMessage && hasName;
 }
 
+function hasNativeBunResolveMessagePrototypeSurface(prototype: object): boolean {
+  const keys = ownKeys(prototype);
+  if (keys.length !== 15) return false;
+
+  let hasCode = false;
+  let hasColumn = false;
+  let hasImportKind = false;
+  let hasLevel = false;
+  let hasLine = false;
+  let hasMessage = false;
+  let hasPosition = false;
+  let hasReferrer = false;
+  let hasSpecifier = false;
+  let hasToJSON = false;
+  let hasToString = false;
+  let hasName = false;
+  let hasConstructor = false;
+  let hasToPrimitive = false;
+  let hasToStringTag = false;
+
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "code") {
+      hasCode = true;
+    } else if (key === "column") {
+      hasColumn = true;
+    } else if (key === "importKind") {
+      hasImportKind = true;
+    } else if (key === "level") {
+      hasLevel = true;
+    } else if (key === "line") {
+      hasLine = true;
+    } else if (key === "message") {
+      hasMessage = true;
+    } else if (key === "position") {
+      hasPosition = true;
+    } else if (key === "referrer") {
+      hasReferrer = true;
+    } else if (key === "specifier") {
+      hasSpecifier = true;
+    } else if (key === "toJSON") {
+      hasToJSON = true;
+    } else if (key === "toString") {
+      hasToString = true;
+    } else if (key === "name") {
+      hasName = true;
+    } else if (key === "constructor") {
+      hasConstructor = true;
+    } else if (key === SymbolToPrimitive) {
+      hasToPrimitive = true;
+    } else if (key === SymbolToStringTag) {
+      hasToStringTag = true;
+    } else {
+      return false;
+    }
+  }
+
+  if (
+    !hasCode ||
+    !hasColumn ||
+    !hasImportKind ||
+    !hasLevel ||
+    !hasLine ||
+    !hasMessage ||
+    !hasPosition ||
+    !hasReferrer ||
+    !hasSpecifier ||
+    !hasToJSON ||
+    !hasToString ||
+    !hasName ||
+    !hasConstructor ||
+    !hasToPrimitive ||
+    !hasToStringTag
+  ) {
+    return false;
+  }
+
+  return isBunResolveMessagePrototypeAccessor(
+    getOwnPropertyDescriptor(prototype, "column"),
+    { hasSetter: false },
+  ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "importKind"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "level"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "line"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "position"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "referrer"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "specifier"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeData(getOwnPropertyDescriptor(prototype, "toJSON"), {
+      type: "function",
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    }) &&
+    isBunResolveMessagePrototypeData(getOwnPropertyDescriptor(prototype, "toString"), {
+      type: "function",
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    }) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, "constructor"),
+      {
+        type: "function",
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      },
+    ) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, SymbolToPrimitive),
+      {
+        type: "function",
+        writable: false,
+        enumerable: false,
+        configurable: true,
+      },
+    ) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, SymbolToStringTag),
+      {
+        type: "string",
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        value: "ResolveMessage",
+      },
+    );
+}
+
+function hasBunResolveMessagePrototypeSurface(prototype: object): boolean {
+  return hasReducedBunResolveMessagePrototypeSurface(prototype) ||
+    hasNativeBunResolveMessagePrototypeSurface(prototype);
+}
+
 function isBunResolveMessageAccessorObject(value: object): boolean {
   try {
     if (ownKeys(value).length !== 0) return false;
@@ -1840,7 +2018,7 @@ function isBunResolveMessageAccessorObject(value: object): boolean {
     if (prototype === null || getPrototypeOf(prototype) !== IntrinsicObjectPrototype) {
       return false;
     }
-    if (!hasOnlyBunResolveMessagePrototypeKeys(prototype)) {
+    if (!hasBunResolveMessagePrototypeSurface(prototype)) {
       return false;
     }
     if (

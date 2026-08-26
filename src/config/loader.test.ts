@@ -914,6 +914,37 @@ export default config as const;
         assertStringIncludes(error.message, "left-pad");
       });
 
+      it("classifies Bun ResolveMessage objects with the live native prototype surface", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-native-prototype-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  column: { get() { return 1; }, enumerable: true, configurable: false },\n" +
+            "  importKind: { get() { return 'import-statement'; }, enumerable: true, configurable: false },\n" +
+            "  level: { get() { return 'error'; }, enumerable: true, configurable: false },\n" +
+            "  line: { get() { return 1; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  position: { get() { return 0; }, enumerable: true, configurable: false },\n" +
+            "  referrer: { get() { return '/app/veryfront.config.mjs'; }, enumerable: true, configurable: false },\n" +
+            "  specifier: { get() { return 'left-pad'; }, enumerable: true, configurable: false },\n" +
+            "  toJSON: { value: function toJSON() { return {}; }, writable: true, enumerable: true, configurable: false },\n" +
+            "  toString: { value: function toString() { return this.message; }, writable: true, enumerable: true, configurable: false },\n" +
+            "  name: { value: 'ResolveMessage', writable: false, enumerable: true, configurable: true },\n" +
+            "  constructor: { value: function ResolveMessage() {}, writable: true, enumerable: false, configurable: true },\n" +
+            "  [Symbol.toPrimitive]: { value: function toPrimitive() { return this.message; }, writable: false, enumerable: false, configurable: true },\n" +
+            "  [Symbol.toStringTag]: { value: 'ResolveMessage', writable: false, enumerable: false, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
       it("does not leak Bun-shaped prototype accessor failures", async () => {
         const codeError = await loadFailure(
           "vf-config-bun-resolve-throwing-prototype-",
@@ -962,7 +993,7 @@ export default config as const;
               "    set(_) {}, enumerable: true, configurable: false,\n" +
               "  },\n" +
               "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
-              "  constructor: { value: function ResolveMessage() {}, configurable: true },\n" +
+              "  veryfrontProjectControlledKey: { value: true, enumerable: true, configurable: false },\n" +
               "});\n" +
               "throw Object.create(resolveMessagePrototype);\n",
           );
