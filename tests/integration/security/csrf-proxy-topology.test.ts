@@ -34,4 +34,30 @@ describe("security/csrf/helpers applyCsrfCookie proxy topology", () => {
       return Promise.resolve();
     });
   });
+
+  it("marks both custom CSRF cookies Secure for a trusted forwarded chain", async () => {
+    await withEnv({ VERYFRONT_TRUST_FORWARDED_HEADERS: "1" }, () => {
+      const req = new Request("http://csrf-internal.service/page", {
+        headers: {
+          accept: "text/html",
+          "x-forwarded-host": "app.example.com, csrf-internal.service",
+          "x-forwarded-proto": "https, http",
+        },
+      });
+      const headers = new Headers();
+      applyCsrfCookie(req, headers, {
+        cookieName: "vf_csrf",
+        headerName: "x-vf-csrf",
+      });
+
+      const cookies = headers.getSetCookie();
+      assertEquals(cookies.length, 2, "custom names publish a token and an advertisement");
+      assertEquals(
+        cookies.every((cookie) => cookie.includes("; Secure")),
+        true,
+        "the normalized public HTTPS origin must secure both browser-facing cookies",
+      );
+      return Promise.resolve();
+    });
+  });
 });

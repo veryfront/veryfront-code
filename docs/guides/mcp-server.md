@@ -37,6 +37,20 @@ export const OPTIONS = handler;
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
 
+MCP clients are not browsers, so they hold no CSRF cookie to echo. Exclude the route from the CSRF check, or every `POST` receives `403`:
+
+```ts
+export default {
+  security: {
+    csrf: {
+      excludePaths: ["/api/mcp"],
+    },
+  },
+};
+```
+
+The route stays protected by the `auth` field below, which is what authenticates an MCP client. See [Security headers and CSP](./security-headers.md) for the CSRF contract.
+
 Export a local token and start the dev server:
 
 ```bash

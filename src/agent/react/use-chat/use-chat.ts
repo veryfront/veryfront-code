@@ -249,9 +249,9 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
 
         const response = await fetch(api, {
           method: "POST",
-          // Production enables CSRF by default, so this POST has to echo the
-          // `__Host-vf_csrf` cookie or the server answers 403. Development
-          // issues the same cookie without enforcing it so this path is tested.
+          // CSRF is enforced in every environment, so this POST has to echo the
+          // browser-readable token or the server answers 403. The helper also
+          // discovers configured and origin-specific cookie names.
           headers: csrfMutationHeaders(api, {
             headers: {
               "Content-Type": "application/json",

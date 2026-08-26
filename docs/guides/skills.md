@@ -144,6 +144,8 @@ Expose the agent through an AG-UI route, then ask it to use the skill:
 ```bash
 curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Use the code-review skill and summarize what you would check first."}]}]}'
 ```
 
