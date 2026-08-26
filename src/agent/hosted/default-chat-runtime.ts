@@ -5,6 +5,7 @@ import {
   type ToolExecutionContext,
   type ToolSet,
 } from "#veryfront/tool";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import {
   runWithoutRequestContext as runWithoutProjectRequestContext,
@@ -404,7 +405,8 @@ function snapshotHostedToolResult(result: unknown): unknown {
   return snapshot.value;
 }
 
-function scopeHostedRuntimeTools(input: {
+/** @internal Scope local tool execution and sanitize errors without trusted provenance. */
+export function scopeHostedRuntimeTools(input: {
   tools: ToolSet;
   taskContext: DefaultHostedChatRuntimeTaskContext;
   cloudContext: VeryfrontCloudContext;
@@ -412,6 +414,7 @@ function scopeHostedRuntimeTools(input: {
   return Object.fromEntries(
     Object.entries(input.tools).map(([toolName, tool]) => {
       const execute = tool.execute;
+      const preserveTrustedError = hasTrustedHostToolProvenance(tool);
       return [
         toolName,
         {
@@ -425,7 +428,8 @@ function scopeHostedRuntimeTools(input: {
                   return snapshotHostedToolResult(
                     await apply(execute, tool, [toolInput, context]),
                   );
-                } catch {
+                } catch (error) {
+                  if (preserveTrustedError) throw error;
                   throw new TypeErrorConstructor("Hosted project tool execution failed");
                 }
               },

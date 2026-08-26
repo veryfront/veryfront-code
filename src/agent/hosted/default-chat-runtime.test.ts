@@ -4,6 +4,7 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -17,6 +18,9 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
+import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -27,6 +31,7 @@ import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
+  scopeHostedRuntimeTools,
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
@@ -62,6 +67,55 @@ function emptyRemoteSource(config: RemoteMCPToolSourceConfig): RemoteToolSource 
       Promise.resolve({ ok: true }),
   };
 }
+
+Deno.test("scopeHostedRuntimeTools preserves trusted errors and sanitizes project errors", async () => {
+  const trustedError = INVALID_ARGUMENT.create({ detail: "Correct the trusted tool input" });
+  const tools = createToolsFromHostDefinitions({
+    trusted_failure: markTrustedHostToolProvenance({
+      description: "Trusted framework failure",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        throw trustedError;
+      },
+    }),
+    project_failure: {
+      description: "Project failure",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => {
+        throw INVALID_ARGUMENT.create({ detail: "Project-controlled detail" });
+      },
+    },
+  });
+  const scoped = scopeHostedRuntimeTools({
+    tools,
+    taskContext: {
+      authToken: "visitor-token",
+      projectId: "project-1",
+      projectSlug: "project-slug-1",
+      branchId: null,
+      model: "test/tool-errors",
+    },
+    cloudContext: {
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "visitor-token",
+      projectSlug: "project-slug-1",
+      serviceLayer: "cloud",
+    },
+  });
+
+  let caughtTrustedError: unknown;
+  try {
+    await scoped.trusted_failure?.execute({});
+  } catch (error) {
+    caughtTrustedError = error;
+  }
+  assertStrictEquals(caughtTrustedError, trustedError);
+  await assertRejects(
+    async () => await scoped.project_failure?.execute({}),
+    TypeError,
+    "Hosted project tool execution failed",
+  );
+});
 
 function createTextStream() {
   return new ReadableStream<unknown>({

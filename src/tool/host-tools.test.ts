@@ -6,11 +6,34 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
 import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
 import { getRemoteToolProvenance } from "./remote-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
+} from "./host-tool-provenance.ts";
 import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("preserves trusted host provenance through materialization", () => {
+    const trustedDefinition = markTrustedHostToolProvenance({
+      description: "Trusted framework tool",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => ({ ok: true }),
+    });
+    const tools = createToolsFromHostDefinitions({
+      trusted: trustedDefinition,
+      project: {
+        description: "Project tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ ok: true }),
+      },
+    });
+
+    assertEquals(hasTrustedHostToolProvenance(tools.trusted), true);
+    assertEquals(hasTrustedHostToolProvenance(tools.project), false);
+  });
+
   it("materializes host tool definitions into framework tools", async () => {
     let receivedContextToolCallId = "";
 
