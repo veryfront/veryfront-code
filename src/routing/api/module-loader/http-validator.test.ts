@@ -2017,6 +2017,25 @@ describe("routing/api/module-loader/http-validator", () => {
         [],
       );
       await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` Command && registerSupport();` +
+          ` function registerSupport() {}`,
+        [],
+      );
+      for (
+        const source of [
+          `const Command = Deno.Command; Command || registerSupport();`,
+          `const Command = Deno.Command; registerSupport() && Command;`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "logical expressions must not expose a subprocess constructor alias",
+        );
+      }
+      await validateHTTPImports(
         `let Command = Deno.Command; const Safe = class {};` +
           ` export const instance = new (Command &&= Safe)();`,
         [],

@@ -1672,6 +1672,19 @@ function resolvesToGlobalIntrinsicMember(
       new Set(seen),
     );
   }
+  if (
+    expression.type === "LogicalExpression" && expression.operator === "&&" &&
+    isNode(expression.right)
+  ) {
+    return resolvesToGlobalIntrinsicMember(
+      expression.right,
+      objectName,
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+  }
   const branches = expressionBranches(expression);
   if (branches !== null) {
     return resolvesToGlobalIntrinsicMember(
@@ -3277,6 +3290,7 @@ function isInertCapabilityInspection(
   let current = node;
   let link = parents.get(current);
   while (link && isInertInspectionValueFlow(link)) {
+    if (isTruthyLogicalAndLeftGuard(link)) return true;
     current = link.parent;
     link = parents.get(current);
   }
@@ -3290,6 +3304,12 @@ function isInertCapabilityInspection(
   return link.parent.type === "BinaryExpression" &&
     (link.parent.operator === "===" || link.parent.operator === "!==") &&
     (link.key === "left" || link.key === "right");
+}
+
+function isTruthyLogicalAndLeftGuard(link: ParentLink): boolean {
+  return link.parent.type === "LogicalExpression" &&
+    link.parent.operator === "&&" &&
+    link.key === "left";
 }
 
 function isInertInspectionValueFlow(link: ParentLink): boolean {
