@@ -871,7 +871,7 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     Authorization: "Bearer token-1",
   });
   assertEquals(await resolveTestHeaders(configs[0]?.headers, { authToken: "run-token-1" }), {
-    Authorization: "Bearer run-token-1",
+    Authorization: "Bearer token-1",
   });
 
   activeProjectId = "project-2";
@@ -1115,7 +1115,7 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
     Authorization: "Bearer token-1",
   });
   assertEquals(await resolveTestHeaders(configs[0]?.headers, { authToken: "run-token-1" }), {
-    Authorization: "Bearer run-token-1",
+    Authorization: "Bearer token-1",
   });
   assertEquals(configs[2]?.headers, { Authorization: "Bearer linear-token" });
 

@@ -7,6 +7,7 @@ import {
   createHostedRootLocalToolRuntime,
   prepareHostedRootSandboxToolSource,
 } from "./root-sandbox-tool-source.ts";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { DefaultHostedChatRuntimeTaskContext } from "./default-chat-runtime.ts";
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
@@ -162,11 +163,15 @@ Deno.test("createHostedRootLocalToolRuntime merges sandbox tools and owns their 
     },
   });
 
-  assertEquals(Object.keys(await runtime.buildLocalTools(taskContext)).sort(), [
+  const localTools = await runtime.buildLocalTools(taskContext);
+  assertEquals(Object.keys(localTools).sort(), [
     "bash",
     "get_background_command",
     "sleep",
   ]);
+  assertEquals(hasTrustedHostToolProvenance(localTools.bash), true);
+  assertEquals(hasTrustedHostToolProvenance(localTools.get_background_command), true);
+  assertEquals(hasTrustedHostToolProvenance(localTools.sleep), false);
   assertEquals(Object.keys(await runtime.buildLocalTools(taskContext)).sort(), [
     "bash",
     "get_background_command",

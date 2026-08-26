@@ -1,5 +1,9 @@
 /** Chat execution preparation and runtime wiring for the cloud agent service. */
 import { type HostToolSet, sleepTool } from "#veryfront/tool";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   buildAgentRunTraceAttributes,
@@ -89,31 +93,29 @@ export function buildLocalTools(
   const config = context.infrastructure.getConfig();
   const tools: HostToolSet = {
     ...getDiscoveredHostTools({ agentId: taskContext.agentId }),
-    form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
-    load_skill: createLoadSkillTool(context, taskContext),
-    sleep: sleepTool,
-    web_fetch: createHostedWebFetchTool(),
+    ...markTrustedHostToolSet({
+      form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
+      load_skill: createLoadSkillTool(context, taskContext),
+      sleep: sleepTool,
+      web_fetch: createHostedWebFetchTool(),
+    }),
   };
 
   if (options.allowDelegation !== false) {
     const agentConfig = options.liveProjectSteering?.agent;
     const binding = resolveHostedDelegationBinding(agentConfig);
     if (binding.kind === "scoped") {
-      Object.assign(
-        tools,
-        buildHostedDelegateTools(context, {
-          delegates: binding.delegateIds,
-          selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
-          taskContext,
-        }),
-      );
+      const delegateTools = buildHostedDelegateTools(context, {
+        delegates: binding.delegateIds,
+        selfId: agentConfig?.id ?? taskContext.agentId ?? "veryfront",
+        taskContext,
+      });
+      Object.assign(tools, markTrustedHostToolSet(delegateTools));
     } else {
       // Generic invoke_agent remains the platform tool for dynamic agent
       // selection. Explicit scoped delegate bindings opt into fixed targets.
-      tools.invoke_agent = createInvokeAgentTool(
-        context,
-        taskContext,
-      );
+      const invokeAgentTool = createInvokeAgentTool(context, taskContext);
+      tools.invoke_agent = markTrustedHostToolProvenance(invokeAgentTool);
     }
   }
 
