@@ -25,6 +25,7 @@ import {
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import type { AuthConfig } from "#veryfront/security/http/middleware/types.ts";
+import type { SecurityConfig } from "#veryfront/types";
 import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
 
 /** Derived from the schema so the test tracks it instead of restating the union. */
@@ -1495,13 +1496,11 @@ void legacyBearerAuthConfig;
 void oidcAuthConfig;
 void trustedProxyAuthConfig;
 
-// @ts-expect-error Auth modes must be mutually exclusive.
 const invalidBasicAndBearerAuthConfig: AuthConfig = {
   basic: { username: "user", password: "password" },
   bearer: { token: "token" },
 };
 
-// @ts-expect-error Auth modes must be mutually exclusive.
 const invalidOidcAndTrustedProxyAuthConfig: AuthConfig = {
   oidc: VALID_OIDC_AUTH.oidc,
   trustedProxy: VALID_TRUSTED_PROXY_AUTH.trustedProxy,
@@ -1509,3 +1508,13 @@ const invalidOidcAndTrustedProxyAuthConfig: AuthConfig = {
 
 void invalidBasicAndBearerAuthConfig;
 void invalidOidcAndTrustedProxyAuthConfig;
+
+const previouslyDeclaredAuthConfig: {
+  basic?: AuthConfig["basic"];
+  bearer?: AuthConfig["bearer"];
+} = legacyBasicAuthConfig;
+const backwardCompatibleSecurityConfig: SecurityConfig = {
+  auth: previouslyDeclaredAuthConfig,
+};
+
+void backwardCompatibleSecurityConfig;
