@@ -63,7 +63,27 @@ export async function capturePreviewSourceSnapshotMarker(
   // A reused contextual adapter can switch branches across either await. Only
   // publish a marker when both observations name the same source context.
   if (await fs.getSourceSnapshotIdentity?.() !== identity) return;
+  if (await fs.getSourceSnapshotVersion?.() !== version) return;
   return { identity, version };
+}
+
+export async function captureRequiredPreviewSourceSnapshotMarker(
+  fs: FileSystemAdapter,
+  projectSlug: string,
+): Promise<PreviewSourceSnapshotMarker> {
+  const marker = await capturePreviewSourceSnapshotMarker(fs);
+  if (marker !== undefined) return marker;
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail:
+      `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot that produced preview document configuration.`,
+  });
+}
+
+export function previewSourceSnapshotMarkersEqual(
+  left: PreviewSourceSnapshotMarker,
+  right: PreviewSourceSnapshotMarker,
+): boolean {
+  return left.identity === right.identity && left.version === right.version;
 }
 
 /** Bind already-derived request configuration to its strict source snapshot. */

@@ -125,6 +125,10 @@ function createHostedConfigAdapter(source: string): RuntimeAdapter {
   const adapter = createMockAdapter({
     [configPath]: { isDirectory: false, isFile: true },
   });
+  adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+  adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:hosted-config-test:main";
+  adapter.fs.getSourceSnapshotVersion = () => 1;
   adapter.fs.readFile = (path: string) =>
     path === configPath
       ? Promise.resolve(source)
@@ -1053,6 +1057,10 @@ describe("resolveProjectRuntimeContext", () => {
           }));
         `)
         : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:remote-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => 1;
     defaultDiscoveryCache.adapters.set("/attacker/chosen/path", adapter);
     const req = new Request("http://localhost/page", {
       headers: {

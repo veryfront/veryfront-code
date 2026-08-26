@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { API_CLIENT_ERROR } from "#veryfront/errors";
+import { API_CLIENT_ERROR, VeryfrontError } from "#veryfront/errors";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
 
@@ -861,6 +861,140 @@ describe("adapter-factory", () => {
       });
     });
 
+    it("keeps subresource config loads on the normal freshness lease", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/_vf_modules/app/page.js",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+      assertEquals(result.config?.router, "pages");
+      assertEquals(result.previewDocumentSourceSnapshot, undefined);
+    });
+
+    it("rejects preview document config when the source generation changes during the read", async () => {
+      let sourceVersion = 1;
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => sourceVersion,
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          sourceVersion++;
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const req = await makeReq();
+
+      const rejection = await assertRejects(() =>
+        resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "mutable-config-project",
+          projectId: "proj_mutable_config",
+          proxyToken: "tok-123",
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: "main",
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req,
+          pathname: "/",
+          isProxyMode: true,
+          prepareHostedConfigContext: preparePreviewHostedConfigContext,
+        })
+      );
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
     it("re-throws config loading errors in proxy mode", async () => {
       // Use an extended adapter whose runWithContext throws
       const base = createMockAdapter({});
@@ -1072,6 +1206,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
+        pathname: "/api/config-probe",
         isProxyMode: true,
         prepareHostedConfigContext: preparePreviewHostedConfigContext,
       });
@@ -1166,6 +1301,10 @@ describe("adapter-factory", () => {
     // A release with no config file gets a legitimate 404 from the API. It used
     // to be re-thrown, so every request for such a project returned 404.
     const adapter = createMockAdapter({});
+    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => 1;
     adapter.fs.readFile = () =>
       Promise.reject(
         API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
@@ -1200,6 +1339,10 @@ describe("adapter-factory", () => {
     // Downstream substitutes the process-wide security config for an absent
     // project config, so the reason it is absent has to survive the return.
     assertEquals(result.configOutcome, "hosted-absent");
+    assertEquals(result.previewDocumentSourceSnapshot, {
+      identity: "branch:noconfig:main",
+      version: 1,
+    });
   });
 
   it("uses defaults when the 404 arrives wrapped rather than at the top level", async () => {
@@ -1209,6 +1352,10 @@ describe("adapter-factory", () => {
     // Reading only the outermost object made the fallback fire for one shape and
     // not the other, so this project 404'd while an identical one did not.
     const adapter = createMockAdapter({});
+    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => 1;
     adapter.fs.readFile = () =>
       Promise.reject(
         Object.assign(new Error("API request failed: 404 Not Found"), { status: 404 }),
@@ -1240,6 +1387,10 @@ describe("adapter-factory", () => {
 
     assertEquals(result.config, undefined);
     assertEquals(result.configOutcome, "hosted-absent");
+    assertEquals(result.previewDocumentSourceSnapshot, {
+      identity: "branch:noconfig:main",
+      version: 1,
+    });
   });
 
   it("still fails when a 404 comes from something other than the config read", async () => {

@@ -25,6 +25,10 @@ function createMockAdapter(
     capabilities: {},
     fs: {
       exists: () => Promise.resolve(false),
+      sourceSnapshotFreshnessOptionsVersion: 1,
+      ensureSourceSnapshotFresh: () => Promise.resolve(),
+      getSourceSnapshotIdentity: () => "branch:test-project:main",
+      getSourceSnapshotVersion: () => 1,
     } as unknown as RuntimeAdapter["fs"],
     env: {
       get: (key: string) => envValues[key],
@@ -321,13 +325,10 @@ describe("server/runtime-handler/index", () => {
         1,
         "admission must start the request rather than short-circuit at the proxy guard",
       );
-      // The fixture project has no loadable config, so the first failure past
-      // the proxy guard is config loading. Reaching it proves admission.
-      assertEquals(
-        body.includes("config-parse-error"),
-        true,
-        "a trusted proxy request must be admitted through to project runtime resolution",
-      );
+      // Reaching isolation proves admission into the project runtime pipeline.
+      // Do not assert the later config error shape here: hosted-config tests
+      // install evaluator hooks in the parallel unit suite, and this test only
+      // owns the proxy-admission boundary.
     } finally {
       Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
     }

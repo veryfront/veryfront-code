@@ -5,6 +5,7 @@ import { it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { createMockAdapter, makeCtx } from "./ssr/ssr.handler.test-helpers.ts";
 import {
+  captureRequiredPreviewSourceSnapshotMarker,
   ensurePreviewDocumentSourceSnapshot,
   ensurePreviewSourceSnapshotFresh,
   preparePreviewDocumentSourceSnapshot,
@@ -256,4 +257,16 @@ it("never reuses a prepared snapshot from an adapter that cannot name its contex
     2,
     "without a snapshot identity, freshness must not carry across a possible context change",
   );
+});
+
+it("rejects strict config markers without an identifiable snapshot", async () => {
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotVersion = () => 1;
+
+  const rejection = await assertRejects(() =>
+    captureRequiredPreviewSourceSnapshotMarker(adapter.fs, "preview-project")
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
 });

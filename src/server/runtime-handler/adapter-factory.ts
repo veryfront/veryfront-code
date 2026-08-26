@@ -8,7 +8,11 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
-import { CACHE_INVARIANT_VIOLATION, getErrorMessage } from "#veryfront/errors";
+import {
+  CACHE_INVARIANT_VIOLATION,
+  getErrorMessage,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
+} from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -28,10 +32,12 @@ import {
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
 import {
-  capturePreviewSourceSnapshotMarker,
+  captureRequiredPreviewSourceSnapshotMarker,
   ensurePreviewDocumentConfigSourceSnapshotFresh,
   type PreviewSourceSnapshotMarker,
+  previewSourceSnapshotMarkersEqual,
 } from "../handlers/request/source-snapshot-freshness.ts";
+import { ssrOwnsDocumentPathname } from "../handlers/request/ssr/document-ownership.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -172,7 +178,8 @@ function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): bo
   if (!opts.isProxyMode || opts.proxyEnv === "production") return false;
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
-  return pathname !== "/api" && !pathname.startsWith("/api/");
+  if (pathname === "/api" || pathname.startsWith("/api/")) return false;
+  return ssrOwnsDocumentPathname(pathname);
 }
 
 async function prepareProxyConfigLoad(
@@ -320,8 +327,13 @@ export async function resolveAdapter(
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
           const strictDocumentConfig = requiresStrictPreviewDocumentConfig(opts);
+          let configSourceSnapshot: PreviewSourceSnapshotMarker | undefined;
           if (strictDocumentConfig) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(
+              effectiveAdapter.fs,
+              opts.projectSlug!,
+            );
+            configSourceSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
               effectiveAdapter.fs,
               opts.projectSlug!,
             );
@@ -335,17 +347,33 @@ export async function resolveAdapter(
               signal: opts.req.signal,
             });
             if (strictDocumentConfig) {
-              previewDocumentSourceSnapshot = await capturePreviewSourceSnapshotMarker(
+              const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
                 effectiveAdapter.fs,
+                opts.projectSlug!,
               );
+              if (!previewSourceSnapshotMarkersEqual(configSourceSnapshot!, currentSnapshot)) {
+                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                  detail:
+                    `The mutable source snapshot serving "${opts.projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
+                });
+              }
+              previewDocumentSourceSnapshot = currentSnapshot;
             }
             return config;
           } catch (error: unknown) {
             if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
             if (strictDocumentConfig && hostedConfigAbsent) {
-              previewDocumentSourceSnapshot = await capturePreviewSourceSnapshotMarker(
+              const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
                 effectiveAdapter.fs,
+                opts.projectSlug!,
               );
+              if (!previewSourceSnapshotMarkersEqual(configSourceSnapshot!, currentSnapshot)) {
+                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                  detail:
+                    `The mutable source snapshot serving "${opts.projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
+                });
+              }
+              previewDocumentSourceSnapshot = currentSnapshot;
             }
             throw error;
           }
