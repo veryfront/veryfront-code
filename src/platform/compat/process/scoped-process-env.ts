@@ -39,6 +39,10 @@
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
 type EnvRecord = Record<string, string | undefined>;
+type EnvOverlayStore = Map<string, string | null>;
+
+/** Returns the active host-only test overlay, or null outside test execution. */
+export type EnvOverlayGetter = () => EnvOverlayStore | null;
 
 /** Returns the active project environment snapshot, or undefined outside one. */
 export type ProjectEnvSnapshotGetter = () => ProjectEnvSnapshot | undefined;
@@ -61,6 +65,7 @@ const ReflectOwnKeys = Reflect.ownKeys;
 const ReflectSet = Reflect.set;
 const ReflectSetPrototypeOf = Reflect.setPrototypeOf;
 const INSPECT_CUSTOM = Symbol.for("nodejs.util.inspect.custom");
+const testOverlayAwareDenoEnvViews = new WeakSet<object>();
 
 // Keyed by the snapshot object, which the scope owns for exactly its lifetime.
 const writesBySnapshot = new WeakMap<ProjectEnvSnapshot, ScopedWrites>();
@@ -72,6 +77,44 @@ export interface DenoEnvView {
   delete(key: string): void;
   has(key: string): boolean;
   toObject(): Record<string, string>;
+}
+
+/** Whether a Deno environment view already composes with the supported test overlay. */
+export function isTestOverlayAwareDenoEnvView(value: unknown): boolean {
+  return typeof value === "object" && value !== null && testOverlayAwareDenoEnvViews.has(value);
+}
+
+function readOverlay(
+  getOverlay: EnvOverlayGetter | undefined,
+  key: string,
+): { found: boolean; value: string | undefined } {
+  const overlay = getOverlay?.();
+  if (!overlay?.has(key)) return { found: false, value: undefined };
+  return { found: true, value: overlay.get(key) ?? undefined };
+}
+
+function recordOverlay(
+  getOverlay: EnvOverlayGetter | undefined,
+  key: string,
+  value: string | null,
+): boolean {
+  const overlay = getOverlay?.();
+  if (!overlay) return false;
+  overlay.set(key, value);
+  return true;
+}
+
+function applyOverlay(
+  record: Record<string, string>,
+  getOverlay: EnvOverlayGetter | undefined,
+): Record<string, string> {
+  const overlay = getOverlay?.();
+  if (!overlay) return record;
+  for (const [key, value] of overlay) {
+    if (value === null) delete record[key];
+    else record[key] = value;
+  }
+  return record;
 }
 
 function writesFor(snapshot: ProjectEnvSnapshot): ScopedWrites {
@@ -145,6 +188,7 @@ export function deleteProjectScopedEnv(
 export function createProjectScopedDenoEnvView(
   hostEnv: DenoEnvView,
   getSnapshot: ProjectEnvSnapshotGetter,
+  getOverlay?: EnvOverlayGetter,
 ): DenoEnvView {
   const hostGet = hostEnv.get;
   const hostSet = hostEnv.set;
@@ -155,13 +199,14 @@ export function createProjectScopedDenoEnvView(
   const view: DenoEnvView = {
     get(key) {
       const snapshot = getSnapshot();
-      return snapshot === undefined
-        ? ReflectApply(hostGet, hostEnv, [key])
-        : readScoped(snapshot, key);
+      if (snapshot !== undefined) return readScoped(snapshot, key);
+      const overlay = readOverlay(getOverlay, key);
+      return overlay.found ? overlay.value : ReflectApply(hostGet, hostEnv, [key]);
     },
     set(key, value) {
       const snapshot = getSnapshot();
       if (snapshot === undefined) {
+        if (recordOverlay(getOverlay, key, value)) return;
         ReflectApply(hostSet, hostEnv, [key, value]);
         return;
       }
@@ -170,6 +215,7 @@ export function createProjectScopedDenoEnvView(
     delete(key) {
       const snapshot = getSnapshot();
       if (snapshot === undefined) {
+        if (recordOverlay(getOverlay, key, null)) return;
         ReflectApply(hostDelete, hostEnv, [key]);
         return;
       }
@@ -177,17 +223,18 @@ export function createProjectScopedDenoEnvView(
     },
     has(key) {
       const snapshot = getSnapshot();
-      return snapshot === undefined
-        ? ReflectApply(hostHas, hostEnv, [key])
-        : readScoped(snapshot, key) !== undefined;
+      if (snapshot !== undefined) return readScoped(snapshot, key) !== undefined;
+      const overlay = readOverlay(getOverlay, key);
+      return overlay.found ? overlay.value !== undefined : ReflectApply(hostHas, hostEnv, [key]);
     },
     toObject() {
       const snapshot = getSnapshot();
       return snapshot === undefined
-        ? ReflectApply(hostToObject, hostEnv, [])
+        ? applyOverlay(ReflectApply(hostToObject, hostEnv, []), getOverlay)
         : projectScopedEnvRecord(snapshot);
     },
   };
+  if (getOverlay) testOverlayAwareDenoEnvViews.add(view);
   return ObjectFreeze(view);
 }
 
@@ -270,6 +317,7 @@ function assertEnvDataDescriptor(
 function createHostViewHandler(
   hostEnv: EnvRecord,
   getSnapshot: ProjectEnvSnapshotGetter,
+  getOverlay?: EnvOverlayGetter,
 ): ProxyHandler<EnvRecord> {
   /** Resolve the snapshot for a string key, or undefined to defer to the host record. */
   const scopeFor = (prop: string | symbol): ProjectEnvSnapshot | undefined =>
@@ -279,43 +327,87 @@ function createHostViewHandler(
     get(target, prop) {
       if (prop === INSPECT_CUSTOM) return ReflectGet(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectGet(hostEnv, prop);
+      if (!snapshot) {
+        if (typeof prop === "string") {
+          const overlay = readOverlay(getOverlay, prop);
+          if (overlay.found) return overlay.value;
+        }
+        return ReflectGet(hostEnv, prop);
+      }
       return readScoped(snapshot, prop as string);
     },
     set(_target, prop, value) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectSet(hostEnv, prop, value);
+      if (!snapshot) {
+        if (typeof prop === "string" && recordOverlay(getOverlay, prop, String(value))) return true;
+        return ReflectSet(hostEnv, prop, value);
+      }
       recordScopedWrite(snapshot, prop as string, String(value));
       return true;
     },
     deleteProperty(_target, prop) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectDeleteProperty(hostEnv, prop);
+      if (!snapshot) {
+        if (typeof prop === "string" && recordOverlay(getOverlay, prop, null)) return true;
+        return ReflectDeleteProperty(hostEnv, prop);
+      }
       recordScopedWrite(snapshot, prop as string, null);
       return true;
     },
     has(target, prop) {
       if (prop === INSPECT_CUSTOM) return ReflectHas(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectHas(hostEnv, prop);
+      if (!snapshot) {
+        if (typeof prop === "string") {
+          const overlay = readOverlay(getOverlay, prop);
+          if (overlay.found) return overlay.value !== undefined;
+        }
+        return ReflectHas(hostEnv, prop);
+      }
       return readScoped(snapshot, prop as string) !== undefined;
     },
     ownKeys(_target) {
       const snapshot = getSnapshot();
-      if (!snapshot) return ReflectOwnKeys(hostEnv);
+      if (!snapshot) {
+        const overlay = getOverlay?.();
+        if (!overlay) return ReflectOwnKeys(hostEnv);
+        const keys = new Set(ReflectOwnKeys(hostEnv));
+        for (const [key, value] of overlay) {
+          if (value === null) keys.delete(key);
+          else keys.add(key);
+        }
+        return [...keys];
+      }
       return scopedKeys(snapshot);
     },
     getOwnPropertyDescriptor(target, prop) {
       if (prop === INSPECT_CUSTOM) return ReflectGetOwnPropertyDescriptor(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectGetOwnPropertyDescriptor(hostEnv, prop);
+      if (!snapshot) {
+        if (typeof prop === "string") {
+          const overlay = readOverlay(getOverlay, prop);
+          if (overlay.found) {
+            return overlay.value === undefined
+              ? undefined
+              : { value: overlay.value, writable: true, enumerable: true, configurable: true };
+          }
+        }
+        return ReflectGetOwnPropertyDescriptor(hostEnv, prop);
+      }
       const value = readScoped(snapshot, prop as string);
       if (value === undefined) return undefined;
       return { value, writable: true, enumerable: true, configurable: true };
     },
     defineProperty(_target, prop, descriptor) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectDefineProperty(hostEnv, prop, descriptor);
+      if (!snapshot) {
+        if (typeof prop === "string" && getOverlay?.()) {
+          assertEnvDataDescriptor(descriptor);
+          recordOverlay(getOverlay, prop, String(descriptor.value));
+          return true;
+        }
+        return ReflectDefineProperty(hostEnv, prop, descriptor);
+      }
       assertEnvDataDescriptor(descriptor);
       recordScopedWrite(snapshot, prop as string, String(descriptor.value));
       return true;
@@ -344,6 +436,7 @@ function createHostViewHandler(
 export function createProjectScopedProcessEnvView(
   hostEnv: EnvRecord,
   getSnapshot: ProjectEnvSnapshotGetter,
+  getOverlay?: EnvOverlayGetter,
 ): EnvRecord {
   const target = ObjectCreate(ObjectGetPrototypeOf(hostEnv)) as EnvRecord;
   ObjectDefineProperty(target, "<veryfront:masked>", {
@@ -355,11 +448,13 @@ export function createProjectScopedProcessEnvView(
   ObjectDefineProperty(target, INSPECT_CUSTOM, {
     value: () => {
       const snapshot = getSnapshot();
-      return snapshot ? projectScopedEnvRecord(snapshot) : { ...hostEnv };
+      return snapshot
+        ? projectScopedEnvRecord(snapshot)
+        : applyOverlay({ ...hostEnv } as Record<string, string>, getOverlay);
     },
     configurable: true,
   });
-  return new Proxy(target, createHostViewHandler(hostEnv, getSnapshot));
+  return new Proxy(target, createHostViewHandler(hostEnv, getSnapshot, getOverlay));
 }
 
 /**
@@ -411,6 +506,7 @@ let installed = false;
  */
 export function installProjectScopedProcessEnv(
   getSnapshot: ProjectEnvSnapshotGetter,
+  getOverlay?: EnvOverlayGetter,
 ): void {
   if (installed) return;
 
@@ -419,7 +515,7 @@ export function installProjectScopedProcessEnv(
   if (!processLike || !hostEnv) return;
 
   installed = true;
-  const hostView = createProjectScopedProcessEnvView(hostEnv, getSnapshot);
+  const hostView = createProjectScopedProcessEnvView(hostEnv, getSnapshot, getOverlay);
   try {
     ObjectDefineProperty(processLike, "env", {
       get: () => hostView,

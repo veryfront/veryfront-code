@@ -183,7 +183,8 @@ function installProjectScopedDenoEnv(
   if (denoEnvViewInstalled || !denoRuntime || !denoEnv) return;
 
   const descriptor = ObjectGetOwnPropertyDescriptor(denoRuntime, "env");
-  const view = createProjectScopedDenoEnvView(denoEnv, getSnapshot);
+  const getOverlay = allowHostEnvTestOverlay ? getEnvOverlayStore : undefined;
+  const view = createProjectScopedDenoEnvView(denoEnv, getSnapshot, getOverlay);
   ObjectDefineProperty(denoRuntime, "env", {
     value: view,
     writable: false,
@@ -213,7 +214,10 @@ export function registerTrustedProjectEnvSnapshot(
   installProjectScopedDenoEnv(getter);
   installProjectScopedDenoCommand(getter);
   _trustedProjectEnvSnapshot = getter;
-  installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
+  installProjectScopedProcessEnv(
+    getTrustedProjectEnvSnapshot,
+    allowHostEnvTestOverlay ? getEnvOverlayStore : undefined,
+  );
 }
 
 /** Return the active server-owned project env snapshot, if registered. */

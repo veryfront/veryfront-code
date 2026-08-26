@@ -58,6 +58,60 @@ describe("host environment access", () => {
     }
   });
 
+  denoOnlyIt("loads the testing overlay after the project environment facade", async () => {
+    const storageUrl = new URL("../../../server/project-env/storage.ts", import.meta.url).href;
+    const bddUrl = new URL("../../../testing/bdd.ts", import.meta.url).href;
+    const source = `
+      const { runWithProjectEnv } = await import(${JSON.stringify(storageUrl)});
+      await import(${JSON.stringify(bddUrl)});
+      Deno.env.set("VF_LATE_TEST_ROOT", "root-value");
+      const scoped = runWithProjectEnv({ VF_LATE_TEST_PROJECT: "project-value" }, () => ({
+        root: Deno.env.get("VF_LATE_TEST_ROOT") ?? null,
+        project: Deno.env.get("VF_LATE_TEST_PROJECT") ?? null,
+        processRoot: process.env.VF_LATE_TEST_ROOT ?? null,
+        processProject: process.env.VF_LATE_TEST_PROJECT ?? null,
+      }));
+      console.log(JSON.stringify({
+        root: Deno.env.get("VF_LATE_TEST_ROOT") ?? null,
+        processRoot: process.env.VF_LATE_TEST_ROOT ?? null,
+        scoped,
+      }));
+    `;
+    const child = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env",
+        `--allow-read=${fromFileUrl(new URL("../../../../", import.meta.url))}`,
+        "-",
+      ],
+      clearEnv: true,
+      env: { DENO_TESTING: "1" },
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(source));
+    await writer.close();
+    const output = await child.output();
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    assert(output.success, stderr);
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(output.stdout).trim()),
+      {
+        root: "root-value",
+        processRoot: "root-value",
+        scoped: {
+          root: null,
+          project: "project-value",
+          processRoot: null,
+          processProject: "project-value",
+        },
+      },
+    );
+  });
+
   denoOnlyIt("ignores forged test overlays when env permission is granted", async () => {
     const moduleUrl = new URL("./env.ts", import.meta.url).href;
     const source = `
