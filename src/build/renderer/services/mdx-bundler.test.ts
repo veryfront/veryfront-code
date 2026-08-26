@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { withTempFile, writeTextFile } from "#veryfront/testing/index.ts";
+import { toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   register,
   resolve as resolveContract,
@@ -56,7 +58,8 @@ function moduleDataUrl(code: string): string {
  * Loads emitted MDX as a real ES module.
  *
  * Runtime imports are replaced with inline stubs so nothing resolves from the
- * registry. One data URL stays hermetic and avoids Bun's nested-URL path limit.
+ * registry. A disposable module file keeps the import specifier short enough
+ * for Bun even as the emitted compatibility wrapper grows.
  */
 async function importEmittedModule(
   code: string,
@@ -97,7 +100,10 @@ async function importEmittedModule(
           : `const ${local} = (components) => ({ ...components });`,
     );
 
-  return await import(moduleDataUrl(executable));
+  return await withTempFile(async (modulePath) => {
+    await writeTextFile(modulePath, executable);
+    return await import(toFileUrl(modulePath).href);
+  }, { prefix: "vf-mdx-emitted-", suffix: ".mjs" });
 }
 
 function renderEmittedComponent(
