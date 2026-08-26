@@ -35,6 +35,8 @@
  * @module security/http/derived-csp-origins
  */
 
+import { compareStrings } from "#veryfront/utils/compare.ts";
+
 /** Directives this module is permitted to contribute to. */
 export const DERIVABLE_CSP_DIRECTIVES = Object.freeze(
   ["img-src", "media-src", "font-src"] as const,
@@ -156,11 +158,11 @@ export function deriveCspOriginsFromSource(
   // release, which is what lets the header and anything keyed on it be cached.
   const ranked = [...counts.entries()]
     .sort(([originA, countA], [originB, countB]) =>
-      countB - countA || originA.localeCompare(originB)
+      countB - countA || compareStrings(originA, originB)
     )
     .slice(0, MAX_DERIVED_ORIGINS)
     .map(([origin]) => origin)
-    .sort();
+    .sort(compareStrings);
 
   // Every retained origin is granted to all three passive directives rather
   // than routed between them. Splitting by file extension would reintroduce a
