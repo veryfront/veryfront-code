@@ -249,6 +249,7 @@ const WILDCARD_SEMVER_RANGE = new RegExp(
   `^(?:[~^])?v?${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:\\.[xX*](?:\\.[xX*])?|\\.${SEMVER_NUMERIC_IDENTIFIER}\\.[xX*])$`,
 );
+const NPM_DIST_TAG = /^[A-Za-z][0-9A-Za-z._-]*$/;
 
 /**
  * How many leading path segments a recognised package coordinate occupies, or
@@ -355,7 +356,11 @@ function addressesRemoteFile(mapping: string): boolean {
 
   const versionSeparator = decodedLastSegment.lastIndexOf("@");
   const version = versionSeparator > 0 ? decodedLastSegment.slice(versionSeparator + 1) : undefined;
-  if (version && (SEMVER_VERSION_OR_RANGE.test(version) || WILDCARD_SEMVER_RANGE.test(version))) {
+  if (
+    version &&
+    (SEMVER_VERSION_OR_RANGE.test(version) || WILDCARD_SEMVER_RANGE.test(version) ||
+      NPM_DIST_TAG.test(version))
+  ) {
     return false;
   }
 

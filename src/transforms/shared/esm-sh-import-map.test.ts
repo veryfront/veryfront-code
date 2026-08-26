@@ -388,6 +388,15 @@ describe("transforms/shared/esm-sh-import-map", () => {
     }
   });
 
+  it("recognizes dotted dist-tags before file extensions", () => {
+    const mapping = "https://cdn.example/pkg@beta.release";
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+      `${mapping}/sub`,
+      "a dotted dist-tag is a package selector rather than a filename suffix",
+    );
+  });
+
   it("treats an npm mapping ending in a separator as a package root", () => {
     assertEquals(
       resolve("https://esm.sh/pkg@1/sub", { pkg: "npm:react@19/" }),
