@@ -1601,6 +1601,38 @@ export default config as const;
         }
       });
 
+      it("cannot keep prose that follows a redacted URL without a space", async () => {
+        // The trailing-punctuation rule needs a boundary -- whitespace, a quote,
+        // or end of line. A script that does not put spaces between sentences
+        // gives it none, so the punctuation run never terminates, the `)` is
+        // taken as URL, and the rest of the line goes with it.
+        //
+        // Asserted rather than left implicit, because the Unicode class above
+        // makes this look handled. `Failed (see .../x)。 Retry` passes, and it is
+        // the space doing that work, not the class. Remove the space and the
+        // whole remainder is redacted.
+        const glued = await loadFailure(
+          "vf-config-paren-cjk-glued-",
+          `throw new Error("Failed (see https://registry.internal/x)。次を試してください");\n`,
+        );
+
+        assertStringIncludes(glued.message, "Failed (see [url]");
+        assertEquals(glued.message.includes("次を試してください"), false);
+
+        // Pre-existing, and not something the parenthesis branches introduced:
+        // origin/main redacts this identically, because the ordinary tail branch
+        // already eats CJK glued to a URL. The whole tail assumes an ASCII token
+        // delimited by whitespace. Closing it means redefining the boundary
+        // across every pattern here, which is a separate change.
+        const noParen = await loadFailure(
+          "vf-config-cjk-glued-",
+          `throw new Error("Failed https://registry.internal/x次を試してください");\n`,
+        );
+
+        assertEquals(noParen.message.includes("registry.internal"), false);
+        assertEquals(noParen.message.includes("次を試してください"), false);
+      });
+
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
         // The other half of the structural rule, and the reason it is not a list
         // of characters prose may end with. Punctuation after a `)` does not make
