@@ -1655,14 +1655,23 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"'()]|\([^\s"'()]*\))+/g;
+const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"']*@)?(?:[^\s"'()]|\([^\s"'()]*\))+/g;
+// Userinfo gets its own permissive run up to `@`, rather than relying on the
+// balanced-parentheses alternative that covers the rest of the token. That
+// alternative matches one flat `(...)` pair, so a legal nested userinfo such as
+// `u((x))y@registry.internal` ended the match at the first `(` and left the
+// hostname in the caller-visible detail. RFC 3986 puts `(` and `)` in
+// sub-delims, so nesting there is valid rather than exotic. `[^\s"']*` cannot
+// cross whitespace or a quote, so the run stays inside one URL token and a
+// trailing prose `)` is still left behind.
 // The malformed single-slash form, kept separate from SCHEME_URL rather than
 // folded in as an alternation: two plain patterns read more clearly than one
 // branching expression, and each stays independently checkable.
 //
 // The scheme needs at least two characters here, which is what keeps a genuine
 // `C:/Users/...` out -- a drive letter is always exactly one.
-const MALFORMED_SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"'()]|\([^\s"'()]*\))+/g;
+const MALFORMED_SCHEME_URL =
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"']*@)?(?:[^\s"'()]|\([^\s"'()]*\))+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"'()]*\))+/g;

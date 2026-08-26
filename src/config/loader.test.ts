@@ -1014,6 +1014,20 @@ export default config as const;
         assertEquals(error.message.includes("registry.internal"), false);
       });
 
+      it("redacts a URL whose userinfo nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-userinfo-",
+          `throw new Error("Fetch https://u((x))y@registry.internal/config.ts failed");\n`,
+        );
+
+        // The balanced-pair alternative matches one flat `(...)`, so a nested
+        // userinfo ended the token at the first `(` and left the hostname behind.
+        // RFC 3986 sub-delims include `(` and `)`, so this is a legal authority.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("((x))"), false);
+      });
+
       it("redacts a single-slash URL-like token without misclassifying Windows paths", async () => {
         const error = await loadFailure(
           "vf-config-single-slash-url-",
