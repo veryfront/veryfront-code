@@ -19,12 +19,22 @@ import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
+import {
+  isConfigOptionalControlPlaneRunRequest,
+  isSignedChannelDispatch,
+  isSignedControlPlaneDispatch,
+} from "#veryfront/channels/control-plane.ts";
+import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
+import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
 
 // Handler imports
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import { isPlatformLivenessProbe } from "#veryfront/security/http/platform-liveness-probe.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.handler.ts";
@@ -134,6 +144,14 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+function skipsApplicationAuth(request: Request, pathname: string): boolean {
+  return request.method === "OPTIONS" ||
+    isCspReportRequest(request.method, pathname) ||
+    isSignedControlPlaneDispatch(request) ||
+    isSignedChannelDispatch(request) ||
+    isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+}
 
 /** Handler names in registration order. */
 export const HANDLER_NAMES = [
@@ -316,6 +334,7 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+  const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
     if (opts.debug) return true;
 
@@ -396,13 +415,44 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
+          !skipsApplicationAuth(req, url.pathname);
+        let requestOrigin: string | null | undefined;
+        if (requiresApplicationAuth) {
+          const preparedMonitoringRequest = await prepareProjectRequest({
+            req,
+            url,
+            isProxyMode,
+          });
+          const trustProxyHeaders = preparedMonitoringRequest.proxyTrust.proxyTrusted ??
+            getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
+          requestOrigin = getEffectiveRequestOrigin(req, url, trustProxyHeaders);
+        }
+
         const minimalCtx = buildMinimalContext(
           projectDir,
           adapter,
           securityLoader.getSecurityConfig(),
           isDebugEnabled(),
           config,
+          requestOrigin,
         );
+
+        if (requiresApplicationAuth) {
+          const authResult = await handleApplicationAuthRequest(req, minimalCtx);
+          if (authResult?.response) {
+            const terminalResponse = authResult.response;
+            const response = await applyCORSHeaders({
+              request: req,
+              response: terminalResponse,
+              config: minimalCtx.securityConfig?.cors,
+            });
+            return response ?? terminalResponse;
+          }
+          minimalCtx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+          minimalCtx.applicationIdentityHeaderNames =
+            authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+        }
 
         const response = await registry.execute(req, minimalCtx);
         return response ?? new Response("Not Found", { status: 404 });
@@ -605,8 +655,39 @@ export function createVeryfrontHandler(
 
           const ctx = runtimeContext.handlerContext!;
           const envVarsForRequest = runtimeContext.rawEnvVars;
+          // Only activate env isolation in proxy mode (multi-tenant).
+          // reqCtx.token indicates the request came through the proxy with auth.
+          // Without it (standalone / test), host env must remain accessible.
+          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
+          const isolatedEnvForRequest = shouldIsolateEnv
+            ? filterRuntimeProjectEnv(envVarsForRequest)
+            : undefined;
+          const runInRequestProjectEnv = <T>(operation: () => T): T =>
+            isolatedEnvForRequest === undefined
+              ? operation()
+              : runWithProjectEnv(isolatedEnvForRequest, operation);
 
           await incrementRequestMetrics();
+
+          if (!skipsApplicationAuth(request, url.pathname)) {
+            const authResult = await runInRequestProjectEnv(() =>
+              handleApplicationAuthRequest(request, ctx)
+            );
+            if (authResult?.response) {
+              const terminalResponse = authResult.response;
+              const response = await runInRequestProjectEnv(() =>
+                applyCORSHeaders({
+                  request,
+                  response: terminalResponse,
+                  config: ctx.securityConfig?.cors,
+                })
+              );
+              return response ?? terminalResponse;
+            }
+            ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+            ctx.applicationIdentityHeaderNames =
+              authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+          }
 
           const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
           const executeProjectRoute = () =>
@@ -621,21 +702,11 @@ export function createVeryfrontHandler(
               sourceIntegrationPolicy,
               executeProjectRoute,
             );
-          // Only activate env isolation in proxy mode (multi-tenant).
-          // reqCtx.token indicates the request came through the proxy with auth.
-          // Without it (standalone / test), host env must remain accessible.
-          const shouldIsolateEnv = !adapterRes.isLocalProject && !!reqCtx.token;
           const response = await withSpan(
             SpanNames.HANDLER_EXECUTE,
             () =>
               profilePhase("handler.execute", () => {
-                if (shouldIsolateEnv) {
-                  return runWithProjectEnv(
-                    filterRuntimeProjectEnv(envVarsForRequest),
-                    executeRoute,
-                  );
-                }
-                return executeRoute();
+                return runInRequestProjectEnv(executeRoute);
               }),
             {
               "handler.project_slug": projectRes.projectSlug || "unknown",

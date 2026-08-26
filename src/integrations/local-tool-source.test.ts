@@ -10,6 +10,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -296,7 +297,6 @@ describe("createLocalIntegrationToolSource", () => {
       { tool: "aws__list-s3-buckets", detail: "endpoint" },
       { tool: "github__list_issues", detail: "GraphQL" },
       { tool: "gmail__list_emails", detail: "enrichment" },
-      { tool: "algolia__list_indices", detail: "authority" },
       { tool: "alphavantage__quote", detail: "query" },
       { tool: "slack__list_channels", detail: "authorization-code" },
     ] as const;
@@ -538,6 +538,396 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
+  it("executes environment-host tools against the configured host only", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      assertEquals(request.url.origin, "https://unit-cluster.example.cloud:6333");
+      assertEquals(headerValue(request.init, "api-key"), TEST_CREDENTIAL);
+      return Promise.resolve(Response.json({ result: { collections: [{ name: "docs" }] } }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: (name) =>
+          name === "QDRANT_CLUSTER_HOST" ? "unit-cluster.example.cloud" : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    assertEquals(await source.executeTool("qdrant__list_collections", {}), [
+      { name: "docs" },
+    ]);
+    assertEquals(requests, ["https://unit-cluster.example.cloud:6333/collections"]);
+  });
+
+  it("resolves Shopware's token and API endpoints to the same configured host", async () => {
+    const requests: string[] = [];
+    let hostReads = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["shopware__search_products"],
+        credentialProvider: (name) => {
+          if (name === "SHOPWARE_SHOP_DOMAIN") {
+            hostReads += 1;
+            return "shop.example.com";
+          }
+          if (name === "SHOPWARE_CLIENT_ID") return "shopware-client";
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        requests.push(request.url.href);
+        if (request.url.pathname === "/api/oauth/token") {
+          assertEquals(request.init.method, "POST");
+          return Promise.resolve(Response.json({
+            access_token: "shopware-access-token",
+            token_type: "Bearer",
+          }));
+        }
+        assertEquals(
+          headerValue(request.init, "authorization"),
+          "Bearer shopware-access-token",
+        );
+        return Promise.resolve(Response.json({ data: [] }));
+      },
+    );
+
+    assertEquals((await source.listTools()).map((definition) => definition.name), [
+      "shopware__search_products",
+    ]);
+    hostReads = 0;
+    assertEquals(await source.executeTool("shopware__search_products", { term: "desk" }), []);
+    assertEquals(hostReads, 1);
+    assertEquals(requests, [
+      "https://shop.example.com/api/oauth/token",
+      "https://shop.example.com/api/search/product",
+    ]);
+  });
+
+  it("revalidates a cached environment host for each binding", async () => {
+    let hostReads = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["shopware__search_products"],
+        credentialProvider: (name) => {
+          if (name === "SHOPWARE_SHOP_DOMAIN") {
+            hostReads += 1;
+            return "shop.example.com/prefix";
+          }
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => Promise.resolve(Response.json({})),
+    );
+
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-config-invalid");
+    assertStringIncludes(error.message, "SHOPWARE_SHOP_DOMAIN");
+    assertEquals(hostReads, 1);
+  });
+
+  it("rejects environment-host tool arguments before reading the host", async () => {
+    let credentialProviderCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => Promise.resolve(Response.json({})),
+    );
+
+    const error = await assertRejects(
+      () => source.executeTool("qdrant__list_collections", { unknown: true }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+  });
+
+  it("accepts the scaffolded HTTPS origin for PostHog", async () => {
+    const requests: string[] = [];
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["posthog__list_feature_flags"],
+        credentialProvider: (name) =>
+          name === "POSTHOG_HOST" ? "https://app.posthog.com" : TEST_CREDENTIAL,
+      },
+      (request) => {
+        requests.push(request.url.href);
+        assertEquals(request.url.origin, request.allowedOrigin);
+        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
+        return Promise.resolve(Response.json({ results: [] }));
+      },
+    );
+
+    assertEquals(
+      await source.executeTool("posthog__list_feature_flags", { projectId: "42" }),
+      { results: [] },
+    );
+    assertEquals(requests, [
+      "https://app.posthog.com/api/projects/42/feature_flags/?limit=50&offset=0",
+    ]);
+  });
+
+  it("falls back to the catalog default host when the variable is unset", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({ data: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["langfuse__list_traces"],
+        credentialProvider: (name) => name === "LANGFUSE_HOST" ? undefined : "langfuse-key",
+      },
+      transport,
+    );
+
+    await source.executeTool("langfuse__list_traces", {});
+    assertEquals(requests, ["https://cloud.langfuse.com/api/public/traces?page=1&limit=25"]);
+  });
+
+  it("reports the missing host variable by name before any transport call", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: (name) => name === "QDRANT_CLUSTER_HOST" ? undefined : TEST_CREDENTIAL,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({}));
+      },
+    );
+
+    for (
+      const attempt of [
+        () => source.listTools(),
+        () => source.executeTool("qdrant__list_collections", {}),
+      ]
+    ) {
+      const error = await assertRejects(attempt, VeryfrontError);
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-credentials-missing");
+      assert(error.message.includes("QDRANT_CLUSTER_HOST"), error.message);
+    }
+    assertEquals(transportCalls, 0);
+  });
+
+  it("fails as credential-unavailable when the host provider throws instead of using the default", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["langfuse__list_traces"],
+        credentialProvider: (name) => {
+          if (name === "LANGFUSE_HOST") throw new Error("transient provider failure");
+          return "langfuse-key";
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ data: [] }));
+      },
+    );
+
+    // A provider failure must not fall back to the catalog default host: a
+    // configured US Langfuse project would silently route to the EU host.
+    const error = await assertRejects(
+      () => source.executeTool("langfuse__list_traces", {}),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-credential-unavailable");
+    assert(error.message.includes("LANGFUSE_HOST"), error.message);
+    assertEquals(transportCalls, 0);
+  });
+
+  it("accepts a configured path prefix when the template host precedes the path", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      assertEquals(request.url.origin, request.allowedOrigin);
+      return Promise.resolve(Response.json({ paymentMethods: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["adyen__list_payment_methods"],
+        credentialProvider: (name) =>
+          name === "ADYEN_CHECKOUT_HOST"
+            ? "1797a841fbb37ca7-adyendemo-checkout-live.adyenpayments.com/checkout"
+            : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    await source.executeTool("adyen__list_payment_methods", { merchantAccount: "TestMerchant" });
+    assertEquals(requests, [
+      "https://1797a841fbb37ca7-adyendemo-checkout-live.adyenpayments.com/checkout/v71/paymentMethods",
+    ]);
+  });
+
+  it("rejects path-prefixed host values that could escape the resolved URL", async () => {
+    for (
+      const hostile of [
+        "attacker.example?query",
+        "attacker.example#fragment",
+        "user@attacker.example/checkout",
+        "attacker.example//checkout",
+        "attacker.example/checkout/",
+        "/checkout",
+        "attacker.example/check out",
+        "attacker.example/{token}",
+        "attacker.example/%2e%2e",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["adyen__list_payment_methods"],
+          credentialProvider: (name) => name === "ADYEN_CHECKOUT_HOST" ? hostile : TEST_CREDENTIAL,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("adyen__list_payment_methods", { merchantAccount: "M" }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+      assert(error.message.includes("ADYEN_CHECKOUT_HOST"), error.message);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
+  it("rejects configured host values that could escape the URL authority", async () => {
+    for (
+      const hostile of [
+        "attacker.example/path",
+        "attacker.example?query",
+        "attacker.example#fragment",
+        "user@attacker.example",
+        "attacker.example:443:6333",
+        "attacker.example:notaport",
+        " attacker.example",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["qdrant__list_collections"],
+          credentialProvider: (name) => name === "QDRANT_CLUSTER_HOST" ? hostile : TEST_CREDENTIAL,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("qdrant__list_collections", {}),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+      assert(error.message.includes("QDRANT_CLUSTER_HOST"), error.message);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
+  it("routes tenant-host tools to the argument-selected subdomain of the pinned domain", async () => {
+    const origins: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      origins.push(request.url.origin);
+      assertEquals(request.url.origin, request.allowedOrigin);
+      assertEquals(request.url.pathname, "/query");
+      assertEquals(headerValue(request.init, "api-key"), TEST_CREDENTIAL);
+      return Promise.resolve(Response.json({ matches: [] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["pinecone__query_vectors"],
+        credentialProvider: testCredentialProvider,
+      },
+      transport,
+    );
+
+    assertEquals(
+      await source.executeTool("pinecone__query_vectors", {
+        indexHostPrefix: "docs-abc1234.svc.aped-4627-b74a",
+        vector: [0.1, 0.2],
+      }),
+      { matches: [] },
+    );
+    assertEquals(
+      await source.executeTool("pinecone__query_vectors", {
+        indexHostPrefix: "sales-def5678.svc.unit-env",
+        vector: [0.3, 0.4],
+      }),
+      { matches: [] },
+    );
+    assertEquals(origins, [
+      "https://docs-abc1234.svc.aped-4627-b74a.pinecone.io",
+      "https://sales-def5678.svc.unit-env.pinecone.io",
+    ]);
+  });
+
+  it("rejects tenant host arguments that could leave the pinned registrable domain", async () => {
+    for (
+      const hostile of [
+        "evil.example/query",
+        "evil.example?query",
+        "evil.example#fragment",
+        "user@evil.example",
+        "evil.example:443",
+        " evil.example",
+        "evil_example",
+        "%65vil.example",
+        "a..b",
+        ".evil.example",
+        "evil.example.",
+        "",
+        ".",
+        "..",
+      ]
+    ) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["pinecone__query_vectors"],
+          credentialProvider: testCredentialProvider,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () =>
+          source.executeTool("pinecone__query_vectors", {
+            indexHostPrefix: hostile,
+            vector: [0.1],
+          }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-request-invalid");
+      assertEquals(transportCalls, 0);
+    }
+  });
+
   it("mints client credentials before executing a fixed-origin provider tool", async () => {
     const requests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {
@@ -601,66 +991,6 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(error.slug, "local-integration-request-invalid");
     assertEquals(credentialProviderCalls, 0);
     assertEquals(transportCalls, 0);
-  });
-
-  it("admits a patterned authority and pins credentials to the validated host", async () => {
-    let credentialProviderCalls = 0;
-    const requests: string[] = [];
-    const source = _createLocalIntegrationToolSourceForTesting(
-      {
-        tools: ["servicenow__list_incidents"],
-        credentialProvider: () => {
-          credentialProviderCalls += 1;
-          return TEST_CREDENTIAL;
-        },
-      },
-      (request) => {
-        requests.push(request.url.href);
-        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
-        return Promise.resolve(Response.json({ result: [] }));
-      },
-    );
-
-    assertEquals((await source.listTools())[0]?.parameters, {
-      type: "object",
-      properties: {
-        instanceHost: {
-          type: "string",
-          description: "ServiceNow instance host, for example example.service-now.com",
-          pattern: "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
-        },
-        sysparm_query: {
-          type: "string",
-          description: "Encoded ServiceNow query",
-        },
-        sysparm_limit: {
-          type: "number",
-          description: "Maximum incidents to return",
-        },
-        sysparm_fields: {
-          type: "string",
-          description: "Comma-separated incident fields to return",
-        },
-      },
-      required: ["instanceHost"],
-      additionalProperties: false,
-    });
-    await source.executeTool("servicenow__list_incidents", {
-      instanceHost: "example.service-now.com",
-    });
-    const callsBeforeRejection = credentialProviderCalls;
-    await assertRejects(
-      () =>
-        source.executeTool("servicenow__list_incidents", {
-          instanceHost: "attacker.example",
-        }),
-      VeryfrontError,
-    );
-
-    assertEquals(credentialProviderCalls, callsBeforeRejection);
-    assertEquals(requests, [
-      "https://example.service-now.com/api/now/v1/table/incident?sysparm_query=active%3Dtrue%5EORDERBYDESCsys_updated_on&sysparm_limit=25&sysparm_fields=sys_id%2Cnumber%2Cshort_description%2Cdescription%2Cstate%2Cimpact%2Curgency%2Cpriority%2Cassignment_group%2Cassigned_to%2Copened_at%2Csys_updated_on",
-    ]);
   });
 
   it("rejects a dot-segment path argument before minting credentials", async () => {

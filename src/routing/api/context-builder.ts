@@ -3,6 +3,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { flattenRouteParams } from "../flatten-route-params.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 export { parseCookies };
 
@@ -10,6 +11,8 @@ export { parseCookies };
 export interface APIContext {
   request: Request;
   req: Request;
+  identity?: ApplicationIdentity | null;
+  applicationIdentity?: ApplicationIdentity | null;
   params: Record<string, string | string[]>;
   query: URLSearchParams;
   cookies: Record<string, string>;
@@ -120,6 +123,7 @@ export function createContext(
   match: RouteMatch,
   fs: FileSystemAdapter,
   env: Readonly<Record<string, string>> = EMPTY_PROJECT_ENV,
+  identity: ApplicationIdentity | null = null,
 ): APIContext {
   const url = new URL(request.url);
   const json = createJsonHelper(request);
@@ -129,6 +133,8 @@ export function createContext(
   return {
     request,
     req: request,
+    identity,
+    applicationIdentity: identity,
     params: match.params,
     query: url.searchParams,
     cookies: parseCookies(request.headers.get("cookie") ?? ""),

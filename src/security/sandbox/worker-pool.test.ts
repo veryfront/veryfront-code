@@ -90,6 +90,7 @@ function makeRequest(
     projectDir: "/tmp",
     sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     projectEnv,
+    applicationIdentity: null,
   };
 }
 
@@ -617,6 +618,7 @@ testSuite("WorkerPool", () => {
           params: {},
           projectDir: "/allowed/path",
           sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          applicationIdentity: null,
         }),
       VeryfrontError,
       "outside the allowed project boundary",

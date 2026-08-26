@@ -17,6 +17,8 @@ export type {
   BearerAuthConfig,
   CORSConfig,
   CSPDirectives,
+  OidcAuthConfig,
   SecurityConfig,
+  TrustedProxyAuthConfig,
 } from "./middleware/index.ts";
 export { setCors } from "./middleware/index.ts";

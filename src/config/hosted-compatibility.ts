@@ -263,6 +263,16 @@ function describeReason(
       remedy: `Give "security.cors.origin" a string or an array of strings.`,
     };
   }
+  if (reason === "hosted-trusted-proxy-auth") {
+    return {
+      summary:
+        `Veryfront Cloud cannot run trusted-proxy application auth because it does not yet own ` +
+        `the boundary that strips and overwrites asserted identity headers.`,
+      remedy:
+        `Use OIDC through "security.auth.oidc" for Veryfront Cloud, or use trusted-proxy auth only when you ` +
+        `run or self-host the project yourself behind a trusted proxy.`,
+    };
+  }
   return {
     summary:
       `The hosted runtime reads the configuration file as data: it accepts literals, the four ` +

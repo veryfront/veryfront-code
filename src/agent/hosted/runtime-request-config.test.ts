@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
@@ -323,36 +323,58 @@ Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides na
   assertEquals(resolve([]), []);
 });
 
-Deno.test("resolveHostedRuntimeRequestConfig distinguishes unrestricted and omitted agent tools", () => {
-  const resolve = (
-    tools: RuntimeAgentMarkdownDefinition["tools"],
-    providerTools?: string[],
-  ) => {
-    const result = resolveHostedRuntimeRequestConfig({
-      request: {},
-      agentConfig: createAgentConfig({ tools, providerTools }),
+Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
+  const resolve = (skills: boolean | string[] | undefined) =>
+    resolveHostedRuntimeRequestConfig({
+      request: {
+        runtimeOverrides: { allowedTools: ["get_file", "invoke_agent"] },
+      },
+      agentConfig: createAgentConfig({
+        tools: ["get_file"],
+        skills,
+      }),
       resolveModelId: (model) => model,
-    });
-    return {
-      tools: result.requestedAllowedTools,
-      providerTools: result.requestedAllowedProviderTools,
-      includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
-    };
-  };
+    }).requestedAllowedTools;
 
-  assertEquals(resolve(true), {
-    tools: undefined,
-    providerTools: [],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-  });
-  assertEquals(resolve(undefined), {
-    tools: [],
-    providerTools: [],
-    includeRuntimeEssentialToolsWhenEmpty: true,
-  });
-  assertEquals(resolve(undefined, ["web_search"]), {
-    tools: [],
-    providerTools: ["web_search"],
-    includeRuntimeEssentialToolsWhenEmpty: true,
+  assertEquals(resolve(["plan"]), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(true), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(undefined), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(false), ["get_file"]);
+  assertEquals(resolve([]), ["get_file"]);
+});
+
+describe("resolveHostedRuntimeRequestConfig", () => {
+  it("distinguishes unrestricted and omitted agent tools", () => {
+    const resolve = (
+      tools: RuntimeAgentMarkdownDefinition["tools"],
+      providerTools?: string[],
+    ) => {
+      const result = resolveHostedRuntimeRequestConfig({
+        request: {},
+        agentConfig: createAgentConfig({ tools, providerTools }),
+        resolveModelId: (model) => model,
+      });
+      return {
+        tools: result.requestedAllowedTools,
+        providerTools: result.requestedAllowedProviderTools,
+        includeRuntimeEssentialToolsWhenEmpty: result.includeRuntimeEssentialToolsWhenEmpty,
+      };
+    };
+
+    assertEquals(resolve(true), {
+      tools: undefined,
+      providerTools: [],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
+    assertEquals(resolve(undefined), {
+      tools: [],
+      providerTools: [],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
+    assertEquals(resolve(undefined, ["web_search"]), {
+      tools: [],
+      providerTools: ["web_search"],
+      includeRuntimeEssentialToolsWhenEmpty: true,
+    });
   });
 });

@@ -12,7 +12,10 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { refreshLoggerConfig } from "#veryfront/utils";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
-import { RscActionAuthorizationProviderName } from "#veryfront/extensions/auth/index.ts";
+import {
+  type RscActionAuthorizationProvider,
+  RscActionAuthorizationProviderName,
+} from "#veryfront/extensions/auth/index.ts";
 import {
   beginContractGeneration,
   commitContractGeneration,
@@ -1554,6 +1557,77 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("action endpoint - POST handling", () => {
+    it("withholds configured identity and infrastructure headers from action authorization", async () => {
+      const sourceHeaders = new Headers({
+        authorization: "Bearer request-token",
+        cookie: "session=application-cookie",
+        "content-type": "application/json",
+        "x-application-header": "preserved",
+        "X-AUTH-SUBJECT": "trusted-proxy-subject",
+        "x-auth-email": "trusted-proxy-email",
+        "proxy-authorization": "Basic infrastructure-proxy-token",
+        "x-forwarded-for": "203.0.113.10",
+        "x-project-id": "infrastructure-project",
+        "x-token": "platform-service-token",
+        "x-veryfront-control-plane-jws": "signed-control-plane-request",
+      });
+      const sourceRequest = new Request("http://localhost/_veryfront/rsc/action", {
+        method: "POST",
+        headers: sourceHeaders,
+        body: JSON.stringify({ id: "valid-action", args: [] }),
+      });
+      let observedMethod = "";
+      let observedHeaders: Readonly<Record<string, string | undefined>> | undefined;
+      let observedSameSignal = true;
+      const generation = beginContractGeneration();
+      stageContract(
+        generation,
+        RscActionAuthorizationProviderName,
+        {
+          authorize(providerRequest) {
+            observedMethod = providerRequest.method;
+            observedHeaders = providerRequest.headers;
+            observedSameSignal = providerRequest.signal === sourceRequest.signal;
+            return false;
+          },
+        } satisfies RscActionAuthorizationProvider,
+      );
+      commitContractGeneration(generation);
+
+      try {
+        const result = await handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/action",
+            config: rscEnabledConfig,
+            req: sourceRequest,
+            applicationIdentityHeaderNames: [
+              "x-auth-subject",
+              "X-Auth-Email",
+            ],
+          }),
+        );
+
+        assertEquals(result?.status, 403);
+        assertEquals(observedMethod, "POST");
+        assertEquals(observedSameSignal, false);
+        assertEquals(observedHeaders?.authorization, "Bearer request-token");
+        assertEquals(observedHeaders?.cookie, "session=application-cookie");
+        assertEquals(observedHeaders?.["content-type"], "application/json");
+        assertEquals(observedHeaders?.["x-application-header"], "preserved");
+        assertEquals(observedHeaders?.["x-auth-subject"], undefined);
+        assertEquals(observedHeaders?.["x-auth-email"], undefined);
+        assertEquals(observedHeaders?.["proxy-authorization"], undefined);
+        assertEquals(observedHeaders?.["x-forwarded-for"], undefined);
+        assertEquals(observedHeaders?.["x-project-id"], undefined);
+        assertEquals(observedHeaders?.["x-token"], undefined);
+        assertEquals(observedHeaders?.["x-veryfront-control-plane-jws"], undefined);
+      } finally {
+        sealContractGeneration(generation);
+        await drainContractGeneration(generation);
+        completeContractGenerationRetirement(generation);
+      }
+    });
+
     it("fails closed without a generation-owned authorization provider", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
