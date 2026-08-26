@@ -81,6 +81,14 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should append the esm.sh subpath to a wildcard-version mapping", () => {
+      const map = { imports: { pkg: "https://cdn.example/pkg@1.x" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg@1.x/sub",
+      );
+    });
+
     it("should resolve prefix mappings with trailing slash", () => {
       const map = { imports: { "@lib/": "/src/lib/" } };
       assertEquals(resolveImport("@lib/utils.ts", map), "/src/lib/utils.ts");

@@ -222,6 +222,10 @@ const EXACT_SEMVER = new RegExp(
     `(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?` +
     `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
 );
+const WILDCARD_SEMVER_RANGE = new RegExp(
+  `^(?:[~^])?v?${SEMVER_NUMERIC_IDENTIFIER}` +
+    `(?:\\.[xX*](?:\\.[xX*])?|\\.${SEMVER_NUMERIC_IDENTIFIER}\\.[xX*])$`,
+);
 
 /**
  * How many leading path segments a recognised package coordinate occupies, or
@@ -328,7 +332,9 @@ function addressesRemoteFile(mapping: string): boolean {
 
   const versionSeparator = decodedLastSegment.lastIndexOf("@");
   const version = versionSeparator > 0 ? decodedLastSegment.slice(versionSeparator + 1) : undefined;
-  if (version && EXACT_SEMVER.test(version)) return false;
+  if (version && (EXACT_SEMVER.test(version) || WILDCARD_SEMVER_RANGE.test(version))) {
+    return false;
+  }
 
   // Outside a recognised shape, a version marks a coordinate unless the name
   // also carries an extension, which makes it a version-stamped file such as
