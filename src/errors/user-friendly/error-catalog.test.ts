@@ -20,6 +20,10 @@ interface ParsedStatementNode {
   readonly expression?: ParsedStatementNode;
   readonly callee?: ParsedStatementNode;
   readonly object?: ParsedStatementNode;
+  readonly left?: ParsedStatementNode;
+  readonly test?: ParsedStatementNode;
+  readonly tag?: ParsedStatementNode;
+  readonly expressions?: readonly ParsedStatementNode[];
   readonly extra?: { readonly parenthesized?: unknown };
 }
 
@@ -76,9 +80,26 @@ function startsWithUseClientExpression(statement: ParsedStatementNode): boolean 
     }
     if (
       expression.type === "ParenthesizedExpression" || expression.type === "TSAsExpression" ||
-      expression.type === "TSTypeAssertion" || expression.type === "TSNonNullExpression"
+      expression.type === "TSTypeAssertion" || expression.type === "TSNonNullExpression" ||
+      expression.type === "TSSatisfiesExpression" || expression.type === "TSInstantiationExpression"
     ) {
       expression = expression.expression;
+      continue;
+    }
+    if (expression.type === "BinaryExpression" || expression.type === "LogicalExpression") {
+      expression = expression.left;
+      continue;
+    }
+    if (expression.type === "ConditionalExpression") {
+      expression = expression.test;
+      continue;
+    }
+    if (expression.type === "SequenceExpression") {
+      expression = expression.expressions?.[0];
+      continue;
+    }
+    if (expression.type === "TaggedTemplateExpression") {
+      expression = expression.tag;
       continue;
     }
     return false;
@@ -337,6 +358,26 @@ describe("ERROR_SOLUTIONS", () => {
           [0],
           "a continued string expression is not a directive statement",
         );
+      });
+
+      it("rejects semicolonless directives continued as expressions", () => {
+        for (
+          const continuation of [
+            "+enabled",
+            "&& enabled",
+            "? enabled : disabled",
+            ", enabled",
+            "`tag`",
+          ]
+        ) {
+          const block = ["'use client'", continuation].join("\n");
+
+          assertEquals(
+            invalidUseClientIndexes(block),
+            [0],
+            `${continuation} continues the string instead of starting a directive statement`,
+          );
+        }
       });
 
       it("rejects a directive-like string wrapped in an expression", () => {
