@@ -918,6 +918,13 @@ function resolvesToGlobalIntrinsic(
     return isGlobalObject(expression.object, scope, nodeScopes);
   }
   if (
+    expression.type === "TSQualifiedName" && isNode(expression.left) &&
+    isNode(expression.right) && expression.right.type === "Identifier" &&
+    expression.right.name === name
+  ) {
+    return isGlobalObject(expression.left, scope, nodeScopes);
+  }
+  if (
     expression.type === "AssignmentExpression" &&
     ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right)
   ) {
@@ -1245,10 +1252,16 @@ function objectPropertyIsProtoSetter(property: ASTNode): boolean {
 }
 
 function objectPropertyMayDefineEnumerableProto(property: ASTNode): boolean {
-  if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.key)) {
+  if (
+    !isNode(property) ||
+    (property.type !== "ObjectProperty" && property.type !== "ObjectMethod") ||
+    !isNode(property.key)
+  ) {
     return false;
   }
-  if (property.computed !== true) return false;
+  if (property.computed !== true) {
+    return property.type === "ObjectMethod" && staticPropertyKey(property) === "__proto__";
+  }
   const key = staticString(property.key);
   return key === null || key === "__proto__";
 }
@@ -1988,8 +2001,7 @@ function applyIdentifierCapability(
   if (!isIdentifierReference(node, parents)) return;
 
   if (
-    (node.name === "eval" || node.name === "Function") &&
-    resolveBinding(scope, node.name) === null
+    ["eval", "Function"].some((name) => resolvesToGlobalIntrinsic(node, name, scope, nodeScopes))
   ) {
     analysis.hasDynamicCodeGeneration = true;
   }
