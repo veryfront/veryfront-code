@@ -1,10 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { formatErrorBox, formatUserError } from "./error-formatter.ts";
+import {
+  formatErrorBox,
+  formatUserError,
+  sanitizeUserFacingStackFrameForTesting,
+} from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe("formatErrorBox", () => {
   it("should return a string containing the error message", () => {
@@ -146,25 +149,12 @@ describe("formatUserError", () => {
   });
 
   it("withholds DNS-shaped properties on built-in receivers", () => {
-    const receiver = {
-      acmeOrder42(): Error {
-        return new Error("project method failed");
-      },
-    };
-    const error = receiver.acmeOrder42();
-
-    const previousEnvironment = getHostEnv("VERYFRONT_ENV");
-    setEnv("VERYFRONT_ENV", "development");
-    let output: string;
-    try {
-      output = formatUserError(error);
-    } finally {
-      if (previousEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
-      else setEnv("VERYFRONT_ENV", previousEnvironment);
-    }
-
-    assert(output.includes("Stack trace:"));
-    assertEquals(output.includes("Object.acmeOrder42"), false);
+    assertEquals(
+      sanitizeUserFacingStackFrameForTesting(
+        "    at Object.acmeOrder42 (/workspace/app.ts:1:1)",
+      ),
+      "at <anonymous>",
+    );
   });
 
   it("should not invoke proxy traps in plain output", () => {

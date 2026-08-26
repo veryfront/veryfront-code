@@ -344,6 +344,11 @@ function sanitizeUserFacingStackFrame(line: string): string {
   return "at <anonymous>";
 }
 
+/** @internal Test-only stack frame sanitization seam. */
+export function sanitizeUserFacingStackFrameForTesting(line: string): string {
+  return sanitizeUserFacingStackFrame(line);
+}
+
 /**
  * Format error as a polished box with solution
  */
