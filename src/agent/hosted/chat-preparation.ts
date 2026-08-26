@@ -50,6 +50,7 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -348,7 +349,7 @@ function resolveInitialModelVisibleToolNames(input: {
       ...(isHostAllowed("form_input") ? ["form_input"] : []),
       ...(input.selectedSkills.length > 0 && isHostAllowed("load_skill") ? ["load_skill"] : []),
       TOOL_SEARCH_TOOL_NAME,
-    ].sort();
+    ].sort(compareStrings);
   }
 
   const visibleToolNames = new Set(
@@ -361,7 +362,7 @@ function resolveInitialModelVisibleToolNames(input: {
   ) {
     visibleToolNames.add("load_skill");
   }
-  return [...visibleToolNames].sort();
+  return [...visibleToolNames].sort(compareStrings);
 }
 
 /** Options accepted by prepare hosted chat runtime creation. */

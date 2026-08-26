@@ -8,7 +8,10 @@
       "provides": ["DocumentExtractor"]
     },
     "capabilities": [
-      { "type": "fs:read" }
+      { "type": "fs:read" },
+      { "type": "process:spawn", "commands": ["deno"] },
+      { "type": "env:read" },
+      { "type": "native:ffi" }
     ]
   },
   "imports": {

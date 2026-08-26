@@ -7,7 +7,7 @@ import {
   _setRuntimeConfigForTesting,
   createTestConfig,
 } from "#veryfront/config/runtime-config.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
 import {
   getDefaultVeryfrontCloudEmbeddingModel,

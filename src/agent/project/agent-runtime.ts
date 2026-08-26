@@ -30,6 +30,7 @@ import {
   runWithEffectiveSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy-context.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
@@ -82,7 +83,7 @@ function resolveAgentToolNames(tools: AgentConfig["tools"]): true | string[] | u
 
   const names = Object.entries(tools)
     .flatMap(([name, value]) => value === false ? [] : [name])
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareStrings);
 
   return names.length > 0 ? names : undefined;
 }
@@ -99,7 +100,7 @@ function resolveAgentDeniedToolNames(tools: AgentConfig["tools"]): string[] | un
 
   const names = Object.entries(tools)
     .flatMap(([name, value]) => value === false ? [name] : [])
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareStrings);
 
   return names.length > 0 ? names : undefined;
 }

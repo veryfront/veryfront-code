@@ -94,17 +94,35 @@ describe("structured system messages", () => {
   });
 });
 
-Deno.test("filterHostedChatRuntimeLocalTools filters and sorts local tools", () => {
-  const result = filterHostedChatRuntimeLocalTools({
-    tools: {
-      sleep: localTool("Sleep"),
-      form_input: localTool("Form input"),
-      invoke_agent: localTool("Invoke agent"),
-    },
-    allowedToolNames: new Set(["sleep", "invoke_agent"]),
+describe("filterHostedChatRuntimeLocalTools", () => {
+  it("filters and sorts local tools", () => {
+    const result = filterHostedChatRuntimeLocalTools({
+      tools: {
+        sleep: localTool("Sleep"),
+        form_input: localTool("Form input"),
+        invoke_agent: localTool("Invoke agent"),
+      },
+      allowedToolNames: new Set(["sleep", "invoke_agent"]),
+    });
+
+    assertEquals(Object.keys(result), ["invoke_agent", "sleep"]);
   });
 
-  assertEquals(Object.keys(result), ["invoke_agent", "sleep"]);
+  it("orders model-visible tools by code unit", () => {
+    const result = filterHostedChatRuntimeLocalTools({
+      tools: {
+        alpha_tool: localTool("Alpha"),
+        Zeta_tool: localTool("Zeta"),
+      },
+      allowedToolNames: new Set(["alpha_tool", "Zeta_tool"]),
+    });
+
+    assertEquals(
+      Object.keys(result),
+      ["Zeta_tool", "alpha_tool"],
+      "runtime tool inventory must use code-unit ordering for model-visible names",
+    );
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skill tools under non-empty allowed tools", async () => {

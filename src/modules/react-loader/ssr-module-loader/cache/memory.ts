@@ -81,7 +81,7 @@ const projectTransformCounts = new Map<string, number>();
 type ProjectTransformWaiter = {
   resolve: (acquired: boolean) => void;
   reject: (reason?: unknown) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
+  timeoutId?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   onAbort?: () => void;
 };
@@ -146,7 +146,7 @@ function settleProjectTransformWaiter(
   acquired: boolean,
 ): void {
   removeProjectTransformWaiter(projectId, waiter);
-  clearTimeout(waiter.timeoutId);
+  if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
   if (waiter.signal && waiter.onAbort) {
     waiter.signal.removeEventListener("abort", waiter.onAbort);
   }
@@ -158,7 +158,7 @@ function abortProjectTransformWaiter(
   waiter: ProjectTransformWaiter,
 ): void {
   removeProjectTransformWaiter(projectId, waiter);
-  clearTimeout(waiter.timeoutId);
+  if (waiter.timeoutId !== undefined) clearTimeout(waiter.timeoutId);
   if (waiter.signal && waiter.onAbort) {
     waiter.signal.removeEventListener("abort", waiter.onAbort);
   }
@@ -214,17 +214,19 @@ export async function tryAcquireTransformSlot(
 ): Promise<boolean> {
   throwIfAborted(signal);
   if (acquireTransformSlot(projectId, bypass)) return true;
-  if (timeoutMs <= 0) return false;
+  if (Number.isNaN(timeoutMs) || timeoutMs <= 0) return false;
 
   return new Promise<boolean>((resolve, reject) => {
     const waiter: ProjectTransformWaiter = {
       resolve,
       reject,
-      timeoutId: setTimeout(() => {
-        settleProjectTransformWaiter(projectId, waiter, false);
-      }, timeoutMs),
       signal,
     };
+    if (Number.isFinite(timeoutMs)) {
+      waiter.timeoutId = setTimeout(() => {
+        settleProjectTransformWaiter(projectId, waiter, false);
+      }, timeoutMs);
+    }
 
     const queue = projectTransformWaiters.get(projectId);
     if (queue) {

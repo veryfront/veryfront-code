@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NodeState,
   PendingApproval,
@@ -6,7 +6,12 @@ import type {
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
-import { workflowMutationHeaders } from "./mutation-headers.ts";
+import {
+  encodeWorkflowPathSegment,
+  normalizeWorkflowApiBase,
+  useStableWorkflowHeaders,
+  workflowMutationHeaders,
+} from "./mutation-headers.ts";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
@@ -15,6 +20,10 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000;
 export interface UseWorkflowOptions {
   runId: string;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   pollInterval?: number;
   autoRefresh?: boolean;
   onStatusChange?: (status: WorkflowStatus, previousStatus: WorkflowStatus) => void;
@@ -43,6 +52,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   const {
     runId,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     pollInterval = DEFAULT_POLL_INTERVAL_MS,
     autoRefresh = true,
     onStatusChange,
@@ -50,14 +61,32 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     onError,
     onApprovalRequired,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
+  const requestContext = useMemo(
+    () => ({ credentials, normalizedApiBase, runId, stableHeaders }),
+    [credentials, normalizedApiBase, runId, stableHeaders],
+  );
+  const currentRequestContext = useRef(requestContext);
+  currentRequestContext.current = requestContext;
 
   const [run, setRun] = useState<WorkflowRun | null>(null);
+  const [runRequestContext, setRunRequestContext] = useState(requestContext);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   const previousStatusRef = useRef<WorkflowStatus | null>(null);
   const previousApprovalsRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    // Run details and approval identities belong to one request context. Clear
+    // them before a replacement fetch can fail and leave old session data.
+    setRun(null);
+    setError(null);
+    previousStatusRef.current = null;
+    previousApprovalsRef.current.clear();
+  }, [requestContext]);
 
   const calculateProgress = useCallback((workflowRun: WorkflowRun | null): number => {
     const states = Object.values(workflowRun?.nodeStates ?? {});
@@ -74,9 +103,14 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (!runId) return;
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}`, {
-        signal: abortControllerRef.current?.signal,
-      });
+      const response = await fetch(
+        `${normalizedApiBase}/runs/${encodeWorkflowPathSegment(runId, "Workflow run ID")}`,
+        {
+          signal: abortControllerRef.current?.signal,
+          headers: stableHeaders,
+          credentials,
+        },
+      );
 
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -86,6 +120,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
       }
 
       const workflowRun = (await response.json()) as WorkflowRun;
+      if (currentRequestContext.current !== requestContext) return;
 
       const previousStatus = previousStatusRef.current;
       if (previousStatus && previousStatus !== workflowRun.status) {
@@ -107,31 +142,49 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         onApprovalRequired?.(approval);
       }
 
+      setRunRequestContext(requestContext);
       setRun(workflowRun);
       setError(null);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
+      if (currentRequestContext.current !== requestContext) return;
 
       const fetchError = err instanceof Error ? err : new Error(String(err));
       setError(fetchError);
       onError?.(fetchError);
     }
-  }, [apiBase, onApprovalRequired, onComplete, onError, onStatusChange, runId]);
+  }, [
+    credentials,
+    normalizedApiBase,
+    onApprovalRequired,
+    onComplete,
+    onError,
+    onStatusChange,
+    requestContext,
+    runId,
+    stableHeaders,
+  ]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    const refreshedRequestContext = requestContext;
+    if (currentRequestContext.current !== refreshedRequestContext) return;
     setIsLoading(true);
     await fetchRun();
-    setIsLoading(false);
-  }, [fetchRun]);
+    if (currentRequestContext.current === refreshedRequestContext) setIsLoading(false);
+  }, [fetchRun, requestContext]);
 
   const cancel = useCallback(async (): Promise<void> => {
     if (!runId) return;
+    const mutatedRequestContext = requestContext;
 
     try {
-      const requestUrl = `${apiBase}/runs/${runId}/cancel`;
+      const requestUrl = `${normalizedApiBase}/runs/${
+        encodeWorkflowPathSegment(runId, "Workflow run ID")
+      }/cancel`;
       const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(requestUrl),
+        headers: workflowMutationHeaders(requestUrl, stableHeaders),
+        credentials,
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -139,22 +192,27 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
           status: response.status,
         });
       }
+      if (currentRequestContext.current !== mutatedRequestContext) return;
       await refresh();
     } catch (err) {
       const cancelError = err instanceof Error ? err : new Error(String(err));
-      setError(cancelError);
+      if (currentRequestContext.current === mutatedRequestContext) setError(cancelError);
       throw cancelError;
     }
-  }, [apiBase, refresh, runId]);
+  }, [credentials, normalizedApiBase, refresh, requestContext, runId, stableHeaders]);
 
   const retry = useCallback(async (): Promise<void> => {
     if (!runId) return;
+    const mutatedRequestContext = requestContext;
 
     try {
-      const requestUrl = `${apiBase}/runs/${runId}/retry`;
+      const requestUrl = `${normalizedApiBase}/runs/${
+        encodeWorkflowPathSegment(runId, "Workflow run ID")
+      }/retry`;
       const response = await fetch(requestUrl, {
         method: "POST",
-        headers: workflowMutationHeaders(requestUrl),
+        headers: workflowMutationHeaders(requestUrl, stableHeaders),
+        credentials,
       });
       if (!response.ok) {
         throw REQUEST_ERROR.create({
@@ -162,13 +220,14 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
           status: response.status,
         });
       }
+      if (currentRequestContext.current !== mutatedRequestContext) return;
       await refresh();
     } catch (err) {
       const retryError = err instanceof Error ? err : new Error(String(err));
-      setError(retryError);
+      if (currentRequestContext.current === mutatedRequestContext) setError(retryError);
       throw retryError;
     }
-  }, [apiBase, refresh, runId]);
+  }, [credentials, normalizedApiBase, refresh, requestContext, runId, stableHeaders]);
 
   useEffect(() => {
     abortControllerRef.current = new AbortController();
@@ -203,13 +262,15 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     };
   }, [autoRefresh, fetchRun, pollInterval, refresh]);
 
+  const visibleRun = runRequestContext === requestContext ? run : null;
+
   return {
-    run,
-    status: run?.status ?? "pending",
-    progress: calculateProgress(run),
-    currentNodes: run?.currentNodes ?? [],
-    nodeStates: run?.nodeStates ?? {},
-    pendingApprovals: run?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
+    run: visibleRun,
+    status: visibleRun?.status ?? "pending",
+    progress: calculateProgress(visibleRun),
+    currentNodes: visibleRun?.currentNodes ?? [],
+    nodeStates: visibleRun?.nodeStates ?? {},
+    pendingApprovals: visibleRun?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
     refresh,
     cancel,
     retry,

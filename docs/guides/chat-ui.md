@@ -125,6 +125,11 @@ The preset sends same-origin cookies automatically. If your route instead
 requires an explicit bearer header, compose the headless `useUpload()` hook
 with its `headers` option rather than placing a secret token in `Chat` props.
 
+GET requests without an upload ID do not list stored uploads by default. If
+every authorized caller can access every upload in the storage backend, set
+`allowListing: true` to support a shared uploads list. Do not enable listing
+when authorization only proves that the caller belongs to the application.
+
 To change the upload limits, bound the complete multipart request separately
 from the file bytes:
 

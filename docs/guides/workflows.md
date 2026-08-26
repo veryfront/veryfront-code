@@ -105,6 +105,8 @@ Ensure every `agent` and `tool` used by the workflow exists in `agents/` or `too
 ```bash
 curl http://localhost:3000/api/start-content-workflow \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"topic":"AI agents"}'
 ```
 
@@ -335,9 +337,12 @@ approval, the decision lands in the workflow context under the wait node's id,
 so later steps read `ctx["editor-review"]` as
 `{ approved, approver, comment, data, decidedAt }`.
 
-The approval endpoint served by `createWorkflowHandler` accepts the same
-decision as a JSON body of the shape `{ approved, approver, comment?, data? }`.
-See [Workflows: advanced](./workflows-advanced.md) for the handler routes.
+The approval endpoint served by `createWorkflowHandler` accepts a JSON body of
+the shape `{ approved, approver, comment?, data? }`. The body-level `approver`
+is compatibility input, not an identity claim. The handler replaces it with
+the authenticated identity returned by its server-side `authorize` callback,
+and that server-derived identity is what the workflow context persists. See
+[Workflows: advanced](./workflows-advanced.md) for the handler routes.
 
 ### Wait for events
 
@@ -435,6 +440,8 @@ Call it:
 ```bash
 curl -s http://localhost:3000/api/verify-content-workflow \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"topic":"AI agents"}' \
   | jq '{status, nodes: (.nodeStates | to_entries | map({(.key): .value.status}))}'
 ```

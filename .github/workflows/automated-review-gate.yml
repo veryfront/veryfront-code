@@ -24,13 +24,18 @@ jobs:
   target:
     name: resolve automated review target
     # Apply publisher eligibility before allocating a resolver runner. The
-    # resolver also gives source and merge-group publishers the same immutable
-    # source-SHA concurrency key.
+    # resolver also gives source and merge-group publishers the same per-pull
+    # concurrency key while keeping the immutable source SHA separate.
     if: >-
       github.event_name == 'merge_group' ||
-      ((github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      ((github.event_name != 'issue_comment' ||
+        (github.event.issue.pull_request &&
+         github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+         github.event.comment.user.id == 199175422 &&
+         github.event.comment.user.type == 'Bot')) &&
        (github.event_name != 'workflow_run' ||
-        github.event.workflow_run.event == 'pull_request_review'))
+        (github.event.workflow_run.event == 'pull_request_review' &&
+         endsWith(github.event.workflow_run.display_title, '-eligible'))))
     permissions:
       contents: read
       pull-requests: read
@@ -39,8 +44,10 @@ jobs:
     timeout-minutes: 2
     outputs:
       key: ${{ steps.resolve.outputs.key }}
+      head_sha: ${{ steps.resolve.outputs.head-sha }}
       pull_number: ${{ steps.resolve.outputs.pull-number }}
       status_id: ${{ steps.resolve.outputs.status-id }}
+      merge_group_status_id: ${{ steps.resolve.outputs.merge-group-status-id }}
     steps:
       - name: Resolve the current head commit
         id: resolve
@@ -55,7 +62,7 @@ jobs:
               const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
               const pullNumber = match ? Number(match[1]) : undefined;
               return Number.isSafeInteger(pullNumber)
-                ? { pullNumber, sourceHeadSha: match[2].toLowerCase() }
+                ? { pullNumber, baseHeadSha: match[2].toLowerCase() }
                 : undefined;
             };
             const parseReviewWakeupIdentity = (run) => {
@@ -65,7 +72,7 @@ jobs:
               const title = typeof run?.display_title === "string"
                 ? run.display_title
                 : "";
-              const match = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(title);
+              const match = /^automated-review-wakeup-pr-([1-9]\d*)-eligible$/.exec(title);
               const pullNumber = match ? Number(match[1]) : undefined;
               const headRepositoryId = run?.head_repository?.id;
               if (
@@ -102,6 +109,59 @@ jobs:
                 core.setOutput("key", `run-${context.runId}`);
                 return;
               }
+              // Publish the per-pull lock as soon as the serialized queue ref
+              // is trustworthy. Later resolver failures must serialize their
+              // emergency status with the normal merge-group publisher.
+              core.setOutput("key", `pr-${queueEntry.pullNumber}`);
+              const mergeGroupSha = context.payload.merge_group?.head_sha;
+              if (typeof mergeGroupSha !== "string" || !fullSha.test(mergeGroupSha)) {
+                core.setFailed("Could not resolve a valid merge group commit");
+                return;
+              }
+              let mergeGroupStatusId = 0;
+              let mergeGroupStatusFound = false;
+              try {
+                for (let page = 1; page <= 5; page += 1) {
+                  const response = await github.rest.repos.listCommitStatusesForRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: mergeGroupSha,
+                    per_page: 100,
+                    page,
+                  });
+                  if (!Array.isArray(response.data)) {
+                    throw new Error("Merge group status history is malformed");
+                  }
+                  for (const status of response.data) {
+                    if (status?.context !== "Automated review") continue;
+                    if (!Number.isSafeInteger(status?.id) || status.id < 1) {
+                      throw new Error("Merge group status identity is malformed");
+                    }
+                    mergeGroupStatusId = status.id;
+                    mergeGroupStatusFound = true;
+                    break;
+                  }
+                  if (mergeGroupStatusFound || response.data.length < 100) break;
+                  if (page === 5) {
+                    throw new Error("Merge group status history exceeded 500 items");
+                  }
+                }
+                core.setOutput(
+                  "merge-group-status-id",
+                  String(mergeGroupStatusId),
+                );
+              } catch (error) {
+                core.setFailed(`Could not capture the merge group status boundary: ${error}`);
+                return;
+              }
+              const baseSha = context.payload.merge_group?.base_sha;
+              if (
+                typeof baseSha !== "string" || !fullSha.test(baseSha) ||
+                queueEntry.baseHeadSha !== baseSha.toLowerCase()
+              ) {
+                core.setFailed("Merge queue base does not match its serialized lock");
+                return;
+              }
             }
             const pullNumber = queueEntry?.pullNumber ??
               context.payload.pull_request?.number ??
@@ -110,51 +170,50 @@ jobs:
                 : wakeupSignal?.pullNumber);
             if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
               core.setFailed("Could not resolve a valid pull request number");
-              core.setOutput("key", `run-${context.runId}`);
+              if (!queueEntry) core.setOutput("key", `run-${context.runId}`);
               return;
             }
-            let headSha = queueEntry?.sourceHeadSha;
-            if (!headSha) {
+            let headSha;
+            try {
+              const response = await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `pull/${pullNumber}/head`,
+              });
+              headSha = response.data?.object?.sha;
+            } catch (error) {
               try {
-                const response = await github.rest.git.getRef({
+                const fallbackResponse = await github.rest.pulls.get({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  ref: `pull/${pullNumber}/head`,
+                  pull_number: pullNumber,
                 });
-                headSha = response.data?.object?.sha;
-              } catch (error) {
-                try {
-                  const fallbackResponse = await github.rest.pulls.get({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pullNumber,
-                  });
-                  const fallbackHead = fallbackResponse.data?.head?.sha;
-                  if (typeof fallbackHead === "string" && fullSha.test(fallbackHead)) {
-                    headSha = fallbackHead;
-                  }
-                } catch (fallbackError) {
-                  core.error(
-                    `Could not resolve a failure target from the pull request: ${fallbackError}`,
-                  );
+                const fallbackHead = fallbackResponse.data?.head?.sha;
+                if (typeof fallbackHead === "string" && fullSha.test(fallbackHead)) {
+                  headSha = fallbackHead;
                 }
-                const eventFailureHead =
-                  context.payload.pull_request?.number === pullNumber
-                    ? context.payload.pull_request?.head?.sha
-                    : undefined;
-                if (!headSha && fullSha.test(eventFailureHead ?? "")) {
-                  headSha = eventFailureHead;
-                }
-                core.setFailed(`Could not resolve the pull request head ref: ${error}`);
+              } catch (fallbackError) {
+                core.error(
+                  `Could not resolve a failure target from the pull request: ${fallbackError}`,
+                );
               }
+              const eventFailureHead =
+                context.payload.pull_request?.number === pullNumber
+                  ? context.payload.pull_request?.head?.sha
+                  : undefined;
+              if (!headSha && fullSha.test(eventFailureHead ?? "")) {
+                headSha = eventFailureHead;
+              }
+              core.setFailed(`Could not resolve the pull request head ref: ${error}`);
             }
             if (!fullSha.test(headSha ?? "")) {
               core.setFailed("Could not resolve a valid review target commit");
-              core.setOutput("key", `run-${context.runId}`);
+              if (!queueEntry) core.setOutput("key", `run-${context.runId}`);
               return;
             }
             headSha = headSha.toLowerCase();
-            core.setOutput("key", headSha);
+            core.setOutput("key", `pr-${pullNumber}`);
+            core.setOutput("head-sha", headSha);
             core.setOutput("pull-number", String(pullNumber));
             if (wakeupSignal) {
               let pullRequest;
@@ -243,7 +302,17 @@ jobs:
       (needs.target.result != 'success' ||
        needs.merge_group.result != 'success')
     permissions:
+      contents: read
       statuses: write
+    env:
+      TARGET_RESULT: ${{ needs.target.result }}
+      TARGET_STATUS_ID: ${{ needs.target.outputs.merge_group_status_id }}
+      PUBLISHER_STATUS_ID: ${{ needs.merge_group.outputs.status_id }}
+    concurrency:
+      # Parsed merge-group runs share the normal per-pull lock. The raw-ref
+      # fallback only applies when target resolution could not parse the ref.
+      group: automated-review-${{ needs.target.outputs.key || format('merge-group-{0}', github.event.merge_group.head_ref) }}
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -255,6 +324,124 @@ jobs:
             const mergeGroupSha = context.payload.merge_group?.head_sha;
             if (!/^[0-9a-f]{40}$/i.test(mergeGroupSha ?? "")) {
               core.setFailed("Could not resolve the merge group failure target");
+              return;
+            }
+            const headRef = context.payload.merge_group?.head_ref;
+            const pullMatch = typeof headRef === "string"
+              ? /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-[0-9a-f]{40}$/i.exec(headRef)
+              : undefined;
+            const pullNumber = pullMatch ? Number(pullMatch[1]) : undefined;
+            const parseStatusId = (value) => {
+              if (typeof value !== "string" || value === "") return undefined;
+              const statusId = Number(value);
+              return Number.isSafeInteger(statusId) && statusId >= 0
+                ? statusId
+                : undefined;
+            };
+            let selectMergeGroupFailureStatusBoundary = ({
+              targetResult,
+              targetStatusId,
+              publisherStatusId,
+            }) => {
+              const statusId = targetResult === "success" &&
+                  publisherStatusId !== undefined
+                ? publisherStatusId
+                : targetStatusId;
+              return Number.isSafeInteger(statusId) && statusId >= 0
+                ? statusId
+                : undefined;
+            };
+            let shouldPreserveLaterMergeGroupSuccess = ({
+              latestStatus,
+              reconciliationStatusId,
+              pullNumber,
+            }) =>
+              Number.isSafeInteger(reconciliationStatusId) &&
+              reconciliationStatusId >= 0 &&
+              Number.isSafeInteger(pullNumber) && pullNumber >= 1 &&
+              Number.isSafeInteger(latestStatus?.id) &&
+              latestStatus.id !== reconciliationStatusId &&
+              latestStatus?.context === "Automated review" &&
+              latestStatus?.state === "success" &&
+              latestStatus?.creator?.login === "github-actions[bot]" &&
+              latestStatus?.creator?.id === 41898282 &&
+              latestStatus?.creator?.type === "Bot" &&
+              latestStatus?.description ===
+                `Reused exact-head review for PR #${pullNumber}`;
+            try {
+              const response = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: "scripts/ci/automated-review-gate.mjs",
+                ref: context.payload.repository.default_branch,
+              });
+              const file = response.data;
+              if (
+                Array.isArray(file) || file?.type !== "file" ||
+                file?.encoding !== "base64" ||
+                typeof file?.content !== "string"
+              ) throw new Error("Trusted review gate content is malformed");
+              const gateUrl = `data:text/javascript;base64,${
+                Buffer.from(file.content, "base64").toString("base64")
+              }`;
+              const gate = await import(gateUrl);
+              if (
+                typeof gate.selectMergeGroupFailureStatusBoundary !== "function" ||
+                typeof gate.shouldPreserveLaterMergeGroupSuccess !== "function"
+              ) {
+                throw new Error("Trusted review boundary helper is unavailable");
+              }
+              selectMergeGroupFailureStatusBoundary =
+                gate.selectMergeGroupFailureStatusBoundary;
+              shouldPreserveLaterMergeGroupSuccess =
+                gate.shouldPreserveLaterMergeGroupSuccess;
+            } catch (error) {
+              // This job must still close the gate when the trusted helper is
+              // the component that failed. Keep an independent pinned check.
+              core.warning(`Using the independent boundary check: ${error}`);
+            }
+            const reconciliationStatusId = selectMergeGroupFailureStatusBoundary({
+              targetResult: process.env.TARGET_RESULT,
+              targetStatusId: parseStatusId(process.env.TARGET_STATUS_ID),
+              publisherStatusId: parseStatusId(process.env.PUBLISHER_STATUS_ID),
+            });
+            if (reconciliationStatusId === undefined) {
+              core.warning("The merge group status boundary is unavailable");
+            }
+            let latestStatus;
+            try {
+              for (let page = 1; page <= 5; page += 1) {
+                const response = await github.rest.repos.listCommitStatusesForRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: mergeGroupSha,
+                  per_page: 100,
+                  page,
+                });
+                if (!Array.isArray(response.data)) {
+                  throw new Error("Merge group status history is malformed");
+                }
+                latestStatus = response.data.find((status) =>
+                  status?.context === "Automated review"
+                );
+                if (latestStatus || response.data.length < 100) break;
+                if (page === 5) {
+                  throw new Error("Merge group status history exceeded 500 items");
+                }
+              }
+            } catch (error) {
+              // If the optional stale-run check is unavailable, closing the
+              // required status remains the fail-closed result.
+              core.warning(`Could not check for a later merge group publisher: ${error}`);
+            }
+            if (shouldPreserveLaterMergeGroupSuccess({
+              latestStatus,
+              reconciliationStatusId,
+              pullNumber,
+            })) {
+              core.notice(
+                `Preserved merge group success ${latestStatus.id} published after boundary ${reconciliationStatusId}.`,
+              );
               return;
             }
             await github.rest.repos.createCommitStatus({
@@ -285,9 +472,12 @@ jobs:
     # executes pull request code.
     needs: target
     if: github.event_name != 'merge_group'
+    outputs:
+      force_invalidate: ${{ steps.publish.outputs.force-invalidate }}
+      source_status_id: ${{ steps.publish.outputs.source-status-id }}
     concurrency:
-      # Every pull request event for one head must serialize on the same key so
-      # an older pending write cannot win.
+      # Every event for one pull request must serialize across force-pushes so
+      # an old-head failure cannot close the current merge-group gate.
       group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
@@ -297,7 +487,7 @@ jobs:
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TARGET_SHA: ${{ needs.target.outputs.key }}
+          TARGET_SHA: ${{ needs.target.outputs.head_sha }}
           PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
@@ -368,6 +558,28 @@ jobs:
                   ? `base-${context.runId}`
                   : undefined,
             });
+            if (Number.isSafeInteger(result.statusId)) {
+              core.setOutput("source-status-id", String(result.statusId));
+            }
+            if (
+              result.state === "success" &&
+              (!Number.isSafeInteger(result.statusId) || result.statusId < 1)
+            ) {
+              core.setFailed(
+                "Automated review success did not return a source status identity.",
+              );
+              return "failure";
+            }
+            const forceInvalidateCurrentSource = () => {
+              if (!Number.isSafeInteger(result.statusId) || result.statusId < 1) {
+                core.setFailed(
+                  "Cannot force invalidation without the source status identity.",
+                );
+                return false;
+              }
+              core.setOutput("force-invalidate", "true");
+              return true;
+            };
             let queueResultCount;
             if (
               result.state === "failure" ||
@@ -382,14 +594,37 @@ jobs:
               });
               queueResultCount = queueFailures;
             } else {
-              const queueResults = await reconcileActiveMergeGroupReviewStatuses({
-                github,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pullNumber,
-                sourceHeadSha: headSha,
-                baseRef: result.baseRef,
-              });
+              let queueResults;
+              try {
+                queueResults = await reconcileActiveMergeGroupReviewStatuses({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  sourceHeadSha: headSha,
+                  baseRef: result.baseRef,
+                });
+              } catch (error) {
+                // The source success above belongs to this failed run. Tell
+                // fallback invalidation not to treat it as a later repair.
+                if (!forceInvalidateCurrentSource()) return "failure";
+                throw error;
+              }
+              // A failure that never reached its synthetic commit leaves the
+              // queue's prior success as live review proof. The trusted gate
+              // throws on that, but the loaded module comes from the default
+              // branch, so verify the collected results here as well and fail
+              // the run: the fallback invalidation job keys on this failure.
+              const unreplaced = queueResults.filter((entry) =>
+                entry?.state === "failure" && entry?.published !== true
+              ).length;
+              if (unreplaced > 0) {
+                if (!forceInvalidateCurrentSource()) return "failure";
+                core.setFailed(
+                  `Review proof was not replaced on ${unreplaced} active merge queue commit(s).`,
+                );
+                return "failure";
+              }
               queueResultCount = queueResults.length;
             }
             if (queueResultCount > 0) {
@@ -427,7 +662,7 @@ jobs:
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          TARGET_SHA: ${{ needs.target.outputs.key }}
+          TARGET_SHA: ${{ needs.target.outputs.head_sha }}
         with:
           retries: 3
           script: |
@@ -487,12 +722,14 @@ jobs:
       pull-requests: read
       statuses: write
     env:
-      TARGET_SHA: ${{ needs.target.outputs.key }}
+      TARGET_SHA: ${{ needs.target.outputs.head_sha }}
       PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
       RECONCILIATION_STATUS_ID: ${{ needs.target.outputs.status_id }}
+      SOURCE_STATUS_ID: ${{ needs.review.outputs.source_status_id }}
+      FORCE_INVALIDATE: ${{ needs.review.outputs.force_invalidate }}
     concurrency:
-      # Share the source-head publisher lock so fallback failures cannot race
-      # successful source or merge-group status writes.
+      # Share the per-pull publisher lock so fallback failures cannot race
+      # successful source or merge-group status writes across force-pushes.
       group: automated-review-${{ needs.target.outputs.key }}
       queue: max
     runs-on: ubuntu-latest
@@ -506,7 +743,15 @@ jobs:
             const fullSha = /^[0-9a-f]{40}$/i;
             const pullNumber = Number(process.env.PULL_NUMBER);
             const headSha = process.env.TARGET_SHA;
-            const statusIdText = process.env.RECONCILIATION_STATUS_ID ?? "";
+            const forceInvalidateText = process.env.FORCE_INVALIDATE ?? "";
+            if (forceInvalidateText !== "" && forceInvalidateText !== "true") {
+              core.setFailed("The forced invalidation signal is malformed");
+              return;
+            }
+            const forceInvalidate = forceInvalidateText === "true";
+            const statusIdText = forceInvalidate
+              ? process.env.SOURCE_STATUS_ID ?? ""
+              : process.env.RECONCILIATION_STATUS_ID ?? "";
             const reconciliationStatusId = statusIdText === ""
               ? undefined
               : Number(statusIdText);
@@ -528,6 +773,14 @@ jobs:
               core.setFailed("The review status boundary is invalid");
               return;
             }
+            const parseMergeQueuePullNumber = (headRef) => {
+              if (typeof headRef !== "string") return undefined;
+              const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-([1-9]\d*)-([0-9a-f]{40})$/i.exec(headRef);
+              const number = match ? Number(match[1]) : undefined;
+              return Number.isSafeInteger(number)
+                ? { pullNumber: number, baseHeadSha: match[2].toLowerCase() }
+                : undefined;
+            };
             const collectAll = async (endpoint, parameters, source) => {
               const items = [];
               for await (
@@ -546,13 +799,35 @@ jobs:
               }
               return items;
             };
+            const resolveQueueRefTarget = async (ref) => {
+              let response;
+              try {
+                response = await github.rest.git.getRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref,
+                });
+              } catch (error) {
+                if (error?.status === 404) return undefined;
+                throw error;
+              }
+              const sha = response?.data?.object?.sha;
+              if (!fullSha.test(sha ?? "")) {
+                throw new Error("Merge queue ref response has a malformed commit");
+              }
+              return sha;
+            };
             const publishIndependentFailure = async () => {
               const pull = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pullNumber,
               });
-              if (pull.data?.head?.sha?.toLowerCase() !== headSha.toLowerCase()) {
+              const pullHeadSha = pull.data?.head?.sha;
+              if (!fullSha.test(pullHeadSha ?? "")) {
+                throw new Error("Pull request head response has a malformed commit");
+              }
+              if (pullHeadSha.toLowerCase() !== headSha.toLowerCase()) {
                 return { headSha, queueFailures: 0, skipped: true };
               }
               const baseRepositoryId = pull.data?.base?.repo?.id;
@@ -611,21 +886,98 @@ jobs:
                 {
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  ref: `heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`,
+                  ref: "heads/gh-readonly-queue/",
                 },
                 "merge queue refs",
               );
               const seen = new Set();
-              const expectedQueueRef =
-                `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${headSha}`;
               for (const queueRef of refs) {
-                if (queueRef?.ref !== expectedQueueRef) continue;
+                const parsed = parseMergeQueuePullNumber(queueRef?.ref);
+                if (parsed?.pullNumber !== pullNumber) continue;
                 const mergeGroupSha = queueRef?.object?.sha;
                 if (!fullSha.test(mergeGroupSha ?? "")) {
                   throw new Error("Merge queue ref has a malformed commit");
                 }
                 if (seen.has(mergeGroupSha.toLowerCase())) continue;
-                seen.add(mergeGroupSha.toLowerCase());
+                const latestPull = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                const latestHeadSha = latestPull.data?.head?.sha;
+                if (!fullSha.test(latestHeadSha ?? "")) {
+                  throw new Error("Pull request head response has a malformed commit");
+                }
+                if (
+                  latestHeadSha.toLowerCase() !== headSha.toLowerCase()
+                ) continue;
+                let targetVerified = false;
+                try {
+                  const bindingResponse = await github.graphql(
+                    `query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+                      repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) {
+                          number
+                          state
+                          headRefOid
+                          baseRefName
+                          mergeQueueEntry {
+                            baseCommit { oid }
+                            headCommit { oid }
+                          }
+                        }
+                      }
+                    }`,
+                    {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      number: pullNumber,
+                    },
+                  );
+                  const boundPull = bindingResponse?.repository?.pullRequest;
+                  const boundEntry = boundPull?.mergeQueueEntry;
+                  const activeBindingMismatch =
+                    boundPull?.number !== pullNumber ||
+                    boundPull?.state !== "OPEN" ||
+                    boundPull?.headRefOid?.toLowerCase() !== headSha.toLowerCase() ||
+                    boundPull?.baseRefName !== baseRef ||
+                    boundEntry?.baseCommit?.oid?.toLowerCase() !==
+                      parsed.baseHeadSha ||
+                    boundEntry?.headCommit?.oid?.toLowerCase() !==
+                      mergeGroupSha.toLowerCase();
+                  if (!activeBindingMismatch) {
+                    const liveRef = await github.rest.git.getRef({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      ref: queueRef.ref.slice("refs/".length),
+                    });
+                    targetVerified =
+                      liveRef?.data?.object?.sha?.toLowerCase() ===
+                        mergeGroupSha.toLowerCase();
+                  }
+                } catch {
+                  targetVerified = false;
+                }
+                if (!targetVerified) {
+                  const liveTarget = await resolveQueueRefTarget(
+                    queueRef.ref.slice("refs/".length),
+                  );
+                  targetVerified =
+                    liveTarget?.toLowerCase() === mergeGroupSha.toLowerCase();
+                }
+                if (!targetVerified) continue;
+                const finalPull = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pullNumber,
+                });
+                const finalHeadSha = finalPull.data?.head?.sha;
+                if (!fullSha.test(finalHeadSha ?? "")) {
+                  throw new Error("Pull request head response has a malformed commit");
+                }
+                if (
+                  finalHeadSha.toLowerCase() !== headSha.toLowerCase()
+                ) continue;
                 await github.rest.repos.createCommitStatus({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -635,6 +987,7 @@ jobs:
                   description: `Could not revalidate review for PR #${pullNumber}`,
                   target_url: pullUrl,
                 });
+                seen.add(mergeGroupSha.toLowerCase());
               }
               return {
                 headSha,
@@ -686,6 +1039,8 @@ jobs:
     name: reuse exact-head review for merge group
     if: github.event_name == 'merge_group'
     needs: target
+    outputs:
+      status_id: ${{ steps.reuse.outputs.merge-group-status-id }}
     permissions:
       contents: read
       pull-requests: read
@@ -697,13 +1052,56 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Reuse the source pull request review
+        id: reuse
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SOURCE_HEAD_SHA: ${{ needs.target.outputs.key }}
+          SOURCE_HEAD_SHA: ${{ needs.target.outputs.head_sha }}
           PULL_NUMBER: ${{ needs.target.outputs.pull_number }}
         with:
           retries: 3
           script: |
+            const fullSha = /^[0-9a-f]{40}$/i;
+            const mergeGroupSha = context.payload.merge_group?.head_sha;
+            if (!fullSha.test(mergeGroupSha ?? "")) {
+              core.setFailed("Could not resolve a valid merge group commit");
+              return;
+            }
+            let mergeGroupStatusId = 0;
+            let mergeGroupStatusFound = false;
+            try {
+              for (let page = 1; page <= 5; page += 1) {
+                const response = await github.rest.repos.listCommitStatusesForRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: mergeGroupSha,
+                  per_page: 100,
+                  page,
+                });
+                if (!Array.isArray(response.data)) {
+                  throw new Error("Merge group status history is malformed");
+                }
+                for (const status of response.data) {
+                  if (status?.context !== "Automated review") continue;
+                  if (!Number.isSafeInteger(status?.id) || status.id < 1) {
+                    throw new Error("Merge group status identity is malformed");
+                  }
+                  mergeGroupStatusId = status.id;
+                  mergeGroupStatusFound = true;
+                  break;
+                }
+                if (mergeGroupStatusFound || response.data.length < 100) break;
+                if (page === 5) {
+                  throw new Error("Merge group status history exceeded 500 items");
+                }
+              }
+              core.setOutput(
+                "merge-group-status-id",
+                String(mergeGroupStatusId),
+              );
+            } catch (error) {
+              core.setFailed(`Could not capture the publisher status boundary: ${error}`);
+              return;
+            }
             let parseMergeQueuePullNumber;
             let publishMergeGroupReviewStatus;
             try {
@@ -739,12 +1137,74 @@ jobs:
             }
             const pullNumber = Number(process.env.PULL_NUMBER);
             const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
+            const baseSha = context.payload.merge_group.base_sha;
+            // The trusted default-branch helper returns sourceHeadSha until
+            // this compatibility fix itself has passed the merge queue.
+            const serializedBaseSha = queueEntry.baseHeadSha ??
+              queueEntry.sourceHeadSha;
             if (
               !Number.isSafeInteger(pullNumber) ||
               pullNumber !== queueEntry.pullNumber ||
-              sourceHeadSha !== queueEntry.sourceHeadSha
+              !fullSha.test(sourceHeadSha ?? "") ||
+              !fullSha.test(baseSha ?? "") ||
+              !fullSha.test(serializedBaseSha ?? "") ||
+              baseSha.toLowerCase() !== serializedBaseSha
             ) {
-              core.setFailed("Merge queue source does not match its serialized lock");
+              core.setFailed("Merge queue identity does not match its serialized lock");
+              return;
+            }
+            const bindingResponse = await github.graphql(
+              `query ActiveMergeQueueBinding($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    number
+                    state
+                    headRefOid
+                    baseRefName
+                    mergeQueueEntry {
+                      baseCommit { oid }
+                      headCommit { oid }
+                    }
+                  }
+                }
+              }`,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                number: pullNumber,
+              },
+            );
+            const boundPull = bindingResponse?.repository?.pullRequest;
+            const boundEntry = boundPull?.mergeQueueEntry;
+            const baseRef = boundPull?.baseRefName;
+            const eventRef = context.payload.merge_group.head_ref;
+            const normalizedEventRef = typeof eventRef === "string" &&
+                eventRef.startsWith("refs/heads/")
+              ? eventRef
+              : `refs/heads/${eventRef}`;
+            const expectedRef = typeof baseRef === "string"
+              ? `refs/heads/gh-readonly-queue/${baseRef}/pr-${pullNumber}-${serializedBaseSha}`
+              : "";
+            if (
+              boundPull?.number !== pullNumber || boundPull?.state !== "OPEN" ||
+              !fullSha.test(mergeGroupSha ?? "") ||
+              boundPull?.headRefOid?.toLowerCase() !== sourceHeadSha ||
+              boundEntry?.baseCommit?.oid?.toLowerCase() !== serializedBaseSha ||
+              boundEntry?.headCommit?.oid?.toLowerCase() !== mergeGroupSha ||
+              typeof baseRef !== "string" || baseRef.length === 0 ||
+              baseRef.length > 1024 || baseRef.includes("\0") ||
+              normalizedEventRef !== expectedRef
+            ) {
+              core.setFailed("Merge group is not bound to the current pull request head");
+              return;
+            }
+            const liveRef = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: expectedRef.slice("refs/".length),
+            });
+            if (liveRef?.data?.object?.sha?.toLowerCase() !== mergeGroupSha) {
+              core.setFailed("Merge queue ref no longer targets this merge group");
               return;
             }
             const result = await publishMergeGroupReviewStatus({
@@ -753,7 +1213,8 @@ jobs:
               repo: context.repo.repo,
               pullNumber,
               sourceHeadSha,
-              mergeGroupSha: context.payload.merge_group.head_sha,
+              baseHeadSha: serializedBaseSha,
+              mergeGroupSha,
             });
             if (result.state === "success") {
               core.notice(

@@ -71,6 +71,7 @@ import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-m
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -877,7 +878,7 @@ export async function createRuntimeAgentStreamResponse(
           ...(allowedRemoteToolNames ?? []),
           ...forwardedToolNames,
         ]),
-      ].sort(),
+      ].sort(compareStrings),
       {
         model: agent.config.model,
         requiredToolNames: localToolNames,

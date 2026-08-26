@@ -57,6 +57,7 @@ import {
   getToolResultError,
   isIntegrationAuthenticationActionResult,
 } from "#veryfront/tool/result.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -1521,7 +1522,7 @@ export function processStreamInternal(
         if (shadowLifecycleFailed) categories.add("shadow_error");
         const report: StreamLifecycleShadowReport = {
           count: categories.size,
-          categories: [...categories].sort(),
+          categories: [...categories].sort(compareStrings),
         };
         callbacks.onLifecycleShadowReport?.(report);
         setActiveSpanAttributes({

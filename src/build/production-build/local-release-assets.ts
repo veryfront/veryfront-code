@@ -26,6 +26,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export const LOCAL_RELEASE_ASSET_MANIFEST_PATH = "_veryfront/release-asset-manifest.json";
 
@@ -136,7 +137,7 @@ export async function generateLocalReleaseAssetManifest(
             reactVersion,
             ...Object.entries(dependencies)
               .map(([specifier, entry]) => `${specifier}:${entry.contentHash}`)
-              .sort(),
+              .sort(compareStrings),
           ].join("\n"),
         ) as Uint8Array<ArrayBuffer>,
       );

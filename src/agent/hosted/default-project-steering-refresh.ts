@@ -24,6 +24,7 @@ import {
   createNoneSkillSelectorSnapshot,
   type ResolvedSkillSelectorPolicy,
 } from "#veryfront/skill/selector.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Public API contract for default hosted project steering refresh logger. */
 export type DefaultHostedProjectSteeringRefreshLogger = {
@@ -271,7 +272,7 @@ export function createDefaultHostedProjectSteeringRefresh(
         ...sourceAllowedRemoteToolNames,
         ...input.toolAssembly.providerToolNames,
       ]),
-    ].sort();
+    ].sort(compareStrings);
     const toolNames = selectProviderCompatibleToolNames(allToolNames, {
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
@@ -282,7 +283,7 @@ export function createDefaultHostedProjectSteeringRefresh(
       ? [
         ...bootstrapToolNames,
         ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
-      ].sort()
+      ].sort(compareStrings)
       : toolNames;
     input.taskContext.availableToolNames = modelVisibleToolNames;
     const promptSkills = modelVisibleToolNames.includes("load_skill")
