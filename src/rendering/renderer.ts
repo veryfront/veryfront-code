@@ -81,13 +81,14 @@ import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts"
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
-import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
+import { Singleflight, SingleflightFollowerLimitError } from "#veryfront/utils/singleflight.ts";
 import {
   acquireProjectSlot,
   projectRenderCounts,
   releaseProjectSlot,
   RENDER_ACQUIRE_TIMEOUT_MS,
   RENDER_PER_PROJECT_LIMIT,
+  RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
@@ -832,12 +833,22 @@ export class Renderer {
     let cachedData: CachedRenderData;
     try {
       cachedData = cacheKey !== null
-        ? await waitForSharedPromise(
-          this.renderFlight.do(flightKey, runRender),
-          callerSignal,
-        )
+        ? await this.renderFlight.do(flightKey, runRender, {
+          maxFollowers: RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
+          signal: callerSignal,
+        })
         : await runRender();
     } catch (error) {
+      if (error instanceof SingleflightFollowerLimitError) {
+        throw SERVICE_OVERLOADED.create({
+          detail: "Render request capacity exhausted. Try again shortly.",
+          context: {
+            slug,
+            projectId: ctx.projectId,
+            limit: RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
+          },
+        });
+      }
       const attachedMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
       const attachedCookies = attachedMetadata.cookies;
       const unwrappedError = error instanceof Error

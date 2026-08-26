@@ -1182,6 +1182,7 @@ function createHostedConfigFlight(
   payload: PreparedDeclarativeConfigWorkerPayload,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): HostedConfigFlight {
   const controller = createHostedAbortController();
   const controllerSignal = getAbortControllerSignal(controller);
@@ -1198,7 +1199,8 @@ function createHostedConfigFlight(
       signal: controllerSignal,
     });
     throwIfHostedConfigAborted(controllerSignal);
-    const merged = deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
+    const validate = () => deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
+    const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);
     if (usePersistentCache && cacheRevision === revisionAtStart) {
       configCacheByProject.set(hostedCacheKey, {
@@ -1245,6 +1247,7 @@ function getOrCreateHostedConfigFlight(
   payload: PreparedDeclarativeConfigWorkerPayload,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): HostedConfigFlight {
   const flightKey = buildHostedConfigFlightKey(hostedCacheKey, revisionAtStart);
   const existing = mapGet(hostedConfigFlights, flightKey);
@@ -1266,6 +1269,7 @@ function getOrCreateHostedConfigFlight(
     payload,
     usePersistentCache,
     revisionAtStart,
+    validationBoundary,
   );
 }
 
@@ -2564,6 +2568,7 @@ function loadHostedConfigFromSource(
   signal: AbortSignal | undefined,
   usePersistentCache: boolean,
   revisionAtStart: number,
+  validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig,
 ): Promise<VeryfrontConfig> {
   return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
@@ -2601,6 +2606,7 @@ function loadHostedConfigFromSource(
         payload,
         usePersistentCache,
         revisionAtStart,
+        validationBoundary,
       );
       return await waitForHostedConfigFlight(flight, signal);
     },
@@ -2752,6 +2758,7 @@ export interface HostedConfigOptions {
   readonly sourceContext: VirtualConfigSourceContext;
   readonly preparedContext: PreparedDeclarativeConfigContext;
   readonly signal?: AbortSignal;
+  readonly validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig;
 }
 
 /**
@@ -2793,6 +2800,7 @@ interface InternalGetConfigOptions extends GetConfigOptions {
   readonly hosted?: Readonly<{
     preparedContext: PreparedDeclarativeConfigContext;
     signal?: AbortSignal;
+    validationBoundary?: (validate: () => VeryfrontConfig) => VeryfrontConfig;
   }>;
 }
 
@@ -3105,6 +3113,7 @@ function getConfigInternal(
                   hosted.signal,
                   usePersistentCache,
                   revisionAtStart,
+                  hosted.validationBoundary,
                 );
                 const provenance = configFileProvenance(configFile);
                 logger.debug("Successfully loaded config", {
@@ -3267,6 +3276,7 @@ export function getHostedConfig(
       hosted: {
         preparedContext: options.preparedContext,
         signal: options.signal,
+        validationBoundary: options.validationBoundary,
       },
     }),
     (result) => result.config,

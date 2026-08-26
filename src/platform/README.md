@@ -156,6 +156,8 @@ Consumers capture optional capabilities once as own data-property methods. Secur
 
 Virtual filesystems may publish `symlinkSemantics: "none"` together with a monotonic `getSourceSnapshotVersion()`. Snapshot consumers compare the generation before and after an exact read and throw `FileSnapshotChangedError` when it changes. The error is exported from `veryfront/fs` and `veryfront/platform/adapters`.
 
+Mutable multi-project adapters that verify one source across credential scopes must also publish `ensureSourceSnapshotFresh()` or `refreshSourceSnapshot()`, plus `getSourceSnapshotFingerprint()`. The fingerprint must identify the complete active source snapshot and return unavailable when that snapshot changes during hashing.
+
 The native implementations use runtime or standard-library primitives only. Provider-specific filesystem behavior belongs behind an adapter or extension boundary.
 
 ### Platform Detection

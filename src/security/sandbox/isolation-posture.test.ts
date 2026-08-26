@@ -112,11 +112,10 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(posture.ssr.requested, false);
     assertEquals(posture.ssr.effective, false);
     assertEquals(posture.hostExecutionGranted, false);
-    assertEquals(posture.hostExecutionOverrideConfigured, false);
     assertEquals(posture.inForce, true);
   });
 
-  it("keeps API isolation in force when preparation is unsupported", async () => {
+  it("keeps API isolation in force when preparation is unsupported and no grant exists", async () => {
     setEnv("WORKER_ISOLATION_ENABLED", "1");
     setEnv("WORKER_ISOLATION_API", "1");
     __setCompiledBinaryForTests(true);
@@ -124,17 +123,16 @@ describe("security/sandbox isolation posture reporting", () => {
 
     const posture = getIsolationPosture();
 
-    // The flag stands and API ownership fails closed with a typed 503, so the
-    // surface stays effective rather than downgrading.
+    // Without an operator grant the flag stands and API ownership fails closed
+    // with a typed 503, so the surface stays effective rather than downgrading.
     assertEquals(posture.api.requested, true);
     assertEquals(posture.api.effective, true);
     assertEquals(posture.apiPreparationSupported, false);
     assertEquals(posture.hostExecutionGranted, false);
-    assertEquals(posture.hostExecutionOverrideConfigured, false);
     assertEquals(posture.inForce, true);
   });
 
-  it("keeps API isolation in force when the deprecated override is configured", async () => {
+  it("keeps API isolation in force when preparation is unsupported under a grant", async () => {
     setEnv("WORKER_ISOLATION_ENABLED", "1");
     setEnv("WORKER_ISOLATION_API", "1");
     setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
@@ -146,8 +144,7 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(posture.api.requested, true);
     assertEquals(posture.api.effective, true);
     assertEquals(posture.apiPreparationSupported, false);
-    assertEquals(posture.hostExecutionGranted, false);
-    assertEquals(posture.hostExecutionOverrideConfigured, true);
+    assertEquals(posture.hostExecutionGranted, true);
     assertEquals(posture.inForce, true);
   });
 

@@ -1,5 +1,4 @@
 import {
-  computeHash,
   computeIntegrity,
   createLockfileManager,
   getLockfileEntryForBuild,
@@ -10,8 +9,6 @@ import {
   setLockfileEntryForBuild,
   sleep,
 } from "#veryfront/utils";
-import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost, validateHTTPImports } from "./http-validator.ts";
 import {
@@ -27,9 +24,11 @@ import {
   readHttpModuleText,
 } from "../../../transforms/shared/http-module-response.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { isNotFoundError, remove } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/compat/path";
 
 const logger = serverLogger.component("api");
-const HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
+const LEGACY_HTTP_MODULE_CACHE_DIR = ".veryfront/cache/api-http-imports";
 const HTTP_MODULE_FETCH_MAX_ATTEMPTS = 3;
 const HTTP_MODULE_FETCH_RETRY_DELAY_MS = 100;
 
@@ -41,23 +40,6 @@ interface HTTPPluginOptions {
   projectDir?: string;
   resolveImportMetaSpecifier?: ImportMetaSpecifierResolver;
   strict?: boolean;
-}
-
-interface CachedHTTPModuleMetadata {
-  url: string;
-  resolvedUrl: string;
-  integrity: string;
-  fetchedAt: string;
-}
-
-interface HTTPModuleCache {
-  read(url: string, expectedIntegrity?: string): Promise<string | null>;
-  write(
-    url: string,
-    contents: string,
-    resolvedUrl: string,
-    integrity: string,
-  ): Promise<void>;
 }
 
 type RemoteModuleFetchResult =
@@ -72,6 +54,12 @@ type RemoteModuleFetchResult =
     status: number;
     url: string;
   };
+
+function describeErrorCategory(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && code ? `${error.name || "Error"}(${code})` : error.name;
+}
 
 async function validateRemoteModuleSource(
   contents: string,
@@ -101,95 +89,29 @@ async function validateRemoteModuleSource(
   return { contents: rewritten, loader: "js" };
 }
 
-function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache | null {
-  if (!projectDir) return null;
-
-  const fs = createFileSystem();
-  const cacheDir = pathHelper.join(projectDir, HTTP_MODULE_CACHE_DIR);
-
-  async function cachePaths(
-    url: string,
-    integrity: string,
-  ): Promise<{ sourcePath: string; metadataPath: string }> {
-    const key = await computeHash(`${url}\n${integrity}`);
-    return {
-      sourcePath: pathHelper.join(cacheDir, `${key}.mjs`),
-      metadataPath: pathHelper.join(cacheDir, `${key}.json`),
-    };
+function describeRemoteModuleUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.origin;
+  } catch {
+    return "remote module";
   }
+}
 
-  async function readMetadata(
-    metadataPath: string,
-    fs: FileSystem,
-  ): Promise<CachedHTTPModuleMetadata | null> {
-    if (!await fs.exists(metadataPath)) return null;
+async function removeLegacyHTTPModuleCache(projectDir: string | undefined): Promise<void> {
+  if (!projectDir) return;
 
-    try {
-      return JSON.parse(await fs.readTextFile(metadataPath)) as CachedHTTPModuleMetadata;
-    } catch (error) {
-      logger.debug(`[http] ignoring unreadable module cache metadata: ${error}`);
-      return null;
-    }
+  const cacheDir = pathHelper.join(projectDir, LEGACY_HTTP_MODULE_CACHE_DIR);
+  try {
+    await remove(cacheDir, { recursive: true });
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    logger.warn(
+      `[http] could not remove legacy module cache ${LEGACY_HTTP_MODULE_CACHE_DIR}: ${
+        describeErrorCategory(error)
+      }`,
+    );
   }
-
-  return {
-    async read(url: string, expectedIntegrity?: string): Promise<string | null> {
-      if (!expectedIntegrity) return null;
-
-      try {
-        const { sourcePath, metadataPath } = await cachePaths(url, expectedIntegrity);
-        if (!await fs.exists(sourcePath)) return null;
-
-        const contents = await fs.readTextFile(sourcePath);
-        const integrity = await computeIntegrity(contents);
-        if (integrity !== expectedIntegrity) {
-          logger.warn(`[http] cached module integrity mismatch: ${url}`);
-          return null;
-        }
-
-        const metadata = await readMetadata(metadataPath, fs);
-        if (metadata?.integrity && metadata.integrity !== integrity) {
-          logger.warn(`[http] cached module metadata integrity mismatch: ${url}`);
-          return null;
-        }
-
-        return contents;
-      } catch (error) {
-        logger.debug(`[http] module cache read miss for ${url}: ${error}`);
-        return null;
-      }
-    },
-
-    async write(
-      url: string,
-      contents: string,
-      resolvedUrl: string,
-      integrity: string,
-    ): Promise<void> {
-      try {
-        await fs.mkdir(cacheDir, { recursive: true });
-        const { sourcePath, metadataPath } = await cachePaths(url, integrity);
-        await fs.writeTextFile(sourcePath, contents);
-        await fs.writeTextFile(
-          metadataPath,
-          `${
-            JSON.stringify(
-              {
-                url,
-                resolvedUrl,
-                integrity,
-                fetchedAt: new Date().toISOString(),
-              } satisfies CachedHTTPModuleMetadata,
-              null,
-              2,
-            )
-          }\n`,
-        );
-      } catch (error) {
-        logger.debug(`[http] could not update module cache for ${url}: ${error}`);
-      }
-    },
-  };
 }
 
 export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
@@ -201,8 +123,8 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
   }
   const lockfile = opts.lockfile ??
     (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
-  const moduleCache = createHTTPModuleCache(opts.projectDir);
   let lockfileFlushDisabled = false;
+  void removeLegacyHTTPModuleCache(opts.projectDir);
 
   return {
     name: "vf-api-http-fetch",
@@ -308,14 +230,18 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
 
         try {
           await lockfile.flush();
-          logger.debug(`[http] lockfile updated: ${url} -> ${entry.resolved}`);
+          logger.debug(
+            `[http] lockfile updated: ${describeRemoteModuleUrl(url)} -> ${
+              describeRemoteModuleUrl(entry.resolved)
+            }`,
+          );
         } catch (error) {
           if (!isReadOnlyFileSystemError(error)) throw error;
           lockfileFlushDisabled = true;
           logger.debug(
-            `[http] lockfile flush disabled on read-only filesystem for ${url}: ${
-              describePersistenceError(error)
-            }`,
+            `[http] lockfile flush disabled on read-only filesystem for ${
+              describeRemoteModuleUrl(url)
+            }: ${describePersistenceError(error)}`,
           );
         }
       }
@@ -328,7 +254,9 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           }
 
           logger.warn(
-            `[http] fetch attempt ${attempt} failed ${url} ${response.status}; retrying`,
+            `[http] fetch attempt ${attempt} failed ${
+              describeRemoteModuleUrl(url)
+            } ${response.status}; retrying`,
           );
           await sleep(HTTP_MODULE_FETCH_RETRY_DELAY_MS * attempt);
         }
@@ -399,28 +327,23 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
             }
             u.searchParams.set("target", "es2020");
             u.searchParams.set("bundle", "true");
-            logger.debug(`[http] esm.sh rewrite: ${args.path} -> ${u.toString()}`);
+            logger.debug(
+              `[http] esm.sh rewrite: ${describeRemoteModuleUrl(args.path)} -> ${
+                describeRemoteModuleUrl(u.toString())
+              }`,
+            );
             requestUrl = u.toString();
           }
         } catch (e) {
           logger.warn("API URL parse failed", e);
         }
 
-        const readCachedModule = async (
-          url: string | undefined,
-          expectedIntegrity?: string,
-        ): Promise<string | null> => {
-          if (!url || !moduleCache) return null;
-          return await moduleCache.read(url, expectedIntegrity);
-        };
-
         // A newer-format lockfile keeps failing the load loudly; an unreadable
         // or malformed lockfile degrades to a cache miss with a logged remedy.
         const lockfileEntry = lockfile ? await getLockfileEntryForBuild(lockfile, args.path) : null;
 
         if (lockfileEntry) {
-          let canUseLockfileCacheFallback = true;
-          logger.debug(`[http] lockfile hit: ${args.path}`);
+          logger.debug(`[http] lockfile hit: ${describeRemoteModuleUrl(args.path)}`);
           try {
             const res = await fetchRemoteModule(lockfileEntry.resolved);
             if (res.ok) {
@@ -434,13 +357,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                   res.url,
                   resolveImportMetaSpecifier,
                 );
-                await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
-                await moduleCache?.write(
-                  lockfileEntry.resolved,
-                  text,
-                  lockfileEntry.resolved,
-                  integrity,
-                );
                 return loaded;
               }
 
@@ -448,38 +364,35 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 return {
                   errors: [
                     {
-                      text:
-                        `Integrity mismatch for ${args.path}: expected ${lockfileEntry.integrity}, got ${integrity}`,
+                      text: `Integrity mismatch for ${
+                        describeRemoteModuleUrl(args.path)
+                      }: expected ${lockfileEntry.integrity}, got ${integrity}`,
                     } as Message,
                   ],
                 };
               }
 
-              canUseLockfileCacheFallback = false;
-              logger.warn(`[http] integrity mismatch, refetching: ${args.path}`);
-            } else {
               logger.warn(
-                `[http] cached URL returned ${res.status}, trying module cache: ${args.path}`,
+                `[http] integrity mismatch, refetching: ${describeRemoteModuleUrl(args.path)}`,
               );
+            } else {
+              return {
+                errors: [{
+                  text: `Failed to fetch locked remote module ${
+                    describeRemoteModuleUrl(lockfileEntry.resolved)
+                  }: ${res.status}`,
+                } as Message],
+              };
             }
           } catch (error) {
             if (error instanceof OutboundRequestBlockedError) throw error;
-            logger.warn(`[http] cached URL failed, trying module cache: ${args.path}`);
-          }
-
-          if (canUseLockfileCacheFallback) {
-            const cachedText =
-              await readCachedModule(lockfileEntry.resolved, lockfileEntry.integrity) ??
-                await readCachedModule(args.path, lockfileEntry.integrity);
-            if (cachedText) {
-              logger.warn(`[http] serving cached remote import for ${args.path}`);
-              return await validateRemoteModuleSource(
-                cachedText,
-                allowedHosts,
-                lockfileEntry.resolved,
-                resolveImportMetaSpecifier,
-              );
-            }
+            return {
+              errors: [{
+                text: `Failed to fetch locked remote module ${
+                  describeRemoteModuleUrl(lockfileEntry.resolved)
+                }`,
+              } as Message],
+            };
           }
         }
 
@@ -494,25 +407,13 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         }
 
         if (!res.ok) {
-          const cachedText =
-            await readCachedModule(lockfileEntry?.resolved, lockfileEntry?.integrity) ??
-              await readCachedModule(requestUrl, lockfileEntry?.integrity) ??
-              await readCachedModule(args.path, lockfileEntry?.integrity);
-          if (cachedText) {
-            logger.warn(`[http] serving cached remote import for ${args.path}`);
-            return await validateRemoteModuleSource(
-              cachedText,
-              allowedHosts,
-              lockfileEntry?.resolved ?? requestUrl,
-              resolveImportMetaSpecifier,
-            );
-          }
-
-          logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
+          logger.error(
+            `[http] fetch failed ${describeRemoteModuleUrl(requestUrl)} ${res.status}`,
+          );
           return {
             errors: [
               {
-                text: `Failed to fetch ${args.path}: ${res.status}`,
+                text: `Failed to fetch ${describeRemoteModuleUrl(args.path)}: ${res.status}`,
               } as Message,
             ],
           };
@@ -533,10 +434,6 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
           integrity,
           fetchedAt: new Date().toISOString(),
         });
-        await moduleCache?.write(args.path, text, resolvedUrl, integrity);
-        await moduleCache?.write(requestUrl, text, resolvedUrl, integrity);
-        await moduleCache?.write(resolvedUrl, text, resolvedUrl, integrity);
-
         return loaded;
       });
 

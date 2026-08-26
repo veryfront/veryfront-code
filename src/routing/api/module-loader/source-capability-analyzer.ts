@@ -1120,7 +1120,11 @@ function resolvesToPrototypeMutator(
       resolvesToGlobalIntrinsic(expression.object, "Reflect", scope, nodeScopes);
   }
   if (isAliasAssignmentExpression(expression)) {
-    return resolvesToPrototypeMutator(expression.right, scope, nodeScopes, seen);
+    const leftMayRemain = logicalAssignmentMayRetainTruthyLeft(expression) &&
+      isNode(expression.left) &&
+      resolvesToPrototypeMutator(expression.left, scope, nodeScopes, new Set(seen));
+    return leftMayRemain ||
+      resolvesToPrototypeMutator(expression.right, scope, nodeScopes, new Set(seen));
   }
   const branches = expressionBranches(expression);
   if (branches !== null) {
@@ -1649,13 +1653,36 @@ function resolvesToGlobalIntrinsicMember(
     )
   ) return true;
   if (isAliasAssignmentExpression(expression)) {
+    const leftMayRemain = logicalAssignmentMayRetainTruthyLeft(expression) &&
+      isNode(expression.left) &&
+      resolvesToGlobalIntrinsicMember(
+        expression.left,
+        objectName,
+        propertyName,
+        scope,
+        nodeScopes,
+        new Set(seen),
+      );
+    return leftMayRemain || resolvesToGlobalIntrinsicMember(
+      expression.right,
+      objectName,
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+  }
+  if (
+    expression.type === "LogicalExpression" && expression.operator === "&&" &&
+    isNode(expression.right)
+  ) {
     return resolvesToGlobalIntrinsicMember(
       expression.right,
       objectName,
       propertyName,
       scope,
       nodeScopes,
-      seen,
+      new Set(seen),
     );
   }
   const branches = expressionBranches(expression);
@@ -2887,6 +2914,10 @@ function isAliasAssignmentExpression(
     ALIAS_ASSIGNMENT_OPERATORS.has(String(expression.operator)) && isNode(expression.right);
 }
 
+function logicalAssignmentMayRetainTruthyLeft(expression: ASTNode): boolean {
+  return expression.operator === "||=" || expression.operator === "??=";
+}
+
 function isReflectGetGlobalWorker(
   expression: ASTNode,
   scope: Scope,
@@ -3190,14 +3221,19 @@ function isAliasInitializerUse(
 ): boolean {
   let current = node;
   let link = parents.get(current);
-  while (
-    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
-    link.key === "expression"
-  ) {
+  while (link && isInertInspectionValueFlow(link)) {
     current = link.parent;
     link = parents.get(current);
   }
   if (!link) return false;
+  if (
+    current.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(current.operator)) &&
+    isNode(current.left) &&
+    (current.left.type === "Identifier" ||
+      isSafeGlobalObjectDestructuring(current.left)) &&
+    link.parent.type === "ExpressionStatement" && link.key === "expression"
+  ) return true;
   return (link.parent.type === "VariableDeclarator" && link.key === "init" &&
     isNode(link.parent.id) &&
     (link.parent.id.type === "Identifier" ||
@@ -3229,6 +3265,108 @@ function isSafeGlobalObjectDestructuring(pattern: ASTNode): boolean {
 function isNewExpressionCallee(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
   const link = parents.get(node);
   return link?.parent.type === "NewExpression" && link.key === "callee";
+}
+
+function isCallExpressionCallee(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  return link !== undefined && isCallExpression(link.parent) && link.key === "callee";
+}
+
+function isInertCapabilityInspection(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (link && isInertInspectionValueFlow(link)) {
+    if (isTruthyLogicalAndLeftGuard(link)) return true;
+    current = link.parent;
+    link = parents.get(current);
+  }
+  if (!link) return false;
+  if (
+    link.parent.type === "UnaryExpression" &&
+    (link.parent.operator === "typeof" || link.parent.operator === "!") &&
+    link.key === "argument"
+  ) return true;
+  if (isInertControlFlowUse(link)) return true;
+  return link.parent.type === "BinaryExpression" &&
+    (link.parent.operator === "===" || link.parent.operator === "!==") &&
+    (link.key === "left" || link.key === "right");
+}
+
+function isTruthyLogicalAndLeftGuard(link: ParentLink): boolean {
+  return link.parent.type === "LogicalExpression" &&
+    link.parent.operator === "&&" &&
+    link.key === "left";
+}
+
+function isInertInspectionValueFlow(link: ParentLink): boolean {
+  if (TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) && link.key === "expression") return true;
+  if (
+    link.parent.type === "ConditionalExpression" &&
+    (link.key === "consequent" || link.key === "alternate")
+  ) return true;
+  return link.parent.type === "LogicalExpression" &&
+    (link.key === "left" || link.key === "right");
+}
+
+function isInertControlFlowUse(link: ParentLink): boolean {
+  return (link.key === "test" &&
+    (link.parent.type === "IfStatement" ||
+      link.parent.type === "ConditionalExpression" ||
+      link.parent.type === "WhileStatement" ||
+      link.parent.type === "DoWhileStatement" ||
+      link.parent.type === "ForStatement")) ||
+    (link.key === "discriminant" && link.parent.type === "SwitchStatement");
+}
+
+function isTrackedPrototypeMutatorInvocationUse(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  if (!link) return false;
+  if (
+    isCallExpression(link.parent) && link.key === "arguments" &&
+    borrowedPrototypeMutatorCallTargets(link.parent, scope, nodeScopes).length > 0
+  ) return true;
+  if (
+    !isMemberExpressionWithObject(link.parent) || link.key !== "object" ||
+    (memberPropertyName(link.parent) !== "call" && memberPropertyName(link.parent) !== "apply")
+  ) return false;
+  current = link.parent;
+  link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  return link !== undefined && isCallExpression(link.parent) && link.key === "callee" &&
+    borrowedPrototypeMutatorCallTargets(link.parent, scope, nodeScopes).length > 0;
 }
 
 function isMemberObjectUse(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
@@ -3393,7 +3531,9 @@ function applyMemberCapability(
   }
   if (
     resolvesToDenoCommand(node, scope, nodeScopes) &&
-    !isNewExpressionCallee(node, parents) && !isAliasInitializerUse(node, parents)
+    !isNewExpressionCallee(node, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
+    !isAliasInitializerUse(node, parents)
   ) {
     analysis.hasDynamicCodeGeneration = true;
   }
@@ -4108,6 +4248,47 @@ function applySubprocessConstructionCapability(
   }
 }
 
+function applySubprocessReferenceCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (node.type === "Identifier" && !isIdentifierReference(node, parents)) return;
+  if (
+    resolvesToDenoCommand(node, scope, nodeScopes) &&
+    !isNewExpressionCallee(node, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
+    !isAliasInitializerUse(node, parents) &&
+    !isBindingIdentifier(node, parents) &&
+    !isMutationTarget(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
+function applyPrototypeMutatorReferenceCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (node.type === "Identifier" && !isIdentifierReference(node, parents)) return;
+  if (
+    resolvesToPrototypeMutator(node, scope, nodeScopes) &&
+    !isCallExpressionCallee(node, parents) &&
+    !isTrackedPrototypeMutatorInvocationUse(node, scope, nodeScopes, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
+    !isAliasInitializerUse(node, parents) &&
+    !isBindingIdentifier(node, parents) &&
+    !isMutationTarget(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
 function applyInheritedClassCapability(
   node: ASTNode,
   scope: Scope,
@@ -4337,6 +4518,14 @@ export async function analyzeSourceCapabilities(
     applyObjectPatternCapability(node, scope, nodeScopes, parents, analysis);
     applyWorkerConstructionCapability(node, scope, nodeScopes, analysis);
     applySubprocessConstructionCapability(node, scope, nodeScopes, analysis);
+    applySubprocessReferenceCapability(node, scope, nodeScopes, parents, analysis);
+    applyPrototypeMutatorReferenceCapability(
+      node,
+      scope,
+      nodeScopes,
+      parents,
+      analysis,
+    );
     applyInheritedClassCapability(node, scope, nodeScopes, analysis);
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
 

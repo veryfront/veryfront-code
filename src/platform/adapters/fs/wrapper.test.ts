@@ -294,7 +294,7 @@ describe("FSAdapterWrapper", () => {
       assertEquals(getterCalls, 0, "the wrapper must not execute adapter accessors");
     });
 
-    it("forwards freshness options and snapshot versions", async () => {
+    it("forwards freshness options and snapshot capabilities", async () => {
       let reason: string | undefined;
       let maxAgeMs: number | undefined;
       const fsAdapter = {
@@ -307,6 +307,9 @@ describe("FSAdapterWrapper", () => {
         },
         getSourceSnapshotVersion() {
           return 11;
+        },
+        getSourceSnapshotFingerprint() {
+          return "snapshot-11";
         },
       };
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -324,6 +327,7 @@ describe("FSAdapterWrapper", () => {
       );
       assertEquals(wrapper.sourceSnapshotFreshnessOptionsVersion, 1);
       assertEquals(await wrapper.getSourceSnapshotVersion?.(), 11);
+      assertEquals(await wrapper.getSourceSnapshotFingerprint?.(), "snapshot-11");
     });
 
     it("delegates getSourceSnapshotIdentity to the wrapped adapter", async () => {
@@ -348,6 +352,7 @@ describe("FSAdapterWrapper", () => {
       assertEquals(wrapper.ensureSourceSnapshotFresh, undefined);
       assertEquals(wrapper.sourceSnapshotFreshnessOptionsVersion, undefined);
       assertEquals(wrapper.getSourceSnapshotVersion, undefined);
+      assertEquals(wrapper.getSourceSnapshotFingerprint, undefined);
       assertEquals(wrapper.getSourceSnapshotIdentity, undefined);
     });
   });
@@ -914,20 +919,9 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("runWithContext should preserve adapter binding for production release materialization", async () => {
-      const adapter = new MultiProjectFSAdapter({
-        veryfront: {
-          apiBaseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
-      const wrapper = new FSAdapterWrapper(adapter);
-      const originalManager = (adapter as any).manager;
       let getAdapterCalled = false;
       let callbackSawMaterializedAdapter = false;
-
-      (adapter as any).manager = {
+      const manager = {
         getAdapter() {
           getAdapterCalled = true;
           return Promise.resolve(createMockFSAdapter());
@@ -935,6 +929,15 @@ describe("FSAdapterWrapper", () => {
         getStats: () => ({ adapters: 0, stats: [] }),
         dispose: () => {},
       };
+      const adapter = new MultiProjectFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      }, manager as never);
+      const wrapper = new FSAdapterWrapper(adapter);
 
       try {
         const result = await wrapper.runWithContext(
@@ -955,7 +958,6 @@ describe("FSAdapterWrapper", () => {
         assertEquals(result, "result");
         assertEquals(callbackSawMaterializedAdapter, true);
       } finally {
-        (adapter as any).manager = originalManager;
         adapter.dispose();
       }
     });

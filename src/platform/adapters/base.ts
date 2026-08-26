@@ -335,6 +335,8 @@ export interface FileSystemAdapter {
    * derived state while this value is unchanged.
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  /** Stable content digest for the active source snapshot. */
+  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
   /**
    * Stable name for the source context the snapshot currently targets, such
    * as the bound project/branch, environment, or release. Per-request context
