@@ -212,7 +212,7 @@ const getCsrfSchema = defineSchema((v) =>
         .regex(HTTP_TOKEN_PATTERN, "Expected a valid cookie name")
         .refine(
           (name) => !isReservedCsrfCookieName(name),
-          "Expected a cookie name other than the reserved CSRF names advertisement",
+          "Expected a cookie name outside Veryfront's reserved CSRF namespaces",
         )
         .optional(),
       headerName: v

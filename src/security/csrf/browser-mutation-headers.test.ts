@@ -3,6 +3,8 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { csrfMutationHeadersFor } from "./browser-mutation-headers.ts";
 import {
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
   csrfNamesCookieName,
   DEFAULT_CSRF_COOKIE_NAME,
   DEFAULT_CSRF_HEADER_NAME,
@@ -56,6 +58,59 @@ describe("csrfMutationHeadersFor", () => {
       headers.get(DEFAULT_CSRF_HEADER_NAME),
       null,
       "the default header must not be sent when the project configured another",
+    );
+  });
+
+  it("accepts an advertised origin-scoped HTTP token name", () => {
+    const origin = "http://192.168.1.20:3000";
+    const cookieName = csrfHttpTokenCookieName("vf_csrf", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${advertisedNames(origin, `${origin}:${cookieName}:x-project-csrf`)}; ` +
+          `${cookieName}=tok-http`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+    );
+
+    assertEquals(
+      headers.get("x-project-csrf"),
+      "tok-http",
+      "a validated internal name from server discovery must not be treated as caller config",
+    );
+  });
+
+  it("accepts an advertised origin-scoped HTTPS migration token", () => {
+    const cookieName = csrfHttpsTokenCookieName("vf_csrf", ORIGIN);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(
+        `${advertisedNames(ORIGIN, `${ORIGIN}:${cookieName}:x-project-csrf`)}; ` +
+          `${cookieName}=tok-https`,
+      ),
+    );
+
+    assertEquals(
+      headers.get("x-project-csrf"),
+      "tok-https",
+      "the HTTPS migration token must remain discoverable without caller configuration",
+    );
+  });
+
+  it("recovers an HTTPS migration token for an explicit configured name", () => {
+    const configuredName = "vf_explicit";
+    const cookieName = csrfHttpsTokenCookieName(configuredName, ORIGIN);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(`${cookieName}=tok-https`),
+      { cookieName: configuredName, headerName: "x-explicit" },
+    );
+
+    assertEquals(
+      headers.get("x-explicit"),
+      "tok-https",
+      "explicit configuration must retain deterministic migration discovery",
     );
   });
 
@@ -127,6 +182,41 @@ describe("csrfMutationHeadersFor", () => {
       headers.get("x-advertised"),
       null,
       "the advertised header must not also be sent",
+    );
+  });
+
+  it("keeps an explicit HTTP custom name compatible with an origin-scoped token", () => {
+    const origin = "http://app.test";
+    const cookieName = csrfHttpTokenCookieName("vf_explicit", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${cookieName}=tok-explicit`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+      { cookieName: "vf_explicit", headerName: "x-explicit" },
+    );
+
+    assertEquals(headers.get("x-explicit"), "tok-explicit");
+  });
+
+  it("recovers a derived HTTP default when its advertisement is missing", () => {
+    const origin = "http://app.test";
+    const cookieName = csrfHttpTokenCookieName("vf_csrf", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${cookieName}=tok-http`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+    );
+
+    assertEquals(
+      headers.get(DEFAULT_CSRF_HEADER_NAME),
+      "tok-http",
+      "evicting discovery must not strand an otherwise valid deterministic HTTP token",
     );
   });
 
@@ -211,12 +301,23 @@ describe("csrfMutationHeadersFor", () => {
     assertThrows(
       () =>
         csrfMutationHeadersFor("/api/cases", facts(""), {
-          cookieName: "vf_csrf_names_forbidden",
+          cookieName: csrfNamesCookieName(ORIGIN),
         }),
       TypeError,
       "reserved",
       "an explicit browser override must obey the same reservation as server configuration",
     );
+  });
+
+  it("accepts a non-derived cookie name that only shares the advertisement prefix", () => {
+    const cookieName = "vf_csrf_names_forbidden";
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(`${cookieName}=matching-token`),
+      { cookieName },
+    );
+
+    assertEquals(headers.get(DEFAULT_CSRF_HEADER_NAME), "matching-token");
   });
 
   it("ignores an advertisement written by a sibling app on another port", () => {

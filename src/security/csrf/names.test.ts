@@ -3,6 +3,8 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CSRF_NAMES_COOKIE_NAME,
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
   DEFAULT_CSRF_COOKIE_NAME,
@@ -14,6 +16,72 @@ import {
 const ORIGIN = "https://app.test";
 
 describe("security/csrf/names advertisement", () => {
+  it("gives fresh custom HTTP tokens an origin-scoped cookie name", () => {
+    const first = csrfHttpTokenCookieName("vf_csrf", "http://localhost:3000");
+    const second = csrfHttpTokenCookieName("vf_csrf", "http://localhost:4000");
+
+    assertEquals(first.startsWith("vf_csrf_http_"), true);
+    assertEquals(first === second, false);
+    assertThrows(
+      () => csrfHttpTokenCookieName("vf_csrf", "https://localhost:3000"),
+      TypeError,
+      "canonical HTTP origin",
+    );
+
+    const longConfiguredName = "x".repeat(256);
+    const longScopedName = csrfHttpTokenCookieName(
+      longConfiguredName,
+      "http://localhost:3000",
+    );
+    const advertisement = encodeCsrfNamesAdvertisement(
+      longScopedName,
+      "x-csrf-token",
+      "http://localhost:3000",
+    );
+    assertEquals(
+      decodeCsrfNamesAdvertisement(advertisement ?? undefined, "http://localhost:3000"),
+      { cookieName: longScopedName, headerName: "x-csrf-token" },
+      "an internal derived name may exceed the configured-name limit without becoming unreadable",
+    );
+    assertThrows(
+      () => requireNonReservedCsrfCookieName(longScopedName),
+      TypeError,
+      "reserved",
+      "a caller must not configure a name inside the internal HTTP token namespace",
+    );
+    assertEquals(
+      requireNonReservedCsrfCookieName("vf_csrf_http_forbidden"),
+      "vf_csrf_http_forbidden",
+      "an existing public name that cannot decode as a derived token must stay valid",
+    );
+  });
+
+  it("gives migrated HTTPS tokens an origin-scoped cookie name", () => {
+    const first = csrfHttpsTokenCookieName("vf_csrf", "https://localhost:3000");
+    const second = csrfHttpsTokenCookieName("vf_csrf", "https://localhost:4000");
+
+    assertEquals(first.startsWith("vf_csrf_https_"), true);
+    assertEquals(first === second, false);
+    assertThrows(
+      () => csrfHttpsTokenCookieName("vf_csrf", "http://localhost:3000"),
+      TypeError,
+      "canonical HTTPS origin",
+    );
+    assertEquals(
+      decodeCsrfNamesAdvertisement(
+        encodeCsrfNamesAdvertisement(first, "x-csrf-token", "https://localhost:3000") ??
+          undefined,
+        "https://localhost:3000",
+      ),
+      { cookieName: first, headerName: "x-csrf-token" },
+    );
+    assertThrows(
+      () => requireNonReservedCsrfCookieName(first),
+      TypeError,
+      "reserved",
+    );
+  });
+
   it("gives each origin its own advertisement cookie", () => {
     const first = csrfNamesCookieName("http://localhost:3000");
     const second = csrfNamesCookieName("http://localhost:4000");
@@ -97,6 +165,11 @@ describe("security/csrf/names advertisement", () => {
       TypeError,
       "reserved",
       "a configured token must not collide with an origin-specific advertisement cookie",
+    );
+    assertEquals(
+      requireNonReservedCsrfCookieName("vf_csrf_names_forbidden"),
+      "vf_csrf_names_forbidden",
+      "a pre-existing name that cannot decode as an origin must stay compatible",
     );
   });
 
