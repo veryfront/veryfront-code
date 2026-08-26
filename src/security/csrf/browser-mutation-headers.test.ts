@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { csrfMutationHeadersFor } from "./browser-mutation-headers.ts";
 import {
+  csrfHttpsTokenCookieName,
   csrfHttpTokenCookieName,
   csrfNamesCookieName,
   DEFAULT_CSRF_COOKIE_NAME,
@@ -77,6 +78,23 @@ describe("csrfMutationHeadersFor", () => {
       headers.get("x-project-csrf"),
       "tok-http",
       "a validated internal name from server discovery must not be treated as caller config",
+    );
+  });
+
+  it("accepts an advertised origin-scoped HTTPS migration token", () => {
+    const cookieName = csrfHttpsTokenCookieName("vf_csrf", ORIGIN);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      facts(
+        `${advertisedNames(ORIGIN, `${ORIGIN}:${cookieName}:x-project-csrf`)}; ` +
+          `${cookieName}=tok-https`,
+      ),
+    );
+
+    assertEquals(
+      headers.get("x-project-csrf"),
+      "tok-https",
+      "the HTTPS migration token must remain discoverable without caller configuration",
     );
   });
 

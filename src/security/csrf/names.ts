@@ -83,6 +83,7 @@ export function resolveCsrfNames(options?: CsrfNameOptions): {
  */
 export const CSRF_NAMES_COOKIE_NAME = "vf_csrf_names";
 const CSRF_HTTP_TOKEN_COOKIE_PREFIX = "vf_csrf_http_";
+const CSRF_HTTPS_TOKEN_COOKIE_PREFIX = "vf_csrf_https_";
 const MAX_INTERNAL_CSRF_COOKIE_NAME_LENGTH = 2048;
 const nativeAtob = globalThis.atob;
 
@@ -120,6 +121,18 @@ export function csrfHttpTokenCookieName(cookieName: string, origin: string): str
   return `${CSRF_HTTP_TOKEN_COOKIE_PREFIX}${base64urlEncode(`${origin}\0${configuredName}`)}`;
 }
 
+/** Return the HTTPS-only token name used while migrating a shared legacy token. */
+export function csrfHttpsTokenCookieName(cookieName: string, origin: string): string {
+  const configuredName = requireNonReservedCsrfCookieName(
+    requireCsrfName(cookieName, "CSRF cookieName"),
+  );
+  const parsed = new URL(origin);
+  if (parsed.origin !== origin || parsed.protocol !== "https:") {
+    throw new TypeError("HTTPS CSRF token origin must be a canonical HTTPS origin");
+  }
+  return `${CSRF_HTTPS_TOKEN_COOKIE_PREFIX}${base64urlEncode(`${origin}\0${configuredName}`)}`;
+}
+
 /** Select the token name that issuance and browser discovery use for one origin. */
 export function effectiveCsrfTokenCookieNameForOrigin(
   configuredCookieName: string,
@@ -138,14 +151,18 @@ export function effectiveCsrfTokenCookieNameForOrigin(
   return csrfHttpTokenCookieName(cookieName, origin);
 }
 
-function isDerivedCsrfHttpTokenCookieName(cookieName: string): boolean {
-  if (!cookieName.startsWith(CSRF_HTTP_TOKEN_COOKIE_PREFIX)) return false;
+function isDerivedCsrfTokenCookieName(
+  cookieName: string,
+  prefix: string,
+  protocol: "http:" | "https:",
+): boolean {
+  if (!cookieName.startsWith(prefix)) return false;
   // Every supported browser and server runtime provides atob. If an unknown
   // runtime does not, preserve the collision-safe behavior rather than admit
   // a name that might be one of the internal encodings.
   if (typeof nativeAtob !== "function") return true;
 
-  const encoded = cookieName.slice(CSRF_HTTP_TOKEN_COOKIE_PREFIX.length);
+  const encoded = cookieName.slice(prefix.length);
   if (!encoded || encoded.length % 4 === 1) return false;
   const padding = "=".repeat((4 - encoded.length % 4) % 4);
   let decoded: string;
@@ -163,7 +180,7 @@ function isDerivedCsrfHttpTokenCookieName(cookieName: string): boolean {
   const configuredName = decoded.slice(separator + 1);
   try {
     const parsed = new URL(origin);
-    return parsed.protocol === "http:" && parsed.origin === origin &&
+    return parsed.protocol === protocol && parsed.origin === origin &&
       requireCsrfName(configuredName, "CSRF cookieName") === configuredName &&
       !isReservedCsrfCookieName(configuredName);
   } catch {
@@ -175,16 +192,20 @@ function isDerivedCsrfHttpTokenCookieName(cookieName: string): boolean {
 export function isReservedCsrfCookieName(cookieName: string): boolean {
   return cookieName === CSRF_NAMES_COOKIE_NAME ||
     cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`) ||
-    isDerivedCsrfHttpTokenCookieName(cookieName);
+    isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTP_TOKEN_COOKIE_PREFIX, "http:") ||
+    isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTPS_TOKEN_COOKIE_PREFIX, "https:");
 }
 
 function requireAdvertisedCsrfCookieName(cookieName: string): string {
-  if (cookieName.startsWith(CSRF_HTTP_TOKEN_COOKIE_PREFIX)) {
+  if (
+    cookieName.startsWith(CSRF_HTTP_TOKEN_COOKIE_PREFIX) ||
+    cookieName.startsWith(CSRF_HTTPS_TOKEN_COOKIE_PREFIX)
+  ) {
     if (
       cookieName.length > MAX_INTERNAL_CSRF_COOKIE_NAME_LENGTH ||
       !HTTP_TOKEN_PATTERN.test(cookieName)
     ) {
-      throw new TypeError("Advertised HTTP CSRF cookieName is invalid");
+      throw new TypeError("Advertised derived CSRF cookieName is invalid");
     }
     return cookieName;
   }
@@ -207,7 +228,7 @@ const CSRF_NAMES_SEPARATOR = ":";
  * Reject a configured name that would collide with an internal companion cookie.
  *
  * Without this, `security.csrf.cookieName: "vf_csrf_names"` would make the
- * advertisement overwrite the random token cookie, while a derived HTTP name
+ * advertisement overwrite the random token cookie, while a derived token name
  * could alias the token Veryfront validates for another configuration. A
  * pre-existing configured name that merely shares the readable prefix remains
  * valid unless its suffix decodes to a real derived token identity.

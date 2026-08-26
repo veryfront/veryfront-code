@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CSRF_NAMES_COOKIE_NAME,
+  csrfHttpsTokenCookieName,
   csrfHttpTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
@@ -52,6 +53,32 @@ describe("security/csrf/names advertisement", () => {
       requireNonReservedCsrfCookieName("vf_csrf_http_forbidden"),
       "vf_csrf_http_forbidden",
       "an existing public name that cannot decode as a derived token must stay valid",
+    );
+  });
+
+  it("gives migrated HTTPS tokens an origin-scoped cookie name", () => {
+    const first = csrfHttpsTokenCookieName("vf_csrf", "https://localhost:3000");
+    const second = csrfHttpsTokenCookieName("vf_csrf", "https://localhost:4000");
+
+    assertEquals(first.startsWith("vf_csrf_https_"), true);
+    assertEquals(first === second, false);
+    assertThrows(
+      () => csrfHttpsTokenCookieName("vf_csrf", "http://localhost:3000"),
+      TypeError,
+      "canonical HTTPS origin",
+    );
+    assertEquals(
+      decodeCsrfNamesAdvertisement(
+        encodeCsrfNamesAdvertisement(first, "x-csrf-token", "https://localhost:3000") ??
+          undefined,
+        "https://localhost:3000",
+      ),
+      { cookieName: first, headerName: "x-csrf-token" },
+    );
+    assertThrows(
+      () => requireNonReservedCsrfCookieName(first),
+      TypeError,
+      "reserved",
     );
   });
 

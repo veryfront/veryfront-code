@@ -65,7 +65,11 @@ secure. Plain-HTTP LAN development uses an origin-scoped
 discard `Secure` `__Host-` cookies there and an HTTP sibling must not collide
 with an HTTPS token. Its companion `vf_csrf_names_<encoded-origin>` cookie lets
 `csrfMutationHeaders` discover that physical name; application code should not
-read or construct it directly. The default header is `x-csrf-token`.
+read or construct it directly. During migration, if an HTTP sibling still
+advertises a legacy shared token, HTTPS uses an origin-scoped
+`vf_csrf_https_<encoded-origin-and-config>` token instead of making that legacy
+cookie unreadable to the already-open HTTP app. The default header is
+`x-csrf-token`.
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion

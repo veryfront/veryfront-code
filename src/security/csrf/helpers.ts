@@ -14,6 +14,7 @@ import { getEffectiveRequestOrigin } from "#veryfront/server/utils/request-host.
 import { MAX_CSRF_TTL_SECONDS } from "#veryfront/utils/constants/security.ts";
 import {
   CSRF_NAMES_COOKIE_NAME,
+  csrfHttpsTokenCookieName,
   csrfHttpTokenCookieName,
   type CsrfNameOptions,
   csrfNamesCookieName,
@@ -138,12 +139,12 @@ export function validateCsrf(
     });
     const cookies = parseCookiesFromHeaders(req.headers);
     const cookieTokens = [cookies[cookieName]];
-    if (
-      !cookieName.startsWith("__Host-") &&
-      !cookieName.startsWith("__Secure-")
-    ) {
-      if (new URL(browserOrigin).protocol === "http:") {
+    if (!cookieName.startsWith("__Host-") && !cookieName.startsWith("__Secure-")) {
+      const protocol = new URL(browserOrigin).protocol;
+      if (protocol === "http:") {
         cookieTokens.push(cookies[csrfHttpTokenCookieName(cookieName, browserOrigin)]);
+      } else if (protocol === "https:") {
+        cookieTokens.push(cookies[csrfHttpsTokenCookieName(cookieName, browserOrigin)]);
       }
     }
     const headerToken = req.headers.get(headerName) ?? "";
@@ -190,9 +191,10 @@ export function csrfCookieSetting(
  * Missing tokens get a fresh double-submit cookie. Existing tokens are retained,
  * but stale or missing name advertisements are refreshed with the token TTL so
  * browser helpers keep discovering configured names. When a host-wide custom
- * token is shared with HTTP and HTTPS sibling origins, HTTPS refreshes upgrade
- * the existing token to Secure. HTTP siblings use their origin-scoped token
- * names instead. `__Host-` and `__Secure-` token names always keep Secure.
+ * token is shared with HTTP and HTTPS sibling origins, HTTPS refreshes use an
+ * origin-isolated Secure token so the legacy token remains readable to HTTP.
+ * HTTP siblings use their own origin-scoped token names for fresh pairs.
+ * `__Host-` and `__Secure-` token names always keep Secure.
  */
 export function applyCsrfCookie(
   req: Request,
@@ -240,12 +242,18 @@ export function applyCsrfCookie(
     cookies = {};
   }
   const configuredToken = cookies[configuredCookieName];
-  const cookieName = effectiveCsrfTokenCookieNameForOrigin(
+  let cookieName = effectiveCsrfTokenCookieNameForOrigin(
     configuredCookieName,
     browserOrigin,
     Boolean(configuredToken),
   );
   const browserProtocol = new URL(browserOrigin).protocol;
+  if (
+    browserProtocol === "https:" &&
+    shouldUseIsolatedHttpsCsrfToken(configuredCookieName, browserOrigin, cookies)
+  ) {
+    cookieName = csrfHttpsTokenCookieName(configuredCookieName, browserOrigin);
+  }
   const secureAdvertisement = cookieName.startsWith("__Host-") ||
     browserProtocol === "https:";
   const secureToken = cookieName.startsWith("__Secure-") || secureAdvertisement;
@@ -318,6 +326,36 @@ export function applyCsrfCookie(
     secureAdvertisement,
     true,
   );
+}
+
+function shouldUseIsolatedHttpsCsrfToken(
+  configuredCookieName: string,
+  browserOrigin: string,
+  cookies: Record<string, string>,
+): boolean {
+  if (
+    configuredCookieName.startsWith("__Host-") ||
+    configuredCookieName.startsWith("__Secure-")
+  ) return false;
+
+  const isolatedName = csrfHttpsTokenCookieName(configuredCookieName, browserOrigin);
+  if (cookies[isolatedName]) return true;
+  const currentAdvertisement = decodeCsrfNamesAdvertisement(
+    cookies[csrfNamesCookieName(browserOrigin)],
+    browserOrigin,
+  );
+  if (currentAdvertisement?.cookieName === isolatedName) return true;
+
+  for (const [cookieName, value] of Object.entries(cookies)) {
+    if (!cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`)) continue;
+    const origin = csrfNamesAdvertisementOrigin(value);
+    if (origin === null || new URL(origin).protocol !== "http:") continue;
+    if (cookieName !== csrfNamesCookieName(origin)) continue;
+    if (decodeCsrfNamesAdvertisement(value, origin)?.cookieName === configuredCookieName) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function appendSiblingCsrfNamesCookies(

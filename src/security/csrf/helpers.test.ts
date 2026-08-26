@@ -8,7 +8,12 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { applyCsrfCookie, csrfCookieSetting, generateCsrfToken, validateCsrf } from "./helpers.ts";
-import { CSRF_NAMES_COOKIE_NAME, csrfHttpTokenCookieName, csrfNamesCookieName } from "./names.ts";
+import {
+  CSRF_NAMES_COOKIE_NAME,
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
+  csrfNamesCookieName,
+} from "./names.ts";
 
 describe("security/csrf/helpers", () => {
   describe("generateCsrfToken", () => {
@@ -1001,11 +1006,12 @@ describe("applyCsrfCookie name advertisement", () => {
     assertStringIncludes(token, "Max-Age=60");
   });
 
-  it("does not let a mixed-scheme sibling advertisement downgrade an HTTPS token", () => {
+  it("moves a stale HTTPS advertisement to an isolated migration token", () => {
     const httpOrigin = "http://example.test:3000";
     const httpsOrigin = "https://example.test:4000";
     const httpAdvertisement = csrfNamesCookieName(httpOrigin);
     const httpsAdvertisement = csrfNamesCookieName(httpsOrigin);
+    const httpsTokenName = csrfHttpsTokenCookieName("vf_csrf", httpsOrigin);
     const headers = new Headers();
     const req = new Request(`${httpsOrigin}/page`, {
       headers: {
@@ -1024,41 +1030,44 @@ describe("applyCsrfCookie name advertisement", () => {
     const cookies = setCookies(headers);
     const httpSibling = cookies.find((cookie) => cookie.startsWith(`${httpAdvertisement}=`));
     const httpsCurrent = cookies.find((cookie) => cookie.startsWith(`${httpsAdvertisement}=`));
-    const token = cookies.find((cookie) => cookie.startsWith("vf_csrf="));
+    const token = cookies.find((cookie) => cookie.startsWith(`${httpsTokenName}=`));
 
-    assertExists(
-      httpSibling,
-      "the HTTP sibling advertisement must stay aligned with the refreshed shared token",
-    );
     assertEquals(
-      httpSibling.includes("Secure"),
-      false,
-      "an HTTP sibling advertisement must not be rewritten with HTTPS-only scope",
+      httpSibling,
+      undefined,
+      "HTTPS must not rewrite discovery for the already-open HTTP app",
     );
-    assertExists(httpsCurrent, "the HTTPS current advertisement must still be refreshed");
+    assertExists(httpsCurrent, "the stale HTTPS advertisement must move to the isolated token");
     assertStringIncludes(
       httpsCurrent,
-      "Secure",
-      "the current HTTPS advertisement must retain HTTPS-only scope",
+      encodeURIComponent(`${httpsOrigin}:${httpsTokenName}:x-https`),
     );
-    assertExists(token, "the shared token must still be synchronized with the stale refresh");
+    assertStringIncludes(httpsCurrent, "Secure");
+    assertExists(token, "HTTPS must issue the isolated token with the refreshed advertisement");
     assertStringIncludes(
       token,
       "Secure",
-      "client-writable sibling advertisements must not relax the token security attributes",
+      "a client-writable sibling advertisement must not relax the HTTPS token attributes",
+    );
+    assertEquals(
+      cookies.some((cookie) => cookie.startsWith("vf_csrf=")),
+      false,
+      "the shared legacy token must not be promoted to Secure",
     );
   });
 
-  it("upgrades a host-wide token to Secure despite a claimed HTTP sibling", () => {
+  it("isolates HTTPS while a migrated HTTP app still uses the legacy token", () => {
     const httpOrigin = "http://example.test:3000";
     const httpsOrigin = "https://example.test:4000";
     const httpAdvertisement = csrfNamesCookieName(httpOrigin);
     const httpsAdvertisement = csrfNamesCookieName(httpsOrigin);
+    const httpsTokenName = csrfHttpsTokenCookieName("vf_csrf", httpsOrigin);
     const headers = new Headers();
     const req = new Request(`${httpsOrigin}/page`, {
       headers: {
         accept: "text/html",
-        cookie: `vf_csrf=shared-token; ${httpAdvertisement}=${httpOrigin}:vf_csrf:x-http`,
+        cookie: `vf_csrf=legacy-token; ${httpAdvertisement}=` +
+          `${httpOrigin}:vf_csrf:x-http`,
       },
     });
 
@@ -1069,26 +1078,48 @@ describe("applyCsrfCookie name advertisement", () => {
     });
 
     const cookies = setCookies(headers);
-    const httpSibling = cookies.find((cookie) => cookie.startsWith(`${httpAdvertisement}=`));
+    const httpsToken = cookies.find((cookie) => cookie.startsWith(`${httpsTokenName}=`));
     const httpsCurrent = cookies.find((cookie) => cookie.startsWith(`${httpsAdvertisement}=`));
-    const token = cookies.find((cookie) => cookie.startsWith("vf_csrf="));
-
-    assertExists(
-      httpSibling,
-      "the HTTP sibling advertisement must stay aligned with the refreshed shared token",
-    );
-    assertExists(httpsCurrent, "the HTTPS sibling must publish its missing advertisement");
+    assertExists(httpsToken, "HTTPS must mint an origin-isolated migration token");
+    assertStringIncludes(httpsToken, "Secure");
+    assertExists(httpsCurrent, "HTTPS must advertise the isolated token");
     assertStringIncludes(
       httpsCurrent,
-      "Secure",
-      "the HTTPS advertisement can stay scoped to the HTTPS document",
+      encodeURIComponent(`${httpsOrigin}:${httpsTokenName}:x-https`),
     );
-    assertExists(token, "the shared token lifetime must still be synchronized");
-    assertStringIncludes(token, "vf_csrf=shared-token", "the shared token value must not rotate");
-    assertStringIncludes(
-      token,
-      "Secure",
-      "an unauthenticated HTTP advertisement must not keep the HTTPS token insecure",
+    assertEquals(
+      cookies.some((cookie) => cookie.startsWith("vf_csrf=")),
+      false,
+      "HTTPS must leave the legacy token readable by the already-open HTTP app",
+    );
+    assertEquals(
+      cookies.some((cookie) => cookie.startsWith(`${httpAdvertisement}=`)),
+      false,
+      "HTTPS must not rewrite the HTTP app discovery cookie",
+    );
+
+    const token = httpsToken.slice(httpsTokenName.length + 1).split(";", 1)[0]!;
+    assertEquals(
+      validateCsrf(
+        new Request(`${httpsOrigin}/api`, {
+          method: "POST",
+          headers: { cookie: `${httpsTokenName}=${token}`, "x-https": token },
+        }),
+        { cookieName: "vf_csrf", headerName: "x-https" },
+      ),
+      true,
+      "server validation must accept the isolated HTTPS token",
+    );
+    assertEquals(
+      validateCsrf(
+        new Request(`${httpOrigin}/api`, {
+          method: "POST",
+          headers: { cookie: "vf_csrf=legacy-token", "x-http": "legacy-token" },
+        }),
+        { cookieName: "vf_csrf", headerName: "x-http" },
+      ),
+      true,
+      "the already-open HTTP app must retain the legacy token immediately",
     );
   });
 
