@@ -54,8 +54,10 @@ import {
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
+  capturePreviewDocumentRenderSourceSnapshot,
   ensurePreviewDocumentSourceSnapshot,
   type PreviewDocumentSnapshotReclassifier,
+  previewSourceSnapshotMarkersEqual,
   reclassifyPreviewDocumentSourceSnapshotIfChanged,
 } from "../source-snapshot-freshness.ts";
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
@@ -305,6 +307,7 @@ export class SSRHandler extends BaseHandler {
           applicationUrl.searchParams.get("forceProductionScripts") === "1" ||
           applicationUrl.searchParams.get("force_production_scripts") === "1";
         const useNoCache = shouldUseNoCacheHeadersFromHandler(ctx);
+        const renderSourceSnapshot = await capturePreviewDocumentRenderSourceSnapshot(ctx);
 
         const result = await this.ssrService.renderPage(ctx, {
           request: applicationRequest,
@@ -337,6 +340,18 @@ export class SSRHandler extends BaseHandler {
           dependencySnapshot,
           rendered,
         );
+        if (renderSourceSnapshot !== undefined) {
+          const completedSourceSnapshot = await capturePreviewDocumentRenderSourceSnapshot(ctx);
+          if (
+            completedSourceSnapshot === undefined ||
+            !previewSourceSnapshotMarkersEqual(renderSourceSnapshot, completedSourceSnapshot)
+          ) {
+            throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+              detail:
+                `The source snapshot for "${ctx.projectSlug}" changed during server rendering, so this document request must be retried against one generation.`,
+            });
+          }
+        }
         if (failureResponse) return failureResponse;
 
         return this.buildResponse(req, ctx, rendered, nonce);

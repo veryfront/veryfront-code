@@ -1173,8 +1173,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     reason = "freshness-check",
     options?: SourceSnapshotFreshnessOptions,
   ): Promise<void> {
+    const initializedAtEntry = this.initialized;
     await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
+
+    // Initialization fetched and installed the complete current listing. A
+    // first strict caller can use that same authority response; only an
+    // adapter that was already initialized needs another zero-age refresh.
+    if (!initializedAtEntry) return;
 
     // The snapshot identity only names the branch, so an edit to a draft file
     // never changes it. The lease age is therefore the only thing that can

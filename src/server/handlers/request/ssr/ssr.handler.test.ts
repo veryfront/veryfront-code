@@ -330,6 +330,45 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       }
     });
 
+    it("rejects a preview render when its source generation changes during rendering", async () => {
+      let version = 1;
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+      adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+      adapter.fs.getSourceSnapshotVersion = () => version;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          version++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>mixed generation</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+
+      const rejection = await assertRejects(() =>
+        handler.handle(
+          new Request("http://localhost/preview"),
+          makeCtx({
+            adapter,
+            projectSlug: "preview-project",
+            requestContext: {
+              token: "",
+              slug: "preview-project",
+              branch: "main",
+              mode: "preview",
+            },
+          }),
+        )
+      );
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
     it("rejects a legacy ensure-only adapter for a preview document", async () => {
       let ensureCalls = 0;
       let renderCalls = 0;

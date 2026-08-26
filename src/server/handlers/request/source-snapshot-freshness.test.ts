@@ -169,6 +169,22 @@ it("reuses a prepared document snapshot while its identity and generation are un
   assertEquals(refreshes, 1, "an unchanged generation reuses the classifier's strict refresh");
 });
 
+it("reuses a prepared version-only snapshot on a fixed adapter", async () => {
+  let refreshes = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.refreshSourceSnapshot = () => {
+    refreshes++;
+    return Promise.resolve();
+  };
+  adapter.fs.getSourceSnapshotVersion = () => 1;
+  const ctx = makePreviewCtx(adapter);
+
+  await preparePreviewDocumentSourceSnapshot(ctx);
+  await ensurePreviewDocumentSourceSnapshot(ctx);
+
+  assertEquals(refreshes, 1, "a stable fixed generation must reuse the classifier refresh");
+});
+
 it("fails closed when config and routing would observe different generations", async () => {
   let version = 1;
   const adapter = createMockAdapter();

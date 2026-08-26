@@ -4,6 +4,7 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext, HandlerResult } from "../types.ts";
 
@@ -40,7 +41,7 @@ const DOCUMENT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze
 export type PreviewDocumentSnapshotReclassifier = () => Promise<HandlerResult>;
 
 export interface PreviewSourceSnapshotMarker {
-  readonly identity: string;
+  readonly identity?: string;
   readonly version?: number;
 }
 
@@ -50,6 +51,7 @@ interface PreparedDocumentSnapshot {
   readonly reclassify?: PreviewDocumentSnapshotReclassifier;
   readonly configBound?: boolean;
   readonly liveSource?: boolean;
+  readonly fixedContext?: boolean;
 }
 
 const preparedDocumentSnapshots = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
@@ -58,14 +60,20 @@ const preparedDocumentSnapshots = new WeakMap<HandlerContext, PreparedDocumentSn
 export async function capturePreviewSourceSnapshotMarker(
   fs: FileSystemAdapter,
 ): Promise<PreviewSourceSnapshotMarker | undefined> {
+  const hasIdentity = typeof fs.getSourceSnapshotIdentity === "function";
+  const hasVersion = typeof fs.getSourceSnapshotVersion === "function";
+  if (!hasIdentity && !hasVersion) return;
   const identity = await fs.getSourceSnapshotIdentity?.();
-  if (identity === undefined) return;
   const version = await fs.getSourceSnapshotVersion?.();
   // A reused contextual adapter can switch branches across either await. Only
   // publish a marker when both observations name the same source context.
-  if (await fs.getSourceSnapshotIdentity?.() !== identity) return;
-  if (await fs.getSourceSnapshotVersion?.() !== version) return;
-  return { identity, version };
+  if (hasIdentity && await fs.getSourceSnapshotIdentity?.() !== identity) return;
+  if (hasVersion && await fs.getSourceSnapshotVersion?.() !== version) return;
+  if (identity === undefined && version === undefined) return;
+  return {
+    ...(identity === undefined ? {} : { identity }),
+    ...(version === undefined ? {} : { version }),
+  };
 }
 
 export async function captureRequiredPreviewSourceSnapshotMarker(
@@ -73,7 +81,7 @@ export async function captureRequiredPreviewSourceSnapshotMarker(
   projectSlug: string,
 ): Promise<PreviewSourceSnapshotMarker> {
   const marker = await capturePreviewSourceSnapshotMarker(fs);
-  if (marker?.version !== undefined) return marker;
+  if (marker?.identity !== undefined && marker.version !== undefined) return marker;
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
       `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot and concrete generation that produced preview document configuration.`,
@@ -111,7 +119,9 @@ async function preparedDocumentSnapshotMatches(
   }
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
-  const identityMatches = prepared.identity !== undefined && identity === prepared.identity;
+  const identityMatches = prepared.identity !== undefined
+    ? identity === prepared.identity
+    : prepared.fixedContext === true && prepared.version !== undefined;
   const versionMatches = prepared.version === undefined || version === prepared.version;
   return identityMatches && versionMatches;
 }
@@ -141,7 +151,31 @@ export async function preparePreviewDocumentSourceSnapshot(
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
   const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
-  preparedDocumentSnapshots.set(ctx, { identity, version, reclassify, liveSource });
+  const fixedContext = !isExtendedFSAdapter(ctx.adapter.fs) ||
+    ctx.adapter.fs.isFixedProjectMode?.() === true;
+  preparedDocumentSnapshots.set(ctx, {
+    identity,
+    version,
+    reclassify,
+    liveSource,
+    fixedContext,
+  });
+}
+
+/** Capture the generation that one preview document render must retain. */
+export async function capturePreviewDocumentRenderSourceSnapshot(
+  ctx: HandlerContext,
+): Promise<PreviewSourceSnapshotMarker | undefined> {
+  if (!hasMutablePreviewSource(ctx)) return;
+  const fs = ctx.adapter.fs;
+  const hasMarkerCapability = typeof fs.getSourceSnapshotIdentity === "function" ||
+    typeof fs.getSourceSnapshotVersion === "function";
+  const marker = await capturePreviewSourceSnapshotMarker(fs);
+  if (marker !== undefined || !hasMarkerCapability) return marker;
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail:
+      `The mutable source snapshot serving "${ctx.projectSlug}" changed while its render generation was being captured.`,
+  });
 }
 
 function isLiveSourceWithoutSnapshotCapabilities(fs: FileSystemAdapter): boolean {
