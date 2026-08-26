@@ -2073,6 +2073,43 @@ class SlowFirstWaitClaimBackend extends MemoryBackend {
   }
 }
 
+class SlowPendingEventWaitListBackend extends MemoryBackend {
+  listDelayMs = 0;
+
+  override async listPendingEventWaits(): Promise<
+    Array<{ runId: string; wait: PersistedPendingEventWait }>
+  > {
+    const waits = await super.listPendingEventWaits();
+    await delay(this.listDelayMs);
+    return waits;
+  }
+}
+
+class RejectOnceEventWaitResolutionBackend extends MemoryBackend {
+  rejectedResolutions = 0;
+
+  override resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    if (status === "expired" && this.rejectedResolutions === 0) {
+      this.rejectedResolutions++;
+      return Promise.reject(new Error("transient event wait resolution failure"));
+    }
+    return super.resolvePendingEventWait(runId, waitId, status);
+  }
+}
+
+class FinalizationObservingBackend extends MemoryBackend {
+  finalizedEventIds: string[] = [];
+
+  override finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+    this.finalizedEventIds.push(eventId);
+    return super.finalizeRunEventDelivery(runId, eventId);
+  }
+}
+
 class CompleteSiblingDuringTimeoutBackend extends MemoryBackend {
   override async updateRunIfStatus(
     runId: string,
@@ -2329,6 +2366,53 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("checks each swept deadline after asynchronous backend reads", async () => {
+    const slowBackend = new SlowPendingEventWaitListBackend();
+    const sweepingClient = createWorkflowClient({
+      backend: slowBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const runId = "run_deadline_during_sweep";
+    try {
+      await slowBackend.createRun({
+        id: runId,
+        workflowId: "deadline-during-sweep",
+        status: "waiting",
+        input: {},
+        nodeStates: {
+          timed: { nodeId: "timed", status: "running", attempt: 1 },
+        },
+        currentNodes: ["timed"],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await slowBackend.savePendingEventWait(runId, {
+        id: "wait-timed-sweep",
+        runId,
+        nodeId: "timed",
+        eventName: "timed.ready",
+        waitKind: "event",
+        requestedAt: new Date(),
+        expiresAt: new Date(Date.now() + 20),
+        status: "pending",
+      });
+      slowBackend.listDelayMs = 40;
+
+      await sweepingClient.getEventWaitManager().checkExpiredEventWaits();
+
+      assertEquals(
+        (await slowBackend.getRun(runId))?.status,
+        "failed",
+        "a wait expiring while the backend lists it must be handled by this sweep",
+      );
+    } finally {
+      await sweepingClient.destroy();
+    }
+  });
+
   it("merges only the timed-out node over a concurrent sibling completion", async () => {
     const racingBackend = new CompleteSiblingDuringTimeoutBackend();
     const racingClient = createWorkflowClient({
@@ -2425,6 +2509,31 @@ describe("WorkflowClient durable event waits", () => {
     await waitFor(async () => (await client.getRun(runId))?.status === "completed");
   });
 
+  it("reports an event delivered by a recursive same-run drain", async () => {
+    client.register(workflow({
+      id: "recursive-drain-outcome",
+      steps: [
+        waitForEvent("first", { eventName: "gate.ready" }),
+        waitForEvent("second", { eventName: "gate.ready" }),
+      ],
+    }));
+    const handle = await client.start("recursive-drain-outcome", {});
+    await handle.settled();
+    await backend.appendRunEvent(handle.runId, {
+      id: "evt-older-buffered",
+      eventName: "gate.ready",
+      payload: { sequence: 1 },
+      publishedAt: new Date(),
+    });
+
+    assertEquals(
+      await client.publishEvent(handle.runId, "gate.ready", { sequence: 2 }),
+      "delivered",
+      "a nested drain that consumes this publish must contribute to its outer outcome",
+    );
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed");
+  });
+
   it("persists every event wait nested inside a parallel node", async () => {
     client.register(workflow({
       id: "nested-parallel-waits",
@@ -2478,6 +2587,28 @@ describe("WorkflowClient durable event waits", () => {
       0,
       "a delivered event wait must no longer be pending",
     );
+  });
+
+  it("finalizes the mailbox reservation after a successful delivery", async () => {
+    const observingBackend = new FinalizationObservingBackend();
+    const observingClient = createWorkflowClient({ backend: observingBackend });
+    try {
+      observingClient.register(eventWorkflow);
+      const handle = await observingClient.start("event-workflow", {});
+      await handle.settled();
+
+      assertEquals(
+        await observingClient.publishEvent(handle.runId, "payment.confirmed", { amount: 42 }),
+        "delivered",
+      );
+      assertEquals(
+        observingBackend.finalizedEventIds.length,
+        1,
+        "successful delivery must finalize the exact claimed event reservation",
+      );
+    } finally {
+      await observingClient.destroy();
+    }
   });
 
   it("leaves the run parked when a differently named event is published", async () => {
@@ -3480,6 +3611,34 @@ describe("WorkflowClient durable event waits", () => {
       await waitFor(async () => (await flakyClient.getRun(handle.runId))?.status === "failed", {
         timeout: 2_500,
         message: "an elapsed wait restored without a sweep was never re-armed",
+      });
+    } finally {
+      await flakyClient.destroy();
+    }
+  });
+
+  it("re-arms a deadline timer when claiming the expired wait throws", async () => {
+    const flaky = new RejectOnceEventWaitResolutionBackend();
+    const flakyClient = createWorkflowClient({
+      backend: flaky,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    try {
+      flakyClient.register(workflow({
+        id: "timer-resolution-recovery",
+        steps: [
+          waitForEvent("await-payment", { eventName: "payment.confirmed", timeout: 30 }),
+        ],
+      }));
+      const handle = await flakyClient.start("timer-resolution-recovery", {});
+      await handle.settled();
+      await waitFor(() => flaky.rejectedResolutions === 1, {
+        message: "the deadline timer never attempted to claim the expired wait",
+      });
+
+      await waitFor(async () => (await flakyClient.getRun(handle.runId))?.status === "failed", {
+        timeout: 2_500,
+        message: "a transient wait-resolution error permanently disarmed the deadline",
       });
     } finally {
       await flakyClient.destroy();

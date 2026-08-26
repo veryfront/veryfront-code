@@ -115,6 +115,7 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const context = cloneExecutionState(run.context, "Workflow context");
     const nodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
+    let publishedNodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
     let contextPatch = createSetContextPatch();
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
@@ -291,7 +292,14 @@ export class DAGExecutor {
             });
           }
         }
-        await this.publishNodeStates(scope, nodeStates, context, contextPatch, batch);
+        publishedNodeStates = await this.publishNodeStates(
+          scope,
+          nodeStates,
+          publishedNodeStates,
+          context,
+          contextPatch,
+          batch,
+        );
         abortSignal?.throwIfAborted();
       }
 
@@ -446,7 +454,14 @@ export class DAGExecutor {
           const status = nodeStates[nodeId]?.status;
           return status === "running" || status === "failed";
         });
-        await this.publishNodeStates(scope, nodeStates, context, contextPatch, stillCurrent);
+        publishedNodeStates = await this.publishNodeStates(
+          scope,
+          nodeStates,
+          publishedNodeStates,
+          context,
+          contextPatch,
+          stillCurrent,
+        );
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -535,13 +550,16 @@ export class DAGExecutor {
   private async publishNodeStates(
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
+    previousNodeStates: Record<string, NodeState>,
     context: WorkflowContext,
     contextPatch: ContextPatch,
     currentNodes: string[],
-  ): Promise<void> {
+  ): Promise<Record<string, NodeState>> {
+    const nodeStatePatch = createRecordPatch(previousNodeStates, nodeStates);
     const published = await this.config.onNodeStatesChanged?.({
       runId: scope.rootRunId,
       nodeStates: structuredClone(nodeStates),
+      nodeStatePatch: cloneExecutionState(nodeStatePatch, "Workflow node-state changes"),
       currentNodes: [...currentNodes],
       context: structuredClone(context),
       contextPatch: cloneExecutionState(contextPatch, "Workflow context changes"),
@@ -552,6 +570,7 @@ export class DAGExecutor {
         detail: "Workflow execution ownership changed before node-state persistence",
       });
     }
+    return cloneExecutionState(nodeStates, "Workflow node states");
   }
 
   private async executeNode(

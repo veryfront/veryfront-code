@@ -37,6 +37,8 @@ type WorkflowRunScalarUpdate = Partial<
  */
 export type WorkflowRunUpdate = WorkflowRunScalarUpdate & {
   nodeStates?: WorkflowRun["nodeStates"];
+  /** Top-level node-state keys removed by this patch. */
+  nodeStateDeletes?: string[];
   context?: Partial<WorkflowRun["context"]>;
   /** Top-level context keys removed by this patch. */
   contextDeletes?: string[];
@@ -56,6 +58,7 @@ const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "status",
   "output",
   "nodeStates",
+  "nodeStateDeletes",
   "currentNodes",
   "context",
   "contextDeletes",
@@ -387,6 +390,13 @@ export interface WorkflowBackend {
     waitId: string,
     event: RunEventEnvelope,
   ): Promise<boolean>;
+  /**
+   * Release any capacity reservation retained for a successfully delivered
+   * event. This is the commit-side counterpart to `restoreRunEventDelivery`:
+   * once delivery cannot roll back, an empty mailbox must no longer count
+   * against the backend's mailbox bound.
+   */
+  finalizeRunEventDelivery?(runId: string, eventId: string): Promise<void>;
 
   /**
    * @deprecated Never implemented by any built-in backend and never called by
@@ -553,6 +563,7 @@ type WithEventWaitSupport =
       | "claimRunEventForWait"
       | "restoreRunEvent"
       | "restoreRunEventDelivery"
+      | "finalizeRunEventDelivery"
     >
   >;
 
@@ -562,7 +573,8 @@ type WithEventWaitSupport =
  * The whole group is required, not any single method: a backend that could
  * record a wait but not buffer an event, or buffer an event but not resolve a
  * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
- * `restoreRunEvent`, and `restoreRunEventDelivery` are part of the group for
+ * `restoreRunEvent`, `restoreRunEventDelivery`, and
+ * `finalizeRunEventDelivery` are part of the group for
  * the same reason: without them a delivery that fails halfway leaves the run
  * parked on a wait already marked delivered, re-orders its mailbox, or loses
  * the event outright when a crash lands between the two separate restores.
@@ -586,6 +598,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.claimRunEventForWait === "function" &&
     typeof backend.restoreRunEvent === "function" &&
     typeof backend.restoreRunEventDelivery === "function" &&
+    typeof backend.finalizeRunEventDelivery === "function" &&
     (!hasWorkerSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")
   );

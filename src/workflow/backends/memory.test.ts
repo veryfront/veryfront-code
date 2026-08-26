@@ -312,6 +312,27 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("merges node-state sets while applying explicit deletions", async () => {
+      await backend.createRun(createTestRun("run-node-state-delete", {
+        nodeStates: {
+          removed: { nodeId: "removed", status: "completed", attempt: 1 },
+          concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        },
+      }));
+
+      await backend.updateRun("run-node-state-delete", {
+        nodeStates: {
+          kept: { nodeId: "kept", status: "completed", attempt: 1 },
+        },
+        nodeStateDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun("run-node-state-delete"))?.nodeStates, {
+        concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        kept: { nodeId: "kept", status: "completed", attempt: 1 },
+      });
+    });
+
     it("should conditionally update only the expected worker owner", async () => {
       await backend.createRun(createTestRun("run-owned", {
         status: "running",
@@ -972,6 +993,35 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "ready"))?.id,
         "evt-active-0",
         "a claimed last event must retain its mailbox slot until delivery commits",
+      );
+
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-finalized-mailbox", { eventName: "ready" }),
+      );
+      await backend.appendRunEvent("run-events", {
+        id: "evt-finalized-mailbox",
+        eventName: "ready",
+        payload: undefined,
+        publishedAt: new Date(),
+      });
+      const delivered = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-finalized-mailbox",
+        "ready",
+      );
+      assertExists(delivered);
+      await backend.finalizeRunEventDelivery("run-events", delivered.id);
+      await backend.appendRunEvent("run-after-finalize", {
+        id: "evt-after-finalize",
+        eventName: "ready",
+        payload: undefined,
+        publishedAt: new Date(),
+      });
+      assertEquals(
+        (await backend.takeRunEvent("run-after-finalize", "ready"))?.id,
+        "evt-after-finalize",
+        "successful delivery must release an empty mailbox reservation",
       );
     });
 

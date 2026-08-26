@@ -127,6 +127,7 @@ export class MemoryBackend implements WorkflowBackend {
   private approvals = new Map<string, PersistedPendingApproval[]>();
   private eventWaits = new Map<string, PersistedPendingEventWait[]>();
   private runEvents = new Map<string, RunEventEnvelope[]>();
+  private runEventClaims = new Map<string, Set<string>>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
@@ -186,13 +187,15 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
-    const { contextDeletes = [], ...storedPatch } = patch;
+    const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
     const context = { ...run.context, ...patch.context };
     for (const key of contextDeletes) delete context[key];
+    const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
+    for (const key of nodeStateDeletes) delete nodeStates[key];
     const updated: WorkflowRun = {
       ...run,
       ...storedPatch,
-      nodeStates: { ...run.nodeStates, ...patch.nodeStates },
+      nodeStates,
       context,
     };
 
@@ -211,6 +214,7 @@ export class MemoryBackend implements WorkflowBackend {
       patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled"
     ) {
       this.runEvents.delete(runId);
+      this.runEventClaims.delete(runId);
     }
 
     return Promise.resolve();
@@ -287,6 +291,7 @@ export class MemoryBackend implements WorkflowBackend {
       snapshot.status === "cancelled"
     ) {
       this.runEvents.delete(runId);
+      this.runEventClaims.delete(runId);
     }
     return Promise.resolve(true);
   }
@@ -298,6 +303,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.approvals.delete(runId);
     this.eventWaits.delete(runId);
     this.runEvents.delete(runId);
+    this.runEventClaims.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
     return Promise.resolve();
@@ -774,7 +780,7 @@ export class MemoryBackend implements WorkflowBackend {
     const index = mailbox.findIndex((event) => event.id === eventId);
     if (index < 0) return Promise.resolve(false);
     mailbox.splice(index, 1);
-    if (mailbox.length === 0) this.runEvents.delete(runId);
+    this.deleteEmptyRunEventMailbox(runId, mailbox);
     return Promise.resolve(true);
   }
 
@@ -795,6 +801,7 @@ export class MemoryBackend implements WorkflowBackend {
       if (overflow <= 0) return;
       const run = this.runs.get(mailboxRunId);
       if (run && activeStatuses.includes(run.status)) continue;
+      if ((this.runEventClaims.get(mailboxRunId)?.size ?? 0) > 0) continue;
       this.runEvents.delete(mailboxRunId);
       overflow--;
     }
@@ -806,7 +813,7 @@ export class MemoryBackend implements WorkflowBackend {
     // Taking mutates synchronously before returning, so removal and return are
     // one atomic step for this in-memory backend.
     const taken = takeRetainedRunEvent(mailbox, eventName);
-    if (mailbox.length === 0) this.runEvents.delete(runId);
+    this.deleteEmptyRunEventMailbox(runId, mailbox);
     return Promise.resolve(taken);
   }
 
@@ -823,6 +830,9 @@ export class MemoryBackend implements WorkflowBackend {
     const taken = takeRetainedRunEvent(mailbox, eventName);
     if (!taken) return Promise.resolve(null);
     wait.status = "delivered";
+    const claims = this.runEventClaims.get(runId) ?? new Set<string>();
+    claims.add(taken.id);
+    this.runEventClaims.set(runId, claims);
     // Keep an empty mailbox as the claimed event's capacity reservation. The
     // asynchronous delivery may still roll back, and another run must not take
     // this slot before restoreRunEventDelivery puts the event back.
@@ -833,6 +843,7 @@ export class MemoryBackend implements WorkflowBackend {
     const mailbox = this.runEvents.get(runId) ?? [];
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
+    this.releaseRunEventClaim(runId, event.id);
     return Promise.resolve();
   }
 
@@ -859,7 +870,27 @@ export class MemoryBackend implements WorkflowBackend {
     const mailbox = this.runEvents.get(runId) ?? [];
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
+    this.releaseRunEventClaim(runId, event.id);
     return Promise.resolve(restored);
+  }
+
+  finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+    this.releaseRunEventClaim(runId, eventId);
+    const mailbox = this.runEvents.get(runId);
+    if (mailbox) this.deleteEmptyRunEventMailbox(runId, mailbox);
+    return Promise.resolve();
+  }
+
+  private releaseRunEventClaim(runId: string, eventId: string): void {
+    const claims = this.runEventClaims.get(runId);
+    if (!claims) return;
+    claims.delete(eventId);
+    if (claims.size === 0) this.runEventClaims.delete(runId);
+  }
+
+  private deleteEmptyRunEventMailbox(runId: string, mailbox: RunEventEnvelope[]): void {
+    if (mailbox.length > 0 || (this.runEventClaims.get(runId)?.size ?? 0) > 0) return;
+    this.runEvents.delete(runId);
   }
 
   // =========================================================================
@@ -1055,6 +1086,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.approvals.clear();
     this.eventWaits.clear();
     this.runEvents.clear();
+    this.runEventClaims.clear();
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();

@@ -9,6 +9,7 @@
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
 import type { CheckpointManager, CheckpointOwnership } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
+import type { RecordPatch } from "./context-patch.ts";
 
 /** Internal set/delete operations emitted by one node execution. */
 export interface ContextPatch {
@@ -66,6 +67,7 @@ export interface DAGExecutorConfig {
   onNodeStatesChanged?: (input: {
     runId: string;
     nodeStates: Record<string, NodeState>;
+    nodeStatePatch: RecordPatch<NodeState>;
     currentNodes: string[];
     context: WorkflowContext;
     contextPatch: ContextPatch;

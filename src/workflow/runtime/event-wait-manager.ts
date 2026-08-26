@@ -94,6 +94,8 @@ export class EventWaitManager {
   private expirationTimer?: ReturnType<typeof setInterval>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Shared accumulator for nested and concurrent drains of one run. */
+  private activeDrainOutcomes = new Map<string, DrainOutcome>();
   private destroyed = false;
 
   constructor(config: EventWaitManagerConfig) {
@@ -323,82 +325,109 @@ export class EventWaitManager {
    */
   private async drain(runId: string): Promise<DrainOutcome> {
     const backend = this.config.backend;
-    const outcome: DrainOutcome = {
+    const activeOutcome = this.activeDrainOutcomes.get(runId);
+    const outcome: DrainOutcome = activeOutcome ?? {
       deliveredEventIds: new Set(),
       failedEventIds: new Set(),
       terminal: false,
     };
     if (!hasEventWaitSupport(backend)) return outcome;
+    const ownsOutcome = activeOutcome === undefined;
+    if (ownsOutcome) this.activeDrainOutcomes.set(runId, outcome);
 
-    for (const wait of await backend.getPendingEventWaits(runId)) {
-      // A delay is released by its own deadline, never by a published event,
-      // so it must not consume anything from the mailbox.
-      if (wait.waitKind === "delay") continue;
+    try {
+      for (const wait of await backend.getPendingEventWaits(runId)) {
+        // A delay is released by its own deadline, never by a published event,
+        // so it must not consume anything from the mailbox.
+        if (wait.waitKind === "delay") continue;
 
-      // A wait whose declared deadline has already passed must not be resolved
-      // by an event published after it: a delayed timer or a restarted process
-      // does not extend the timeout. Expire it here, before matching, so the
-      // race is decided by the deadline and not by which sweep ran last.
-      if (wait.expiresAt && Date.now() > wait.expiresAt.getTime()) {
-        try {
-          await this.expire(wait);
-        } catch (error) {
-          logger.error(
-            "Failed to expire an overdue event wait before matching",
-            { runId, waitId: wait.id },
-            error,
-          );
+        // A wait whose declared deadline has already passed must not be resolved
+        // by an event published after it: a delayed timer or a restarted process
+        // does not extend the timeout. Expire it here, before matching, so the
+        // race is decided by the deadline and not by which sweep ran last.
+        if (wait.expiresAt && Date.now() > wait.expiresAt.getTime()) {
+          try {
+            await this.expire(wait);
+          } catch (error) {
+            logger.error(
+              "Failed to expire an overdue event wait before matching",
+              { runId, waitId: wait.id },
+              error,
+            );
+          }
+          continue;
         }
-        continue;
-      }
 
-      // The claim is one atomic backend step: the event leaves the mailbox and
-      // the wait flips to delivered together, so no crash can strand an event
-      // outside the mailbox against a wait that is still pending.
-      const event = await backend.claimRunEventForWait(runId, wait.id, wait.eventName);
-      if (!event) continue;
+        // The claim is one atomic backend step: the event leaves the mailbox and
+        // the wait flips to delivered together, so no crash can strand an event
+        // outside the mailbox against a wait that is still pending.
+        const event = await backend.claimRunEventForWait(runId, wait.id, wait.eventName);
+        if (!event) continue;
 
-      this.clearExpiry(wait.id);
-      let reconciled: WorkflowRunControlReconcileOutcome;
-      try {
-        reconciled = await this.deliver(wait, event.payload);
-      } catch (error) {
-        if (await this.nodeOutcomeCommitted(wait)) {
-          outcome.deliveredEventIds.add(event.id);
+        this.clearExpiry(wait.id);
+        let reconciled: WorkflowRunControlReconcileOutcome;
+        try {
+          reconciled = await this.deliver(wait, event.payload);
+        } catch (error) {
+          if (await this.nodeOutcomeCommitted(wait)) {
+            outcome.deliveredEventIds.add(event.id);
+            await this.finalizeDelivery(wait, event);
+            logger.error(
+              "Event wait node committed but resuming the run failed",
+              { runId, waitId: wait.id, nodeId: wait.nodeId },
+              error,
+            );
+            continue;
+          }
+          // The event is out of the mailbox and the wait is marked delivered, but
+          // the node never completed. Leaving it there strands the run: nothing
+          // pending remains for a later publish to match, and run control reads
+          // the same record to tell a parked run from a stuck one, so a resume
+          // would fail a run that is merely waiting. Give both back instead.
+          outcome.failedEventIds.add(event.id);
           logger.error(
-            "Event wait node committed but resuming the run failed",
+            "Event wait delivery failed; restoring the wait and re-buffering the event",
             { runId, waitId: wait.id, nodeId: wait.nodeId },
             error,
           );
-          continue;
-        }
-        // The event is out of the mailbox and the wait is marked delivered, but
-        // the node never completed. Leaving it there strands the run: nothing
-        // pending remains for a later publish to match, and run control reads
-        // the same record to tell a parked run from a stuck one, so a resume
-        // would fail a run that is merely waiting. Give both back instead.
-        outcome.failedEventIds.add(event.id);
-        logger.error(
-          "Event wait delivery failed; restoring the wait and re-buffering the event",
-          { runId, waitId: wait.id, nodeId: wait.nodeId },
-          error,
-        );
-        await this.rollBackDelivery(wait, event);
-        continue;
-      }
-
-      if (reconciled.status === "skipped-terminal") {
-        if (reconciled.run?.status === "failed") {
-          outcome.failedEventIds.add(event.id);
           await this.rollBackDelivery(wait, event);
           continue;
         }
-        outcome.terminal = true;
-        continue;
+
+        if (reconciled.status === "skipped-terminal") {
+          if (reconciled.run?.status === "failed") {
+            outcome.failedEventIds.add(event.id);
+            await this.rollBackDelivery(wait, event);
+            continue;
+          }
+          outcome.terminal = true;
+          await this.finalizeDelivery(wait, event);
+          continue;
+        }
+        outcome.deliveredEventIds.add(event.id);
+        await this.finalizeDelivery(wait, event);
       }
-      outcome.deliveredEventIds.add(event.id);
+      return outcome;
+    } finally {
+      if (ownsOutcome) this.activeDrainOutcomes.delete(runId);
     }
-    return outcome;
+  }
+
+  private async finalizeDelivery(
+    wait: PersistedPendingEventWait,
+    event: RunEventEnvelope,
+  ): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    try {
+      await backend.finalizeRunEventDelivery(wait.runId, event.id);
+    } catch (error) {
+      logger.error(
+        "Failed to finalize an event delivery mailbox reservation",
+        { runId: wait.runId, waitId: wait.id, eventId: event.id },
+        error,
+      );
+    }
   }
 
   /**
@@ -517,6 +546,7 @@ export class EventWaitManager {
       this.clearExpiry(wait.id);
       this.expire(wait).catch((error) => {
         logger.error("Failed to apply event wait timeout", { waitId: wait.id }, error);
+        this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
       });
     }, Math.max(minimumDelayMs, wait.expiresAt.getTime() - Date.now()));
     // Unreferenced like the sweep interval: a deadline timer is a convenience
@@ -681,7 +711,6 @@ export class EventWaitManager {
     const backend = this.config.backend;
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
 
-    const now = Date.now();
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
     for (const { runId, wait } of await backend.listPendingEventWaits()) {
       // A wait whose run is already terminal can never be delivered or
@@ -711,7 +740,7 @@ export class EventWaitManager {
         continue;
       }
 
-      if (!wait.expiresAt || now <= wait.expiresAt.getTime()) continue;
+      if (!wait.expiresAt || Date.now() <= wait.expiresAt.getTime()) continue;
       try {
         await this.expire(wait);
       } catch (error) {

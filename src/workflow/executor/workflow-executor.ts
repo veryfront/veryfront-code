@@ -25,6 +25,7 @@ import type {
 import { generateId, parseDuration } from "../types.ts";
 import {
   hasEventWaitSupport,
+  hasRunPatchKeyMergeSupport,
   restoreRunStateIfStatus,
   updateRunIfStatus,
   type WorkflowBackend,
@@ -191,6 +192,7 @@ export class WorkflowExecutor {
       onNodeStatesChanged: ({
         runId,
         nodeStates,
+        nodeStatePatch,
         currentNodes,
         context,
         contextPatch,
@@ -201,7 +203,12 @@ export class WorkflowExecutor {
           runId,
           ["running"],
           {
-            nodeStates,
+            nodeStates: hasRunPatchKeyMergeSupport(this.config.backend)
+              ? nodeStatePatch.set
+              : nodeStates,
+            nodeStateDeletes: hasRunPatchKeyMergeSupport(this.config.backend)
+              ? nodeStatePatch.delete
+              : undefined,
             currentNodes,
             context: toPersistedWorkflowContext(context),
             contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant"),

@@ -57,6 +57,12 @@ class MockRedisAdapter implements RedisAdapter {
     value: string,
     replaceMaps = false,
   ): void {
+    if (field === "nodeStateDeletes") {
+      const nodeStates = JSON.parse(hash.get("nodeStates") ?? "{}") as Record<string, unknown>;
+      for (const key of JSON.parse(value) as string[]) delete nodeStates[key];
+      hash.set("nodeStates", JSON.stringify(nodeStates));
+      return;
+    }
     if (field === "contextDeletes") {
       const context = JSON.parse(hash.get("context") ?? "{}") as Record<string, unknown>;
       for (const key of JSON.parse(value) as string[]) delete context[key];
@@ -1908,6 +1914,33 @@ describe("RedisBackend", () => {
         mockRedis.lastScript,
         "field == 'contextDeletes'",
         "the Lua patch must apply deletions atomically with context key merges",
+      );
+    });
+
+    it("applies explicit node-state deletions without replacing concurrent keys", async () => {
+      await backend.createRun(createTestRun("run-node-state-delete"));
+      await backend.updateRun("run-node-state-delete", {
+        nodeStates: {
+          removed: { nodeId: "removed", status: "completed", attempt: 1 },
+          concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        },
+      });
+
+      await backend.updateRun("run-node-state-delete", {
+        nodeStates: {
+          kept: { nodeId: "kept", status: "completed", attempt: 1 },
+        },
+        nodeStateDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun("run-node-state-delete"))?.nodeStates, {
+        concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        kept: { nodeId: "kept", status: "completed", attempt: 1 },
+      });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "field == 'nodeStateDeletes'",
+        "the Lua patch must apply deletions atomically with node-state key merges",
       );
     });
 

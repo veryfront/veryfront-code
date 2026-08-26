@@ -1308,6 +1308,13 @@ describe("DAGExecutor", () => {
     });
 
     it("removes child node states from previous dynamic loop iterations", async () => {
+      const persistedDeletes: string[][] = [];
+      const deletingExecutor = new DAGExecutor({
+        stepExecutor,
+        onNodeStatesChanged: ({ nodeStatePatch }) => {
+          persistedDeletes.push(nodeStatePatch.delete);
+        },
+      });
       const nodes: WorkflowNode[] = [
         {
           id: "the-loop",
@@ -1325,12 +1332,28 @@ describe("DAGExecutor", () => {
         },
       ];
 
-      const result = await executor.execute(nodes, createTestRun());
+      const result = await deletingExecutor.execute(
+        nodes,
+        createTestRun({
+          nodeStates: {
+            "old-child": {
+              nodeId: "old-child",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+        }),
+      );
 
       assertEquals(result.completed, true);
       assertEquals(result.nodeStates["old-child"], undefined);
       assertExists(result.nodeStates["current-child"]);
       assertEquals(result.nodeStates["current-child"]!.status, "completed");
+      assertEquals(
+        persistedDeletes.some((deleted) => deleted.includes("old-child")),
+        true,
+        "durable node-state patches must carry dynamic child deletions",
+      );
     });
   });
 

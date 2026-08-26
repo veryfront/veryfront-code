@@ -154,7 +154,12 @@ local function decodePatchJson(value)
   return cjson.decode(value)
 end
 local function applyPatchField(field, value)
-  if field == 'contextDeletes' then
+  if field == 'nodeStateDeletes' then
+    local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+    local deleted = decodePatchJson(value)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
+  elseif field == 'contextDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
     local deleted = decodePatchJson(value)
     for _, key in ipairs(deleted) do current[key] = nil end
@@ -218,7 +223,12 @@ local function decodePatchJson(value)
   return cjson.decode(value)
 end
 local function applyPatchField(field, value)
-  if field == 'contextDeletes' then
+  if field == 'nodeStateDeletes' then
+    local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+    local deleted = decodePatchJson(value)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
+  elseif field == 'contextDeletes' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
     local deleted = decodePatchJson(value)
     for _, key in ipairs(deleted) do current[key] = nil end
@@ -909,6 +919,9 @@ export class RedisBackend implements WorkflowBackend {
       fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
     }
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    if (patch.nodeStateDeletes !== undefined) {
+      fields.nodeStateDeletes = JSON.stringify(patch.nodeStateDeletes);
+    }
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (context !== undefined) fields.context = context;
     if (patch.contextDeletes !== undefined) {
