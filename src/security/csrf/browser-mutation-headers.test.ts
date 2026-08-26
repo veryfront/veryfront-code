@@ -89,6 +89,25 @@ describe("csrfMutationHeadersFor", () => {
     );
   });
 
+  it("normalizes an explicit default cookie name for an insecure origin", () => {
+    const origin = "http://app.test";
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: "vf_csrf=tok-insecure",
+        baseURI: `${origin}/page`,
+        origin,
+      },
+      { cookieName: DEFAULT_CSRF_COOKIE_NAME },
+    );
+
+    assertEquals(
+      headers.get(DEFAULT_CSRF_HEADER_NAME),
+      "tok-insecure",
+      "the browser must use the same insecure-origin default as issuance and validation",
+    );
+  });
+
   it("lets an explicit caller name override the advertisement", () => {
     const headers = csrfMutationHeadersFor(
       "/api/cases",

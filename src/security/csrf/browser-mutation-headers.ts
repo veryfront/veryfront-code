@@ -13,7 +13,7 @@ import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 import {
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
-  defaultCsrfCookieNameForOrigin,
+  effectiveCsrfCookieNameForOrigin,
   resolveCsrfNames,
 } from "./names.ts";
 
@@ -76,8 +76,10 @@ export function csrfMutationHeadersFor(
     facts.origin,
   );
   const { cookieName, headerName } = resolveCsrfNames({
-    cookieName: options.cookieName ?? advertised?.cookieName ??
-      defaultCsrfCookieNameForOrigin(facts.origin),
+    cookieName: effectiveCsrfCookieNameForOrigin(
+      options.cookieName ?? advertised?.cookieName,
+      facts.origin,
+    ),
     headerName: options.headerName ?? advertised?.headerName,
   });
   if (headers.has(headerName)) return headers;
