@@ -56,6 +56,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const currentRequestContext = useRef(requestContext);
   currentRequestContext.current = requestContext;
   const decisionSequence = useRef(0);
+  const decisionRequestContext = useRef(requestContext);
 
   const [approvalState, setApprovalState] = useState<
     {
@@ -72,7 +73,9 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   }, []);
 
   useEffect(() => {
+    if (decisionRequestContext.current === requestContext) return;
     decisionSequence.current++;
+    decisionRequestContext.current = requestContext;
     setIsSubmitting(false);
   }, [requestContext]);
 
@@ -133,6 +136,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const submitDecision = useCallback(
     async (decision: ApprovalDecision): Promise<void> => {
       if (!runId || !approvalId) return;
+      decisionRequestContext.current = requestContext;
       const sequence = ++decisionSequence.current;
       const submittedRequestContext = requestContext;
       const isCurrentRequest = (): boolean =>

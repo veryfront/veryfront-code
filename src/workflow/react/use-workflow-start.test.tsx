@@ -89,6 +89,111 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("keeps an approval decision launched from a layout effect current on mount", async () => {
+    const restoreDom = installDom();
+    const decisionResponse = Promise.withResolvers<Response>();
+    const decisions: string[] = [];
+    const onDecision = (decision: { approver: string }): void => {
+      decisions.push(decision.approver);
+    };
+    let hook: UseApprovalResult | null = null;
+    let decisionPromise: Promise<void> | null = null;
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) =>
+        init?.method === "POST" ? decisionResponse.promise : Promise.resolve(
+          Response.json({ id: "approval-1", status: "pending" }),
+        )) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        approver: "layout-user",
+        onDecision,
+      });
+      const approve = hook.approve;
+      useLayoutEffect(() => {
+        decisionPromise = approve();
+      }, [approve]);
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      assertEquals(hook!.isSubmitting, true);
+
+      decisionResponse.resolve(Response.json({ resolvedBy: "server-user" }));
+      await decisionPromise;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isSubmitting, false);
+      assertEquals(hook!.approval?.status, "approved");
+      assertEquals(hook!.approval?.resolvedBy, "server-user");
+      assertEquals(decisions, ["server-user"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("keeps a layout-effect decision current after the approval context changes", async () => {
+    const restoreDom = installDom();
+    const decisionResponse = Promise.withResolvers<Response>();
+    const decisions: string[] = [];
+    const onDecision = (decision: { approver: string }): void => {
+      decisions.push(decision.approver);
+    };
+    let hook: UseApprovalResult | null = null;
+    let decisionPromise: Promise<void> | null = null;
+
+    installMockFetch(
+      ((input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST") return decisionResponse.promise;
+        return Promise.resolve(Response.json({
+          id: String(input).split("/").at(-1),
+          status: "pending",
+        }));
+      }) as typeof fetch,
+    );
+
+    function Capture({ approvalId, decide }: { approvalId: string; decide: boolean }): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId,
+        approver: "layout-user",
+        onDecision,
+      });
+      const approve = hook.approve;
+      useLayoutEffect(() => {
+        if (decide) decisionPromise = approve();
+      }, [approve, decide]);
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture approvalId="approval-old" decide={false} />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      flushSync(() => root.render(<Capture approvalId="approval-new" decide />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isSubmitting, true);
+
+      decisionResponse.resolve(Response.json({ resolvedBy: "server-user" }));
+      await decisionPromise;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isSubmitting, false);
+      assertEquals(hook!.approval?.id, "approval-new");
+      assertEquals(hook!.approval?.status, "approved");
+      assertEquals(decisions, ["server-user"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("ignores an obsolete start response after authorization changes", async () => {
     const restoreDom = installDom();
     const oldResponse = Promise.withResolvers<Response>();
