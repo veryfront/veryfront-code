@@ -1068,7 +1068,7 @@ describe("Bun workspace resolution", () => {
           "    const { default: value } = await import(dependency);\n" +
           `    globalThis[${JSON.stringify(resultMarker)}] = value;\n` +
           "  },\n" +
-          "] };\n";
+          "}] };\n";
         await writeTextFile(configPath, source);
         await writeTextFile(helperPath, 'export default "before";\n');
         adapter.fs.files.set(configPath, source);
