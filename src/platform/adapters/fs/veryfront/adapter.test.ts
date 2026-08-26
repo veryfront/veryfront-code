@@ -818,6 +818,35 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(reordered, first);
       assertNotEquals(changed, first);
     });
+
+    it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const internals = adapter as unknown as {
+        getCurrentSourceSnapshotIdentity(): string | undefined;
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
+        sourceSnapshotIdentity: string | undefined;
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      };
+      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "old source" }];
+      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotCheckedAt = Date.now();
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+
+      internals.wsManager.deps.clearMemoryCaches();
+
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+      assertEquals(internals.sourceSnapshotFiles, undefined);
+      assertEquals(internals.sourceSnapshotIdentity, undefined);
+      assertEquals(internals.sourceSnapshotCheckedAt, 0);
+      assertEquals(internals.sourceSnapshotFingerprint, undefined);
+    });
   });
 
   describe("dispose", () => {
