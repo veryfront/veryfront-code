@@ -14,6 +14,7 @@ interface Binding {
     readonly propertyName: string | null;
   }>;
   readonly workerObjectInitializers: ASTNode[];
+  hasAliasAssignment: boolean;
   prototypeMutated: boolean;
   enumerableProtoPropertyDefined: boolean;
 }
@@ -48,6 +49,23 @@ const COMMENT_KEYS = new Set([
 ]);
 const METADATA_KEYS = new Set(["loc", "start", "end", "extra", "errors", "tokens"]);
 const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "self", "window"]);
+const WELL_KNOWN_SYMBOL_NAMES = new Set([
+  "asyncDispose",
+  "asyncIterator",
+  "dispose",
+  "hasInstance",
+  "isConcatSpreadable",
+  "iterator",
+  "match",
+  "matchAll",
+  "replace",
+  "search",
+  "species",
+  "split",
+  "toPrimitive",
+  "toStringTag",
+  "unscopables",
+]);
 const REMOTE_OR_INLINE_URL = /^(?:https?|data|blob):/i;
 const FILE_URL = /^file:/i;
 const LOCAL_MODULE_SPECIFIER = /^\.\.?\//;
@@ -153,6 +171,7 @@ function ensureBinding(scope: Scope, name: string): Binding {
     initializers: [],
     memberInitializers: [],
     workerObjectInitializers: [],
+    hasAliasAssignment: false,
     prototypeMutated: false,
     enumerableProtoPropertyDefined: false,
   };
@@ -271,6 +290,7 @@ function collectDestructuringAliasAssignments(
     if (value.type !== "Identifier" || typeof value.name !== "string") continue;
     const binding = resolveBinding(scope, value.name);
     if (binding === null) continue;
+    binding.hasAliasAssignment = true;
     const propertyName = staticPropertyKey(property);
     binding.memberInitializers.push({ objectInitializer, propertyName });
     if (propertyName === "Worker") binding.workerObjectInitializers.push(objectInitializer);
@@ -457,7 +477,11 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
       isNode(node.left) && isNode(node.right)
     ) {
       if (node.left.type === "Identifier" && typeof node.left.name === "string") {
-        resolveBinding(scope, node.left.name)?.initializers.push(node.right);
+        const binding = resolveBinding(scope, node.left.name);
+        if (binding) {
+          binding.hasAliasAssignment = true;
+          binding.initializers.push(node.right);
+        }
       } else if (node.left.type === "ObjectPattern") {
         collectDestructuringAliasAssignments(scope, node.left, node.right);
       }
@@ -1982,8 +2006,11 @@ function applyMemberCapability(
   const object = patternChild(node.object);
   const objectIsProvablyPlain = object !== undefined &&
     isPlainObjectValue(object, scope, nodeScopes);
-  const mayReadConstructor = !isSimpleMemberAssignmentTarget(node, parents) &&
-    (property === "constructor" || node.computed === true && property === null);
+  const computedKeyIsDefinitelySymbol = node.computed === true && isNode(node.property) &&
+    isDefinitelySymbolValue(node.property, scope, nodeScopes);
+  const mayReadConstructor = !isMemberWriteTarget(node, parents) &&
+    (property === "constructor" ||
+      node.computed === true && property === null && !computedKeyIsDefinitelySymbol);
   if (mayReadConstructor && !objectIsProvablyPlain) analysis.hasDynamicCodeGeneration = true;
   if (object === undefined || !isGlobalObject(object, scope, nodeScopes)) return;
   if (property === null || property === "eval" || property === "Function") {
@@ -1997,13 +2024,137 @@ function applyMemberCapability(
   }
 }
 
-function isSimpleMemberAssignmentTarget(
+function isMemberWriteTarget(
   node: ASTNode,
   parents: WeakMap<ASTNode, ParentLink>,
 ): boolean {
-  const link = parents.get(node);
-  return link?.parent.type === "AssignmentExpression" && link.key === "left" &&
-    link.parent.operator === "=";
+  let current = node;
+  while (true) {
+    const link = parents.get(current);
+    if (!link) return false;
+    if (
+      link.parent.type === "AssignmentExpression" && link.key === "left" &&
+      link.parent.operator === "="
+    ) return true;
+    if (
+      (link.parent.type === "ForInStatement" || link.parent.type === "ForOfStatement") &&
+      link.key === "left"
+    ) return true;
+    if (!isNestedBindingPatternPosition(link.parent, link.key, parents)) return false;
+    current = link.parent;
+  }
+}
+
+function isDefinitelySymbolValue(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (
+      binding === null || binding.hasAliasAssignment || seen.has(binding) ||
+      binding.initializers.length === 0
+    ) return false;
+    seen.add(binding);
+    return binding.initializers.every((initializer) =>
+      isDefinitelySymbolValue(
+        initializer,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    );
+  }
+  if (isCallExpression(expression) && isNode(expression.callee)) {
+    const callee = unwrapExpression(expression.callee);
+    return resolvesDefinitelyToGlobalIntrinsic(callee, "Symbol", scope, nodeScopes) ||
+      (isMemberExpressionWithObject(callee) && memberPropertyName(callee) === "for" &&
+        resolvesDefinitelyToGlobalIntrinsic(callee.object, "Symbol", scope, nodeScopes));
+  }
+  if (isMemberExpressionWithObject(expression)) {
+    const propertyName = memberPropertyName(expression);
+    return propertyName !== null && WELL_KNOWN_SYMBOL_NAMES.has(propertyName) &&
+      resolvesDefinitelyToGlobalIntrinsic(expression.object, "Symbol", scope, nodeScopes);
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return expression.operator === "=" &&
+      isDefinitelySymbolValue(expression.right, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  return branches !== null &&
+    isDefinitelySymbolValue(branches[0], scope, nodeScopes, new Set(seen)) &&
+    isDefinitelySymbolValue(branches[1], scope, nodeScopes, new Set(seen));
+}
+
+function resolvesDefinitelyToGlobalIntrinsic(
+  node: ASTNode,
+  name: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null) return expression.name === name;
+    if (
+      binding.hasAliasAssignment || seen.has(binding) || binding.initializers.length === 0
+    ) return false;
+    seen.add(binding);
+    return binding.initializers.every((initializer) =>
+      resolvesDefinitelyToGlobalIntrinsic(
+        initializer,
+        name,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    );
+  }
+  if (isMemberExpressionWithObject(expression) && memberPropertyName(expression) === name) {
+    return isUnshadowedGlobalObjectExpression(expression.object, scope);
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return expression.operator === "=" &&
+      resolvesDefinitelyToGlobalIntrinsic(expression.right, name, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  return branches !== null &&
+    resolvesDefinitelyToGlobalIntrinsic(
+      branches[0],
+      name,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) &&
+    resolvesDefinitelyToGlobalIntrinsic(
+      branches[1],
+      name,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+}
+
+function isUnshadowedGlobalObjectExpression(
+  node: ASTNode,
+  scope: Scope,
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    return GLOBAL_OBJECT_NAMES.has(expression.name) &&
+      resolveBinding(scope, expression.name) === null;
+  }
+  if (
+    isMemberExpressionWithObject(expression) &&
+    GLOBAL_OBJECT_NAMES.has(memberPropertyName(expression) ?? "")
+  ) {
+    return isUnshadowedGlobalObjectExpression(expression.object, scope);
+  }
+  return false;
 }
 
 function applyCallCapability(
