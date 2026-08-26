@@ -6,6 +6,7 @@ import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchWithTimeout,
   pollUrlReady,
@@ -241,8 +242,12 @@ async function waitForPageContent(
   while (Date.now() < deadline) {
     try {
       const response = await fetchWithTimeout(`http://127.0.0.1:${port}/`, 1_000);
-      const content = await response.text();
-      if (content.includes(expected)) return;
+      try {
+        const content = await response.text();
+        if (content.includes(expected)) return;
+      } finally {
+        await response.body?.cancel().catch(() => {});
+      }
     } catch {
       // The server may be between reloads.
     }
@@ -272,6 +277,36 @@ async function requestPageAndApi(port: number): Promise<void> {
 describe(
   "veryfront dev output",
   () => {
+    it("releases page responses when reading fails and retries", async () => {
+      let attempts = 0;
+      let cancellations = 0;
+      const response = (text: () => Promise<string>): Response =>
+        ({
+          text,
+          body: {
+            cancel: () => {
+              cancellations++;
+              return Promise.resolve();
+            },
+          },
+        }) as unknown as Response;
+
+      await withMockFetch(
+        () => {
+          attempts++;
+          return Promise.resolve(
+            attempts === 1
+              ? response(() => Promise.reject(new DOMException("Body read aborted", "AbortError")))
+              : response(() => Promise.resolve("updated dev logs page")),
+          );
+        },
+        () => waitForPageContent(30_010, "updated dev logs page", 250),
+      );
+
+      assertEquals(attempts, 2);
+      assertEquals(cancellations, 2);
+    });
+
     it(
       "keeps default dev output focused on readiness and hides routine diagnostics",
       { timeout: TEST_TIMEOUTS.INTEGRATION },
