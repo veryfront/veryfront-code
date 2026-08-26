@@ -392,15 +392,13 @@ async function reconcileNodeOutcome(
     for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
       const run = await requireActiveReconcileRun(backend, input.runId);
       if (!isActiveReconcileRun(run)) return { status: "skipped-terminal", run };
-      if (input.isApplicable && !input.isApplicable(run)) return { status: "stale-wait", run };
+      if (input.isApplicable?.(run) === false) return { status: "stale-wait", run };
 
       const expectedWorkerId = run.workerId;
       const updated = await patchNodeOutcome(backend, input, run, expectedWorkerId);
       if (!updated) {
-        const latest = await backend.getRun(input.runId);
-        if (!isActiveReconcileRun(latest)) {
-          return { status: "skipped-terminal", run: latest ?? undefined };
-        }
+        const skipped = await skippedTerminalReconcileOutcome(backend, input.runId);
+        if (skipped) return skipped;
         continue;
       }
       outcomeCommitted = true;
@@ -421,6 +419,16 @@ async function reconcileNodeOutcome(
 
 function isActiveReconcileRun(run: WorkflowRun | null): run is WorkflowRun {
   return run !== null && ACTIVE_RECONCILE_STATUSES.includes(run.status);
+}
+
+async function skippedTerminalReconcileOutcome(
+  backend: WorkflowBackend,
+  runId: string,
+): Promise<WorkflowRunControlReconcileOutcome | undefined> {
+  const latest = await backend.getRun(runId);
+  return isActiveReconcileRun(latest)
+    ? undefined
+    : { status: "skipped-terminal", run: latest ?? undefined };
 }
 
 async function requireActiveReconcileRun(
@@ -988,7 +996,7 @@ export async function executeWorkflowRunControl(
       await releaseWaitingLock();
       const releasedRun = await backend.getRun(runId);
       if (
-        !releasedRun || releasedRun.status !== "waiting" ||
+        releasedRun?.status !== "waiting" ||
         executionController.signal.aborted ||
         !input.isCurrentExecution(runId, executionController) ||
         (expectedWorkerId !== undefined && releasedRun.workerId !== expectedWorkerId)
@@ -1075,7 +1083,7 @@ export async function executeWorkflowRunControl(
       await releaseWaitingLock();
       const releasedRun = await backend.getRun(runId);
       if (
-        !releasedRun || releasedRun.status !== "waiting" ||
+        releasedRun?.status !== "waiting" ||
         executionController.signal.aborted ||
         !input.isCurrentExecution(runId, executionController) ||
         (expectedWorkerId !== undefined && releasedRun.workerId !== expectedWorkerId)

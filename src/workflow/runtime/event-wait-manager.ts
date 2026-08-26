@@ -140,26 +140,26 @@ function timedWaitClaimKey(runId: string, waitId: string): string {
  * and the backend's atomic resolve decides that race.
  */
 export class EventWaitManager {
-  private config: EventWaitManagerConfig;
+  private readonly config: EventWaitManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
   /** Independent discovery for claims abandoned after this manager starts. */
   private claimRecoveryCheckTimer?: ReturnType<typeof setInterval>;
   private claimRecoveryCheck?: Promise<void>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
-  private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Shared accumulator and completion barrier for same-backend, same-run drain passes. */
-  private drainSessions: Map<string, DrainSession>;
+  private readonly drainSessions: Map<string, DrainSession>;
   /** Best-effort prompt retries; durable claims remain the restart fallback. */
-  private finalizationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private finalizationRetryAttempts = new Map<string, number>();
+  private readonly finalizationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly finalizationRetryAttempts = new Map<string, number>();
   /** Best-effort retries for mail drained after its publisher already returned. */
-  private deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private deliveryRetryAttempts = new Map<string, number>();
+  private readonly deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly deliveryRetryAttempts = new Map<string, number>();
   /** Prompt retries for a committed node whose run resume did not complete. */
-  private committedResumeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private committedResumeRetryAttempts = new Map<string, number>();
+  private readonly committedResumeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly committedResumeRetryAttempts = new Map<string, number>();
   /** Same-process timeout claims still reconciling their matching run transition. */
-  private activeTimedWaitClaims = new Set<string>();
+  private readonly activeTimedWaitClaims = new Set<string>();
   private destroyed = false;
 
   constructor(config: EventWaitManagerConfig) {
@@ -1098,10 +1098,10 @@ export class EventWaitManager {
   private async recoverAbandonedDeliveries(
     runId?: string,
     activeRecoveryRunId?: string,
-  ): Promise<Set<string>> {
+  ): Promise<readonly string[]> {
     const backend = this.config.backend;
     const restoredRunIds = new Set<string>();
-    if (this.destroyed || !hasEventWaitSupport(backend)) return restoredRunIds;
+    if (this.destroyed || !hasEventWaitSupport(backend)) return [];
     const recoveryDelay = this.config.deliveryClaimRecoveryDelay ??
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS;
     const recoveryLease = Math.max(recoveryDelay, MIN_CLAIM_RECOVERY_LEASE_MS);
@@ -1121,7 +1121,7 @@ export class EventWaitManager {
       if (!await this.reserveAbandonedTimedWait(wait, recoveryDelay, recoveryLease)) continue;
       await this.recoverAbandonedTimedWait(wait, restoredRunIds);
     }
-    return restoredRunIds;
+    return Array.from(restoredRunIds);
   }
 
   private async reserveAbandonedDeliveryClaim(
