@@ -1655,15 +1655,25 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 //
 // The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
 // 0x2F is `/` -- the first character of the path this pass exists to preserve.
+const CSI_GLUED_PATH =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/])/g;
+// The same pre-pass for a special-scheme URL start, which the CSI grammar eats
+// exactly as it eats a path. In `ESC[https:registry.internal/x`, `h` is a legal
+// final byte, so the CSI pass left `ttps:registry.internal/x`:
+// ZERO_SLASH_SCHEME_URL no longer recognises the damaged scheme, and
+// POSIX_ABSOLUTE_PATH refuses the `/x` that follows a hostname, so the private
+// host reached the caller. `wss`, `ftp`, the 8-bit introducer, a parameterized
+// introducer and an uppercase scheme all leaked the same way; the single-slash
+// form survived but emitted `ttp[path]`, the path-as-URL mislabel this PR
+// exists to remove.
 //
-// A special-scheme URL start is preserved for the same reason a path is. In
-// `ESC[https:registry.internal/x`, `h` is a legal final byte, so the CSI pass
-// left `ttps:registry.internal/x`: ZERO_SLASH_SCHEME_URL no longer recognises
-// the damaged scheme, and POSIX_ABSOLUTE_PATH refuses the `/x` that follows a
-// hostname, so the private host reached the caller. `wss`, `ftp`, the 8-bit
-// introducer, a parameterized introducer and an uppercase scheme all leaked the
-// same way; the single-slash form survived but emitted `ttp[path]`, the
-// path-as-URL mislabel this PR exists to remove.
+// A separate constant rather than a third alternative in the one above. The two
+// share a prefix, so folding them together is the obvious move -- and it is what
+// took SonarCloud's maintainability rating on new code to B. Splitting a dense
+// alternation into plain per-shape constants is what cleared the same gate
+// earlier in this PR, when `REMOTE_URL` became SCHEME_URL and
+// MALFORMED_SCHEME_URL. Each pass reads as one rule.
 //
 // Only the special schemes are listed, matching MALFORMED_SCHEME_URL and
 // ZERO_SLASH_SCHEME_URL -- keep the three in sync. A generic
@@ -1674,9 +1684,9 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 //
 // `i` is safe on the whole pattern: every other class is either explicitly
 // both cases (`[A-Za-z]`) or contains no letters at all.
-const CSI_GLUED_PATH =
+const CSI_GLUED_URL =
   // deno-lint-ignore no-control-regex
-  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/]|(?:https?|wss?|ftp):)/gi;
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=(?:https?|wss?|ftp):)/gi;
 // The scheme needs at least two characters: `C://Users/alice` is a drive path
 // that Node normalises, not a URL with the one-letter scheme `C`, and matching it
 // here reintroduced the path-as-URL mislabel this PR exists to remove. No
@@ -1876,8 +1886,9 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   // end, which keeps `redactMachinePaths` running exactly once and after
   // de-colorization -- the precondition its own docstring states.
   const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
+  const ungluedUrl = replaceMatchesWithCapturedExec(unglued, CSI_GLUED_URL, " ");
   const deColorized = replaceMatchesWithCapturedExec(
-    unglued,
+    ungluedUrl,
     ANSI_CSI_SEQUENCE,
     "",
   );
