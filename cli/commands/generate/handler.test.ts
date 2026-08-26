@@ -7,6 +7,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleGenerateCommand, parseGenerateArgs } from "./handler.ts";
+import { generateHelp } from "./command-help.ts";
+import { generateCommandSchema } from "../schema/command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/generate/handler", () => {
@@ -92,6 +94,20 @@ describe("commands/generate/handler", () => {
       }
     });
 
+    it("parses auth presets through the existing type and name positions", () => {
+      for (const preset of ["authelia", "oidc", "microsoft-entra"]) {
+        const result = parseGenerateArgs({
+          _: ["generate", "auth", preset],
+        });
+
+        assertEquals(result.success, true, `expected auth ${preset} to parse`);
+        if (result.success) {
+          assertEquals(result.data.type, "auth");
+          assertEquals(result.data.name, preset);
+        }
+      }
+    });
+
     it("rejects provider type because the generator does not implement it", () => {
       const result = parseGenerateArgs({
         _: ["generate", "provider", "theme"],
@@ -116,5 +132,39 @@ describe("commands/generate/handler usage errors", () => {
     assertEquals(error instanceof VeryfrontError, true);
     assertEquals((error as VeryfrontError).slug, "invalid-argument");
     assertEquals((error as VeryfrontError).exitCode, 2);
+  });
+
+  it("requires an auth preset and lists the valid preset values", async () => {
+    const error = await assertRejects(() => handleGenerateCommand({ _: ["generate", "auth"] }));
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "invalid-argument");
+    assertEquals((error as VeryfrontError).message.includes("authelia"), true);
+    assertEquals((error as VeryfrontError).message.includes("oidc"), true);
+    assertEquals((error as VeryfrontError).message.includes("microsoft-entra"), true);
+  });
+
+  it("rejects an unknown auth preset as a usage error", async () => {
+    const error = await assertRejects(() =>
+      handleGenerateCommand({ _: ["generate", "auth", "ldap"] })
+    );
+
+    assertEquals(error instanceof VeryfrontError, true);
+    assertEquals((error as VeryfrontError).slug, "invalid-argument");
+    assertEquals((error as VeryfrontError).exitCode, 2);
+    assertEquals(
+      (error as VeryfrontError).message.includes("authelia, oidc, microsoft-entra"),
+      true,
+    );
+  });
+});
+
+describe("commands/generate help and schema", () => {
+  it("documents auth presets in human help and machine schema examples", () => {
+    assertEquals(generateHelp.notes?.some((note) => note.includes("auth")), true);
+    assertEquals(generateHelp.examples?.includes("veryfront generate auth authelia"), true);
+
+    const schema = generateCommandSchema("generate");
+    assertEquals(schema?.examples.includes("veryfront generate auth microsoft-entra"), true);
   });
 });

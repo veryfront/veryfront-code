@@ -41,7 +41,7 @@ import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const fs = createFileSystem();
-const appRouteContext: AppRouteContext = { params: {}, env: {} };
+const appRouteContext: AppRouteContext = { params: {}, identity: null, env: {} };
 const denoIt = isDeno ? it : it.skip;
 
 async function getText(route: APIRoute | null): Promise<string | undefined> {

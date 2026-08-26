@@ -7,21 +7,43 @@
  * the proxy for project filesystem access.
  */
 const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const NativeNumber = Number;
+const NativeSet = Set;
 const NativeHeaders = Headers;
 const NativeRequest = Request;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const getOwnPropertySymbols = Object.getOwnPropertySymbols;
 const headersAppend = NativeHeaders.prototype.append;
 const headersForEach = NativeHeaders.prototype.forEach;
+const numberIsSafeInteger = NativeNumber.isSafeInteger;
+const objectKeys = Object.keys;
+const regexpTest = RegExp.prototype.test;
 const requestClone = NativeRequest.prototype.clone;
+const setAdd = NativeSet.prototype.add;
+const setHas = NativeSet.prototype.has;
 const requestHeadersGetter = getOwnPropertyDescriptor(
   NativeRequest.prototype,
   "headers",
 )?.get;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringStartsWith = String.prototype.startsWith;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const MAX_DYNAMIC_DENY_HEADERS = 32;
+const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
 
 if (typeof requestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
+}
+
+function setContains<T>(set: ReadonlySet<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function setInsert<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
 }
 
 export function isInfrastructureOnlyRequestHeader(name: string): boolean {
@@ -55,12 +77,84 @@ export function isInfrastructureOnlyRequestHeader(name: string): boolean {
   }
 }
 
+export interface ApplicationRequestHeaderOptions {
+  readonly denyHeaders?: readonly string[];
+}
+
+function normalizeDynamicDenyHeaders(
+  names: readonly string[] | undefined,
+): ReadonlySet<string> | null {
+  try {
+    if (names === undefined) return new NativeSet<string>();
+    if (!arrayIsArray(names) || getOwnPropertySymbols(names).length > 0) return null;
+
+    const descriptors = getOwnPropertyDescriptors(names);
+    const lengthDescriptor = getOwnPropertyDescriptor(names, "length");
+    if (
+      !lengthDescriptor ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !numberIsSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value > MAX_DYNAMIC_DENY_HEADERS
+    ) {
+      return null;
+    }
+
+    const denylist = new NativeSet<string>();
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = descriptors[index];
+      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+        return null;
+      }
+      const name = descriptor.value;
+      if (
+        name.length === 0 ||
+        name.length > MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH ||
+        !(apply(regexpTest, HEADER_NAME_PATTERN, [name]) as boolean)
+      ) {
+        return null;
+      }
+      setInsert(denylist, apply(stringToLowerCase, name, []) as string);
+    }
+
+    const keys = objectKeys(descriptors);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index]!;
+      if (key === "length" || isArrayIndexKey(key)) continue;
+      return null;
+    }
+    return denylist;
+  } catch {
+    return null;
+  }
+}
+
+function isArrayIndexKey(value: string): boolean {
+  if (value === "0") return true;
+  if (value.length === 0 || value[0] === "0") return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code < 48 || code > 57) return false;
+  }
+  const numeric = apply(NativeNumber, undefined, [value]) as number;
+  return numberIsSafeInteger(numeric) && numeric >= 0 && numeric < 2 ** 32 - 1;
+}
+
 /** Copy only application-owned headers across the project-code boundary. */
-export function createApplicationRequestHeaders(headers: Headers): Headers {
+export function createApplicationRequestHeaders(
+  headers: Headers,
+  options: ApplicationRequestHeaderOptions = {},
+): Headers {
+  const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
   const applicationHeaders = new NativeHeaders();
+  if (dynamicDenyHeaders === null) return applicationHeaders;
+
   apply(headersForEach, headers, [
     (value: string, name: string) => {
-      if (!isInfrastructureOnlyRequestHeader(name)) {
+      const normalized = apply(stringToLowerCase, name, []) as string;
+      if (
+        !setContains(dynamicDenyHeaders, normalized) && !isInfrastructureOnlyRequestHeader(name)
+      ) {
         apply(headersAppend, applicationHeaders, [name, value]);
       }
     },
@@ -74,10 +168,13 @@ export function createApplicationRequestHeaders(headers: Headers): Headers {
  * Cloning first preserves the host-owned request body for later framework
  * processing while giving project code an independent header list.
  */
-export function createApplicationRequest(request: Request): Request {
+export function createApplicationRequest(
+  request: Request,
+  options: ApplicationRequestHeaderOptions = {},
+): Request {
   const cloned = apply(requestClone, request, []) as Request;
   const headers = apply(requestHeadersGetter!, cloned, []) as Headers;
   return new NativeRequest(cloned, {
-    headers: createApplicationRequestHeaders(headers),
+    headers: createApplicationRequestHeaders(headers, options),
   });
 }

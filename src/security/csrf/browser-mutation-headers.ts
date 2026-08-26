@@ -11,9 +11,11 @@
 
 import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 import {
+  csrfHttpsTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
   effectiveCsrfCookieNameForOrigin,
+  effectiveCsrfTokenCookieNameForOrigin,
   resolveCsrfNames,
 } from "./names.ts";
 
@@ -28,12 +30,12 @@ export interface CsrfMutationHeadersOptions {
 }
 
 /**
- * Add the double-submit token to a browser mutation aimed at this origin.
+ * Browser document state used by the pure CSRF header helper.
  *
- * No-ops on the server, when the caller already set the header, when the
- * request leaves the document origin, or when no token cookie exists.
+ * Token discovery, request URL resolution, and origin checks use one snapshot.
+ * Supply facts from the same document so those decisions stay consistent.
+ * The shape remains client-safe and contains no server-owned state.
  */
-/** The document facts the double-submit decision depends on. */
 export interface CsrfDocumentFacts {
   /** Raw `document.cookie` string. */
   readonly cookie: string;
@@ -75,19 +77,33 @@ export function csrfMutationHeadersFor(
     cookies[csrfNamesCookieName(facts.origin)],
     facts.origin,
   );
-  const { cookieName, headerName } = resolveCsrfNames({
-    cookieName: effectiveCsrfCookieNameForOrigin(
-      options.cookieName ?? advertised?.cookieName,
-      facts.origin,
-    ),
-    headerName: options.headerName ?? advertised?.headerName,
-  });
+  const configured = resolveCsrfNames(options);
+  const cookieName = options.cookieName === undefined && advertised
+    ? advertised.cookieName
+    : effectiveCsrfCookieNameForOrigin(configured.cookieName, facts.origin);
+  const headerName = options.headerName === undefined && advertised
+    ? advertised.headerName
+    : configured.headerName;
   if (headers.has(headerName)) return headers;
 
   try {
     const resolvedUrl = new URL(requestUrl, facts.baseURI);
     if (resolvedUrl.origin !== facts.origin) return headers;
-    const token = cookies[cookieName];
+    let token = cookies[cookieName];
+    if (!token) {
+      const tokenCookieName = effectiveCsrfTokenCookieNameForOrigin(
+        cookieName,
+        facts.origin,
+        false,
+      );
+      token = cookies[tokenCookieName];
+    }
+    if (
+      !token && resolvedUrl.protocol === "https:" &&
+      !cookieName.startsWith("__Host-") && !cookieName.startsWith("__Secure-")
+    ) {
+      token = cookies[csrfHttpsTokenCookieName(cookieName, facts.origin)];
+    }
     if (token) headers.set(headerName, token);
   } catch {
     // A malformed request URL cannot be proven same-origin, so send nothing.

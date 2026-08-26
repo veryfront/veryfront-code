@@ -103,6 +103,22 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
+function hasTrustedAgentToolDeclaration(agent: Agent, toolName: string): boolean {
+  const configuredTools = agent.config.tools;
+  if (configuredTools === true) {
+    const registryTool = toolRegistry.get(toolName);
+    return Boolean(
+      registryTool && isToolVisibleTo(registryTool, { agentId: agent.id }) ||
+        getAgentAllowedRemoteToolNames(agent).includes(toolName),
+    );
+  }
+  if (!isRecord(configuredTools) || !Object.hasOwn(configuredTools, toolName)) {
+    return false;
+  }
+  const entry = configuredTools[toolName];
+  return entry === true || Boolean(entry && typeof entry === "object");
+}
+
 function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
   const merged = new Set<string>();
   for (const toolName of source) {
@@ -194,11 +210,13 @@ export function buildMergedTools(
         .map(([toolName]) => toolName),
     )
     : new Set<string>();
+  const configOwnsDelegation = hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
         !concreteSourceToolNames.has(tool.name) &&
-        !serverResolvedProjectToolNames.has(tool.name)
+        !serverResolvedProjectToolNames.has(tool.name) &&
+        !(tool.name === INVOKE_AGENT_TOOL_ID && configOwnsDelegation)
       )
       .map((tool) => [
         tool.name,
@@ -492,8 +510,8 @@ function getRuntimeToolAllowlist(
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
  * Skill runtime tools are preserved for every agent. Delegation tools are
- * preserved only when the agent has at least one visible skill, mirroring
- * the hosted chat runtime's allowlist semantics.
+ * preserved only when the agent has at least one visible skill and its trusted
+ * configuration declares delegation, mirroring the hosted chat runtime.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
  * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
@@ -523,8 +541,19 @@ function applyRuntimeToolAllowlist(
   if (!allowedToolNames) {
     return mergedTools;
   }
+  // The shared resolver never appends delegation to a request-derived
+  // allowlist. Preserve invoke_agent only when the trusted agent configuration
+  // declared it; caller-injected entries in mergedTools cannot establish that
+  // provenance. An empty allowlist stays deny-all, and explicit delegation
+  // denial still strips the tool below.
+  const preservesConfigDelegation = hasVisibleSkills &&
+    allowedToolNames.size > 0 &&
+    hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
   return Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
+    Object.entries(mergedTools).filter(([toolName]) =>
+      allowedToolNames.has(toolName) ||
+      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID)
+    ),
   );
 }
 

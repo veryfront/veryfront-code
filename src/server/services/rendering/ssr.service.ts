@@ -41,6 +41,7 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
@@ -124,6 +125,8 @@ export interface SSRRenderOptions {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace paired with the immutable snapshot. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Verified application identity admitted by the host-owned auth boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
 }
 
 export interface MemoryStatus {
@@ -236,7 +239,8 @@ export class SSRService implements SSRServiceLike {
     const { request, url, slug, nonce, studioEmbed, projectId, pageId, noHmr, useNoCache } =
       options;
     const requestHasSensitiveState = requestHasCacheSensitiveState(request);
-    const mustNotCache = useNoCache || requestHasSensitiveState;
+    const hasApplicationIdentity = options.applicationIdentity != null;
+    const mustNotCache = useNoCache || requestHasSensitiveState || hasApplicationIdentity;
 
     // Project source without an explicit host capability is not trusted to
     // execute in the server process. Dedicated single-project runtimes may
@@ -313,6 +317,7 @@ export class SSRService implements SSRServiceLike {
                 dependencyPinningCacheKey: options.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options.dependencyPinningDependencies,
                 dependencyPinningSource: options.dependencyPinningSource,
+                applicationIdentity: options.applicationIdentity ?? null,
               })),
         ));
 

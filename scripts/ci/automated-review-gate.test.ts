@@ -3112,7 +3112,7 @@ describe("review wakeup identity", () => {
     path: ".github/workflows/automated-review-wakeup.yml@main",
     event: "pull_request_review",
     conclusion: "success",
-    display_title: "automated-review-wakeup-pr-123",
+    display_title: "automated-review-wakeup-pr-123-eligible",
     head_branch: "contributor-branch",
     head_sha: HEAD,
     head_repository: { id: 77 },
@@ -3131,22 +3131,33 @@ describe("review wakeup identity", () => {
   });
   const repository = { id: 88, default_branch: "main" };
 
-  it("parses only a trusted completed wakeup run", () => {
+  it("parses only trusted eligible wakeup metadata", () => {
     assertEquals(parseReviewWakeupRun(wakeupRun()), {
       pullNumber: 123,
       headBranch: "contributor-branch",
       headSha: HEAD,
       headRepositoryId: 77,
     });
+    for (const conclusion of ["failure", "cancelled"]) {
+      assertEquals(parseReviewWakeupRun(wakeupRun({ conclusion })), {
+        pullNumber: 123,
+        headBranch: "contributor-branch",
+        headSha: HEAD,
+        headRepositoryId: 77,
+      });
+    }
     for (
       const candidate of [
         wakeupRun({ path: ".github/workflows/untrusted.yml@main" }),
         wakeupRun({ path: 42 }),
         wakeupRun({ event: "pull_request" }),
-        wakeupRun({ conclusion: "failure" }),
         wakeupRun({ id: 0 }),
-        wakeupRun({ display_title: "automated-review-wakeup-pr-0" }),
-        wakeupRun({ display_title: "automated-review-wakeup-pr-123-extra" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-0-eligible" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-123" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-123-ignored" }),
+        wakeupRun({
+          display_title: "automated-review-wakeup-pr-123-eligible-extra",
+        }),
         wakeupRun({ display_title: 123 }),
         wakeupRun({ head_repository: undefined }),
         wakeupRun({ head_branch: "" }),
@@ -3279,7 +3290,11 @@ describe("automated review workflow", () => {
       const condition of [
         "github.event_name == 'merge_group'",
         "github.event.issue.pull_request",
+        "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.comment.user.id == 199175422",
+        "github.event.comment.user.type == 'Bot'",
         "github.event.workflow_run.event == 'pull_request_review'",
+        "endsWith(github.event.workflow_run.display_title, '-eligible')",
       ]
     ) {
       assert(
@@ -3288,8 +3303,16 @@ describe("automated review workflow", () => {
       );
     }
     assert(
+      !targetIf.includes("github.event.workflow_run.conclusion"),
+      "review wakeup eligibility must come from the classified wakeup run-name",
+    );
+    assert(
       !targetIf.includes("github.event.workflow_run.conclusion == 'success'"),
       "failed or cancelled review wakeups must reach trusted invalidation",
+    );
+    assert(
+      !targetIf.includes("github.event.workflow_run.actor"),
+      "downstream reconciliation must trust the classified wakeup result, not the dismissal actor",
     );
     assertEquals(record(targetJob.permissions, "target permissions"), {
       contents: "read",
@@ -3428,8 +3451,7 @@ describe("automated review workflow", () => {
     );
     assertEquals(record(mergeGroupFailureJob.env, "merge group failure env"), {
       TARGET_RESULT: "${{ needs.target.result }}",
-      TARGET_STATUS_ID:
-        "${{ needs.target.outputs.merge_group_status_id }}",
+      TARGET_STATUS_ID: "${{ needs.target.outputs.merge_group_status_id }}",
       PUBLISHER_STATUS_ID: "${{ needs.merge_group.outputs.status_id }}",
     });
     assertEquals(
@@ -3806,7 +3828,7 @@ describe("automated review workflow", () => {
     assertEquals(workflow.name, "Automated review wakeup");
     assertEquals(
       workflow["run-name"],
-      "automated-review-wakeup-pr-${{ github.event.pull_request.number }}",
+      "automated-review-wakeup-pr-${{ github.event.pull_request.number }}-${{ (github.event.review.user.type == 'User' || (github.event.review.user.login == 'chatgpt-codex-connector[bot]' && github.event.review.user.id == 199175422 && github.event.review.user.type == 'Bot')) && 'eligible' || 'ignored' }}",
     );
     assertEquals(record(workflow.permissions, "wakeup permissions"), {});
     assertEquals(
@@ -3819,6 +3841,20 @@ describe("automated review workflow", () => {
     const jobs = record(workflow.jobs, "wakeup jobs");
     const job = record(jobs.review_event, "review event job");
     assertEquals(record(job.permissions, "review event permissions"), {});
+    const jobIf = String(job.if);
+    for (
+      const condition of [
+        "github.event.review.user.type == 'User'",
+        "github.event.review.user.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.review.user.id == 199175422",
+        "github.event.review.user.type == 'Bot'",
+      ]
+    ) {
+      assert(
+        jobIf.includes(condition),
+        "the wakeup must reject review actors that cannot affect the gate",
+      );
+    }
     assertEquals("uses" in job, false);
     const steps = job.steps;
     assert(Array.isArray(steps));

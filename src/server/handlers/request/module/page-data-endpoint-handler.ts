@@ -13,7 +13,7 @@ import {
   type QueryParamCacheOptions,
   sanitizeQueryParamsForCacheKey,
 } from "#veryfront/cache/keys.ts";
-import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
+import type { PageDataResponse, RenderOptions } from "#veryfront/rendering/orchestrator/types.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { isRedirectDestinationAllowed } from "#veryfront/utils/redirect-policy.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -29,6 +29,7 @@ import {
   stripSnapshotHeader,
   withSnapshotResponseHeaders,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
 const PAGE_DATA_CACHE_TTL_MS = readPositiveIntegerEnv("VERYFRONT_PAGE_DATA_CACHE_TTL_MS", 60_000);
@@ -100,6 +101,7 @@ async function resolvePageDataWithinDeadline(
   callerSignal: AbortSignal | undefined,
   dependencySnapshot: DependencyPinningSnapshot,
   dependencyPinningSource: DependencyPinningSourceInput,
+  applicationIdentity: RenderOptions["applicationIdentity"],
 ): Promise<PageDataResponse> {
   const controller = new AbortController();
   const workRequest = callerSignal ? request : new Request(request, { signal: controller.signal });
@@ -112,6 +114,7 @@ async function resolvePageDataWithinDeadline(
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
+      applicationIdentity,
     }),
     PAGE_DATA_TIMEOUT_MS,
     `resolvePageData for ${slug}`,
@@ -163,15 +166,21 @@ export function handlePageDataEndpoint(
         dependencySnapshot = resolvedDependencySnapshot;
 
         const url = new URL(req.url);
-        const applicationRequest = requested.kind === "absent" ? req : new Request(req, {
-          headers: stripSnapshotHeader(req.headers),
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
+        );
+        const applicationRequest = new Request(req, {
+          headers: applicationHeaders,
         });
         const renderer = await getRendererForProject(ctx);
         const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
         // The request reaches server-data hooks, so prefetch work cannot safely
         // populate or join the foreground response cache/singleflight.
+        const hasApplicationIdentity = ctx.applicationIdentity != null;
         const canUsePageDataCache = isPageDataCacheEnabled() &&
-          !requestHasCacheSensitiveState(applicationRequest) && !isSpeculativePrefetch;
+          !requestHasCacheSensitiveState(applicationRequest) && !isSpeculativePrefetch &&
+          !hasApplicationIdentity;
         const cacheKey = canUsePageDataCache
           ? buildPageDataCacheKey(ctx, slug, url, resolvedDependencySnapshot.cacheKey)
           : null;
@@ -190,6 +199,7 @@ export function handlePageDataEndpoint(
                   undefined,
                   resolvedDependencySnapshot,
                   dependencySource,
+                  ctx.applicationIdentity ?? null,
                 ),
               cachePolicy!,
             ),
@@ -204,6 +214,7 @@ export function handlePageDataEndpoint(
               req.signal,
               resolvedDependencySnapshot,
               dependencySource,
+              ctx.applicationIdentity ?? null,
             )
           );
         const cacheStrategy = cacheKey && resolvedDependencySnapshot.cacheKey === "off"

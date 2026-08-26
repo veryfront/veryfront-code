@@ -6,6 +6,7 @@ import {
   removeAbortSignalListener,
 } from "../abort-signal.ts";
 import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
+import { env as getProcessEnvironment } from "./env.ts";
 import { isWindowsPlatform, runtimeProcess } from "./runtime-process.ts";
 
 export interface CommandResult {
@@ -586,7 +587,7 @@ export async function runCommand(
       cmd: bunCmd,
       cwd: cmdCwd,
       detached: detachedProcessGroup,
-      env: clearEnv ? cmdEnv ?? {} : cmdEnv,
+      env: clearEnv ? cmdEnv ?? {} : cmdEnv ? { ...getProcessEnvironment(), ...cmdEnv } : undefined,
       stdout: bunStdio,
       stderr: bunStdio,
     });

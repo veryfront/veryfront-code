@@ -29,6 +29,13 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://langfuse.com/faq/all/where-are-langfuse-api-keys"
+    },
+    {
+      "name": "LANGFUSE_HOST",
+      "description": "Langfuse host without scheme or port. Use cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain.",
+      "required": true,
+      "sensitive": true,
+      "default": "cloud.langfuse.com"
     }
   ],
   "tools": [
@@ -39,14 +46,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/public/traces",
+        "url": "https://{{env.LANGFUSE_HOST}}/api/public/traces",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
-            "default": "cloud.langfuse.com"
-          },
           "page": {
             "type": "number",
             "in": "query",
@@ -92,18 +93,38 @@
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["data"],
+            "collectionKeys": [
+              "data"
+            ],
             "collectionName": "traces",
             "itemFields": [
-              { "name": "id" },
-              { "name": "name" },
-              { "name": "timestamp" },
-              { "name": "userId" },
-              { "name": "sessionId" },
-              { "name": "tags", "kind": "string-array" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "timestamp"
+              },
+              {
+                "name": "userId"
+              },
+              {
+                "name": "sessionId"
+              },
+              {
+                "name": "tags",
+                "kind": "string-array"
+              }
             ],
             "omitted": "trace input/output payloads, costs, and provider-specific payload fields",
-            "outputFields": [{ "name": "meta", "kind": "object" }]
+            "outputFields": [
+              {
+                "name": "meta",
+                "kind": "object"
+              }
+            ]
           }
         }
       }
@@ -115,14 +136,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/public/traces/{traceId}",
+        "url": "https://{{env.LANGFUSE_HOST}}/api/public/traces/{traceId}",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
-            "default": "cloud.langfuse.com"
-          },
           "traceId": {
             "type": "string",
             "in": "path",
@@ -139,14 +154,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{host}/api/public/observations",
+        "url": "https://{{env.LANGFUSE_HOST}}/api/public/observations",
         "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
-            "default": "cloud.langfuse.com"
-          },
           "page": {
             "type": "number",
             "in": "query",
@@ -189,15 +198,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{host}/api/public/scores",
-        "params": {
-          "host": {
-            "type": "string",
-            "in": "path",
-            "description": "Langfuse host: cloud.langfuse.com (EU), us.cloud.langfuse.com (US), or your self-hosted domain",
-            "default": "cloud.langfuse.com"
-          }
-        },
+        "url": "https://{{env.LANGFUSE_HOST}}/api/public/scores",
         "body": {
           "traceId": {
             "type": "string",
@@ -246,14 +247,18 @@
       "icon": "star"
     }
   ],
-  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "suggestedWith": [
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
   "SETUP_GUIDE": {
     "title": "Langfuse API Setup",
     "steps": [
       {
         "step": 1,
         "title": "Create a Langfuse account",
-        "description": "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US) — the free Hobby plan is enough for testing. Self-hosting is also supported."
+        "description": "Sign up at https://cloud.langfuse.com (EU) or https://us.cloud.langfuse.com (US). The free Hobby plan is enough for testing. Self-hosting is also supported."
       },
       {
         "step": 2,
@@ -268,12 +273,12 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the List Traces tool. If your project is in the US region, pass host us.cloud.langfuse.com; EU projects use the default cloud.langfuse.com."
+        "description": "Run the List Traces tool. If your project is in the US region, set LANGFUSE_HOST=us.cloud.langfuse.com in your .env; EU projects use the default cloud.langfuse.com."
       }
     ],
     "notes": [
-      "API keys are project-scoped — create separate keys per project/environment",
-      "All tools take a 'host' parameter (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain"
+      "API keys are project-scoped; create separate keys per project/environment",
+      "All tools send their requests to the host set in the LANGFUSE_HOST environment variable (default cloud.langfuse.com for EU); US cloud is us.cloud.langfuse.com and self-hosted deployments use their own domain"
     ],
     "documentation": "https://api.reference.langfuse.com"
   }
