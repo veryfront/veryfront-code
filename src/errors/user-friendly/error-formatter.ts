@@ -15,6 +15,9 @@ const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
 const regExpPrototypeExec = RegExp.prototype.exec;
 const regExpPrototypeTest = RegExp.prototype.test;
+const urlConstructor = URL;
+const urlHostnameGetter = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const stringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const stringPrototypeEndsWith = String.prototype.endsWith;
 const stringPrototypeIncludes = String.prototype.includes;
 const stringPrototypeIndexOf = String.prototype.indexOf;
@@ -34,6 +37,13 @@ function testRegExp(pattern: RegExp, value: string): boolean {
 
 function endsWithString(value: string, search: string): boolean {
   return reflectApply(stringPrototypeEndsWith, value, [search]);
+}
+
+function includesNonAsciiCodeUnit(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    if (reflectApply(stringPrototypeCharCodeAt, value, [index]) > 0x7f) return true;
+  }
+  return false;
 }
 
 function includesString(value: string, search: string): boolean {
@@ -136,6 +146,39 @@ const SOURCE_FILE_BASENAME_LOCATION =
 /** A dot-separated callable label can be indistinguishable from a hostname. */
 const HOSTNAME_SHAPED_CALLABLE_LABEL =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z](?:[a-z0-9-]*[a-z0-9])?|\d{1,3})\.?$/i;
+const INTERNATIONALIZED_HOSTNAME_SEPARATOR = /[.\u3002\uff0e\uff61]/;
+
+/**
+ * Report labels that WHATWG host parsing recognizes as internationalized DNS.
+ *
+ * The URL parser maps Unicode labels to punycode and treats the ideographic,
+ * fullwidth, and halfwidth full stops as label separators. Restrict parsing to
+ * labels that are both non-ASCII and multi-label candidates, then run the same
+ * conservative hostname pattern over the canonical ASCII spelling. Capturing
+ * the constructor and hostname getter keeps project code from changing this
+ * classification through live global or prototype hooks.
+ */
+function isInternationalizedHostnameShapedCallableLabel(label: string): boolean {
+  if (
+    !urlHostnameGetter || !includesNonAsciiCodeUnit(label) ||
+    !testRegExp(INTERNATIONALIZED_HOSTNAME_SEPARATOR, label)
+  ) {
+    return false;
+  }
+
+  try {
+    const url = new urlConstructor(`http://${label}/`);
+    const hostname = reflectApply(urlHostnameGetter, url, []);
+    return typeof hostname === "string" && testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isHostnameShapedCallableLabel(label: string): boolean {
+  return testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+    isInternationalizedHostnameShapedCallableLabel(label);
+}
 
 /** A bracketed IPv6 literal can be emitted as a custom callable label. */
 const BRACKETED_IPV6_CALLABLE_LABEL = /^\[[0-9a-f:.]*:[0-9a-f:.]*(?:%[a-z0-9._~-]+)?\]$/i;
@@ -178,7 +221,7 @@ function isRetainableCallableLabel(label: string): boolean {
   return !!label && !isSourceLocationText(label) &&
     !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
     !testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) &&
-    (!testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+    (!isHostnameShapedCallableLabel(label) ||
       testRegExp(SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL, label));
 }
 

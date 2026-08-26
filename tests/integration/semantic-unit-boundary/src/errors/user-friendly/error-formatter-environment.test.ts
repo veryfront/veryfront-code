@@ -232,6 +232,63 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("withholds internationalized hostnames and alternate DNS separators", async () => {
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      for (
+        const label of [
+          "秘密.内部",
+          "秘密。内部",
+          "private．internal",
+          "private｡internal",
+        ]
+      ) {
+        const error = new Error("unknown error internationalized_hostname_label_dev");
+        error.stack = [
+          "Error: unknown error internationalized_hostname_label_dev",
+          `    at ${label} (file:///app/a.ts:1:1)`,
+        ].join("\n");
+        const result = formatUserError(error);
+
+        assert(result.includes("at <anonymous>"), "an IDN-shaped label is withheld");
+        assertEquals(
+          result.includes(label),
+          false,
+          "a Unicode or alternate-dot private hostname must not reach user-facing output",
+        );
+      }
+      return Promise.resolve();
+    });
+  });
+
+  it("does not call a live URL hostname hook while classifying IDN labels", async () => {
+    const error = new Error("unknown error mutated_url_hostname_hook");
+    error.stack = [
+      "Error: unknown error mutated_url_hostname_hook",
+      "    at 秘密.内部 (file:///app/a.ts:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const descriptor = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")!;
+      let result: string;
+      try {
+        Object.defineProperty(URL.prototype, "hostname", {
+          configurable: descriptor.configurable,
+          get() {
+            throw new Error("live URL.hostname must not run");
+          },
+        });
+        result = formatUserError(error);
+      } finally {
+        Object.defineProperty(URL.prototype, "hostname", descriptor);
+      }
+
+      assert(result.includes("at <anonymous>"));
+      assertEquals(result.includes("秘密.内部"), false);
+      assertEquals(result.includes("live URL.hostname"), false);
+      return Promise.resolve();
+    });
+  });
+
   it("withholds hostname-shaped constructor labels from parenthesized frames", async () => {
     const error = new Error("unknown error hostname_constructor_label_dev");
     error.stack = [
