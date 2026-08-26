@@ -1655,7 +1655,18 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"]*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
+const SCHEME_URL =
+  /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+// Both the userinfo run and the parenthesised interior are length-bounded, and
+// the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
+// greedy interior rescans the rest of the message from every `(` that never
+// finds a `)`, so `"a://(".repeat(20_000)` cost 2.6s and grew 4x per doubling --
+// quadratic, and reachable from a project-authored error because
+// summarizeConfigLoadCause runs this before the 200-character cap. Bounded, the
+// same input is 42ms and grows 2x per doubling. `/` cannot appear unencoded in
+// userinfo (it terminates the authority), so excluding it costs nothing and
+// keeps that run inside the authority rather than the whole message.
+//
 // The interior of a parenthesised segment is `[^\s"']*`, not `[^\s"'()]*`: a
 // flat interior matches one nesting level, so `/a((TOKEN))` ended the token at
 // the first `(` and left `((TOKEN))` in the caller-visible detail -- a URL path
@@ -1684,10 +1695,10 @@ const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"]*@)?(?:[^\s"'()]|\
 // The scheme needs at least two characters here, which is what keeps a genuine
 // `C:/Users/...` out -- a drive letter is always exactly one.
 const MALFORMED_SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"]*@)?(?:[^\s"'()]|\([^\s"']*\))+/g;
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']*\))+/g;
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in

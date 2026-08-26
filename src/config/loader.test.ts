@@ -1125,6 +1125,37 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("summarizes many failed URL starts in time proportional to length", async () => {
+        // A different pathological shape from the long-alphabetic case above: here
+        // every `a://` starts a URL match that then fails on `(`, and an unbounded
+        // parenthesised interior rescans the rest of the message from each one.
+        // Measured unbounded: 2.6s for 20k repeats, growing 4x per doubling.
+        // Bounded: 53ms, growing 2x. Same control/probe ratio method -- a digit
+        // cannot begin a scheme, so the control never starts a match at all.
+        const repeats = 20000;
+
+        const controlStart = Date.now();
+        await loadFailure(
+          "vf-config-starts-control-",
+          `throw new Error("1://(".repeat(${repeats}));\n`,
+        );
+        const controlMs = Math.max(1, Date.now() - controlStart);
+
+        const probeStart = Date.now();
+        const error = await loadFailure(
+          "vf-config-starts-probe-",
+          `throw new Error("a://(".repeat(${repeats}));\n`,
+        );
+        const probeMs = Date.now() - probeStart;
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
       it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
