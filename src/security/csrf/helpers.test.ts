@@ -409,15 +409,25 @@ describe("security/csrf/helpers", () => {
     });
 
     it("uses a browser-compatible cookie on a plain-HTTP LAN origin", () => {
-      const req = new Request("http://192.168.1.20:3000/", {
+      const origin = "http://192.168.1.20:3000";
+      const req = new Request(`${origin}/`, {
         headers: { accept: "text/html" },
       });
       const headers = new Headers();
       applyCsrfCookie(req, headers, true);
 
-      const setCookie = headers.get("set-cookie") ?? "";
-      assertEquals(setCookie.startsWith("vf_csrf="), true);
-      assertEquals(setCookie.includes("; Secure"), false);
+      const cookies = headers.getSetCookie();
+      const tokenName = csrfHttpTokenCookieName("vf_csrf", origin);
+      const token = cookies.find((cookie) => cookie.startsWith(`${tokenName}=`));
+      assertExists(token, "the default HTTP token must not share its name with HTTPS siblings");
+      assertEquals(token.includes("; Secure"), false);
+      assertEquals(cookies.some((cookie) => cookie.startsWith("vf_csrf=")), false);
+      assertExists(
+        cookies.find((cookie) =>
+          cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes(tokenName)
+        ),
+        "the zero-option browser helper must discover the isolated default token",
+      );
     });
 
     it("applies the LAN fallback when config explicitly repeats the secure default", () => {
@@ -429,12 +439,13 @@ describe("security/csrf/helpers", () => {
       applyCsrfCookie(req, headers, { cookieName: "__Host-vf_csrf" });
 
       const cookies = headers.getSetCookie();
-      const tokenCookie = cookies.find((cookie) => cookie.startsWith("vf_csrf="));
+      const tokenName = csrfHttpTokenCookieName("vf_csrf", origin);
+      const tokenCookie = cookies.find((cookie) => cookie.startsWith(`${tokenName}=`));
       assertExists(tokenCookie, "the explicit documented default must remain usable on LAN HTTP");
       assertEquals(tokenCookie.includes("; Secure"), false);
       assertEquals(
         cookies.some((cookie) =>
-          cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes("vf_csrf")
+          cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes(tokenName)
         ),
         true,
         "the browser helper must discover the origin-selected fallback name",
@@ -461,6 +472,52 @@ describe("security/csrf/helpers", () => {
           cookie.startsWith(`${csrfNamesCookieName(origin)}=`) && cookie.includes(tokenName)
         ),
         "the browser helper must discover the origin-scoped token with the custom header",
+      );
+    });
+
+    it("keeps a default HTTP token isolated from an HTTPS custom sibling", () => {
+      const httpOrigin = "http://example.test:3000";
+      const httpsOrigin = "https://example.test:4000";
+      const httpHeaders = new Headers();
+      applyCsrfCookie(
+        new Request(`${httpOrigin}/`, { headers: { accept: "text/html" } }),
+        httpHeaders,
+        true,
+      );
+
+      const httpCookies = httpHeaders.getSetCookie();
+      const httpTokenName = csrfHttpTokenCookieName("vf_csrf", httpOrigin);
+      const httpTokenCookie = httpCookies.find((cookie) => cookie.startsWith(`${httpTokenName}=`));
+      assertExists(httpTokenCookie);
+      const browserCookies = httpCookies.map((cookie) => cookie.split(";", 1)[0]).join("; ");
+
+      const httpsHeaders = new Headers();
+      applyCsrfCookie(
+        new Request(`${httpsOrigin}/`, {
+          headers: { accept: "text/html", cookie: browserCookies },
+        }),
+        httpsHeaders,
+        { cookieName: "vf_csrf" },
+      );
+      const httpsToken = httpsHeaders.getSetCookie().find((cookie) =>
+        cookie.startsWith("vf_csrf=")
+      );
+      assertExists(httpsToken, "the HTTPS sibling still receives its configured token");
+      assertStringIncludes(httpsToken, "Secure");
+
+      const token = httpTokenCookie.slice(httpTokenName.length + 1).split(";", 1)[0]!;
+      assertEquals(
+        validateCsrf(
+          new Request(`${httpOrigin}/api`, {
+            method: "POST",
+            headers: {
+              cookie: browserCookies,
+              "x-csrf-token": token,
+            },
+          }),
+        ),
+        true,
+        "upgrading the sibling cookie cannot make the origin-scoped HTTP token unreadable",
       );
     });
 

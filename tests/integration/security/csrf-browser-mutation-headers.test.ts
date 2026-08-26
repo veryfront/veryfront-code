@@ -76,24 +76,33 @@ describe("security/csrf/browser-mutation-headers", () => {
   });
 
   it("round-trips the HTTP-compatible default on a LAN development origin", () => {
+    const origin = "http://192.168.1.20:3000";
+    const pageHeaders = new Headers();
+    applyCsrfCookie(
+      new Request(`${origin}/cases`, { headers: { accept: "text/html" } }),
+      pageHeaders,
+      true,
+    );
+    const documentCookie = pageHeaders.getSetCookie()
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
     const headers = withDocument(
       {
-        baseURI: "http://192.168.1.20:3000/cases",
-        cookie: "vf_csrf=lan-token",
-        location: { origin: "http://192.168.1.20:3000" },
+        baseURI: `${origin}/cases`,
+        cookie: documentCookie,
+        location: { origin },
       } as Document,
       () => csrfMutationHeaders("/api/cases"),
     );
-    headers.set("cookie", "vf_csrf=lan-token");
+    headers.set("cookie", documentCookie);
 
-    assertEquals(headers.get("x-csrf-token"), "lan-token");
+    assertEquals(headers.get("x-csrf-token")?.length > 0, true);
     assertEquals(
       validateCsrf(
-        new Request("http://192.168.1.20:3000/api/cases", {
+        new Request(`${origin}/api/cases`, {
           method: "POST",
           headers,
         }),
-        { cookieName: "vf_csrf" },
       ),
       true,
     );
