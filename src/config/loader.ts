@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
-import { dirname, extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
+import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   isExtendedFSAdapter,
@@ -1789,7 +1789,7 @@ function isInstallableLegacyNpmPackageName(packageName: string): boolean {
 const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
 
-function isIntrinsicError(value: unknown): value is Error {
+function isIntrinsicError(value: unknown): value is Error & RuntimeReflectionRecord {
   if (typeof value !== "object") return false;
   let prototype: object | null;
   try {
@@ -1805,7 +1805,7 @@ function isIntrinsicError(value: unknown): value is Error {
 }
 
 function readOwnDataString(
-  value: object,
+  value: RuntimeReflectionRecord,
   key: PropertyKey,
 ): string | undefined {
   let descriptor: PropertyDescriptor | undefined;
@@ -2289,7 +2289,6 @@ async function loadConfigFromTempFile(
   source: string,
   configPath: string,
   loadUrl: (tempFile: string) => string,
-  options: { readonly temporaryParent?: string } = {},
 ): Promise<unknown> {
   const fs = createFileSystem();
   const originalExt = extname(configPath) || ".mjs";
@@ -2302,10 +2301,7 @@ async function loadConfigFromTempFile(
     ? await transpileConfigSourceForImport(source, configPath)
     : source;
 
-  const tempDir = options.temporaryParent === undefined
-    ? await fs.makeTempDir({ prefix: "vf-config-" })
-    : join(options.temporaryParent, `.veryfront-config-${crypto.randomUUID()}`);
-  if (options.temporaryParent !== undefined) await fs.mkdir(tempDir);
+  const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
   const tempFile = join(tempDir, `config${extension}`);
 
   try {
@@ -2522,12 +2518,19 @@ async function loadAndMergeConfig(
     );
   }
 
-  // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
-  // We need to read the source, write to a temp file, and import from there.
-  if (isBun || isDenoCompiled) {
-    logger.debug("Using temp file import for Bun/compiled Deno", {
+  if (isBun) {
+    logger.debug("Using project config import for Bun", { configPath });
+    const configUrl = toFileUrl(resolve(configPath));
+    configUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
+    const configModule = await import(configUrl.href);
+    return validateAndMergeConfig(selectConfigModuleValue(configModule));
+  }
+
+  // Compiled Deno binaries can't dynamically import TypeScript files directly.
+  // Read the source, transpile when needed, and import it from a temp file.
+  if (isDenoCompiled) {
+    logger.debug("Using temp file import for compiled Deno", {
       configPath,
-      isBun,
       isDenoCompiled,
     });
     const fs = createFileSystem();
@@ -2537,9 +2540,6 @@ async function loadAndMergeConfig(
       source,
       configPath,
       (tempFile) => toFileUrl(tempFile).href,
-      // Bun resolves bare imports relative to the copied module. Keep that
-      // module beneath the project so its node_modules ancestry is preserved.
-      { temporaryParent: isBun ? dirname(resolve(configPath)) : undefined },
     );
     logger.debug("Successfully loaded config via temp file", {
       configPath,
