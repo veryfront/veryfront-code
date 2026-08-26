@@ -2255,9 +2255,13 @@ class RejectOnceEventWaitResolutionBackend extends MemoryBackend {
 class FinalizationObservingBackend extends MemoryBackend {
   finalizedEventIds: string[] = [];
 
-  override finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+  override finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
     this.finalizedEventIds.push(eventId);
-    return super.finalizeRunEventDelivery(runId, eventId);
+    return super.finalizeRunEventDelivery(runId, eventId, delivered);
   }
 }
 
@@ -2353,12 +2357,16 @@ class RefusingDeliveryRollbackBackend extends BlockableRunUpdateBackend {
 class FailFirstDeliveryFinalizationBackend extends MemoryBackend {
   finalizationAttempts = 0;
 
-  override finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+  override finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
     this.finalizationAttempts++;
     if (this.finalizationAttempts === 1) {
       return Promise.reject(new Error("delivery finalization unavailable"));
     }
-    return super.finalizeRunEventDelivery(runId, eventId);
+    return super.finalizeRunEventDelivery(runId, eventId, delivered);
   }
 }
 

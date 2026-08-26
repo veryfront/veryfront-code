@@ -1101,7 +1101,7 @@ describe("MemoryBackend", () => {
         "ready",
       );
       assertExists(delivered);
-      await backend.finalizeRunEventDelivery("run-events", delivered.id);
+      await backend.finalizeRunEventDelivery("run-events", delivered.id, true);
       await backend.appendRunEvent("run-after-finalize", {
         id: "evt-after-finalize",
         eventName: "ready",
@@ -1283,11 +1283,36 @@ describe("MemoryBackend", () => {
         "an in-flight claim is not a committed delivery",
       );
 
-      await backend.finalizeRunEventDelivery("run-events", "evt-receipt");
+      await backend.finalizeRunEventDelivery("run-events", "evt-receipt", true);
 
       assertEquals(
         await backend.hasRunEventDeliveryReceipt("run-events", "evt-receipt"),
         true,
+      );
+      assertEquals(await backend.listRunEventDeliveryClaims("run-events"), []);
+    });
+
+    it("does not record a delivery receipt for a terminally discarded claim", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-discarded"));
+      await backend.appendRunEvent("run-events", {
+        id: "evt-discarded",
+        eventName: "payment.confirmed",
+        payload: undefined,
+        publishedAt: new Date(),
+      });
+      assertExists(
+        await backend.claimRunEventForWait(
+          "run-events",
+          "evw-discarded",
+          "payment.confirmed",
+        ),
+      );
+
+      await backend.finalizeRunEventDelivery("run-events", "evt-discarded", false);
+
+      assertEquals(
+        await backend.hasRunEventDeliveryReceipt("run-events", "evt-discarded"),
+        false,
       );
       assertEquals(await backend.listRunEventDeliveryClaims("run-events"), []);
     });

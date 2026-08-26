@@ -997,14 +997,14 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(restored);
   }
 
-  finalizeRunEventDelivery(runId: string, eventId: string): Promise<void> {
+  finalizeRunEventDelivery(runId: string, eventId: string, delivered: boolean): Promise<void> {
     const claim = this.runEventClaims.get(runId)?.get(eventId);
     if (claim) {
       const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);
       if (wait) {
         delete wait.claimedAt;
         delete wait.claimedEventId;
-        wait.deliveredEventId = eventId;
+        if (delivered) wait.deliveredEventId = eventId;
       }
     }
     this.releaseRunEventClaim(runId, eventId);
@@ -1021,13 +1021,16 @@ export class MemoryBackend implements WorkflowBackend {
 
   private persistRunEventDeliveryReceipts(runId: string): void {
     const waits = this.eventWaits.get(runId);
-    if (!waits) return;
+    const run = this.runs.get(runId);
+    if (!waits || !run) return;
     for (const [eventId, claim] of this.runEventClaims.get(runId) ?? []) {
       const wait = waits.find((candidate) => candidate.id === claim.wait.id);
       if (!wait) continue;
       delete wait.claimedAt;
       delete wait.claimedEventId;
-      wait.deliveredEventId = eventId;
+      if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
+        wait.deliveredEventId = eventId;
+      }
     }
   }
 

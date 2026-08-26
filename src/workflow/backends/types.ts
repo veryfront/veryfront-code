@@ -455,9 +455,15 @@ export interface WorkflowBackend {
    * Release any capacity reservation retained for a successfully delivered
    * event. This is the commit-side counterpart to `restoreRunEventDelivery`:
    * once delivery cannot roll back, an empty mailbox must no longer count
-   * against the backend's mailbox bound.
+   * against the backend's mailbox bound. `delivered` distinguishes a committed
+   * node outcome from a claim discarded because another terminal transition
+   * won; only the former may persist an exact-delivery receipt.
    */
-  finalizeRunEventDelivery?(runId: string, eventId: string): Promise<void>;
+  finalizeRunEventDelivery?(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void>;
   /** Report whether one exact event delivery was durably finalized. */
   hasRunEventDeliveryReceipt?(runId: string, eventId: string): Promise<boolean>;
 

@@ -614,13 +614,13 @@ export class EventWaitManager {
             continue;
           }
           outcome.terminal = true;
-          await this.finalizeDelivery(wait, event);
+          await this.finalizeDelivery(wait, event, false);
           continue;
         }
         outcome.failedEventIds.delete(event.id);
         outcome.deliveredEventIds.add(event.id);
         this.recordDeliveredEventReceipt(runId, event.id);
-        await this.finalizeDelivery(wait, event);
+        await this.finalizeDelivery(wait, event, true);
       }
     } finally {
       session.activePasses--;
@@ -636,11 +636,12 @@ export class EventWaitManager {
   private async finalizeDelivery(
     wait: PersistedPendingEventWait,
     event: RunEventEnvelope,
+    delivered: boolean,
   ): Promise<void> {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) return;
     try {
-      await backend.finalizeRunEventDelivery(wait.runId, event.id);
+      await backend.finalizeRunEventDelivery(wait.runId, event.id, delivered);
       this.clearFinalizationRetry(event.id);
     } catch (error) {
       logger.error(
@@ -648,13 +649,14 @@ export class EventWaitManager {
         { runId: wait.runId, waitId: wait.id, eventId: event.id },
         error,
       );
-      this.scheduleFinalizationRetry(wait, event);
+      this.scheduleFinalizationRetry(wait, event, delivered);
     }
   }
 
   private scheduleFinalizationRetry(
     wait: PersistedPendingEventWait,
     event: RunEventEnvelope,
+    delivered: boolean,
   ): void {
     if (this.destroyed || this.finalizationRetryTimers.has(event.id)) return;
     const attempt = (this.finalizationRetryAttempts.get(event.id) ?? 0) + 1;
@@ -676,7 +678,7 @@ export class EventWaitManager {
     const timer = setTimeout(() => {
       this.finalizationRetryTimers.delete(event.id);
       if (this.destroyed) return;
-      void this.finalizeDelivery(wait, event);
+      void this.finalizeDelivery(wait, event, delivered);
     }, retryDelay);
     unrefTimer(timer);
     this.finalizationRetryTimers.set(event.id, timer);
@@ -750,7 +752,7 @@ export class EventWaitManager {
   ): Promise<void> {
     const run = await this.config.backend.getRun(wait.runId);
     if (!run) {
-      if (event) await this.finalizeDelivery(wait, event);
+      if (event) await this.finalizeDelivery(wait, event, true);
       else await this.finalizeTimedWaitClaim(wait);
       this.clearCommittedResumeRetry(wait, event);
       return;
@@ -769,7 +771,7 @@ export class EventWaitManager {
       }
       await this.config.executor.resume(run.id, undefined, run.workerId);
     }
-    if (event) await this.finalizeDelivery(wait, event);
+    if (event) await this.finalizeDelivery(wait, event, true);
     else await this.finalizeTimedWaitClaim(wait);
     this.clearCommittedResumeRetry(wait, event);
   }
@@ -848,7 +850,9 @@ export class EventWaitManager {
         continue;
       }
       if (!run || run.status === "completed" || run.status === "cancelled") {
-        await this.finalizeDelivery(claim.wait, claim.event);
+        const delivered = run?.status === "completed" &&
+          run.nodeStates[claim.wait.nodeId]?.status === "completed";
+        await this.finalizeDelivery(claim.wait, claim.event, delivered);
         continue;
       }
       if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
