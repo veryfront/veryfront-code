@@ -7,6 +7,7 @@ import {
 } from "./types.ts";
 import {
   buildErrorDocsUrl,
+  ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
   ERROR_OUTPUT_MAX_LENGTH_CHARS,
   sanitizeBoundedDiagnosticText,
   sanitizeBoundedErrorSlug,
@@ -756,6 +757,12 @@ export function snapshotThrowableDiagnosticRedactingPath(
   path: string,
   replacement: string,
 ): string {
+  // A rejected path is caller-controlled. Do not normalize it or allocate a
+  // prefix table proportional to it when it is too large to appear in one
+  // bounded diagnostic field; a fixed fallback is both safer and sufficient.
+  if (path.length > ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS) {
+    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
+  }
   // Bound once before each platform and file-URL alias is redacted. A project
   // adapter controls Error.message, so running every pass over the complete
   // untrusted value would multiply work during fallback handling.

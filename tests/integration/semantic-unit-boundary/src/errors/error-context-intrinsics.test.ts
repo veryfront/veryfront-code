@@ -132,4 +132,49 @@ describe("error-context intrinsic hardening", () => {
       assertEquals(String(diagnostic.data.errorMessage).includes("<absolute-path>"), true);
     }
   });
+
+  it("bounds caller-controlled paths before every filesystem fallback", async () => {
+    const captured: { message: string; data: Record<string, unknown> }[] = [];
+    const originalLogDebug = serverLogger.debug;
+    serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+      captured.push({ message, data });
+    }) as typeof serverLogger.debug;
+    const path = `/private/${"private-source-marker".repeat(2_000)}`;
+
+    try {
+      await safeFileRead(
+        { fs: { readFile: () => Promise.reject(new Error(`read failed ${path}`)) } },
+        path,
+        "read-file",
+      );
+      await safeFileStat(
+        { fs: { stat: () => Promise.reject(new Error(`stat failed ${path}`)) } },
+        path,
+        "stat-file",
+      );
+      await safeReadDir<string>(
+        {
+          fs: {
+            readDir(): AsyncIterable<string> {
+              throw new Error(`directory read failed ${path}`);
+            },
+          },
+        },
+        path,
+        "read-directory",
+      );
+    } finally {
+      serverLogger.debug = originalLogDebug;
+    }
+
+    assertEquals(captured.length, 3);
+    for (const diagnostic of captured) {
+      assertEquals(diagnostic.data.path, "<absolute-path>");
+      assertEquals(
+        diagnostic.data.errorMessage,
+        "Filesystem operation failed for <absolute-path>",
+      );
+      assertEquals(diagnostic.message.includes("private-source-marker"), false);
+    }
+  });
 });

@@ -153,17 +153,20 @@ const SINGLE_LABEL_IPV4_CANDIDATE = /^(?:0x[0-9a-f]+|\d+)$/i;
 const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 /**
- * Report labels that WHATWG host parsing recognizes as internationalized DNS.
+ * Report labels that WHATWG host parsing canonicalizes to hostname syntax.
  *
- * The URL parser maps Unicode labels to punycode and treats the ideographic,
- * fullwidth, and halfwidth full stops as label separators. Both single-label
- * and multi-label Unicode hostnames canonicalize to ASCII hostname spellings,
- * so apply the corresponding conservative pattern to the canonical result.
+ * The URL parser maps Unicode labels to punycode, treats alternate full stops
+ * as label separators, and decodes percent-encoded ASCII such as `%2E`. Both
+ * single-label and multi-label candidates can therefore become an ASCII
+ * hostname even when the original spelling does not match the direct patterns.
  * Capturing the constructor and hostname getter keeps project code from
  * changing this classification through live global or prototype hooks.
  */
-function isInternationalizedHostnameShapedCallableLabel(label: string): boolean {
-  if (!urlHostnameGetter || !includesNonAsciiCodeUnit(label)) {
+function isCanonicalHostnameShapedCallableLabel(label: string): boolean {
+  if (
+    !urlHostnameGetter ||
+    (!includesNonAsciiCodeUnit(label) && !includesString(label, "%"))
+  ) {
     return false;
   }
 
@@ -201,7 +204,7 @@ function isSingleLabelIpv4CallableLabel(label: string): boolean {
 function isHostnameShapedCallableLabel(label: string): boolean {
   return testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
     testRegExp(SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
-    isInternationalizedHostnameShapedCallableLabel(label) ||
+    isCanonicalHostnameShapedCallableLabel(label) ||
     isSingleLabelIpv4CallableLabel(label);
 }
 
@@ -308,7 +311,10 @@ function sanitizeUserFacingStackFrame(line: string): string {
   if (includesString(frame, "@") || isSourceLocationText(frame)) {
     return "at <anonymous>";
   }
-  return retainCallableLabel(frame) === "at <anonymous>" ? "at <anonymous>" : frame;
+  // Standard V8 frames start with `at ` and SpiderMonkey-style frames carry a
+  // recognized `@location`. Any other shape can be supplied by
+  // Error.prepareStackTrace and may be arbitrary project data, so never echo it.
+  return "at <anonymous>";
 }
 
 /**

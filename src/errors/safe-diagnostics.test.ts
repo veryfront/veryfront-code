@@ -203,6 +203,21 @@ describe("safe-diagnostics", () => {
     assertEquals(sanitized.includes("private-source-marker"), false);
   });
 
+  it("should reject oversized diagnostic paths before deriving aliases", () => {
+    const privatePath = `/private/${
+      "private-source-marker".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS)
+    }`;
+
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error(`failure ${privatePath}`),
+        privatePath,
+        "<absolute-path>",
+      ),
+      "Filesystem operation failed for <absolute-path>",
+    );
+  });
+
   it("should redact the platform filesystem spelling decoded from file URLs", () => {
     for (
       const [requestedPath, diagnostic] of [

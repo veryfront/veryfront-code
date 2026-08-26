@@ -1,7 +1,11 @@
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { withEnv } from "#veryfront/testing/deno-compat";
-import { formatUserError } from "#veryfront/errors/user-friendly/error-formatter.ts";
+import { cyan, dim } from "#veryfront/compat/console";
+import {
+  formatErrorBox,
+  formatUserError,
+} from "#veryfront/errors/user-friendly/error-formatter.ts";
 
 // formatUserError gates stack output on isProduction(), which resolves the
 // ambient environment with no injectable seam, so these cases drive the gate
@@ -19,13 +23,29 @@ describe("formatUserError environment gating", () => {
     return error;
   };
 
+  it("renders solution examples with the formatter-specific label style", () => {
+    const error = new Error("Client boundary violation in component");
+    const boxed = formatErrorBox(error);
+    const plain = formatUserError(error);
+
+    assert(boxed.includes(dim("Example:")));
+    assert(plain.includes(cyan("Example:")));
+    for (const output of [boxed, plain]) {
+      assert(output.includes("import { db } from './database'"));
+    }
+  });
+
   it("renders a capped stack trace for unknown errors in development", async () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const result = formatUserError(unknownError());
 
       assert(result.includes("Stack trace:"), "unknown errors render a stack trace section");
-      assert(result.includes("at beta"), "the second captured function name is rendered");
-      assert(result.includes("at gamma"), "the third captured function name is rendered");
+      assertEquals(result.includes("at beta"), false, "an ambiguous single-label name is withheld");
+      assertEquals(
+        result.includes("at gamma"),
+        false,
+        "an ambiguous single-label name is withheld",
+      );
       assert(
         result.includes("at <anonymous>"),
         "an async location-only frame keeps no local source location",
@@ -61,9 +81,10 @@ describe("formatUserError environment gating", () => {
         result.includes("at <anonymous>"),
         "a bare UNC frame keeps no local source location",
       );
-      assert(
+      assertEquals(
         result.includes("at handler"),
-        "a name@location frame keeps only its callable label",
+        false,
+        "an ambiguous single-label callable is withheld with its location",
       );
       assertEquals(
         result.includes("build-server"),
@@ -96,9 +117,10 @@ describe("formatUserError environment gating", () => {
         result.includes("at handler@alias"),
         "a multi-delimiter frame keeps its full callable label",
       );
-      assert(
+      assertEquals(
         result.includes("at outer"),
-        "a frame with a location after later delimiters keeps its leading label",
+        false,
+        "an ambiguous single-label prefix is withheld after splitting the location",
       );
       assert(
         result.includes("at <anonymous>"),
@@ -136,10 +158,7 @@ describe("formatUserError environment gating", () => {
       const result = formatUserError(error);
 
       assert(result.includes("Stack trace:"), "unknown errors render a stack trace section");
-      assert(
-        result.includes("at handler"),
-        "an uppercase-scheme name@location frame keeps only its callable label",
-      );
+      assertEquals(result.includes("at handler"), false);
       assertEquals(
         result.includes("/home/alice"),
         false,
@@ -167,10 +186,7 @@ describe("formatUserError environment gating", () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const result = formatUserError(error);
 
-      assert(
-        result.includes("at handler"),
-        "a genuine callable label survives sanitization",
-      );
+      assertEquals(result.includes("at handler"), false);
       assert(
         result.includes("at <anonymous>"),
         "a spaced bare location is withheld rather than echoed",
@@ -260,6 +276,39 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("withholds percent-encoded ASCII hostnames", async () => {
+    const error = new Error("unknown error encoded_hostname_label_dev");
+    error.stack = [
+      "Error: unknown error encoded_hostname_label_dev",
+      "    at private%2Econtrol.example (node:internal/process/task_queues:1:1)",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const result = formatUserError(error);
+
+      assert(result.includes("at <anonymous>"));
+      assertEquals(result.includes("private%2Econtrol.example"), false);
+      return Promise.resolve();
+    });
+  });
+
+  it("fails closed on unrecognized prepareStackTrace frames", async () => {
+    const error = new Error("unknown error custom_stack_payload_dev");
+    error.stack = [
+      "Error: unknown error custom_stack_payload_dev",
+      "customer_payload=acme-order-42",
+    ].join("\n");
+
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      const result = formatUserError(error);
+
+      assert(result.includes("at <anonymous>"));
+      assertEquals(result.includes("customer_payload"), false);
+      assertEquals(result.includes("acme-order-42"), false);
+      return Promise.resolve();
+    });
+  });
+
   it("withholds single-label IPv4 callable labels", async () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       for (const label of ["2130706433", "0x7f000001", "017700000001"]) {
@@ -278,14 +327,15 @@ describe("formatUserError environment gating", () => {
         );
       }
 
-      const safe = new Error("unknown error out_of_range_numeric_callable_dev");
-      safe.stack = [
+      const outOfRange = new Error("unknown error out_of_range_numeric_callable_dev");
+      outOfRange.stack = [
         "Error: unknown error out_of_range_numeric_callable_dev",
         "    at 4294967296 (file:///app/a.ts:1:1)",
       ].join("\n");
-      assert(
-        formatUserError(safe).includes("at 4294967296"),
-        "an out-of-range integer that WHATWG rejects remains a callable label",
+      assertEquals(
+        formatUserError(outOfRange).includes("4294967296"),
+        false,
+        "a numeric single label remains indistinguishable from a private host",
       );
       return Promise.resolve();
     });
@@ -517,7 +567,7 @@ describe("formatUserError environment gating", () => {
     });
   });
 
-  it("preserves async on a safe location-less callable label", async () => {
+  it("withholds async on an ambiguous location-less callable label", async () => {
     const error = new Error("unknown error async_callable_label_dev");
     error.stack = [
       "Error: unknown error async_callable_label_dev",
@@ -527,10 +577,8 @@ describe("formatUserError environment gating", () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const result = formatUserError(error);
 
-      assert(
-        result.includes("at async handler"),
-        "sanitizing a location-less frame must preserve its safe async callable label",
-      );
+      assert(result.includes("at <anonymous>"));
+      assertEquals(result.includes("at async handler"), false);
       return Promise.resolve();
     });
   });
@@ -551,10 +599,7 @@ describe("formatUserError environment gating", () => {
       const result = formatUserError(error);
 
       assert(result.includes("Stack trace:"), "unknown errors render a stack trace section");
-      assert(
-        result.includes("at handler"),
-        "an opaque-scheme name@location frame keeps only its callable label",
-      );
+      assertEquals(result.includes("at handler"), false);
       assertEquals(
         result.includes("PRIVATE_SOURCE_MARKER"),
         false,
@@ -622,10 +667,7 @@ describe("formatUserError environment gating", () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const result = formatUserError(error);
 
-      assert(
-        result.includes("at handler"),
-        "a genuine callable label survives sanitization",
-      );
+      assertEquals(result.includes("at handler"), false);
       assertEquals(
         result.includes("123-app.ts"),
         false,
@@ -660,10 +702,7 @@ describe("formatUserError environment gating", () => {
         result.includes("at <anonymous>"),
         "a bare relative-path frame keeps no source location",
       );
-      assert(
-        result.includes("at handler"),
-        "a name@relative-location frame keeps only its callable label",
-      );
+      assertEquals(result.includes("at handler"), false);
       assertEquals(
         result.includes("src/private"),
         false,
@@ -691,7 +730,7 @@ describe("formatUserError environment gating", () => {
       const result = formatUserError(error);
 
       assert(result.includes("Stack trace:"), "unknown errors render a stack trace section");
-      assert(result.includes("at handler"), "a name@location frame keeps its callable label");
+      assertEquals(result.includes("at handler"), false);
       assertEquals(
         result.includes("app.ts"),
         false,
@@ -722,14 +761,8 @@ describe("formatUserError environment gating", () => {
         result.includes("at <anonymous>"),
         "a coordinate-less filename frame keeps no source location",
       );
-      assert(
-        result.includes("at handler"),
-        "a genuine callable label survives a coordinate-less location",
-      );
-      assert(
-        result.includes("at renderPage"),
-        "a label carrying no source-file extension still survives",
-      );
+      assertEquals(result.includes("at handler"), false);
+      assertEquals(result.includes("at renderPage"), false);
       assertEquals(
         result.includes("private.ts"),
         false,
@@ -758,7 +791,8 @@ describe("formatUserError environment gating", () => {
 
       assertEquals(output.includes("private-control.example"), false);
       assertEquals(output.includes("prefixed-private.example"), false);
-      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), false);
+      assert(output.includes("at <anonymous>"));
       return Promise.resolve();
     });
   });
@@ -776,7 +810,7 @@ describe("formatUserError environment gating", () => {
       const output = formatUserError(error);
 
       assertEquals(output.includes("private-control.example"), false);
-      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), true);
+      assertEquals(output.includes("Object.publicAlias [as visibleAlias]"), false);
       assertEquals(output.includes("get private-control.example visibleAlias"), false);
       return Promise.resolve();
     });
@@ -795,7 +829,7 @@ describe("formatUserError environment gating", () => {
       const output = formatUserError(error);
 
       assertEquals(output.includes("private-control.example"), false);
-      assertEquals(output.includes("get Object.publicValue"), true);
+      assertEquals(output.includes("get Object.publicValue"), false);
       return Promise.resolve();
     });
   });
@@ -819,7 +853,8 @@ describe("formatUserError environment gating", () => {
         RegExp.prototype.test = originalTest;
       }
 
-      assert(output.includes("publicHandler"));
+      assert(output.includes("at <anonymous>"));
+      assertEquals(output.includes("publicHandler"), false);
       assertEquals(output.includes("live RegExp.test"), false);
       return Promise.resolve();
     });
@@ -878,7 +913,8 @@ describe("formatUserError environment gating", () => {
         }
       }
 
-      assert(unknownOutput.includes("publicHandler"));
+      assert(unknownOutput.includes("at <anonymous>"));
+      assertEquals(unknownOutput.includes("publicHandler"), false);
       assertEquals(unknownOutput.includes("2001:db8::dead"), false);
       assert(knownOutput.includes("How to fix:"));
       assert(knownOutput.includes("veryfront.config.ts"));

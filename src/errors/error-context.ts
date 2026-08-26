@@ -6,6 +6,7 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { redactForSerialization } from "#veryfront/utils/logger/redact.ts";
 import {
+  ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
   isAbsoluteFilesystemPathForDiagnostic,
   sanitizeDiagnosticText,
   sanitizeStackDiagnosticText,
@@ -17,6 +18,7 @@ const arrayIsArray = Array.isArray;
 const ABSOLUTE_PATH_REDACTION = "<absolute-path>";
 
 function sanitizeFilesystemContextPath(path: string): string {
+  if (path.length > ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS) return ABSOLUTE_PATH_REDACTION;
   const sanitized = sanitizeDiagnosticText(path);
   return isAbsoluteFilesystemPathForDiagnostic(sanitized) ? ABSOLUTE_PATH_REDACTION : sanitized;
 }
@@ -43,6 +45,18 @@ function snapshotDiagnostic(error: unknown, filesystemPath?: string): {
   readonly message: string;
   readonly stack?: string;
 } {
+  if (
+    filesystemPath !== undefined &&
+    filesystemPath.length > ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS
+  ) {
+    return {
+      message: snapshotThrowableDiagnosticRedactingPath(
+        error,
+        filesystemPath,
+        ABSOLUTE_PATH_REDACTION,
+      ),
+    };
+  }
   const snapshot = snapshotErrorForBoundary(error);
   const message = filesystemPath !== undefined &&
       isAbsoluteFilesystemPathForDiagnostic(filesystemPath)
