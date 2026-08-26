@@ -55,7 +55,6 @@ const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 const ArrayPrototypeSort = Array.prototype.sort;
-const JSONStringify = JSON.stringify;
 const IntrinsicReflectApply = Reflect.apply;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
@@ -98,21 +97,36 @@ function sourceSnapshotsEqual(
   });
 }
 
+function frameSourceSnapshotValue(value: string | number | null): string {
+  if (value === null) return "z";
+  const serialized = typeof value === "number" ? `${value}` : value;
+  const type = typeof value === "number" ? "n" : "s";
+  return `${type}${serialized.length}:${serialized}`;
+}
+
+function serializeSourceSnapshotFile(file: SourceSnapshotFile): string {
+  return frameSourceSnapshotValue(file.path) +
+    frameSourceSnapshotValue(file.id ?? null) +
+    frameSourceSnapshotValue(file.version_id ?? null) +
+    frameSourceSnapshotValue(file.content ?? null) +
+    frameSourceSnapshotValue(file.type ?? null) +
+    frameSourceSnapshotValue(file.size ?? null) +
+    frameSourceSnapshotValue(file.updated_at ?? null);
+}
+
 function serializeSourceSnapshot(files: SourceSnapshotFile[]): string {
   const records: string[] = [];
-  for (const file of files) {
-    records[records.length] = IntrinsicReflectApply(JSONStringify, JSON, [[
-      file.path,
-      file.id ?? null,
-      file.version_id ?? null,
-      file.content ?? null,
-      file.type ?? null,
-      file.size ?? null,
-      file.updated_at ?? null,
-    ]]) as string;
+  for (let index = 0; index < files.length; index++) {
+    records[records.length] = serializeSourceSnapshotFile(files[index]!);
   }
   IntrinsicReflectApply(ArrayPrototypeSort, records, []);
-  return IntrinsicReflectApply(JSONStringify, JSON, [records]) as string;
+
+  let serialized = "";
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!;
+    serialized += `r${record.length}:${record}`;
+  }
+  return serialized;
 }
 
 interface BranchSnapshotRecoveryOptions<T> {

@@ -819,6 +819,55 @@ describe("VeryfrontFSAdapter", () => {
       assertNotEquals(changed, first);
     });
 
+    it("does not consult project-mutated Array serialization hooks", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      const previousToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      let first: string | undefined;
+      let changed: string | undefined;
+
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => ["constant-fingerprint"],
+      });
+      try {
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
+        first = await adapter.getSourceSnapshotFingerprint();
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
+        changed = await adapter.getSourceSnapshotFingerprint();
+      } finally {
+        if (previousToJSON) {
+          Object.defineProperty(Array.prototype, "toJSON", previousToJSON);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "toJSON");
+        }
+      }
+
+      assertNotEquals(changed, first);
+    });
+
+    it("does not iterate through a mutable source-list hook", async () => {
+      const adapter = createAdapter();
+      const files = [{ path: "pages/index.tsx", content: "source" }];
+      Object.defineProperty(files, Symbol.iterator, {
+        configurable: true,
+        value: () => {
+          throw new Error("source-list iterator must not run");
+        },
+      });
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = files;
+
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+    });
+
     it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {
       const adapter = createAdapter();
       adapter.setContentContext({
