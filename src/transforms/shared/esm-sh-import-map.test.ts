@@ -209,6 +209,13 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "https://cdn.example/chart.js/sub",
       "a trailing separator names a directory whatever the segment before it looks like",
     );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", {
+        pkg: "HTTPS://CDN.Example:443/pkg\\?target=es2022#authored",
+      }),
+      "HTTPS://CDN.Example:443/pkg/sub?target=es2022#authored",
+      "a URL-equivalent backslash is normalized without rewriting other authored components",
+    );
   });
 
   it("keeps an extensionless export below a CDN coordinate", () => {
@@ -559,6 +566,20 @@ describe("transforms/shared/esm-sh-import-map", () => {
         pkg: "https://esm.sh/gh/mozilla/pdf.js/build/pdf.mjs",
       }),
       "https://esm.sh/gh/mozilla/pdf.js/build/pdf.mjs",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/build/pdf.mjs", {
+        pkg: "https://esm.sh/%67h/mozilla/pdf.js",
+      }),
+      "https://esm.sh/%67h/mozilla/pdf.js/build/pdf.mjs",
+      "an encoded source-route segment is classified before npm package parsing",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/other", {
+        pkg: "https://esm.sh/%67h/mozilla/pdf.js/build/pdf.mjs",
+      }),
+      "https://esm.sh/%67h/mozilla/pdf.js/build/pdf.mjs",
+      "an export below the encoded source coordinate remains exact",
     );
   });
 

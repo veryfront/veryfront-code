@@ -441,8 +441,9 @@ function isSingleModuleMapping(mapping: string): boolean {
   // canonical origin so `https://esm.sh:443/...` retains esm.sh coordinate
   // semantics instead of falling through to generic path handling.
   let classifiedMapping = mapping;
+  let classifiedUrl: URL | null = null;
   try {
-    const classifiedUrl = new URL(mapping);
+    classifiedUrl = new URL(mapping);
     if (classifiedUrl.hostname.endsWith(".")) {
       classifiedUrl.hostname = classifiedUrl.hostname.slice(0, -1);
     }
@@ -459,6 +460,19 @@ function isSingleModuleMapping(mapping: string): boolean {
   // when the npm name ends in a module suffix as `chart.js` does, and one that
   // already names an export has nothing to append to. Same rule as npm and jsr.
   if (isEsmShUrl(classifiedMapping)) {
+    // Source routes are coordinates too, but the npm package parser rejects
+    // their decoded leading segment. Classify them first so an encoded `gh`
+    // route behaves exactly like its unencoded spelling.
+    const sourceSegments = decodedCoordinateSegments(
+      classifiedUrl?.pathname.split("/").filter(Boolean) ?? [],
+    );
+    const sourceCoordinateLength = classifiedUrl === null
+      ? -1
+      : coordinateSegmentCount(classifiedUrl, sourceSegments);
+    if (sourceCoordinateLength !== -1) {
+      return sourceSegments.length > sourceCoordinateLength;
+    }
+
     const parsed = parseEsmShSpecifier(classifiedMapping);
     if (parsed) {
       // Match esm.sh route classification without rewriting the mapping bytes.
@@ -500,8 +514,19 @@ function isSingleModuleMapping(mapping: string): boolean {
  */
 function appendSubpath(mapping: string, subpath: string): string {
   const boundary = mapping.search(/[?#]/);
-  const path = boundary === -1 ? mapping : mapping.slice(0, boundary);
+  let path = boundary === -1 ? mapping : mapping.slice(0, boundary);
   const query = boundary === -1 ? "" : mapping.slice(boundary);
+  // The URL parser treats a backslash in an HTTP(S) path as a separator. Keep
+  // the authored scheme, authority, escapes, query and fragment, but join
+  // against that normalized path view so `pkg\` does not become `pkg//sub`.
+  const authorityStart = path.indexOf("://");
+  if (authorityStart !== -1) {
+    const firstPathSeparator = path.slice(authorityStart + 3).search(/[\\/]/);
+    if (firstPathSeparator !== -1) {
+      const pathStart = authorityStart + 3 + firstPathSeparator;
+      path = path.slice(0, pathStart) + path.slice(pathStart).replaceAll("\\", "/");
+    }
+  }
   // A mapping that names a directory already ends in the separator the subpath
   // starts with, and not every CDN collapses "//" back to "/".
   const joined = path.endsWith("/") ? path.slice(0, -1) + subpath : path + subpath;

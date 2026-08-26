@@ -279,6 +279,14 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("normalizes a URL-equivalent backslash before appending a subpath", () => {
+      const map: ImportMapConfig = { imports: { pkg: "https://cdn.example/pkg\\" } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+      );
+    });
+
     it("keeps a remote single-module mapping instead of appending a subpath", () => {
       const map: ImportMapConfig = { imports: { "@scope/pkg": "https://cdn.example/pkg.js" } };
       assertEquals(
@@ -641,6 +649,16 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
         resolveImportWithMap("https://esm.sh/gh/owner/repo", map),
         null,
         "gh/owner/repo names a source, so the gh package mapping must not capture it",
+      );
+    });
+
+    it("appends through an encoded esm.sh GitHub source coordinate", () => {
+      const map: ImportMapConfig = {
+        imports: { pkg: "https://esm.sh/%67h/owner/repo" },
+      };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        "https://esm.sh/%67h/owner/repo/sub",
       );
     });
 

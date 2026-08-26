@@ -81,6 +81,22 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should normalize a URL-equivalent backslash before appending a subpath", () => {
+      const map = { imports: { pkg: "https://cdn.example/pkg\\" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+      );
+    });
+
+    it("should append through an encoded esm.sh GitHub source coordinate", () => {
+      const map = { imports: { pkg: "https://esm.sh/%67h/owner/repo" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://esm.sh/%67h/owner/repo/sub",
+      );
+    });
+
     it("should append the esm.sh subpath to a wildcard-version mapping", () => {
       const map = { imports: { pkg: "https://cdn.example/pkg@1.x" } };
       assertEquals(
