@@ -43,15 +43,19 @@ const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
+const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
+const stringTrim = String.prototype.trim;
 const URLConstructor = URL;
 const urlHash = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
 const urlHostname = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
 const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlPassword = Object.getOwnPropertyDescriptor(URL.prototype, "password")?.get;
 const urlProtocol = Object.getOwnPropertyDescriptor(URL.prototype, "protocol")?.get;
+const urlSearch = Object.getOwnPropertyDescriptor(URL.prototype, "search")?.get;
 const urlUsername = Object.getOwnPropertyDescriptor(URL.prototype, "username")?.get;
 
 /** Resolve one local integration credential by its canonical environment-variable name. */
@@ -73,6 +77,7 @@ interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: LocalCatalogConnector;
   readonly endpoint: IntegrationEndpoint;
+  readonly endpointEnvironmentVariable?: string;
   readonly endpointOrigin?: string;
   readonly tool: IntegrationToolMeta & { id: string };
   readonly definition: ToolDefinition;
@@ -345,7 +350,10 @@ function assertSupportedEndpoint(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
   toolId: string,
-): string | undefined {
+): {
+  endpointEnvironmentVariable?: string;
+  endpointOrigin?: string;
+} {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
   }
@@ -367,13 +375,107 @@ function assertSupportedEndpoint(
     if (!stringBoolean(stringStartsWith, endpoint.url, "{{oauth.raw.instance_url}}/")) {
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
-    return undefined;
-  } else {
-    return assertHttpsCatalogUrl(
-      endpoint.url,
-      `Local integration tool "${toolId}" endpoint`,
+    return {};
+  }
+
+  const environmentPrefix = "https://{{env.";
+  if (!stringBoolean(stringStartsWith, endpoint.url, environmentPrefix)) {
+    return {
+      endpointOrigin: assertHttpsCatalogUrl(
+        endpoint.url,
+        `Local integration tool "${toolId}" endpoint`,
+      ),
+    };
+  }
+
+  const markerEnd = apply(stringIndexOf, endpoint.url, ["}}", environmentPrefix.length]) as number;
+  if (markerEnd < environmentPrefix.length) {
+    configurationError(`Local integration tool "${toolId}" has an invalid endpoint environment`);
+  }
+  const environmentVariable = apply(stringSlice, endpoint.url, [
+    environmentPrefix.length,
+    markerEnd,
+  ]) as string;
+  const suffix = apply(stringSlice, endpoint.url, [markerEnd + 2]) as string;
+  if (
+    environmentVariable.length === 0 ||
+    (suffix.length > 0 && !stringBoolean(stringStartsWith, suffix, "/")) ||
+    stringBoolean(stringIncludes, suffix, "{{")
+  ) {
+    configurationError(`Local integration tool "${toolId}" has an invalid endpoint environment`);
+  }
+
+  let declarationCount = 0;
+  for (let index = 0; index < (connector.envVars?.length ?? 0); index++) {
+    if (connector.envVars?.[index]?.name === environmentVariable) declarationCount += 1;
+  }
+  if (declarationCount !== 1) {
+    configurationError(
+      `Local integration tool "${toolId}" endpoint environment must be declared exactly once`,
     );
   }
+  return { endpointEnvironmentVariable: environmentVariable };
+}
+
+function endpointEnvironmentFallback(
+  connector: LocalCatalogConnector,
+  environmentVariable: string,
+): string | undefined {
+  for (let index = 0; index < (connector.envVars?.length ?? 0); index++) {
+    const envVar = connector.envVars?.[index];
+    if (envVar?.name === environmentVariable) return envVar.default;
+  }
+  return undefined;
+}
+
+async function resolveAdmittedEndpoint(
+  tool: AdmittedLocalIntegrationTool,
+  credentialProvider: LocalIntegrationCredentialProvider,
+): Promise<{ endpoint: IntegrationEndpoint; origin?: string }> {
+  const environmentVariable = tool.endpointEnvironmentVariable;
+  if (!environmentVariable) {
+    return { endpoint: tool.endpoint, origin: tool.endpointOrigin };
+  }
+
+  const configured = await credentialProvider(environmentVariable);
+  const fallback = endpointEnvironmentFallback(tool.connector, environmentVariable);
+  const authority = configured === undefined || configured === "" ? fallback : configured;
+  if (
+    typeof authority !== "string" || authority.length === 0 ||
+    apply(stringTrim, authority, []) !== authority ||
+    stringBoolean(stringIncludes, authority, "://") ||
+    stringBoolean(stringIncludes, authority, "{{") ||
+    stringBoolean(stringStartsWith, authority, "/")
+  ) {
+    configurationError(`Local integration tool "${tool.tool.id}" endpoint host is not configured`);
+  }
+
+  const authorityUrl = `https://${authority}`;
+  assertHttpsCatalogUrl(
+    authorityUrl,
+    `Local integration tool "${tool.tool.id}" endpoint host`,
+  );
+  const parsedAuthority = new URLConstructor(authorityUrl);
+  if (
+    urlValue(urlHostname, parsedAuthority).length === 0 ||
+    urlValue(urlSearch, parsedAuthority).length > 0
+  ) {
+    configurationError(`Local integration tool "${tool.tool.id}" endpoint host is not configured`);
+  }
+  const endpoint = freeze({
+    ...tool.endpoint,
+    url: apply(stringReplace, tool.endpoint.url, [
+      `{{env.${environmentVariable}}}`,
+      authority,
+    ]) as string,
+  });
+  return {
+    endpoint,
+    origin: assertHttpsCatalogUrl(
+      endpoint.url,
+      `Local integration tool "${tool.tool.id}" endpoint`,
+    ),
+  };
 }
 
 function inputPropertySchema(
@@ -466,7 +568,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
-  const endpointOrigin = assertSupportedEndpoint(
+  const endpointAdmission = assertSupportedEndpoint(
     connector,
     tool.endpoint,
     canonicalToolId,
@@ -477,7 +579,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     authPlan,
     connector,
     endpoint: tool.endpoint,
-    endpointOrigin,
+    ...endpointAdmission,
     tool,
     definition: toolDefinition(
       tool,
@@ -510,6 +612,7 @@ function createLocalIntegrationToolSourceInternal(
       for (let index = 0; index < snapshot.tools.length; index++) {
         const toolId = snapshot.tools[index]!;
         const tool = mapValue(admitted, toolId)!;
+        await resolveAdmittedEndpoint(tool, credentialProvider);
         if (apply(setHas, validatedConnectors, [tool.connector.name])) continue;
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider);
         apply(setAdd, validatedConnectors, [tool.connector.name]);
@@ -535,14 +638,15 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      const resolvedEndpoint = await resolveAdmittedEndpoint(tool, credentialProvider);
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      let endpoint = tool.endpoint;
-      let allowedOrigin = tool.endpointOrigin;
+      let endpoint = resolvedEndpoint.endpoint;
+      let allowedOrigin = resolvedEndpoint.origin;
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");
