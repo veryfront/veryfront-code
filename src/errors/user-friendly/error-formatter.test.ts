@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { formatErrorBox, formatUserError } from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 describe("formatErrorBox", () => {
   it("should return a string containing the error message", () => {
@@ -142,6 +143,28 @@ describe("formatUserError", () => {
     for (const forbidden of ["\x1b]2;owned", "\x1b[2J", "\x07", "\nFAKE SUCCESS"]) {
       assertEquals(output.includes(forbidden), false);
     }
+  });
+
+  it("withholds DNS-shaped properties on built-in receivers", () => {
+    const receiver = {
+      acmeOrder42(): Error {
+        return new Error("project method failed");
+      },
+    };
+    const error = receiver.acmeOrder42();
+
+    const previousEnvironment = getHostEnv("VERYFRONT_ENV");
+    setEnv("VERYFRONT_ENV", "development");
+    let output: string;
+    try {
+      output = formatUserError(error);
+    } finally {
+      if (previousEnvironment === undefined) deleteEnv("VERYFRONT_ENV");
+      else setEnv("VERYFRONT_ENV", previousEnvironment);
+    }
+
+    assert(output.includes("Stack trace:"));
+    assertEquals(output.includes("Object.acmeOrder42"), false);
   });
 
   it("should not invoke proxy traps in plain output", () => {

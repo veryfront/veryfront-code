@@ -247,15 +247,6 @@ const BRACKETED_IPV6_CALLABLE_LABEL = /^\[[0-9a-f:.]*:[0-9a-f:.]*(?:%[a-z0-9._~-
 /** An unbracketed IPv6 literal can likewise be emitted as a callable label. */
 const UNBRACKETED_IPV6_CALLABLE_LABEL = /^(?=(?:[^:]*:){2})[0-9a-f:.]+(?:%[a-z0-9._~-]+)?$/i;
 
-/**
- * Preserve well-known built-in receiver method labels despite their DNS-like
- * shape. Only this fixed receiver set is exempt: DNS names are case-insensitive,
- * so capitalization alone cannot prove a hostname-shaped label such as
- * `PrivateControl.example` names a callable rather than a private hostname.
- */
-const SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL =
-  /^(?:Object|Array|Boolean|Date|Error|Function|JSON|Map|Math|Number|Promise|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet)\.[a-z_$][A-Za-z0-9_$]*$/;
-
 /** Standard V8 modifiers are syntax around the callable label, not part of it. */
 const CALLABLE_LABEL_PREFIX = /^(?:(?:async|new)\s+)+/;
 
@@ -286,8 +277,7 @@ function isRetainableCallableLabel(label: string): boolean {
     !isSourceLocationText(label) &&
     !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
     !testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) &&
-    (!isHostnameShapedCallableLabel(label) ||
-      testRegExp(SAFE_RECEIVER_QUALIFIED_CALLABLE_LABEL, label));
+    !isHostnameShapedCallableLabel(label);
 }
 
 function isRetainableCallableLabelTokens(label: string): boolean {
