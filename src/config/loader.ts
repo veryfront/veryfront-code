@@ -1646,6 +1646,10 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // summarizeConfigLoadCause for why the path itself is not redacted here.
 // deno-lint-ignore no-control-regex
 const CSI_GLUED_PATH = /(?:\u001B\[|\u009B)(?=[\\/]|[A-Za-z]:[\\/])/g;
+// The scheme needs at least two characters: `C://Users/alice` is a drive path
+// that Node normalises, not a URL with the one-letter scheme `C`, and matching it
+// here reintroduced the path-as-URL mislabel this PR exists to remove. No
+// registered scheme is a single character.
 // A remote config URL is redacted whole rather than picked apart: AGENTS.md
 // counts private hostnames among the values user-facing output must not carry,
 // and the caller cannot tell an internal registry from a public CDN by looking
@@ -1661,7 +1665,7 @@ const CSI_GLUED_PATH = /(?:\u001B\[|\u009B)(?=[\\/]|[A-Za-z]:[\\/])/g;
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
 const SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -1827,13 +1831,20 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   // lose the drive letter the same way. Both are legal CSI sequences, so no
   // tightening of the grammar separates them from a path.
   //
+  // Replaced with a space, not with nothing. `Failed at` + `ESC[` + `/home/alice`
+  // would otherwise become `Failed at/home/alice`, and POSIX_ABSOLUTE_PATH's
+  // lookbehind refuses a slash that follows an alphanumeric -- so removing the
+  // introducer cleanly would manufacture the one adjacency that defeats the very
+  // pass meant to catch it. A doubled space when the text already ended in one is
+  // the whole cost.
+  //
   // Only the introducer is removed, not the path: redacting here instead would
   // produce `ESC[[path]`, and `[` is itself a valid CSI final byte, so the pass
   // below would eat the marker's opening bracket and emit `path]`. Removing just
   // the introducer leaves the path intact for the single redaction pass at the
   // end, which keeps `redactMachinePaths` running exactly once and after
   // de-colorization -- the precondition its own docstring states.
-  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, "");
+  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
   const deColorized = replaceMatchesWithCapturedExec(
     unglued,
     ANSI_CSI_SEQUENCE,

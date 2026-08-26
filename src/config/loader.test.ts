@@ -1028,6 +1028,34 @@ export default config as const;
         assertEquals(error.message.includes("((x))"), false);
       });
 
+      it("keeps a left boundary when a CSI introducer is glued to preceding text", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-between-text-and-path-",
+          `throw new Error("Failed at" + String.fromCharCode(27) + "[/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // The introducer is replaced with a space, not removed. Removing it would
+        // join `at` to `/home/alice`, and POSIX_ABSOLUTE_PATH's lookbehind refuses
+        // a slash following an alphanumeric -- manufacturing the exact adjacency
+        // that defeats the pass meant to catch it.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message.includes("at/home"), false);
+      });
+
+      it("treats a drive letter with a doubled separator as a path, not a URL", async () => {
+        const error = await loadFailure(
+          "vf-config-drive-double-slash-",
+          `throw new Error("Load " + String.fromCharCode(67) + "://Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // Node normalises `C://Users/...` as an absolute drive path. A one-letter
+        // scheme would claim it as a URL, which is the path-as-URL mislabel this
+        // PR exists to remove; no registered scheme is a single character.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("alice"), false);
+      });
+
       it("redacts a zero-slash special-scheme URL", async () => {
         const error = await loadFailure(
           "vf-config-zero-slash-scheme-",
@@ -1184,21 +1212,25 @@ export default config as const;
         // every `a://` starts a URL match that then fails on `(`, and an unbounded
         // parenthesised interior rescans the rest of the message from each one.
         // Measured unbounded: 2.6s for 20k repeats, growing 4x per doubling.
-        // Bounded: 53ms, growing 2x. Same control/probe ratio method -- a digit
+        // Bounded: 47ms, growing 2x. Same control/probe ratio method -- a digit
         // cannot begin a scheme, so the control never starts a match at all.
+        //
+        // Two characters, not one: SCHEME_URL requires a scheme of at least two,
+        // so `a://` stops matching entirely and the probe measures nothing. That
+        // is how this guard silently went vacuous once, and why it is `ab://`.
         const repeats = 20000;
 
         const controlStart = Date.now();
         await loadFailure(
           "vf-config-starts-control-",
-          `throw new Error("1://(".repeat(${repeats}));\n`,
+          `throw new Error("1b://(".repeat(${repeats}));\n`,
         );
         const controlMs = Math.max(1, Date.now() - controlStart);
 
         const probeStart = Date.now();
         const error = await loadFailure(
           "vf-config-starts-probe-",
-          `throw new Error("a://(".repeat(${repeats}));\n`,
+          `throw new Error("ab://(".repeat(${repeats}));\n`,
         );
         const probeMs = Date.now() - probeStart;
 
