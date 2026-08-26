@@ -91,9 +91,10 @@ async function mintTrustedDispatchJws(): Promise<string> {
  *                            attaches an unverifiable header value to simulate
  *                            the direct-access spoofing attack. Omit/false for
  *                            an untrusted client.
+ * @param options.method      Optional HTTP method; defaults to GET.
  */
 async function makeReq(
-  options: { projectPath?: string; trusted?: boolean | "bogus" } = {},
+  options: { projectPath?: string; trusted?: boolean | "bogus"; method?: string } = {},
 ): Promise<Request> {
   const headers = new Headers();
   if (options.projectPath !== undefined) {
@@ -104,7 +105,7 @@ async function makeReq(
   } else if (options.trusted === "bogus") {
     headers.set("x-veryfront-dispatch-jws", "eyJhbGciOi.fake.value");
   }
-  return new Request("http://example.com/", { headers });
+  return new Request("http://example.com/", { headers, method: options.method });
 }
 
 function createMockAdapter(
@@ -803,7 +804,7 @@ describe("adapter-factory", () => {
       ]);
     });
 
-    it("refreshes mutable source before config for SSR documents", async () => {
+    it("refreshes mutable source before config for document and HEAD Markdown routes", async () => {
       let sourceFresh = false;
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
@@ -890,6 +891,48 @@ describe("adapter-factory", () => {
       assertEquals(result.config?.router, "pages");
       assertEquals(result.config?.title, "preview:tenant-value");
       assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
+
+      freshnessCalls.length = 0;
+      sourceFresh = false;
+      const headMarkdownResult = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq({ method: "HEAD" }),
+        pathname: "/notes.md",
+        isProxyMode: true,
+        prepareHostedConfigContext: async () => ({
+          sourceContext: { productionMode: false, branch: "main" },
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        }),
+      });
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+      assertEquals(headMarkdownResult.previewDocumentSourceSnapshot, {
         identity: "branch:mutable-config-project:main",
         version: 1,
       });

@@ -283,7 +283,7 @@ async function resolvePreviewConfigFreshness(
   // would otherwise reach SSR or MarkdownPreviewHandler. A configured build
   // root is discovered from one provisional config read below.
   const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
-    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
+    markdownPreviewOwnsDocumentPathname(pathname);
   if (!documentCandidate) return { freshness: "normal" };
 
   // Renew the normal lease before classifying static ownership. Refreshing the
