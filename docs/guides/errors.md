@@ -527,7 +527,7 @@ RAG store file is unavailable.
 Source snapshot freshness cannot be established.
 
 - **HTTP status:** 503
-- **What to do:** Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1
+- **What to do:** Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1. Strict preview configuration also requires getSourceSnapshotIdentity() and getSourceSnapshotVersion() to return a stable identity and concrete generation.
 
 ## Server and client boundary
 

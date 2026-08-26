@@ -49,6 +49,7 @@ interface PreparedDocumentSnapshot {
   readonly version?: number;
   readonly reclassify?: PreviewDocumentSnapshotReclassifier;
   readonly configBound?: boolean;
+  readonly liveSource?: boolean;
 }
 
 const preparedDocumentSnapshots = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
@@ -105,6 +106,9 @@ async function preparedDocumentSnapshotMatches(
   ctx: HandlerContext,
   prepared: PreparedDocumentSnapshot,
 ): Promise<boolean> {
+  if (prepared.liveSource === true && isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs)) {
+    return true;
+  }
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
   const identityMatches = prepared.identity !== undefined && identity === prepared.identity;
@@ -136,7 +140,15 @@ export async function preparePreviewDocumentSourceSnapshot(
   // a possibly different context.
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
-  preparedDocumentSnapshots.set(ctx, { identity, version, reclassify });
+  const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
+  preparedDocumentSnapshots.set(ctx, { identity, version, reclassify, liveSource });
+}
+
+function isLiveSourceWithoutSnapshotCapabilities(fs: FileSystemAdapter): boolean {
+  return fs.refreshSourceSnapshot === undefined &&
+    fs.ensureSourceSnapshotFresh === undefined &&
+    fs.getSourceSnapshotVersion === undefined &&
+    fs.getSourceSnapshotIdentity === undefined;
 }
 
 /**

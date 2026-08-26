@@ -1,4 +1,4 @@
-import { VeryfrontError } from "#veryfront/errors";
+import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE, VeryfrontError } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
@@ -256,6 +256,30 @@ it("never reuses a prepared snapshot from an adapter that cannot name its contex
     refreshes,
     2,
     "without a snapshot identity, freshness must not carry across a possible context change",
+  );
+});
+
+it("treats a capability-free live adapter as stable across the classifier handoff", async () => {
+  const adapter = createMockAdapter();
+  const ctx = makePreviewCtx(adapter);
+  const reclassify = () => Promise.resolve({ continue: true });
+
+  await preparePreviewDocumentSourceSnapshot(ctx, reclassify);
+
+  assertEquals(
+    await ensurePreviewDocumentSourceSnapshot(ctx),
+    undefined,
+    "a local adapter whose reads are already live must not re-enter classification forever",
+  );
+});
+
+it("documents every capability required for strict configuration markers", () => {
+  assertEquals(
+    SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.suggestion,
+    "Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() " +
+      "with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1. " +
+      "Strict preview configuration also requires getSourceSnapshotIdentity() and " +
+      "getSourceSnapshotVersion() to return a stable identity and concrete generation.",
   );
 });
 
