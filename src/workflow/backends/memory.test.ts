@@ -937,6 +937,42 @@ describe("MemoryBackend", () => {
         "mailbox capacity",
       );
       assertEquals(await backend.takeRunEvent("run-not-created", "ready"), null);
+
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-claimed-mailbox", { eventName: "ready" }),
+      );
+      const claimed = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-claimed-mailbox",
+        "ready",
+      );
+      assertExists(claimed);
+
+      await assertRejects(
+        () =>
+          backend.appendRunEvent("run-racing-publisher", {
+            id: "evt-racing-publisher",
+            eventName: "ready",
+            payload: undefined,
+            publishedAt: new Date(),
+          }),
+        Error,
+        "mailbox capacity",
+      );
+      assertEquals(
+        await backend.restoreRunEventDelivery(
+          "run-events",
+          "evw-claimed-mailbox",
+          claimed,
+        ),
+        true,
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "ready"))?.id,
+        "evt-active-0",
+        "a claimed last event must retain its mailbox slot until delivery commits",
+      );
     });
 
     it("clears waits and buffered events when the run is deleted", async () => {

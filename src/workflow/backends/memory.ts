@@ -823,7 +823,9 @@ export class MemoryBackend implements WorkflowBackend {
     const taken = takeRetainedRunEvent(mailbox, eventName);
     if (!taken) return Promise.resolve(null);
     wait.status = "delivered";
-    if (mailbox.length === 0) this.runEvents.delete(runId);
+    // Keep an empty mailbox as the claimed event's capacity reservation. The
+    // asynchronous delivery may still roll back, and another run must not take
+    // this slot before restoreRunEventDelivery puts the event back.
     return Promise.resolve(taken);
   }
 
