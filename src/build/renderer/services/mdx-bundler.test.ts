@@ -93,11 +93,15 @@ async function importEmittedModule(
         "};",
     )
     .replace(
-      /import\s*\{\s*useMDXComponents\s+as\s+([A-Za-z_$][\w$]*)\s*\}\s*from\s*"veryfront\/mdx";?/g,
-      (_statement, local: string) =>
-        options.providerHeading
-          ? `const ${local} = (components) => ({ h1: "provider-heading", ...components });`
-          : `const ${local} = (components) => ({ ...components });`,
+      /import\s*\{\s*useMDXComponents(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*\}\s*from\s*"veryfront\/mdx";?/g,
+      (_statement, alias: string | undefined) => {
+        const local = alias ?? "useMDXComponents";
+        return (
+          options.providerHeading
+            ? `const ${local} = (components) => ({ h1: "provider-heading", ...components });`
+            : `const ${local} = (components) => ({ ...components });`
+        );
+      },
     );
 
   return await withTempFile(async (modulePath) => {
