@@ -1322,6 +1322,60 @@ export default config as const;
         assertStringIncludes(colorized.message, "[path]");
       });
 
+      it("keeps a special-scheme URL intact when a CSI introducer precedes it", async () => {
+        const zeroSlash = await loadFailure(
+          "vf-config-csi-zero-slash-url-",
+          `throw new Error(String.fromCharCode(27) + "[https:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // `h` is a legal CSI final byte, so the CSI pass consumed `ESC[h` and left
+        // `ttps:registry.internal/...`. ZERO_SLASH_SCHEME_URL no longer recognises
+        // the damaged scheme, and POSIX_ABSOLUTE_PATH refuses a `/` that follows a
+        // hostname, so the private host reached the caller-visible error.
+        assertEquals(zeroSlash.message.includes("registry.internal"), false);
+        assertStringIncludes(zeroSlash.message, "[url]");
+
+        const upper = await loadFailure(
+          "vf-config-csi-zero-slash-upper-",
+          `throw new Error(String.fromCharCode(27) + "[WSS:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // Every special scheme leaks the same way, and schemes are case-insensitive.
+        assertEquals(upper.message.includes("registry.internal"), false);
+        assertStringIncludes(upper.message, "[url]");
+
+        const eightBit = await loadFailure(
+          "vf-config-csi-zero-slash-8bit-",
+          `throw new Error(String.fromCharCode(155) + "ftp:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(eightBit.message.includes("registry.internal"), false);
+        assertStringIncludes(eightBit.message, "[url]");
+
+        const singleSlash = await loadFailure(
+          "vf-config-csi-single-slash-url-",
+          `throw new Error(String.fromCharCode(27) + "[https:/registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // This form did not leak -- the damaged `ttp` still hit the drive-letter
+        // alternative -- but it emitted `ttp[path]`, the path-as-URL mislabel this
+        // change exists to remove.
+        assertEquals(singleSlash.message.includes("registry.internal"), false);
+        assertEquals(singleSlash.message.includes("[path]"), false);
+        assertStringIncludes(singleSlash.message, "[url]");
+
+        const prose = await loadFailure(
+          "vf-config-csi-reset-prose-",
+          `throw new Error(String.fromCharCode(27) + "[0mError: cannot find module");\n`,
+        );
+
+        // The scheme lookahead is restricted to the special schemes for this case:
+        // a generic `[A-Za-z][A-Za-z0-9+.-]*:` would match the `mError:` prose here,
+        // strip `ESC[0`, and leave a stray `m` in an ordinary diagnostic.
+        assertStringIncludes(prose.message, "Error: cannot find module");
+        assertEquals(prose.message.includes("mError"), false);
+      });
+
       it("classifies a drive path glued to diagnostic text as a path, not a URL", async () => {
         const drive = await loadFailure(
           "vf-config-glued-fwd-drive-",

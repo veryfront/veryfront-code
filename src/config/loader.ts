@@ -1655,9 +1655,28 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 //
 // The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
 // 0x2F is `/` -- the first character of the path this pass exists to preserve.
+//
+// A special-scheme URL start is preserved for the same reason a path is. In
+// `ESC[https:registry.internal/x`, `h` is a legal final byte, so the CSI pass
+// left `ttps:registry.internal/x`: ZERO_SLASH_SCHEME_URL no longer recognises
+// the damaged scheme, and POSIX_ABSOLUTE_PATH refuses the `/x` that follows a
+// hostname, so the private host reached the caller. `wss`, `ftp`, the 8-bit
+// introducer, a parameterized introducer and an uppercase scheme all leaked the
+// same way; the single-slash form survived but emitted `ttp[path]`, the
+// path-as-URL mislabel this PR exists to remove.
+//
+// Only the special schemes are listed, matching MALFORMED_SCHEME_URL and
+// ZERO_SLASH_SCHEME_URL -- keep the three in sync. A generic
+// `[A-Za-z][A-Za-z0-9+.-]*:` lookahead cannot be used: it matches the prose in
+// `ESC[0mError: cannot find module`, which would strip `ESC[0` and leave a
+// stray `m` in an ordinary diagnostic. A generic `scheme://` needs no help
+// here, because SCHEME_URL still matches the damaged `ttps://host/x`.
+//
+// `i` is safe on the whole pattern: every other class is either explicitly
+// both cases (`[A-Za-z]`) or contains no letters at all.
 const CSI_GLUED_PATH =
   // deno-lint-ignore no-control-regex
-  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/])/g;
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*(?=[\\/]|[A-Za-z]:[\\/]|(?:https?|wss?|ftp):)/gi;
 // The scheme needs at least two characters: `C://Users/alice` is a drive path
 // that Node normalises, not a URL with the one-letter scheme `C`, and matching it
 // here reintroduced the path-as-URL mislabel this PR exists to remove. No
