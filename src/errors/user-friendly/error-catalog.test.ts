@@ -8,7 +8,7 @@ import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 // statements, not raw lines: comments never end a statement, a directive may
 // carry one (`'use client'; // Client Component`), and one line may hold
 // several statements (`import './setup'; 'use client';`). This is a minimal
-// scanner, not a parser — it removes `//` and `/* */` comments and breaks at
+// scanner, not a parser. It removes `//` and `/* */` comments and breaks at
 // code-level semicolons while staying string-aware (so `'https://x'` and a
 // quoted `;` survive) and preserving newlines, which is exactly enough to
 // recover the statements of the flat catalog examples.
@@ -75,6 +75,7 @@ function toStatementSource(source: string): string {
 // with or without the trailing semicolon, are all forms Veryfront honours and
 // project templates use.
 const directive = /^['"]use client['"];?$/;
+const directiveLike = /['"]use client['"]/;
 
 // The statements of a file block, comments stripped and semicolons resolved
 // first: a trailing comment cannot disguise a directive, a commented-out
@@ -99,10 +100,16 @@ const stringLiteralStatement = /^(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")$/;
 function invalidUseClientIndexes(block: string): number[] {
   const statements = statementsOf(block);
   const indexes = useClientIndexes(block);
+  const directiveLikeIndexes = statements
+    .map((statement, index) => (directiveLike.test(statement) ? index : -1))
+    .filter((index) => index !== -1);
   // Use the runtime classifier as the source of truth for whether a leading
   // string is actually a directive. In particular, a semicolonless string
-  // followed by an ASI continuation token is one expression, not a directive.
-  if (indexes.length > 0 && !hasUseClientDirective(block)) return indexes;
+  // followed by an ASI continuation token or a wrapped string is one
+  // expression, not a directive.
+  if (directiveLikeIndexes.length > 0 && !hasUseClientDirective(block)) {
+    return directiveLikeIndexes;
+  }
 
   return indexes.filter((index) =>
     statements.slice(0, index).some((statement) => !stringLiteralStatement.test(statement))
@@ -331,6 +338,20 @@ describe("ERROR_SOLUTIONS", () => {
           invalidUseClientIndexes(block),
           [0],
           "a continued string expression is not a directive statement",
+        );
+      });
+
+      it("rejects a directive-like string wrapped in an expression", () => {
+        const block = [
+          "// ✅ Correct: app/x.tsx (Client Component)",
+          "('use client');",
+          "export default function Example() { return null; }",
+        ].join("\n");
+
+        assertEquals(
+          invalidUseClientIndexes(block),
+          [0],
+          "a wrapped string is not a runtime directive and must be reported",
         );
       });
 
