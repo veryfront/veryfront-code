@@ -73,6 +73,7 @@ const IntrinsicMap = Map;
 const IntrinsicSet = Set;
 const ArrayIsArray = Array.isArray;
 const IntrinsicPromise = Promise;
+const IntrinsicString = String;
 const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicErrorPrototype = Error.prototype;
 const IntrinsicObjectPrototype = Object.prototype;
@@ -3102,7 +3103,9 @@ function selectConditionalProjectExport(
     }
     return undefined;
   }
-  if (!isRecord(value)) throw new TypeError("Package export target is invalid");
+  if (!isRecord(value)) {
+    throw new InvalidProjectPackageTargetError("Package export target is invalid");
+  }
 
   const keys = ownKeys(value);
   // Node and Bun reject conditional maps whose keys are array indices before
@@ -3985,17 +3988,41 @@ async function importFreshBunAsyncConfig(
   ObjectDefineProperty(globalThis, observerKey, {
     configurable: true,
     value: (specifier: unknown): unknown => {
-      if (typeof specifier !== "string") return specifier;
-      let resolvedSpecifier = specifier;
-      if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
-        const resolvedUrl = new IntrinsicURL(specifier, baseUrl);
+      let stringSpecifier: string;
+      if (typeof specifier === "string") {
+        stringSpecifier = specifier;
+      } else {
+        // Dynamic import applies ToString with the string hint. Resolve that
+        // coerced value from the authored config rather than allowing Bun to
+        // coerce it later relative to the temporary staged module. A Symbol
+        // remains native so import() preserves its rejected-Promise behavior.
+        if (typeof specifier === "symbol") return specifier;
+        try {
+          stringSpecifier = ReflectApply(IntrinsicString, undefined, [specifier]) as string;
+        } catch (error) {
+          // The wrapper runs while evaluating import()'s argument, whereas
+          // native ToString failures reject the returned Promise. Hand Bun a
+          // one-shot coercion object so it produces the same asynchronous
+          // rejection without invoking authored coercion hooks twice.
+          const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
+          ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
+            value: () => {
+              throw error;
+            },
+          });
+          return rejectedSpecifier;
+        }
+      }
+      let resolvedSpecifier = stringSpecifier;
+      if (stringStartsWith(stringSpecifier, "./") || stringStartsWith(stringSpecifier, "../")) {
+        const resolvedUrl = new IntrinsicURL(stringSpecifier, baseUrl);
         resolvedSpecifier = ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
-      } else if (!keepsConfigImportSpecifier(specifier) && !isAbsolute(specifier)) {
+      } else if (!keepsConfigImportSpecifier(stringSpecifier) && !isAbsolute(stringSpecifier)) {
         if (!CapturedBunResolveSync || !CapturedBun) {
           throw new TypeError("Bun project config resolver is unavailable");
         }
         const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
-          specifier,
+          stringSpecifier,
           dirname(absolutePath),
         ]);
         if (typeof resolved !== "string") {

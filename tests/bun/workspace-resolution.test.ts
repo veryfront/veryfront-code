@@ -471,6 +471,25 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-computed-package-" });
   });
 
+  it("resolves coercible computed imports from the original project", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    await withTempDir(async (projectDir) => {
+      const configPath = `${projectDir}/veryfront.config.ts`;
+      const helperPath = `${projectDir}/coercible-helper.ts`;
+      const source = "let coercions = 0;\n" +
+        "const dependency = { toString() { coercions += 1; return './coercible-helper.ts'; } };\n" +
+        "const { default: value } = await import(dependency);\n" +
+        "export default { title: `${value}:${coercions}` };\n";
+      await writeTextFile(configPath, source);
+      await writeTextFile(helperPath, 'export default "coercible";\n');
+      adapter.fs.files.set(configPath, source);
+
+      assertEquals((await getConfig(projectDir, adapter)).title, "coercible:1");
+    }, { prefix: "vf-config-bun-coercible-computed-import-" });
+  });
+
   it("keeps a hashbang first when observing computed imports", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();

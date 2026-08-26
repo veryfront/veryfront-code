@@ -791,6 +791,30 @@ export default config as const;
       }, { prefix: "vf-config-export-array-" });
     });
 
+    it("continues past invalid active conditional targets in export arrays", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-array-target-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-array-target-package",
+            type: "module",
+            exports: [{ import: 42 }, "./index.js"],
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "array-target";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-array-target-package";\nexport default value;\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/config-array-target-package/index.js");
+      }, { prefix: "vf-config-export-array-invalid-target-" });
+    });
+
     it("gives bare Node built-ins precedence over shadow packages", async () => {
       await withTempDir(async (projectDir) => {
         const packageDir = `${projectDir}/node_modules/fs`;
