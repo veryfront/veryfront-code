@@ -6,6 +6,7 @@ import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/dis
 import { tryGetRegistryScopeContext } from "#veryfront/cache/cache-key-builder.ts";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-execution-policy.ts";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -144,7 +145,8 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     logger.warn("Denied executable discovery in a shared runtime", {
       projectSlug: ctx.projectSlug,
       projectId: ctx.projectId,
-      requiredTopology: "dedicated project runtime",
+      // The lever, for an operator whose runtime is meant to be the executor.
+      overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
     });
     throw INITIALIZATION_ERROR.create({
       detail:

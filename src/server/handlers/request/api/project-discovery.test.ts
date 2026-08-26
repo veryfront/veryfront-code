@@ -151,11 +151,14 @@ describe(
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
     });
 
-    it("keeps shared primitive discovery denied despite a host grant", async () => {
+    it("discovers primitives in a shared runtime once the host grants execution", async () => {
+      // Regression for issue-inbox#356: agent chat 500'd on every hosted project
+      // with agents/*.ts because this guard ignored the host-execution
+      // capability that the rest of the execution surfaces already honor.
       const ctx = createHandlerContext("/granted-project", "granted", "preview");
       ctx.isLocalProject = false;
       // Present marks a shared multi-project runtime, as veryfront-server is.
-      // Rejecting also asserts discovery never invokes this tenant boundary.
+      // Rejecting also asserts discovery never invokes it on the granted path.
       ctx.prepareHostedConfigContext = () => Promise.reject(new Error("must not be called"));
       ctx.allowHostProjectCodeExecution = true;
       await ctx.adapter.fs.writeFile(
@@ -181,12 +184,23 @@ describe(
         return readFile(path);
       };
 
-      await assertRejects(
-        () => ensureProjectDiscovery(ctx),
-        Error,
-        "isolated project runtime",
+      const result = await ensureProjectDiscovery(ctx);
+
+      assertExists(result, "discovery must return a result instead of throwing");
+      assertEquals(
+        reads > 0,
+        true,
+        "an operator-granted shared executor must actually read project source",
       );
-      assertEquals(reads, 0);
+      // `reads > 0` alone is satisfied by any incidental probe, so pin the
+      // primitive itself: discovery must have found the granted project's tool.
+      assertEquals(
+        result.tools.has("granted_tool"),
+        true,
+        `granted discovery must surface the project tool, got ${
+          JSON.stringify([...result.tools.keys()])
+        }`,
+      );
     });
 
     afterAll(async () => {

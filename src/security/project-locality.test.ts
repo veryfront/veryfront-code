@@ -1,13 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isBun } from "#veryfront/platform/compat/runtime.ts";
-import {
-  isExplicitHostProjectCodeExecutionAllowed,
-  isHostProjectCodeExecutionAllowed,
-  isSharedProjectRuntime,
-  requiresIsolatedProjectRuntime,
-} from "./project-locality.ts";
+import { isSharedProjectRuntime, requiresIsolatedProjectRuntime } from "./project-locality.ts";
 
 describe("security/project-locality shared runtime topology", () => {
   it("recognizes hosted-config and multi-project runtime boundaries", () => {
@@ -101,11 +95,11 @@ describe("security/project-locality isolated runtime requirement", () => {
     );
   });
 
-  it("denies shared host execution even when the entrypoint grants the capability", () => {
+  it("allows execution once the host-owned entrypoint grants the capability", () => {
     assertEquals(
       requiresIsolatedProjectRuntime({ ...sharedRuntime, allowHostProjectCodeExecution: true }),
-      true,
-      "ambient runtime channels keep shared host execution unsafe",
+      false,
+      "an operator-granted shared executor may run project code",
     );
   });
 
@@ -122,24 +116,6 @@ describe("security/project-locality isolated runtime requirement", () => {
       requiresIsolatedProjectRuntime(dedicatedRuntime),
       false,
       "a non-shared runtime was never denied",
-    );
-  });
-
-  it("keeps the host capability usable in dedicated Bun runtimes", () => {
-    if (!isBun) return;
-    const capableDedicatedRuntime = {
-      ...dedicatedRuntime,
-      allowHostProjectCodeExecution: true,
-    };
-    assertEquals(isExplicitHostProjectCodeExecutionAllowed(capableDedicatedRuntime), true);
-    assertEquals(isHostProjectCodeExecutionAllowed(capableDedicatedRuntime), true);
-    assertEquals(
-      isHostProjectCodeExecutionAllowed({
-        ...sharedRuntime,
-        allowHostProjectCodeExecution: true,
-      }),
-      false,
-      "the topology-aware boundary must still deny shared Bun execution",
     );
   });
 
@@ -162,25 +138,6 @@ describe("security/project-locality isolated runtime requirement", () => {
       true,
       "a hosted-config preparation boundary marks a shared runtime",
     );
-  });
-
-  it("uses one topology snapshot for the host-execution decision", () => {
-    let calls = 0;
-    const runtime = {
-      allowHostProjectCodeExecution: true,
-      adapter: {
-        fs: {
-          isMultiProjectMode: () => calls++ === 0,
-        },
-      },
-    };
-
-    assertEquals(
-      requiresIsolatedProjectRuntime(runtime),
-      true,
-      "a shared topology snapshot must stay authoritative for the whole decision",
-    );
-    assertEquals(calls, 1, "the topology provider must be sampled once");
   });
 
   it("rejects capabilities that are not own boolean data properties", () => {

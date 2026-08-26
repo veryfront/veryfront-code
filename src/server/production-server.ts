@@ -35,8 +35,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 import {
   HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-  isHostProjectExecutionOverrideConfigured,
-  resolveHostProjectExecutionPosture,
+  isHostProjectExecutionOverrideEnabled,
 } from "#veryfront/security/host-execution-policy.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { getIsolationPosture } from "#veryfront/security/sandbox/worker-pool.ts";
@@ -249,20 +248,16 @@ export function startProductionServer(
         enableSSRClientOnlyFetching();
 
         // A dedicated single-project runtime carries the capability implicitly.
-        // Shared runtimes always route executable project code to an isolated
-        // project runtime. The former operator override is diagnostic only.
+        // A shared runtime intended to be the executor must be granted it by an
+        // operator, deliberately and visibly.
         //
         // Computed before discovery so startup and request handling share one
         // value. They disagreed before issue-inbox#363: discovery hardcoded a
         // grant while the handler computed the real posture.
-        const sharedRuntime = bootstrap.config.fs?.veryfront?.proxyMode === true ||
-          isSharedProjectRuntime({ adapter });
-        const operatorOverrideConfigured = isHostProjectExecutionOverrideConfigured();
-        const executionPosture = resolveHostProjectExecutionPosture({
-          sharedRuntime,
-          overrideConfigured: operatorOverrideConfigured,
-        });
-        const { allowHostProjectCodeExecution } = executionPosture;
+        const isolatedRuntimeGrant = bootstrap.config.fs?.veryfront?.proxyMode !== true &&
+          !isSharedProjectRuntime({ adapter });
+        const operatorGrant = isHostProjectExecutionOverrideEnabled();
+        const allowHostProjectCodeExecution = isolatedRuntimeGrant || operatorGrant;
 
         // Run primitive discovery before serving (registries must be populated before first request)
         if (discoveryConfig) {
@@ -274,7 +269,6 @@ export function startProductionServer(
 
             const outcome = await runStartupDiscovery({
               config: discoveryConfig,
-              runtimeAdapter: adapter,
               allowHostProjectCodeExecution,
               discoverAll,
               isExtendedFSAdapter,
@@ -298,12 +292,10 @@ export function startProductionServer(
         // operator looks for it.
         getIsolationPosture();
 
-        if (executionPosture.overrideIgnored) {
-          logger.warn("Host project execution override is ignored", {
+        if (operatorGrant && !isolatedRuntimeGrant) {
+          logger.warn("Shared runtime is executing tenant project code by operator grant", {
             overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-            reason: sharedRuntime
-              ? "shared runtimes require isolated project execution"
-              : "dedicated runtimes already allow project execution",
+            proxyMode: bootstrap.config.fs?.veryfront?.proxyMode === true,
           });
         }
 
