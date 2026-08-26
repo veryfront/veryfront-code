@@ -41,6 +41,8 @@ const promiseAllSettled = Promise.allSettled;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const universalObjectPrototype = Object.prototype;
+const mapConstructor = Map;
+const mapSet = Map.prototype.set;
 const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 // Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
@@ -58,6 +60,14 @@ function sliceString(value: string, start: number, end?: number): string {
 
 function startsWithString(value: string, prefix: string): boolean {
   return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function createStringMap(): Map<string, string> {
+  return new mapConstructor<string, string>();
+}
+
+function setMapValue(map: Map<string, string>, key: string, value: string): void {
+  reflectApply(mapSet, map, [key, value]);
 }
 
 function mapBatch<T, U>(
@@ -275,7 +285,7 @@ export class SSRDependencyValidator {
   ): Promise<ResolvedCachedDependencies> {
     throwIfAborted(signal);
     if (depth > MAX_TRANSFORM_DEPTH) {
-      return { localImportPaths: new Map(), crossProjectPaths: new Map() };
+      return { localImportPaths: createStringMap(), crossProjectPaths: createStringMap() };
     }
 
     const parseResult = await parseLocalImports(
@@ -329,14 +339,14 @@ export class SSRDependencyValidator {
     signal?: AbortSignal,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
-    const crossProjectPaths = new Map<string, string>();
+    const crossProjectPaths = createStringMap();
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
       const results = await allSettled(
         mapBatch(crossProjectImports, i, i + TRANSFORM_BATCH_SIZE, async (crossImport) => {
           try {
             const tempPath = await this.transformCrossProjectImport(crossImport, signal);
-            crossProjectPaths.set(crossImport.specifier, tempPath);
+            setMapValue(crossProjectPaths, crossImport.specifier, tempPath);
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
@@ -372,7 +382,7 @@ export class SSRDependencyValidator {
     options?: DependencyTransformCacheOptions,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
-    const importPathMap = new Map<string, string>();
+    const importPathMap = createStringMap();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const results = await allSettled(
@@ -389,9 +399,13 @@ export class SSRDependencyValidator {
               options,
             );
 
-            importPathMap.set(imp.rewriteSpecifier ?? imp.specifier, depEntry.tempPath);
-            importPathMap.set(imp.specifier, depEntry.tempPath);
-            importPathMap.set(imp.absolutePath, depEntry.tempPath);
+            setMapValue(
+              importPathMap,
+              imp.rewriteSpecifier ?? imp.specifier,
+              depEntry.tempPath,
+            );
+            setMapValue(importPathMap, imp.specifier, depEntry.tempPath);
+            setMapValue(importPathMap, imp.absolutePath, depEntry.tempPath);
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;

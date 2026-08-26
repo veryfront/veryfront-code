@@ -1,7 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import {
+  importParserInternals,
+  parseLocalImports,
+} from "#veryfront/transforms/esm/import-parser.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 
 it("keeps containment when Promise.all is poisoned", async () => {
@@ -83,5 +86,32 @@ it("keeps containment when String prototype methods are poisoned", async () => {
     String.prototype.replaceAll = originalReplaceAll;
     String.prototype.startsWith = originalStartsWith;
     await stopEsbuild();
+  }
+});
+
+it("redacts malformed file URLs through captured string intrinsics", () => {
+  const originalLastIndexOf = String.prototype.lastIndexOf;
+  const originalSlice = String.prototype.slice;
+  const specifier = "file:///project/a%2Fb.tsx";
+  try {
+    String.prototype.lastIndexOf = function (searchString: string, position?: number): number {
+      if (String(this) === specifier) return -1;
+      return Reflect.apply(originalLastIndexOf, this, [searchString, position]);
+    };
+    String.prototype.slice = function (start?: number, end?: number): string {
+      if (String(this) === specifier) return specifier;
+      return Reflect.apply(originalSlice, this, [start, end]);
+    };
+
+    const authoredSpecifier = importParserInternals.toAuthoredSpecifier(
+      null,
+      specifier,
+      "/project/page.tsx",
+    );
+
+    assertEquals(authoredSpecifier, "./a%2Fb.tsx");
+  } finally {
+    String.prototype.lastIndexOf = originalLastIndexOf;
+    String.prototype.slice = originalSlice;
   }
 });

@@ -63,7 +63,9 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const universalObjectPrototype = Object.prototype;
 const StringEndsWith = String.prototype.endsWith;
+const StringLastIndexOf = String.prototype.lastIndexOf;
 const StringReplaceAll = String.prototype.replaceAll;
+const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 const windowsHost = isWindowsPlatform();
 
@@ -71,8 +73,16 @@ function stringEndsWith(value: string, search: string): boolean {
   return ReflectApply(StringEndsWith, value, [search]) as boolean;
 }
 
+function stringLastIndexOf(value: string, search: string): number {
+  return ReflectApply(StringLastIndexOf, value, [search]) as number;
+}
+
 function stringReplaceAll(value: string, search: string, replacement: string): string {
   return ReflectApply(StringReplaceAll, value, [search, replacement]) as string;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringSlice, value, end === undefined ? [start] : [start, end]) as string;
 }
 
 function stringStartsWith(value: string, search: string): boolean {
@@ -289,6 +299,7 @@ export const importParserInternals = Object.freeze({
   isFileUrlSpecifier,
   isPathWithinProject,
   fileUrlToPath,
+  toAuthoredSpecifier,
 });
 
 /**
@@ -449,7 +460,9 @@ function toAuthoredSpecifier(
   specifier: string,
   fromFile: string,
 ): string {
-  if (!targetPath) return `./${specifier.slice(specifier.lastIndexOf("/") + 1)}`;
+  if (!targetPath) {
+    return `./${stringSlice(specifier, stringLastIndexOf(specifier, "/") + 1)}`;
+  }
 
   const relativePath = relative(dirname(fromFile), targetPath);
   return stringStartsWith(relativePath, ".") ? relativePath : `./${relativePath}`;

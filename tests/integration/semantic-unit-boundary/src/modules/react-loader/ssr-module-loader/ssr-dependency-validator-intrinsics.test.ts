@@ -203,3 +203,45 @@ it("awaits contained reads through captured Promise.allSettled", async () => {
     releaseRead(new Uint8Array());
   }
 });
+
+it("records contained rewrite keys through captured Map.set", async () => {
+  const originalSet = Map.prototype.set;
+  const rewriteSpecifier = "file:///project/child.ts";
+  const adapter = {
+    fs: {
+      symlinkSemantics: "none",
+      readFile: () => Promise.resolve("export default null;"),
+    },
+  } as unknown as RuntimeAdapter;
+  const validator = new SSRDependencyValidator(
+    () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+    () => Promise.resolve(""),
+    adapter,
+    "/project",
+  );
+
+  try {
+    Map.prototype.set = function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+      if (key === rewriteSpecifier) return this;
+      return Reflect.apply(originalSet, this, [key, value]);
+    } as typeof Map.prototype.set;
+
+    const paths = await validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        rewriteSpecifier,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(paths.get(rewriteSpecifier), "/tmp/child.js");
+  } finally {
+    Map.prototype.set = originalSet;
+  }
+});
