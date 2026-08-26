@@ -3112,7 +3112,7 @@ describe("review wakeup identity", () => {
     path: ".github/workflows/automated-review-wakeup.yml@main",
     event: "pull_request_review",
     conclusion: "success",
-    display_title: "automated-review-wakeup-pr-123",
+    display_title: "automated-review-wakeup-pr-123-eligible",
     head_branch: "contributor-branch",
     head_sha: HEAD,
     head_repository: { id: 77 },
@@ -3131,22 +3131,33 @@ describe("review wakeup identity", () => {
   });
   const repository = { id: 88, default_branch: "main" };
 
-  it("parses only a trusted completed wakeup run", () => {
+  it("parses only trusted eligible wakeup metadata", () => {
     assertEquals(parseReviewWakeupRun(wakeupRun()), {
       pullNumber: 123,
       headBranch: "contributor-branch",
       headSha: HEAD,
       headRepositoryId: 77,
     });
+    for (const conclusion of ["failure", "cancelled"]) {
+      assertEquals(parseReviewWakeupRun(wakeupRun({ conclusion })), {
+        pullNumber: 123,
+        headBranch: "contributor-branch",
+        headSha: HEAD,
+        headRepositoryId: 77,
+      });
+    }
     for (
       const candidate of [
         wakeupRun({ path: ".github/workflows/untrusted.yml@main" }),
         wakeupRun({ path: 42 }),
         wakeupRun({ event: "pull_request" }),
-        wakeupRun({ conclusion: "failure" }),
         wakeupRun({ id: 0 }),
-        wakeupRun({ display_title: "automated-review-wakeup-pr-0" }),
-        wakeupRun({ display_title: "automated-review-wakeup-pr-123-extra" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-0-eligible" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-123" }),
+        wakeupRun({ display_title: "automated-review-wakeup-pr-123-ignored" }),
+        wakeupRun({
+          display_title: "automated-review-wakeup-pr-123-eligible-extra",
+        }),
         wakeupRun({ display_title: 123 }),
         wakeupRun({ head_repository: undefined }),
         wakeupRun({ head_branch: "" }),
