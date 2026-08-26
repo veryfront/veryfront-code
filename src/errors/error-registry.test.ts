@@ -168,7 +168,7 @@ const PUBLISHED_ERROR_SLUGS: readonly string[] = Object.freeze([
  * alone. Adding a category is a deliberate, rare change and belongs here;
  * adding an error does not.
  */
-const ERROR_CATEGORIES: readonly ErrorCategory[] = Object.freeze([
+const ERROR_CATEGORIES = [
   "CONFIG",
   "BUILD",
   "RUNTIME",
@@ -180,7 +180,24 @@ const ERROR_CATEGORIES: readonly ErrorCategory[] = Object.freeze([
   "DEPLOY",
   "AGENT",
   "GENERAL",
-]);
+] as const satisfies readonly ErrorCategory[];
+
+/**
+ * Fails to compile when `ErrorCategory` gains a member this list omits.
+ *
+ * `as const` above is what makes this work: typed as `readonly ErrorCategory[]`
+ * the element type would widen back to the whole union and the check would
+ * always be `never`, so a missing category would go unasserted. The constraint
+ * has to be `extends never` too -- assigning to an array of the leftover union
+ * compiles fine for an empty array, which makes that form vacuous.
+ */
+/** Widened for membership checks; the tuple above stays narrow for the type assertion. */
+const KNOWN_ERROR_CATEGORIES: ReadonlySet<string> = new Set(ERROR_CATEGORIES);
+
+type AssertNever<T extends never> = T;
+type _EveryErrorCategoryListed = AssertNever<
+  Exclude<ErrorCategory, typeof ERROR_CATEGORIES[number]>
+>;
 
 describe("error-registry", () => {
   describe("slug uniqueness", () => {
@@ -195,7 +212,7 @@ describe("error-registry", () => {
       // after the list was written, so a later removal would go unnoticed.
       assertEquals(
         [...getAllSlugs()].sort(),
-        [...PUBLISHED_ERROR_SLUGS],
+        [...PUBLISHED_ERROR_SLUGS].sort(),
         "Update PUBLISHED_ERROR_SLUGS: add a line for a new error, delete one only when retiring it",
       );
     });
@@ -261,7 +278,7 @@ describe("error-registry", () => {
       const errors = Object.values(ERROR_REGISTRY);
       for (const error of errors) {
         assertEquals(
-          ERROR_CATEGORIES.includes(error.category),
+          KNOWN_ERROR_CATEGORIES.has(error.category),
           true,
           `Error "${error.slug}" has invalid category "${error.category}"`,
         );
