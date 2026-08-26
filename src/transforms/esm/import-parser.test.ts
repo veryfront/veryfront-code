@@ -508,6 +508,80 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(result.cssImports[0]?.projectContained, true);
   });
 
+  it("preserves the lexical identity of hosted relative CSS imported from MDX", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          resolveFile: (path: string) =>
+            Promise.resolve(
+              path.endsWith("components/theme.module.css") ? "components/theme.module.css" : null,
+            ),
+        },
+      } as unknown as RuntimeAdapter;
+
+      const result = await parseLocalImports(
+        `import styles from "./theme.module.css";\n\n<div className={styles.root} />`,
+        "/workspace/project/components/Post.mdx",
+        "/workspace/project",
+        adapter,
+      );
+
+      assertEquals(result.missing.length, 0);
+      assertEquals(result.cssImports[0]?.absolutePath, "components/theme.module.css");
+      assertEquals(
+        result.cssImports[0]?.requestedPath,
+        "/workspace/project/components/theme.module.css",
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("uses hosted alias resolution to retain extension and directory-index identity", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(
+            path === "content/Post"
+              ? "content/Post.mdx"
+              : path === "content/Card"
+              ? "content/Card/index.mdx"
+              : null,
+          ),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = [
+      `import Post from "@/content/Post";`,
+      `import Card from "@/content/Card";`,
+      `export default [Post, Card];`,
+    ].join("\n");
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(
+      result.imports.map(({ absolutePath, requestedPath }) => ({ absolutePath, requestedPath })),
+      [
+        {
+          absolutePath: "content/Post.mdx",
+          requestedPath: "/workspace/project/content/Post.mdx",
+        },
+        {
+          absolutePath: "content/Card/index.mdx",
+          requestedPath: "/workspace/project/content/Card/index.mdx",
+        },
+      ],
+    );
+  });
+
   it("reports a canonicalization race as a missing import", async () => {
     const projectDir = "/workspace/project";
     const missing = Object.assign(new Error("removed during canonicalization"), { code: "ENOENT" });

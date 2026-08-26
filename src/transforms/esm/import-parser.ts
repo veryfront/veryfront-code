@@ -368,7 +368,7 @@ async function resolveContainedFilePath(
 
   const resolved = await resolveExistingFilePath(targetPath, containment.adapter);
   if (!resolved) return null;
-  return await toContainedImportPath(resolved, containment);
+  return await toContainedImportPath(resolved, containment, targetPath);
 }
 
 /**
@@ -533,7 +533,7 @@ async function resolveAliasImportPath(
         return await toContainedImportPath(
           resolved,
           containment,
-          containment.symlinkFree ? lexicalPath : resolved,
+          containment.symlinkFree ? resolve(containment.projectDir, resolved) : resolved,
         );
       }
     } catch (_) {

@@ -37,6 +37,8 @@ const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
 
 const reflectApply = Reflect.apply;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const universalObjectPrototype = Object.prototype;
 const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 // Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
@@ -54,6 +56,36 @@ function sliceString(value: string, start: number, end?: number): string {
 
 function startsWithString(value: string, prefix: string): boolean {
   return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+type AdapterLstat = NonNullable<RuntimeAdapter["fs"]["lstat"]>;
+type AdapterRealPath = NonNullable<RuntimeAdapter["fs"]["realPath"]>;
+
+/** Capture an optional filesystem method without trusting accessors or global pollution. */
+function captureAdapterFsMethod<T extends AdapterLstat | AdapterRealPath>(
+  fs: RuntimeAdapter["fs"],
+  key: "lstat" | "realPath",
+): T | undefined {
+  let owner: object | null = fs;
+  const visited = new Set<object>();
+
+  try {
+    for (let depth = 0; owner !== null && depth < 64; depth++) {
+      if (owner === universalObjectPrototype || visited.has(owner)) return undefined;
+      visited.add(owner);
+      const descriptor = objectGetOwnPropertyDescriptor(owner, key);
+      if (descriptor !== undefined) {
+        return "value" in descriptor && typeof descriptor.value === "function"
+          ? descriptor.value as T
+          : undefined;
+      }
+      owner = objectGetPrototypeOf(owner);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
 }
 
 export interface ResolvedCachedDependencies {
@@ -132,6 +164,9 @@ export class SSRDependencyValidator {
   private readonly projectSnapshotReader?: CapturedSnapshotReader;
   /** The adapter's own contract that its paths cannot traverse symlinks. */
   private readonly symlinkFreeFs: boolean;
+  /** Authenticated optional methods used to canonicalize stable in-project links. */
+  private readonly projectLstat?: AdapterLstat;
+  private readonly projectRealPath?: AdapterRealPath;
 
   constructor(
     private transformWithDependencies: (
@@ -162,6 +197,8 @@ export class SSRDependencyValidator {
       // `undefined` own properties; treat that as unsupported, not malformed.
       true,
     );
+    this.projectLstat = captureAdapterFsMethod<AdapterLstat>(adapter.fs, "lstat");
+    this.projectRealPath = captureAdapterFsMethod<AdapterRealPath>(adapter.fs, "realPath");
   }
 
   /** Reset missing dependencies for a new load cycle. */
@@ -392,11 +429,15 @@ export class SSRDependencyValidator {
    * link -- keeps the original path so the bound read stays the sole arbiter.
    */
   private async canonicalizeProjectImportPath(path: string): Promise<string> {
-    const { fs } = this.adapter;
-    if (typeof fs.lstat !== "function" || typeof fs.realPath !== "function") return path;
+    if (!this.projectLstat || !this.projectRealPath) return path;
     try {
-      if (!(await fs.lstat(path)).isSymlink) return path;
-      return await fs.realPath(path);
+      const info = await (reflectApply(this.projectLstat, this.adapter.fs, [path]) as ReturnType<
+        AdapterLstat
+      >);
+      if (!info.isSymlink) return path;
+      return await (reflectApply(this.projectRealPath, this.adapter.fs, [path]) as ReturnType<
+        AdapterRealPath
+      >);
     } catch {
       return path;
     }
