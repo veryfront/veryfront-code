@@ -33,6 +33,10 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const AsyncLocalStorageRun = asyncLocalStorage.run;
+const AsyncLocalStorageGetStore = asyncLocalStorage.getStore;
+const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
+const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
 const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
 const VeryfrontFSAdapterRefreshSourceSnapshot = VeryfrontFSAdapterPrototype.refreshSourceSnapshot;
 const VeryfrontFSAdapterEnsureSourceSnapshotFresh =
@@ -49,6 +53,14 @@ function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
     ObjectPrototypeIsPrototypeOf,
     VeryfrontFSAdapterPrototype,
     [adapter],
+  ) as boolean;
+}
+
+function isConcreteProxyFSAdapterManager(manager: unknown): boolean {
+  return IntrinsicReflectApply(
+    ObjectPrototypeIsPrototypeOf,
+    ProxyFSAdapterManagerPrototype,
+    [manager],
   ) as boolean;
 }
 
@@ -113,7 +125,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     logger.debug("asyncLocalStorage.run START", { projectSlug });
 
-    return asyncLocalStorage.run(context, async () => {
+    return IntrinsicReflectApply(AsyncLocalStorageRun, asyncLocalStorage, [context, async () => {
       logger.debug("Inside asyncLocalStorage.run callback", {
         projectSlug,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
@@ -122,7 +134,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       // Release asset manifest fetchers are registered by the concrete adapter.
       // Materialize it before renderers can ask for the manifest on a first hit.
       if (productionMode && releaseId) {
-        await this.getAdapter();
+        await this.#getAdapter();
       }
 
       const result = await runWithCacheBatching(fn);
@@ -133,11 +145,15 @@ export class MultiProjectFSAdapter implements FSAdapter {
       });
 
       return result;
-    });
+    }]) as Promise<T>;
   }
 
   setRequestContext(projectSlug: string, token: string): void {
-    const store = asyncLocalStorage.getStore();
+    const store = IntrinsicReflectApply(
+      AsyncLocalStorageGetStore,
+      asyncLocalStorage,
+      [],
+    ) as RequestContext | undefined;
     if (!store) return;
 
     store.projectSlug = projectSlug;
@@ -148,11 +164,15 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
   }
 
-  private async getAdapter(
+  async #getAdapter(
     onResolved?: (initializedNow: boolean) => void,
   ): Promise<VeryfrontFSAdapter> {
     const startTime = performance.now();
-    const context = asyncLocalStorage.getStore();
+    const context = IntrinsicReflectApply(
+      AsyncLocalStorageGetStore,
+      asyncLocalStorage,
+      [],
+    ) as RequestContext | undefined;
 
     if (!context) {
       logger.debug("No context available", {
@@ -180,7 +200,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       hasReleaseId: !!releaseId,
     });
 
-    const adapter = await this.manager.getAdapter(
+    const args = [
       context.projectSlug,
       context.token,
       context.projectId,
@@ -189,7 +209,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
       context.branch,
       onResolved,
-    );
+    ] as const;
+    const adapter = isConcreteProxyFSAdapterManager(this.manager)
+      ? await IntrinsicReflectApply(
+        ProxyFSAdapterManagerGetAdapter,
+        this.manager,
+        args,
+      ) as VeryfrontFSAdapter
+      : await this.manager.getAdapter(...args);
 
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
@@ -209,13 +236,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.readFile(path);
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
     const admittedLimit = requireBoundedFileReadLimit(byteLimit);
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     const readers = captureByteReadCapabilities(
       adapter,
       "Selected Veryfront filesystem adapter",
@@ -230,27 +257,27 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async readTextFile(path: string): Promise<string> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.readTextFile(path);
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.readOptionalTextFile(path);
   }
 
   async exists(path: string): Promise<boolean> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.exists(path);
   }
 
   async stat(path: string): Promise<FileInfo> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.stat(path);
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.readdir(path);
   }
 
@@ -269,12 +296,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
     basePath: string,
     options?: ResolveFileOptions,
   ): Promise<string | null> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     return adapter.resolveFile(basePath, options);
   }
 
   async refreshSourceSnapshot(reason?: string): Promise<void> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     if (isConcreteVeryfrontFSAdapter(adapter)) {
       await IntrinsicReflectApply(VeryfrontFSAdapterRefreshSourceSnapshot, adapter, [reason]);
     } else {
@@ -294,7 +321,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     options?: SourceSnapshotFreshnessOptions,
   ): Promise<void> {
     let initializedByManager = false;
-    const adapter = await this.getAdapter((initializedNow) => {
+    const adapter = await this.#getAdapter((initializedNow) => {
       initializedByManager = initializedNow;
     });
     let previousVersion: number | undefined;
@@ -343,7 +370,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async getSourceSnapshotVersion(): Promise<number | undefined> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     if (isConcreteVeryfrontFSAdapter(adapter)) {
       return IntrinsicReflectApply(
         VeryfrontFSAdapterGetSourceSnapshotVersion,
@@ -357,7 +384,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async getSourceSnapshotFingerprint(): Promise<string | undefined> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     if (!isConcreteVeryfrontFSAdapter(adapter)) {
       return typeof adapter.getSourceSnapshotFingerprint === "function"
         ? await adapter.getSourceSnapshotFingerprint()
@@ -371,7 +398,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async getSourceSnapshotIdentity(): Promise<string | undefined> {
-    const adapter = await this.getAdapter();
+    const adapter = await this.#getAdapter();
     const sourceIdentity = isConcreteVeryfrontFSAdapter(adapter)
       ? IntrinsicReflectApply(VeryfrontFSAdapterGetSourceSnapshotIdentity, adapter, []) as
         | string
@@ -407,7 +434,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getProjectData(): Promise<ReturnType<VeryfrontFSAdapter["getProjectData"]> | undefined> {
     try {
-      const adapter = await this.getAdapter();
+      const adapter = await this.#getAdapter();
       return adapter.getProjectData?.();
     } catch (error) {
       logger.debug("getProjectData failed", { error });
@@ -417,7 +444,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getFilePathByEntityId(entityId: string): Promise<string | undefined> {
     try {
-      const adapter = await this.getAdapter();
+      const adapter = await this.#getAdapter();
       return adapter.getFilePathByEntityId?.(entityId);
     } catch (error) {
       logger.debug("getFilePathByEntityId failed", { entityId, error });
@@ -429,7 +456,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     options: { waitForWarmup?: boolean } = {},
   ): Promise<Array<{ path: string; content?: string }>> {
     try {
-      const adapter = await this.getAdapter();
+      const adapter = await this.#getAdapter();
       const files = (await adapter.getAllSourceFiles?.(options)) ?? [];
 
       if (files.length === 0) {

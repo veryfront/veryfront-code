@@ -12,6 +12,7 @@ const logger = baseLogger.component("proxy-fs-adapter-manager");
 
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+const SHA256_DIGEST_BYTES = 32;
 
 function requirePositiveSafeInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -42,11 +43,22 @@ type ProxyAdapterDiagnosticIdentity = Omit<ProxyAdapterIdentity, "credentialPrin
 const encodeText = TextEncoder.prototype.encode;
 const subtleDigest = crypto.subtle.digest.bind(crypto.subtle);
 const textEncoder = new TextEncoder();
+const NativeUint8Array = Uint8Array;
+const IntrinsicReflectApply = Reflect.apply;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypePadStart = String.prototype.padStart;
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
-  const bytes = encodeText.call(textEncoder, token);
-  const digest = new Uint8Array(await subtleDigest("SHA-256", bytes));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as ReturnType<
+    typeof encodeText
+  >;
+  const digest = new NativeUint8Array(await subtleDigest("SHA-256", bytes));
+  let principal = "";
+  for (let index = 0; index < SHA256_DIGEST_BYTES; index++) {
+    const encoded = IntrinsicReflectApply(NumberPrototypeToString, digest[index]!, [16]) as string;
+    principal += IntrinsicReflectApply(StringPrototypePadStart, encoded, [2, "0"]) as string;
+  }
+  return principal;
 }
 
 function buildDiagnosticCacheKey(identity: ProxyAdapterIdentity): string {

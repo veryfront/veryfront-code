@@ -1,15 +1,30 @@
 /**
  * Prototype-pollution safety for FSAdapterWrapper optional-method capture.
  *
- * These cases mutate the shared Object.prototype, so they cannot live beside
- * the colocated unit tests in src/platform/adapters/fs/wrapper.test.ts.
+ * These cases mutate shared constructors and prototypes, so they cannot live
+ * beside the colocated unit tests in src/platform/adapters/fs/wrapper.test.ts.
  */
 
 import "../../_helpers/contract-init.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
+import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
+import type {
+  ContextualFSAdapter,
+  FSAdapter,
+} from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+
+const baseConfig = {
+  veryfront: {
+    apiBaseUrl: "https://api.example.com",
+    apiToken: "test-token",
+    projectSlug: "test-project",
+    cache: { enabled: false },
+  },
+};
 
 function createMockFSAdapter(): FSAdapter {
   return {
@@ -31,6 +46,15 @@ function createMockFSAdapter(): FSAdapter {
       return Promise.reject(new Error(`File not found: ${path}`));
     },
   } as FSAdapter;
+}
+
+function createMockContextualAdapter(
+  overrides: Partial<ContextualFSAdapter> = {},
+): ContextualFSAdapter {
+  return {
+    ...createMockFSAdapter(),
+    ...overrides,
+  };
 }
 
 function withPollutedObjectPrototype<T>(
@@ -121,5 +145,124 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         assertEquals(planted, false, "the planted prototype method must never be invoked");
       },
     );
+  });
+
+  it("keeps context dispatch independent of wrapper prototype mutation", async () => {
+    let delegatedToken: string | undefined;
+    const interceptedTokens: string[] = [];
+    const fsAdapter = createMockContextualAdapter({
+      runWithContext: <T>(_slug: string, token: string, fn: () => Promise<T>) => {
+        delegatedToken = token;
+        return fn();
+      },
+    });
+    const wrapper = new FSAdapterWrapper(fsAdapter);
+    const original = Object.getOwnPropertyDescriptor(
+      FSAdapterWrapper.prototype,
+      "runWithContext",
+    )!;
+    let result: string | undefined;
+
+    Object.defineProperty(FSAdapterWrapper.prototype, "runWithContext", {
+      configurable: true,
+      value: <T>(_slug: string, token: string, fn: () => Promise<T>) => {
+        interceptedTokens.push(token);
+        return fn();
+      },
+    });
+    try {
+      result = await wrapper.runWithContext(
+        "my-slug",
+        "signed-user-token",
+        () => Promise.resolve("result"),
+      );
+    } finally {
+      Object.defineProperty(FSAdapterWrapper.prototype, "runWithContext", original);
+    }
+
+    assertEquals(result, "result");
+    assertEquals(delegatedToken, "signed-user-token");
+    assertEquals(interceptedTokens, []);
+  });
+
+  it("keeps context dispatch independent of adapter prototype mutation", async () => {
+    const adapter = new MultiProjectFSAdapter(baseConfig);
+    const wrapper = new FSAdapterWrapper(adapter);
+    const interceptedTokens: string[] = [];
+    const original = Object.getOwnPropertyDescriptor(
+      MultiProjectFSAdapter.prototype,
+      "runWithContext",
+    )!;
+    let result: string | undefined;
+
+    Object.defineProperty(MultiProjectFSAdapter.prototype, "runWithContext", {
+      configurable: true,
+      value: <T>(_slug: string, token: string, fn: () => Promise<T>) => {
+        interceptedTokens.push(token);
+        return fn();
+      },
+    });
+    try {
+      result = await wrapper.runWithContext(
+        "my-slug",
+        "signed-user-token",
+        () => Promise.resolve("result"),
+      );
+    } finally {
+      Object.defineProperty(MultiProjectFSAdapter.prototype, "runWithContext", original);
+      adapter.dispose();
+    }
+
+    assertEquals(result, "result");
+    assertEquals(interceptedTokens, []);
+  });
+
+  it("keeps credential partitioning independent of mutable Array.from", async () => {
+    let poisonedCalls = 0;
+    const manager = new ProxyFSAdapterManager({
+      baseConfig,
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        return adapter;
+      },
+    });
+    const original = Object.getOwnPropertyDescriptor(Array, "from")!;
+    let first: VeryfrontFSAdapter | undefined;
+    let second: VeryfrontFSAdapter | undefined;
+
+    Object.defineProperty(Array, "from", {
+      configurable: true,
+      value: () => {
+        poisonedCalls++;
+        return [];
+      },
+    });
+    try {
+      first = await manager.getAdapter(
+        "shared-project",
+        "credential-one",
+        "shared-project-id",
+        false,
+        null,
+        null,
+        "main",
+      );
+      second = await manager.getAdapter(
+        "shared-project",
+        "credential-two",
+        "shared-project-id",
+        false,
+        null,
+        null,
+        "main",
+      );
+    } finally {
+      Object.defineProperty(Array, "from", original);
+      manager.dispose();
+    }
+
+    assertNotStrictEquals(first, second);
+    assertEquals(poisonedCalls, 0);
   });
 });
