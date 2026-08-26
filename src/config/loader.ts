@@ -1675,6 +1675,25 @@ function replaceMatchesWithCapturedExec(
   }
 }
 
+/**
+ * Replace machine-identifying locations in a diagnostic with stable markers.
+ *
+ * The order is load-bearing, narrowest first. Each pass consumes its matches
+ * before the next runs, so an earlier pattern is what keeps a later, greedier
+ * one away from text it would mis-read:
+ *
+ * 1. the quoted forms, whose surrounding quotes bound the match precisely;
+ * 2. `file:///`, which is a path wearing a URL and is reported as `[path]`;
+ * 3. any other `scheme://` URL, reported as `[url]` -- this is also what keeps
+ *    `https:/` away from step 4, whose drive-letter alternative would otherwise
+ *    match the `s:/` inside it and emit `http[path]`;
+ * 4. unquoted Windows drive and UNC paths;
+ * 5. unquoted POSIX paths.
+ *
+ * Callers must strip ANSI sequences first. Colorized text leaves `[31m` style
+ * residue directly in front of a path once the escape itself is gone, which
+ * defeats the boundary lookbehinds steps 3 and 5 rely on.
+ */
 function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
