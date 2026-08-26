@@ -505,7 +505,6 @@ export {
   type AbortRejectionEventTarget,
   type AbortRejectionGuardLogger,
   type AbortRejectionProcessTarget,
-  installAbortRejectionGuard,
   type InstallAbortRejectionGuardOptions,
   type InstalledAbortRejectionGuard,
   isAbortRejectionReason,

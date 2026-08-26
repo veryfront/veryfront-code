@@ -17,7 +17,9 @@ import {
 } from "#veryfront/provider/model-registry.ts";
 import { WorkflowClient } from "#veryfront/workflow";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
-import { getErrorCollector, getLogBuffer, metrics } from "#veryfront/observability";
+import { metrics } from "#veryfront/observability";
+import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import {
   checkMemoryPressure,
   getCacheStats,

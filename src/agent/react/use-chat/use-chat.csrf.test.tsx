@@ -1,9 +1,8 @@
 /**
- * A production build defaults `security.csrf` to on, so the server rejects any
+ * Every environment defaults `security.csrf` to on, so the server rejects a
  * POST that arrives without the double-submit header. The chat transport is the
- * only thing the `ai-agent` template does, so a `useChat` request that omits
- * `x-csrf-token` makes every deployed chat answer `403` — while `veryfront dev`
- * (CSRF off) keeps working and hides the break.
+ * only thing the `ai-agent` template does, so `useChat` must always attach the
+ * browser-readable token.
  */
 import "#veryfront/schemas/_test-setup.ts";
 import { flushSync } from "react-dom";

@@ -20,17 +20,10 @@ const expectedRuntimeExports = [
   "endSpan",
   "extractContext",
   "getActiveContext",
-  "getErrorCollector",
   "getGlobalMetricsAPI",
-  "getHostTelemetryEnv",
-  "getLogBuffer",
   "getMetricsState",
   "getTraceContext",
   "flushApplicationErrors",
-  "initAutoInstrumentation",
-  "initMetrics",
-  "initTracing",
-  "initializeOTLP",
   "injectContext",
   "instrument",
   "instrumentBatch",
@@ -73,15 +66,9 @@ const expectedRuntimeExports = [
   "recordRender",
   "recordRenderError",
   "recordSecurityHeaders",
-  "resetErrorCollector",
-  "resetLogBuffer",
   "setActiveSpanAttributes",
   "setCacheSize",
   "setSpanAttributes",
-  "shutdownMetrics",
-  "shutdownOTLP",
-  "shutdownTracing",
-  "snapshotRequestProfiles",
   "startSpan",
   "trace",
   "withActiveSpan",
@@ -104,5 +91,24 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);
     assertEquals("reset" in observability.metrics, false);
+    for (
+      const processGlobal of [
+        "getErrorCollector",
+        "getHostTelemetryEnv",
+        "getLogBuffer",
+        "initAutoInstrumentation",
+        "initMetrics",
+        "resetErrorCollector",
+        "resetLogBuffer",
+        "shutdownMetrics",
+        "shutdownOTLP",
+        "shutdownTracing",
+        "snapshotRequestProfiles",
+        "initTracing",
+        "initializeOTLP",
+      ]
+    ) {
+      assertEquals(processGlobal in observability, false);
+    }
   });
 });

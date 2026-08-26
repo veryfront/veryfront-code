@@ -4,7 +4,7 @@ description: "Run Veryfront agents as separately deployed services."
 order: 19
 ---
 
-An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or service-level telemetry. Use a normal in-app route for everything else.
+An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, or remote MCP tools. Use a normal in-app route for everything else.
 
 Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
@@ -33,10 +33,15 @@ service runtime:
 
 ```ts
 // service.ts
-import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
+await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService();
 ```
+
+The public starter does not initialize process-wide Sentry or OpenTelemetry
+exporters. Compose service telemetry in the trusted process bootstrap before
+loading project code.
 
 The service discovers the same project primitives as the app runtime:
 
@@ -116,7 +121,9 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+
+await loadAgentServiceEnvFiles();
 
 const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
 const releaseId = process.env.DEPLOYED_RELEASE_ID;
@@ -156,11 +163,13 @@ This service startup config uses `endpoint` and `headers`. Per-agent config in
 
 ```ts
 import {
+  loadAgentServiceEnvFiles,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "veryfront/agent";
 
+await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService({
   serviceName: "support-agent",
   mcpServers: [
@@ -196,7 +205,7 @@ exact allowed endpoints once at startup. Use the host transport only for those
 immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
-import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
 function requiredUrl(name: string): string {
@@ -205,6 +214,7 @@ function requiredUrl(name: string): string {
   return value;
 }
 
+await loadAgentServiceEnvFiles();
 const hostFetch = globalThis.fetch.bind(globalThis);
 const createRemoteToolSource = createRemoteMCPToolSourceFactoryWithTransport({
   trustedEndpoints: [

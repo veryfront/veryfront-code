@@ -21,6 +21,13 @@ export function validateNodeId(id: string): void {
   }
 }
 
+/** Reject identifiers that WHATWG URLs normalize as path navigation. */
+export function validateWorkflowPathSegment(id: string, label: string): void {
+  if (id === "." || id === "..") {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must not be a dot-only URL path segment` });
+  }
+}
+
 /** Namespace child IDs and every dependency reference into the same graph. */
 export function namespaceWorkflowNodes(
   prefix: string,

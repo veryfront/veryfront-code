@@ -7,6 +7,7 @@ import {
   isVirtualFilesystem,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
@@ -771,6 +772,7 @@ async function readHostedConfigSource(
   adapter: RuntimeAdapter,
   configBaseDir: string,
 ): Promise<HostedConfigSourceSelection | null> {
+  let apiNotFound: { error: unknown } | undefined;
   for (const configFile of VERYFRONT_CONFIG_FILES) {
     const configPath = join(configBaseDir, configFile);
     try {
@@ -783,6 +785,14 @@ async function readHostedConfigSource(
     } catch (error) {
       if (isNotFoundError(error)) {
         logger.debug("Hosted config candidate not found", { configPath });
+        continue;
+      }
+      if (hasNotFoundStatus(error)) {
+        // A candidate-scoped API 404 must not abort discovery: a later
+        // candidate may still exist. Remember the first one instead -- if no
+        // candidate is found at all, the 404 has to surface (see below).
+        logger.debug("Hosted config candidate not found", { configPath });
+        if (apiNotFound === undefined) apiNotFound = { error };
         continue;
       }
       if (error instanceof DeclarativeConfigEvaluationError) {
@@ -804,7 +814,30 @@ async function readHostedConfigSource(
       });
     }
   }
+  if (apiNotFound !== undefined) {
+    // Every candidate is missing and at least one miss was an API-layer 404:
+    // the release publishes no config. Rethrow it so the caller reports the
+    // project as "hosted-absent" (adapter-factory then substitutes the
+    // process-wide defaults) instead of synthesizing a default config that
+    // downstream would treat as the project's own.
+    throw apiNotFound.error;
+  }
   return null;
+}
+
+function hasNotFoundStatus(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 8; depth++) {
+    if (
+      typeof current !== "object" || current === null || isProxyWithoutHooks(current)
+    ) return false;
+    const status = ObjectGetOwnPropertyDescriptor(current, "status");
+    if (status?.value === 404) return true;
+    const cause = ObjectGetOwnPropertyDescriptor(current, "cause");
+    if (cause === undefined) return false;
+    current = cause.value;
+  }
+  return false;
 }
 
 function removeQueuedHostedConfigSourceRead(

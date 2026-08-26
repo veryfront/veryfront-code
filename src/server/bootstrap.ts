@@ -55,8 +55,8 @@ import {
   createFileLogSubscriber,
   type FileLogConfig,
   type FileLogSubscriber,
-  getLogBuffer,
 } from "#veryfront/observability";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "./reload-notifier.ts";
 import {
   createServerStyleCallbacks,

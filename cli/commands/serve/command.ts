@@ -182,7 +182,7 @@ function createDeferredProductionStartupErrorReporter(): {
 }
 
 function loadProductionSentryModule(): Promise<ProductionSentryModule> {
-  return import("veryfront/observability/sentry");
+  return import("#veryfront/observability/sentry.ts");
 }
 
 const WILDCARD_BIND_ADDRESSES = new Set(["", "0.0.0.0", "::", "[::]"]);
