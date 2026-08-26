@@ -28,9 +28,17 @@ jobs:
     # concurrency key while keeping the immutable source SHA separate.
     if: >-
       github.event_name == 'merge_group' ||
-      ((github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      ((github.event_name != 'issue_comment' ||
+        (github.event.issue.pull_request &&
+         github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+         github.event.comment.user.id == 199175422 &&
+         github.event.comment.user.type == 'Bot')) &&
        (github.event_name != 'workflow_run' ||
-        github.event.workflow_run.event == 'pull_request_review'))
+        (github.event.workflow_run.event == 'pull_request_review' &&
+         (github.event.workflow_run.actor.type == 'User' ||
+          (github.event.workflow_run.actor.login == 'chatgpt-codex-connector[bot]' &&
+           github.event.workflow_run.actor.id == 199175422 &&
+           github.event.workflow_run.actor.type == 'Bot')))))
     permissions:
       contents: read
       pull-requests: read

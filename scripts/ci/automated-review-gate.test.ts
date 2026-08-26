@@ -3279,7 +3279,14 @@ describe("automated review workflow", () => {
       const condition of [
         "github.event_name == 'merge_group'",
         "github.event.issue.pull_request",
+        "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.comment.user.id == 199175422",
+        "github.event.comment.user.type == 'Bot'",
         "github.event.workflow_run.event == 'pull_request_review'",
+        "github.event.workflow_run.actor.type == 'User'",
+        "github.event.workflow_run.actor.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.workflow_run.actor.id == 199175422",
+        "github.event.workflow_run.actor.type == 'Bot'",
       ]
     ) {
       assert(
@@ -3819,6 +3826,20 @@ describe("automated review workflow", () => {
     const jobs = record(workflow.jobs, "wakeup jobs");
     const job = record(jobs.review_event, "review event job");
     assertEquals(record(job.permissions, "review event permissions"), {});
+    const jobIf = String(job.if);
+    for (
+      const condition of [
+        "github.event.review.user.type == 'User'",
+        "github.event.review.user.login == 'chatgpt-codex-connector[bot]'",
+        "github.event.review.user.id == 199175422",
+        "github.event.review.user.type == 'Bot'",
+      ]
+    ) {
+      assert(
+        jobIf.includes(condition),
+        "the wakeup must reject review actors that cannot affect the gate",
+      );
+    }
     assertEquals("uses" in job, false);
     const steps = job.steps;
     assert(Array.isArray(steps));
