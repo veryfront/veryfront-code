@@ -118,6 +118,14 @@ describe("rewriteLocalImports", () => {
     assertEquals(result, `import { fetch } from "file:///tmp/api.js";`);
   });
 
+  it("rewrites a compiled MDX file URL as an exact specifier", async () => {
+    const compiledSpecifier = "file:///project/components/Child.tsx";
+    const map = new Map([[compiledSpecifier, "/tmp/Child.js"]]);
+    const code = `import Child from "${compiledSpecifier}";`;
+    const result = await rewriteLocalImports(code, map, "/project/page.mdx", projectDir);
+    assertEquals(result, `import Child from "file:///tmp/Child.js";`);
+  });
+
   it("strips trailing slash from projectDir", async () => {
     const map = new Map([["@/utils/log", "/tmp/log.js"]]);
     const code = `import { log } from "../utils/log.js";`;
