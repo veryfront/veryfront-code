@@ -10,7 +10,7 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
-import { namespaceWorkflowNodes } from "../../dsl/validation.ts";
+import { namespaceWorkflowNodes, removeWorkflowNodeNamespace } from "../../dsl/validation.ts";
 import {
   applyContextPatch,
   applyRecordPatch,
@@ -135,6 +135,17 @@ export async function executeLoopNodeStrategy(
     resumeIteration = existingLoopState.iteration;
   }
 
+  const currentStaticChildIds = Array.isArray(config.steps)
+    ? collectWorkflowNodeIds(config.steps)
+    : undefined;
+  // Runs suspended before loop children were namespaced persist both their
+  // private iteration snapshot and durable wait record under local IDs. Keep
+  // that one in-flight iteration on its old graph identity; new iterations use
+  // the namespaced definition and receive the collision fix.
+  const resumeLegacyStaticChildIds = currentStaticChildIds !== undefined &&
+    resumeIterationNodeStates !== undefined &&
+    Object.keys(resumeIterationNodeStates).some((nodeId) => !currentStaticChildIds.has(nodeId));
+
   let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
     ? { ...resumeIterationNodeStates }
     : {};
@@ -157,17 +168,30 @@ export async function executeLoopNodeStrategy(
       break;
     }
 
-    const steps = typeof config.steps === "function"
-      ? namespaceWorkflowNodes(`${node.id}/`, config.steps(context, loopContext))
-      : config.steps;
+    const resumingIterationNodeStates = resumeIteration === iteration
+      ? resumeIterationNodeStates
+      : undefined;
+    let steps: WorkflowNode[];
+    if (typeof config.steps === "function") {
+      const generatedSteps = config.steps(context, loopContext);
+      const namespacedSteps = namespaceWorkflowNodes(`${node.id}/`, generatedSteps);
+      const namespacedIds = collectWorkflowNodeIds(namespacedSteps);
+      const resumeLegacyDynamicChildIds = resumingIterationNodeStates !== undefined &&
+        Object.keys(resumingIterationNodeStates).some((nodeId) => !namespacedIds.has(nodeId));
+      steps = resumeLegacyDynamicChildIds ? generatedSteps : namespacedSteps;
+    } else {
+      steps = resumingIterationNodeStates && resumeLegacyStaticChildIds
+        ? removeWorkflowNodeNamespace(`${node.id}/`, config.steps)
+        : config.steps;
+    }
     runtime.abortSignal?.throwIfAborted();
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9),
     // reconciled against the run's own map so the node that was just resolved
     // is not replayed as still pending.
-    const iterationNodeStates = resumeIteration === iteration && resumeIterationNodeStates
-      ? reconcileIterationNodeStates(resumeIterationNodeStates, nodeStates)
+    const iterationNodeStates = resumingIterationNodeStates
+      ? reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
       : {};
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
@@ -300,6 +324,27 @@ export async function executeLoopNodeStrategy(
     }),
     waiting: false,
   };
+}
+
+function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: WorkflowNode): void => {
+    ids.add(node.id);
+    switch (node.config.type) {
+      case "parallel":
+        node.config.nodes.forEach(visit);
+        break;
+      case "branch":
+        node.config.then.forEach(visit);
+        node.config.else?.forEach(visit);
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) node.config.steps.forEach(visit);
+        break;
+    }
+  };
+  nodes.forEach(visit);
+  return ids;
 }
 
 /**

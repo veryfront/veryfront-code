@@ -506,6 +506,21 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("atomically elects one ownerless approval creator", async () => {
+      const runId = "approval-ownerless-uniqueness";
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Review",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
     it("keeps one pending approval per node until the first is decided", async () => {
       const run = createTestRun("approval-node-uniqueness", {
         status: "waiting",

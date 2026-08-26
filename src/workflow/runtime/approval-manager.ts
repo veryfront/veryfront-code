@@ -300,14 +300,21 @@ export class ApprovalManager {
           });
         }
       } else {
-        await this.config.backend.savePendingApproval(runId, approval);
-        const pending = await this.config.backend.getPendingApprovals(runId);
-        if (!pending.some((candidate) => candidate.id === approval.id)) {
-          const existing = pending.find((candidate) => candidate.nodeId === nodeId);
+        const saveIfAbsent = this.config.backend.savePendingApprovalIfAbsent;
+        if (!saveIfAbsent) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Backend does not support atomic ownerless approval creation",
+          });
+        }
+        const saved = await saveIfAbsent.call(this.config.backend, runId, approval);
+        if (!saved) {
+          const existing = (await this.config.backend.getPendingApprovals(runId)).find(
+            (candidate) => candidate.nodeId === nodeId,
+          );
           if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
           if (existing) return projectApprovalRequest(runId, existing);
           throw ORCHESTRATION_ERROR.create({
-            detail: "Approval persistence completed without a pending record",
+            detail: "Atomic approval creation lost without an existing approval",
           });
         }
       }

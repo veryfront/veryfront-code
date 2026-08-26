@@ -20,6 +20,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { buildGraph } from "../executor/dag/graph.ts";
+import { removeWorkflowNodeNamespace } from "./validation.ts";
 
 function dependentStep(id: string, dependsOn: string[]): WorkflowNode {
   return { ...step(id, { tool: "noop" }), dependsOn };
@@ -111,6 +112,25 @@ describe("composite node namespacing", () => {
     assertEquals(steps.map((child) => child.id), ["poll/fetch", "poll/confirm"]);
     assertEquals(steps[1]?.dependsOn, ["poll/fetch"]);
     buildGraph(steps);
+  });
+
+  it("restores a namespaced static graph for a suspended legacy iteration", () => {
+    const node = loop("poll", {
+      while: () => true,
+      maxIterations: 1,
+      steps: [
+        step("fetch", { tool: "noop" }),
+        dependentStep("confirm", ["fetch"]),
+      ],
+    });
+    const restored = removeWorkflowNodeNamespace(
+      "poll/",
+      loopConfig(node).steps as WorkflowNode[],
+    );
+
+    assertEquals(restored.map((child) => child.id), ["fetch", "confirm"]);
+    assertEquals(restored[1]?.dependsOn, ["fetch"]);
+    buildGraph(restored);
   });
 
   it("rebases static loop descendants into an outer composite namespace", () => {

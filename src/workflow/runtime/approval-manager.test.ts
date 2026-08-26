@@ -74,11 +74,12 @@ class DecisionDuringSaveBackend extends MemoryBackend {
   manager?: ApprovalManager;
   decisionError?: unknown;
 
-  override async savePendingApproval(
+  override async savePendingApprovalIfAbsent(
     runId: string,
     approval: PendingApproval,
-  ): Promise<void> {
-    await super.savePendingApproval(runId, approval);
+  ): Promise<boolean> {
+    const saved = await super.savePendingApprovalIfAbsent(runId, approval);
+    if (!saved) return false;
 
     try {
       await this.manager?.approve(runId, approval.id, "reviewer", undefined, {
@@ -87,6 +88,7 @@ class DecisionDuringSaveBackend extends MemoryBackend {
     } catch (error) {
       this.decisionError = error;
     }
+    return true;
   }
 }
 
@@ -322,6 +324,72 @@ describe("ApprovalManager", () => {
       assertEquals(requests[0]?.approvalId, requests[1]?.approvalId);
       assertEquals((await backend.getPendingApprovals(run.id)).length, 1);
       assertEquals(notifications, 1, "only the atomically persisted winner may notify");
+    });
+
+    it("coalesces ownerless creation across independent managers", async () => {
+      let notifications = 0;
+      const first = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const second = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const run = createTestRun("run-ownerless-concurrent-approval", { status: "waiting" });
+      await backend.createRun(run);
+
+      try {
+        const requests = await Promise.all([
+          first.createApproval(
+            run,
+            "review-node",
+            { type: "wait", waitType: "approval", message: "Please approve" },
+            run.context,
+          ),
+          second.createApproval(
+            run,
+            "review-node",
+            { type: "wait", waitType: "approval", message: "Please approve" },
+            run.context,
+          ),
+        ]);
+
+        assertEquals(requests[0]?.approvalId, requests[1]?.approvalId);
+        assertEquals((await backend.getPendingApprovals(run.id)).length, 1);
+        assertEquals(notifications, 1);
+      } finally {
+        first.stop();
+        second.stop();
+      }
+    });
+
+    it("fails closed when ownerless creation lacks an atomic backend operation", async () => {
+      Object.defineProperty(backend, "savePendingApprovalIfAbsent", { value: undefined });
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const run = createTestRun("run-legacy-ownerless-approval", { status: "waiting" });
+      await backend.createRun(run);
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            run,
+            "review-node",
+            { type: "wait", waitType: "approval", message: "Please approve" },
+            run.context,
+          ),
+        Error,
+        "atomic ownerless approval creation",
+      );
+      assertEquals(await backend.getPendingApprovals(run.id), []);
     });
 
     it("validates the timeout before resolving a dynamic payload", async () => {

@@ -36,13 +36,21 @@ export function namespaceWorkflowNodes(
   return rebaseWorkflowNodes("", prefix, nodes);
 }
 
+/** Restore child IDs from one known namespace for an in-flight legacy graph. */
+export function removeWorkflowNodeNamespace(
+  prefix: string,
+  nodes: WorkflowNode[],
+): WorkflowNode[] {
+  return rebaseWorkflowNodes(prefix, "", nodes);
+}
+
 function rebaseWorkflowNodes(
   oldPrefix: string,
   newPrefix: string,
   nodes: WorkflowNode[],
 ): WorkflowNode[] {
   const rebaseId = (id: string): string => {
-    if (id.startsWith(newPrefix)) return id;
+    if (newPrefix && id.startsWith(newPrefix)) return id;
     if (oldPrefix && id.startsWith(oldPrefix)) {
       return `${newPrefix}${id.slice(oldPrefix.length)}`;
     }

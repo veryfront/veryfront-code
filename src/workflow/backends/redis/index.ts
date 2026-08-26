@@ -1596,6 +1596,13 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
+    await this.savePendingApprovalIfAbsent(runId, approval);
+  }
+
+  async savePendingApprovalIfAbsent(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean> {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
@@ -1621,6 +1628,7 @@ export class RedisBackend implements WorkflowBackend {
     if (Number(result) === 2) {
       throw this.approvalListFullError(approval.id);
     }
+    return Number(result) !== 3;
   }
 
   private approvalListFullError(approvalId: string): Error {

@@ -2691,6 +2691,18 @@ describe("RedisBackend", () => {
       assertEquals(pending[0]!.status, "pending");
     });
 
+    it("atomically elects one ownerless approval creator", async () => {
+      const runId = "run-ap-ownerless-uniqueness";
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
     it("atomically rejects an owned duplicate for the same pending node", async () => {
       const runId = "run-ap-node-uniqueness";
       await backend.createRun(createTestRun(runId, {

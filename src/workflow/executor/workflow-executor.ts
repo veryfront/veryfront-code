@@ -31,7 +31,7 @@ import {
   type WorkflowBackend,
 } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
@@ -68,6 +68,9 @@ const DEFAULT_RESULT_WAIT_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /** Time allowed for an aborted graph to finish its cooperative cleanup. */
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
+const CANCELLED_WAIT_CLEANUP_RETRY_BASE_MS = 1_000;
+const CANCELLED_WAIT_CLEANUP_RETRY_MAX_MS = 60_000;
+const MAX_CANCELLED_WAIT_CLEANUP_ATTEMPTS = 8;
 
 function supportsExecutionOwnership(backend: WorkflowBackend): boolean {
   return typeof backend.updateRunIfStatusAndWorker === "function" &&
@@ -150,6 +153,8 @@ export class WorkflowExecutor {
   private blobResolver?: BlobResolver;
   private activeRunControllers = new Map<string, AbortController>();
   private cancellationUpdates = new Map<string, Promise<void>>();
+  private cancelledWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private cancelledWaitCleanupAttempts = new Map<string, number>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -905,8 +910,8 @@ export class WorkflowExecutor {
    * A cancelled run will never consume an event, so a wait left pending,
    * above all one without a deadline, would report the terminal run as
    * parked forever and be enumerated by every expiration sweep. Cleanup is
-   * best-effort: the cancellation itself already committed, and the sweep
-   * resolves any record this pass could not.
+   * best-effort: the cancellation itself already committed. A bounded retry
+   * keeps cleanup live even when the optional expiration sweep is disabled.
    */
   private async clearPendingEventWaits(runId: string): Promise<void> {
     const backend = this.config.backend;
@@ -918,7 +923,38 @@ export class WorkflowExecutor {
       }
     } catch (error) {
       logger.warn(`Failed to clear pending event waits for cancelled run ${runId}:`, error);
+      this.scheduleCancelledWaitCleanup(runId);
+      return;
     }
+    this.clearCancelledWaitCleanupRetry(runId);
+  }
+
+  private scheduleCancelledWaitCleanup(runId: string): void {
+    if (this.cancelledWaitCleanupTimers.has(runId)) return;
+    const attempt = (this.cancelledWaitCleanupAttempts.get(runId) ?? 0) + 1;
+    if (attempt > MAX_CANCELLED_WAIT_CLEANUP_ATTEMPTS) {
+      this.cancelledWaitCleanupAttempts.delete(runId);
+      logger.error("Cancelled-run event wait cleanup exhausted its retry budget", { runId });
+      return;
+    }
+    this.cancelledWaitCleanupAttempts.set(runId, attempt);
+    const delay = Math.min(
+      CANCELLED_WAIT_CLEANUP_RETRY_BASE_MS * 2 ** (attempt - 1),
+      CANCELLED_WAIT_CLEANUP_RETRY_MAX_MS,
+    );
+    const timer = setTimeout(() => {
+      this.cancelledWaitCleanupTimers.delete(runId);
+      void this.clearPendingEventWaits(runId);
+    }, delay);
+    unrefTimer(timer);
+    this.cancelledWaitCleanupTimers.set(runId, timer);
+  }
+
+  private clearCancelledWaitCleanupRetry(runId: string): void {
+    const timer = this.cancelledWaitCleanupTimers.get(runId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.cancelledWaitCleanupTimers.delete(runId);
+    this.cancelledWaitCleanupAttempts.delete(runId);
   }
 
   /**

@@ -241,12 +241,16 @@ export interface WorkflowBackend {
   /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
-  /**
-   * Append an approval unless this run already has a pending approval or an
-   * unfinished decision claim for the same node. The duplicate check and
-   * append must be one atomic operation.
-   */
+  /** Append a pending approval using the historical backend contract. */
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void>;
+  /**
+   * Atomically append unless a pending approval or unfinished decision claim
+   * already exists for the same node. Returns true only for the winner.
+   */
+  savePendingApprovalIfAbsent?(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean>;
   /**
    * Append an approval only while the run status and worker owner match and no
    * pending approval already exists for the same node. Returns false after

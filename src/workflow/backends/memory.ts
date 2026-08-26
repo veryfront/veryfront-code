@@ -532,6 +532,13 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
+    return this.savePendingApprovalIfAbsent(runId, approval).then(() => undefined);
+  }
+
+  savePendingApprovalIfAbsent(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean> {
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
     if (
@@ -540,7 +547,7 @@ export class MemoryBackend implements WorkflowBackend {
         candidate.nodeId === approval.nodeId
       )
     ) {
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     try {
       appendRetainedPendingApproval(approvals, approval);
@@ -553,7 +560,7 @@ export class MemoryBackend implements WorkflowBackend {
     // separately, racing this very write.
     const run = this.runs.get(runId);
     if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   savePendingApprovalIfStatusAndWorker(

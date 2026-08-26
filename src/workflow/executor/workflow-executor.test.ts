@@ -260,6 +260,31 @@ class RejectSecondRetryDecisionBackend extends MemoryBackend {
   }
 }
 
+class RejectFirstCancelledWaitReadBackend extends MemoryBackend {
+  private rejectNextWaitRead = true;
+  readonly cleanupCompleted = Promise.withResolvers<void>();
+
+  override getPendingEventWaits(
+    runId: string,
+  ): ReturnType<MemoryBackend["getPendingEventWaits"]> {
+    if (this.rejectNextWaitRead) {
+      this.rejectNextWaitRead = false;
+      return Promise.reject(new Error("cancelled wait read unavailable"));
+    }
+    return super.getPendingEventWaits(runId);
+  }
+
+  override async resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    const resolved = await super.resolvePendingEventWait(runId, waitId, status);
+    if (resolved && status === "cancelled") this.cleanupCompleted.resolve();
+    return resolved;
+  }
+}
+
 describe("workflow/executor/workflow-executor", () => {
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
@@ -1563,6 +1588,38 @@ describe("workflow/executor/workflow-executor", () => {
     await executor.cancel(run.id);
 
     assertEquals(resolved, [{ runId: run.id, waitId: "wait-cancelled" }]);
+  });
+
+  it("retries cancelled-run wait cleanup after a transient read failure", async () => {
+    using time = new FakeTime();
+    const backend = new RejectFirstCancelledWaitReadBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("cancel-event-wait-retry"),
+      status: "waiting" as const,
+      nodeStates: {
+        pause: { nodeId: "pause", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["pause"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "wait-cancelled-retry",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "resume.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    await executor.cancel(run.id);
+    assertEquals((await backend.getPendingEventWaits(run.id)).length, 1);
+
+    await time.tickAsync(1_000);
+    await backend.cleanupCompleted.promise;
+
+    assertEquals((await backend.getPendingEventWaits(run.id)).length, 0);
   });
 
   it("refuses to cancel a run that already completed", async () => {

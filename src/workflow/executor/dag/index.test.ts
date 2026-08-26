@@ -35,6 +35,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
+import { loop, step, waitForApproval } from "../../dsl/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1256,6 +1257,63 @@ describe("DAGExecutor", () => {
       assertEquals(second.completed, true);
       assertEquals(order, ["after-wait"]);
       assertEquals(second.nodeStates["after-wait"]!.status, "completed");
+    });
+
+    it("resumes a legacy static-loop decision under its persisted child IDs", async () => {
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            waitForApproval("inner-wait", { message: "approve?" }),
+            { ...step("after-wait", { tool: "noop" }), dependsOn: ["inner-wait"] },
+          ],
+        }),
+      ];
+      const completedDecision: NodeState = {
+        nodeId: "inner-wait",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const run = createTestRun({
+        status: "waiting",
+        nodeStates: {
+          "the-loop": { nodeId: "the-loop", status: "running", attempt: 1 },
+          "inner-wait": completedDecision,
+        },
+        context: {
+          input: { topic: "test" },
+          "the-loop_loop_state": {
+            iteration: 0,
+            previousResults: [],
+            iterationNodeStates: {
+              "inner-wait": {
+                nodeId: "inner-wait",
+                status: "running",
+                attempt: 1,
+                startedAt: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(order, ["after-wait"]);
+      assertEquals(result.nodeStates["inner-wait"], completedDecision);
+      assertEquals(result.nodeStates["the-loop/inner-wait"], undefined);
     });
 
     it("reports every parked wait from a resumed iteration whose record may need recovery", async () => {
