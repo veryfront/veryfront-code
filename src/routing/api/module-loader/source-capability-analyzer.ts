@@ -3231,6 +3231,22 @@ function isNewExpressionCallee(node: ASTNode, parents: WeakMap<ASTNode, ParentLi
   return link?.parent.type === "NewExpression" && link.key === "callee";
 }
 
+function isCallExpressionCallee(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  return link !== undefined && isCallExpression(link.parent) && link.key === "callee";
+}
+
 function isMemberObjectUse(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
   const link = parents.get(node);
   return (link?.parent.type === "MemberExpression" ||
@@ -4108,6 +4124,42 @@ function applySubprocessConstructionCapability(
   }
 }
 
+function applySubprocessReferenceCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (
+    resolvesToDenoCommand(node, scope, nodeScopes) &&
+    !isNewExpressionCallee(node, parents) &&
+    !isAliasInitializerUse(node, parents) &&
+    !isBindingIdentifier(node, parents) &&
+    !isMutationTarget(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
+function applyPrototypeMutatorReferenceCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (
+    resolvesToPrototypeMutator(node, scope, nodeScopes) &&
+    !isCallExpressionCallee(node, parents) &&
+    !isAliasInitializerUse(node, parents) &&
+    !isBindingIdentifier(node, parents) &&
+    !isMutationTarget(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
 function applyInheritedClassCapability(
   node: ASTNode,
   scope: Scope,
@@ -4337,6 +4389,14 @@ export async function analyzeSourceCapabilities(
     applyObjectPatternCapability(node, scope, nodeScopes, parents, analysis);
     applyWorkerConstructionCapability(node, scope, nodeScopes, analysis);
     applySubprocessConstructionCapability(node, scope, nodeScopes, analysis);
+    applySubprocessReferenceCapability(node, scope, nodeScopes, parents, analysis);
+    applyPrototypeMutatorReferenceCapability(
+      node,
+      scope,
+      nodeScopes,
+      parents,
+      analysis,
+    );
     applyInheritedClassCapability(node, scope, nodeScopes, analysis);
     applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
 
