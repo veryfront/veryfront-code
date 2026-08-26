@@ -80,8 +80,12 @@ it("does not trust an inherited freshness options marker on a direct adapter", a
   ) as typeof adapter.fs;
   adapter.fs = fs;
 
-  await preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter));
+  const rejection = await assertRejects(() =>
+    preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter))
+  );
 
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
   assertEquals(ensureCalls, 0, "an inherited marker must not authorize the options contract");
   assertEquals(refreshes, 1, "strict freshness must use the unconditional fallback");
 });
@@ -115,7 +119,7 @@ it("does not invoke an accessor freshness options marker on a direct adapter", a
   assertEquals(ensureCalls, 0, "an accessor marker must not authorize the options contract");
 });
 
-it("prefers a versioned zero-age ensure contract over unconditional refresh", async () => {
+it("uses a versioned zero-age ensure contract before rejecting a markerless snapshot", async () => {
   const ensureCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
   let refreshes = 0;
   const adapter = createMockAdapter();
@@ -132,8 +136,12 @@ it("prefers a versioned zero-age ensure contract over unconditional refresh", as
     },
   };
 
-  await preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter));
+  const rejection = await assertRejects(() =>
+    preparePreviewDocumentSourceSnapshot(makePreviewCtx(adapter))
+  );
 
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
   assertEquals(ensureCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
   assertEquals(refreshes, 0, "the versioned ensure method owns immutable-source short-circuiting");
 });
@@ -411,7 +419,7 @@ it("re-establishes freshness when the snapshot identity changed after preparatio
   );
 });
 
-it("never reuses a prepared snapshot from an adapter that cannot name its context", async () => {
+it("rejects a refreshed snapshot from an adapter that cannot name its generation", async () => {
   let refreshes = 0;
   const adapter = createMockAdapter();
   adapter.fs.refreshSourceSnapshot = () => {
@@ -420,17 +428,14 @@ it("never reuses a prepared snapshot from an adapter that cannot name its contex
   };
   const ctx = makePreviewCtx(adapter);
 
-  await preparePreviewDocumentSourceSnapshot(ctx);
-  await ensurePreviewDocumentSourceSnapshot(ctx);
+  const rejection = await assertRejects(() => preparePreviewDocumentSourceSnapshot(ctx));
 
-  assertEquals(
-    refreshes,
-    2,
-    "without a snapshot identity, freshness must not carry across a possible context change",
-  );
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(refreshes, 1);
 });
 
-it("does not reclassify an unmatchable refresh-only preparation", async () => {
+it("does not reclassify a markerless refresh-only preparation", async () => {
   let refreshes = 0;
   let reclassifications = 0;
   const adapter = createMockAdapter();
@@ -440,14 +445,16 @@ it("does not reclassify an unmatchable refresh-only preparation", async () => {
   };
   const ctx = makePreviewCtx(adapter);
 
-  await preparePreviewDocumentSourceSnapshot(ctx, () => {
-    reclassifications++;
-    return Promise.resolve({ continue: true });
-  });
+  const rejection = await assertRejects(() =>
+    preparePreviewDocumentSourceSnapshot(ctx, () => {
+      reclassifications++;
+      return Promise.resolve({ continue: true });
+    })
+  );
 
-  assertEquals(await ensurePreviewDocumentSourceSnapshot(ctx), undefined);
-  assertEquals(await finishPreviewDocumentSourceSnapshot(ctx), undefined);
-  assertEquals(refreshes, 2, "classification and rendering each establish fresh source");
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(refreshes, 1);
   assertEquals(reclassifications, 0, "an empty marker must not force ownership retries");
 });
 

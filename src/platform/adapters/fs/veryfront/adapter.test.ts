@@ -1360,12 +1360,13 @@ describe("VeryfrontFSAdapter", () => {
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
 
       let listAllFilesCalls = 0;
+      let draftContent = "v1";
       client.listAllFiles = () => {
         listAllFilesCalls++;
         return Promise.resolve([{
           path: "pages/index.tsx",
-          version_id: "v1",
-          content: "v1",
+          version_id: draftContent,
+          content: draftContent,
         }]);
       };
 
@@ -1380,6 +1381,23 @@ describe("VeryfrontFSAdapter", () => {
         "the listing fetched during cold initialization already satisfies this zero-age check",
       );
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "v1");
+
+      draftContent = "v2";
+      (adapter as unknown as {
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      }).wsManager.deps.clearMemoryCaches();
+      await adapter.ensureSourceSnapshotFresh(
+        "invalidated-cold-document",
+        { maxAgeMs: 0 },
+        true,
+      );
+
+      assertEquals(
+        listAllFilesCalls,
+        2,
+        "an invalidation must prevent the cold-initialization shortcut from accepting old authority",
+      );
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "v2");
     });
 
     it("singleflights concurrent cold strict initialization", async () => {

@@ -212,6 +212,7 @@ export class SSRHandler extends BaseHandler {
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
     } catch (error) {
+      endRequest(requestId);
       logger.error("Context setup failed — request will fall through to 404", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

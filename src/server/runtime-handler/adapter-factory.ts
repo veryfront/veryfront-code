@@ -204,7 +204,7 @@ async function hasPublishedStaticFile(
   // ownership probe in the same order for extensionless document candidates.
   const roots = new Set<string>();
   const projectRoot = resolve(projectDir);
-  const buildRoot = resolve(projectRoot, buildOutDir);
+  const buildRoot = resolve(projectRoot, buildOutDir || "dist");
   if (buildRoot !== projectRoot && isWithinDirectory(projectRoot, buildRoot)) {
     roots.add(buildRoot);
   }

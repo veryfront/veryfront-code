@@ -1087,11 +1087,14 @@ describe("adapter-factory", () => {
     });
 
     it("probes relative and absolute in-project build output before strict freshness", async () => {
-      const probeConfiguredOutput = async (outDir: string) => {
+      const probeConfiguredOutput = async (
+        outDir: string,
+        outputDirectory = "custom-output",
+      ) => {
         const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
         const base = createMockAdapter({
           "/veryfront.config.ts": { isDirectory: false, isFile: true },
-          "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
+          [`/base/project/${outputDirectory}/robots`]: { isDirectory: false, isFile: true },
         });
         const extendedFs = {
           ...base.fs,
@@ -1132,6 +1135,7 @@ describe("adapter-factory", () => {
 
       await probeConfiguredOutput("custom-output");
       await probeConfiguredOutput("/base/project/custom-output");
+      await probeConfiguredOutput("", "dist");
     });
 
     it("captures a marker before provisional configured-output reads", async () => {

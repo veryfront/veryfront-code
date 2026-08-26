@@ -303,6 +303,13 @@ function hasFixedProjectContext(fs: FileSystemAdapter): boolean {
   return !isExtendedFSAdapter(fs) || fs.isFixedProjectMode?.() === true;
 }
 
+function throwUnidentifiablePreviewSnapshot(ctx: HandlerContext): never {
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail:
+      `The filesystem adapter serving "${ctx.projectSlug}" refreshed mutable preview source but cannot identify its snapshot generation.`,
+  });
+}
+
 /** Establish strict freshness before API/page ownership is classified. */
 export async function preparePreviewDocumentSourceSnapshot(
   ctx: HandlerContext,
@@ -334,7 +341,7 @@ export async function preparePreviewDocumentSourceSnapshot(
   const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
   if (identity === undefined && version === undefined && !liveSource) {
     preparedDocumentSnapshots.delete(ctx);
-    return;
+    throwUnidentifiablePreviewSnapshot(ctx);
   }
   const fixedContext = hasFixedProjectContext(ctx.adapter.fs);
   preparedDocumentSnapshots.set(ctx, {

@@ -946,6 +946,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // listing arrives. Advance the generation immediately so an older warmup
     // cannot repopulate the cache or answer a waiting read in that window.
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotCheckedAt = 0;
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();

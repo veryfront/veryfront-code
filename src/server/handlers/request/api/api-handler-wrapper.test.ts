@@ -13,6 +13,8 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
         isMultiProjectMode: () => true,
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
+        getSourceSnapshotIdentity: () => "branch:test-project:feature-branch",
+        getSourceSnapshotVersion: () => 1,
         runWithContext: async (
           _slug: string,
           _token: string,

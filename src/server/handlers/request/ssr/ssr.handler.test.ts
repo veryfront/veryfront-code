@@ -973,6 +973,41 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       }
     });
 
+    it("releases performance timing state when context setup falls through", async () => {
+      __resetPerfTimerForTests(true);
+      try {
+        const adapter = createMockAdapter();
+        adapter.fs = {
+          ...adapter.fs,
+          getUnderlyingAdapter: () => adapter.fs,
+          isVeryfrontAdapter: () => true,
+          isMultiProjectMode: () => true,
+          runWithContext: () => {
+            throw new Error("context setup failed");
+          },
+        } as unknown as RuntimeAdapter["fs"];
+
+        const result = await new SSRHandler(createMockSSRService()).handle(
+          new Request("http://localhost/page"),
+          makeCtx({
+            adapter,
+            allowHostProjectCodeExecution: true,
+            projectSlug: "preview-project",
+            proxyToken: "token",
+          }),
+        );
+
+        assertEquals(result.continue, true);
+        assertEquals(
+          __trackedRequestIdsForTests(),
+          [],
+          "a context setup fall-through must release its performance timing entry",
+        );
+      } finally {
+        __resetPerfTimerForTests(undefined);
+      }
+    });
+
     it("releases performance timing state when post-refresh pressure sheds the request", async () => {
       __resetPerfTimerForTests(true);
       try {
