@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend } from "./backend.ts";
@@ -60,6 +61,35 @@ describe("cache/request-cache-batcher", () => {
 
       assertNotEquals(caught, null);
       assertEquals(caught!.message, "test error");
+    });
+
+    it("does not enter context through a project-mutated prototype", async () => {
+      const originalEnterWith = Object.getOwnPropertyDescriptor(
+        AsyncLocalStorage.prototype,
+        "enterWith",
+      )!;
+      const enterWith = originalEnterWith.value as (
+        this: AsyncLocalStorage<unknown>,
+        store: unknown,
+      ) => void;
+      let poisonedCalls = 0;
+      let result: Promise<number> | undefined;
+
+      Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", {
+        configurable: true,
+        value: function (this: AsyncLocalStorage<unknown>, store: unknown): void {
+          poisonedCalls += 1;
+          Reflect.apply(enterWith, this, [store]);
+        },
+      });
+      try {
+        result = runWithCacheBatching(() => Promise.resolve(42));
+      } finally {
+        Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", originalEnterWith);
+      }
+
+      assertEquals(await result, 42);
+      assertEquals(poisonedCalls, 0);
     });
   });
 
