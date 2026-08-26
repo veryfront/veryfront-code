@@ -779,6 +779,8 @@ return 0`;
  * ARGV[4] = decidedAt (ISO string, computed by the caller for determinism)
  * ARGV[5] = "1" when a comment is provided, "0" otherwise
  * ARGV[6] = comment (ignored unless ARGV[5] == "1")
+ * ARGV[7] = "1" when structured decision data is provided, "0" otherwise
+ * ARGV[8] = decision data as JSON (ignored unless ARGV[7] == "1")
  *
  * Returns 1 when applied, 2 when the approval was found but no longer pending
  * (a lost race), 0 when the id is absent.
@@ -797,6 +799,7 @@ for i = 0, len - 1 do
       approval.decidedAt = ARGV[4]
       approval.reconciliationPending = true
       if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
+      if ARGV[7] == '1' then approval.decisionData = cjson.decode(ARGV[8]) else approval.decisionData = nil end
       redis.call('lset', KEYS[1], i, cjson.encode(approval))
       return 1
     end
@@ -1582,6 +1585,7 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
+    const hasData = decision.data !== undefined;
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
@@ -1595,6 +1599,8 @@ export class RedisBackend implements WorkflowBackend {
         new Date().toISOString(),
         hasComment ? "1" : "0",
         hasComment ? decision.comment! : "",
+        hasData ? "1" : "0",
+        hasData ? serializeWorkflowJson(decision.data, "approval decision data", runId) : "",
       ],
     );
     const code = Number(result);

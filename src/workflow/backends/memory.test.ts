@@ -617,6 +617,7 @@ describe("MemoryBackend", () => {
           approved: true,
           approver: "admin@example.com",
           comment: "Looks good!",
+          data: { confirmed: true },
         }),
         true,
         "the first decision on a pending approval must report that it was written",
@@ -626,6 +627,7 @@ describe("MemoryBackend", () => {
       assertEquals(updatedApproval?.status, "approved");
       assertEquals(updatedApproval?.decidedBy, "admin@example.com");
       assertEquals(updatedApproval?.comment, "Looks good!");
+      assertEquals(updatedApproval?.decisionData, { confirmed: true });
 
       assertEquals(
         await backend.updateApproval("run-2", "approval-2", {

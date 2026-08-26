@@ -647,11 +647,14 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
+    const decisionData = decision.data === undefined ? undefined : structuredClone(decision.data);
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
     approval.comment = decision.comment;
+    if (decision.data === undefined) delete approval.decisionData;
+    else approval.decisionData = decisionData;
     approval.reconciliationPending = true;
     return Promise.resolve(true);
   }

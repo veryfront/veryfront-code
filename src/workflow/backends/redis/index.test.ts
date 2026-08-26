@@ -411,6 +411,8 @@ class MockRedisAdapter implements RedisAdapter {
       const decidedAt = args[3]!;
       const hasComment = args[4] === "1";
       const comment = args[5];
+      const hasData = args[6] === "1";
+      const decisionData = args[7];
       const list = this.lists.get(key);
       if (list) {
         for (let i = 0; i < list.length; i++) {
@@ -423,6 +425,8 @@ class MockRedisAdapter implements RedisAdapter {
             approval.reconciliationPending = true;
             if (hasComment) approval.comment = comment;
             else delete approval.comment;
+            if (hasData) approval.decisionData = JSON.parse(decisionData!);
+            else delete approval.decisionData;
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -2976,6 +2980,7 @@ describe("RedisBackend", () => {
           approved: true,
           approver: "admin",
           comment: "looks good",
+          data: { confirmed: true },
         }),
         true,
       );
@@ -2986,6 +2991,7 @@ describe("RedisBackend", () => {
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
+      assertEquals(stored.decisionData, { confirmed: true });
     });
 
     it("updateApproval omits absent comments at the serialized boundary", async () => {

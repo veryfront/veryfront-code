@@ -135,6 +135,8 @@ export interface PersistedPendingApproval extends PendingApproval {
   responseSchemaId?: string;
   /** The decision is durable, but its node outcome has not finished reconciling. */
   reconciliationPending?: true;
+  /** Structured response data retained until the durable decision reconciles. */
+  decisionData?: unknown;
 }
 
 /** Event-wait record persisted by workflow backends, including worker ownership. */
