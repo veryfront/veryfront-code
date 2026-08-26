@@ -41,6 +41,7 @@ const promiseConstructor = Promise;
 const promiseAllSettled = Promise.allSettled;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
+const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
 const universalObjectPrototype = Object.prototype;
 const mapConstructor = Map;
 const mapSet = Map.prototype.set;
@@ -86,12 +87,42 @@ function mapBatch<T, U>(
   return mapped;
 }
 
+function indexedIterable<T>(values: readonly T[]): Iterable<T> {
+  return {
+    [symbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<T> {
+          if (index >= values.length) return { done: true, value: undefined };
+          const value = values[index]!;
+          index++;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
 function allSettled<T>(
   values: readonly (T | PromiseLike<T>)[],
 ): Promise<PromiseSettledResult<Awaited<T>>[]> {
-  return reflectApply(promiseAllSettled, promiseConstructor, [values]) as Promise<
+  return reflectApply(promiseAllSettled, promiseConstructor, [indexedIterable(values)]) as Promise<
     PromiseSettledResult<Awaited<T>>[]
   >;
+}
+
+function ownDataValue(value: object, key: PropertyKey): unknown {
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownStringValue(value: object, key: PropertyKey): string | undefined {
+  const ownValue = ownDataValue(value, key);
+  return typeof ownValue === "string" ? ownValue : undefined;
 }
 
 type AdapterLstat = NonNullable<RuntimeAdapter["fs"]["lstat"]>;
@@ -103,12 +134,15 @@ function captureAdapterFsMethod<T extends AdapterLstat | AdapterRealPath>(
   key: "lstat" | "realPath",
 ): T | undefined {
   let owner: object | null = fs;
-  const visited = new Set<object>();
+  const visited: object[] = [];
 
   try {
     for (let depth = 0; owner !== null && depth < 64; depth++) {
-      if (owner === universalObjectPrototype || visited.has(owner)) return undefined;
-      visited.add(owner);
+      if (owner === universalObjectPrototype) return undefined;
+      for (let index = 0; index < visited.length; index++) {
+        if (visited[index] === owner) return undefined;
+      }
+      visited[visited.length] = owner;
       const descriptor = objectGetOwnPropertyDescriptor(owner, key);
       if (descriptor !== undefined) {
         return "value" in descriptor && typeof descriptor.value === "function"
@@ -390,9 +424,11 @@ export class SSRDependencyValidator {
         mapBatch(imports, i, i + TRANSFORM_BATCH_SIZE, async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp, localFs);
+            const resolvedPath = ownStringValue(imp, "resolvedPath");
+            const requestedPath = ownStringValue(imp, "requestedPath");
 
             const depEntry = await this.transformWithDependencies(
-              imp.resolvedPath ?? imp.requestedPath ?? imp.absolutePath,
+              resolvedPath ?? requestedPath ?? imp.absolutePath,
               depSource,
               depth + 1,
               dependencyHashCache,
@@ -402,7 +438,7 @@ export class SSRDependencyValidator {
 
             setMapValue(
               importPathMap,
-              imp.rewriteSpecifier ?? imp.specifier,
+              ownStringValue(imp, "rewriteSpecifier") ?? imp.specifier,
               depEntry.tempPath,
             );
             setMapValue(importPathMap, imp.specifier, depEntry.tempPath);
@@ -491,7 +527,7 @@ export class SSRDependencyValidator {
     const localFs = createFileSystem();
     registerCSSImport(
       cssImport.absolutePath,
-      cssImport.requestedPath,
+      ownStringValue(cssImport, "requestedPath"),
       () => this.readLocalImportSource(cssImport, localFs),
     );
   }
@@ -501,7 +537,9 @@ export class SSRDependencyValidator {
     localFs: ReturnType<typeof createFileSystem>,
   ): Promise<string> {
     const path = imported.absolutePath;
-    if (imported.projectContained) return this.readProjectImportSource(path);
+    if (ownDataValue(imported, "projectContained") === true) {
+      return this.readProjectImportSource(path);
+    }
     if (this.isProjectAbsolutePath(path)) {
       return this.readProjectImportSource(path);
     }

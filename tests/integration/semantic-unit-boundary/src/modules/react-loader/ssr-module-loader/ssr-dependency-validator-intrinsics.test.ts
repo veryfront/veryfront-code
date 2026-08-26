@@ -204,6 +204,136 @@ it("awaits contained reads through captured Promise.allSettled", async () => {
   }
 });
 
+it("awaits dependency batches through an owned iterator", async () => {
+  const originalIterator = Array.prototype[Symbol.iterator];
+  let releaseRead!: (value: Uint8Array) => void;
+  const read = new Promise<Uint8Array>((resolve) => {
+    releaseRead = resolve;
+  });
+  const transformedPaths: string[] = [];
+  const adapter = {
+    fs: {
+      symlinkSemantics: "native",
+      readFileSnapshotWithinLimit: () => read,
+    },
+  } as unknown as RuntimeAdapter;
+  const validator = new SSRDependencyValidator(
+    (path) => {
+      transformedPaths.push(path);
+      return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+    },
+    () => Promise.resolve(""),
+    adapter,
+    "/project",
+  );
+
+  try {
+    Array.prototype[Symbol.iterator] = function (this: unknown[]): ArrayIterator<unknown> {
+      if (this.length === 1 && this[0] instanceof Promise) {
+        return Reflect.apply(originalIterator, [], []);
+      }
+      return Reflect.apply(originalIterator, this, []);
+    };
+    const processing = validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+    const status = await Promise.race([
+      processing.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 10)),
+    ]);
+
+    releaseRead(new TextEncoder().encode("export default null;"));
+    const paths = await processing;
+
+    assertEquals(status, "pending");
+    assertEquals(transformedPaths, ["/project/child.ts"]);
+    assertEquals(paths.get("./child.ts"), "/tmp/child.js");
+  } finally {
+    Array.prototype[Symbol.iterator] = originalIterator;
+    releaseRead(new Uint8Array());
+  }
+});
+
+it("does not construct a mutable Set while authenticating adapter methods", () => {
+  const OriginalSet = globalThis.Set;
+  try {
+    globalThis.Set = class PoisonedSet {
+      constructor() {
+        throw new Error("mutable Set constructor reached adapter authentication");
+      }
+    } as unknown as SetConstructor;
+
+    const validator = new SSRDependencyValidator(
+      () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+      () => Promise.resolve(""),
+      {
+        fs: {
+          symlinkSemantics: "native",
+          lstat: () => Promise.resolve({ isSymlink: false }),
+          realPath: (path: string) => Promise.resolve(path),
+          readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array()),
+        },
+      } as unknown as RuntimeAdapter,
+      "/project",
+    );
+
+    assertEquals(validator.missingDependencies, []);
+  } finally {
+    globalThis.Set = OriginalSet;
+  }
+});
+
+it("ignores inherited optional dependency path metadata", async () => {
+  const originalResolvedPath = Object.getOwnPropertyDescriptor(Object.prototype, "resolvedPath");
+  const transformedPaths: string[] = [];
+  try {
+    Object.defineProperty(Object.prototype, "resolvedPath", {
+      configurable: true,
+      value: "/external/attacker-selected.ts",
+    });
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        readFile: () => Promise.resolve("export default null;"),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    await validator.processLocalImports(
+      [{ absolutePath: "/project/child.ts", specifier: "./child.ts" }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(transformedPaths, ["/project/child.ts"]);
+  } finally {
+    if (originalResolvedPath) {
+      Object.defineProperty(Object.prototype, "resolvedPath", originalResolvedPath);
+    } else {
+      Reflect.deleteProperty(Object.prototype, "resolvedPath");
+    }
+  }
+});
+
 it("records contained rewrite keys through captured Map.set", async () => {
   const originalSet = Map.prototype.set;
   const rewriteSpecifier = "file:///project/child.ts";

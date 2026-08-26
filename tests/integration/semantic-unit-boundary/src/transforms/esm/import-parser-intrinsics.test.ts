@@ -91,6 +91,46 @@ it("keeps containment when Promise.all is poisoned", async () => {
   }
 });
 
+it("canonicalizes through an owned iterator", async () => {
+  const originalIterator = Array.prototype[Symbol.iterator];
+  const canonicalizationPromises: Promise<string>[] = [];
+  const adapter = {
+    fs: {
+      resolveFile: () => Promise.resolve("/project/child.tsx"),
+      realPath: (path: string) => {
+        const promise = Promise.resolve(path);
+        canonicalizationPromises[canonicalizationPromises.length] = promise;
+        return promise;
+      },
+    },
+  } as unknown as RuntimeAdapter;
+
+  try {
+    Array.prototype[Symbol.iterator] = function (this: unknown[]): ArrayIterator<unknown> {
+      if (
+        this.length === 2 &&
+        this[0] === canonicalizationPromises[0] &&
+        this[1] === canonicalizationPromises[1]
+      ) {
+        throw new Error("mutable array iterator reached canonicalization");
+      }
+      return Reflect.apply(originalIterator, this, []);
+    };
+
+    const result = await parseLocalImports(
+      `import Child from "file:///project/child.tsx";\nexport default Child;`,
+      "/project/page.tsx",
+      "/project",
+      adapter,
+    );
+
+    assertEquals(result.imports.length, 1);
+  } finally {
+    Array.prototype[Symbol.iterator] = originalIterator;
+    await stopEsbuild();
+  }
+});
+
 it("keeps containment when String prototype methods are poisoned", async () => {
   const originalReplaceAll = String.prototype.replaceAll;
   const originalStartsWith = String.prototype.startsWith;

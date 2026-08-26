@@ -62,6 +62,7 @@ const PromiseConstructor = Promise;
 const PromiseAll = Promise.all;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const SymbolIterator: typeof Symbol.iterator = Symbol.iterator;
 const universalObjectPrototype = Object.prototype;
 const StringEndsWith = String.prototype.endsWith;
 const StringLastIndexOf = String.prototype.lastIndexOf;
@@ -104,8 +105,24 @@ function isFileUrlSpecifier(value: string): boolean {
   return stringStartsWith(value, "file://");
 }
 
+function indexedIterable<T>(values: readonly T[]): Iterable<T> {
+  return {
+    [SymbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<T> {
+          if (index >= values.length) return { done: true, value: undefined };
+          const value = values[index]!;
+          index++;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
 function promiseAll<T>(values: readonly (T | PromiseLike<T>)[]): Promise<T[]> {
-  return ReflectApply(PromiseAll, PromiseConstructor, [values]) as Promise<T[]>;
+  return ReflectApply(PromiseAll, PromiseConstructor, [indexedIterable(values)]) as Promise<T[]>;
 }
 
 /**
