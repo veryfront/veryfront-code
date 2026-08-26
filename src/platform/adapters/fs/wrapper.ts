@@ -185,6 +185,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     | undefined
     | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
+  #contextRunner: CapturedMethod | undefined;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
@@ -273,6 +274,33 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
           | string
           | undefined
           | Promise<string | undefined>;
+    }
+    const runWithContext = captureOptionalMethod(fsAdapter, "runWithContext");
+    this.#contextRunner = runWithContext;
+    if (runWithContext !== undefined) {
+      publishFrozen(
+        this,
+        "runWithContext",
+        <T>(
+          projectSlug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) =>
+          IntrinsicReflectApply(runWithContext, fsAdapter, [
+            projectSlug,
+            token,
+            fn,
+            projectId,
+            options,
+          ]) as Promise<T>,
+      );
     }
 
     for (
@@ -378,8 +406,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   isMultiProjectMode(): boolean {
-    return isContextualAdapter(this._fsAdapter) &&
-      typeof this._fsAdapter.runWithContext === "function";
+    return this.#contextRunner !== undefined;
   }
 
   isFixedProjectMode(): boolean {

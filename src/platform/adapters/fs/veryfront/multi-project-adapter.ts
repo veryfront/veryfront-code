@@ -33,6 +33,8 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
+const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
 const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
 const VeryfrontFSAdapterRefreshSourceSnapshot = VeryfrontFSAdapterPrototype.refreshSourceSnapshot;
 const VeryfrontFSAdapterEnsureSourceSnapshotFresh =
@@ -49,6 +51,14 @@ function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
     ObjectPrototypeIsPrototypeOf,
     VeryfrontFSAdapterPrototype,
     [adapter],
+  ) as boolean;
+}
+
+function isConcreteProxyFSAdapterManager(manager: unknown): boolean {
+  return IntrinsicReflectApply(
+    ObjectPrototypeIsPrototypeOf,
+    ProxyFSAdapterManagerPrototype,
+    [manager],
   ) as boolean;
 }
 
@@ -177,7 +187,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       hasReleaseId: !!releaseId,
     });
 
-    const adapter = await this.manager.getAdapter(
+    const args = [
       context.projectSlug,
       context.token,
       context.projectId,
@@ -186,7 +196,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
       context.branch,
       onResolved,
-    );
+    ] as const;
+    const adapter = isConcreteProxyFSAdapterManager(this.manager)
+      ? await IntrinsicReflectApply(
+        ProxyFSAdapterManagerGetAdapter,
+        this.manager,
+        args,
+      ) as VeryfrontFSAdapter
+      : await this.manager.getAdapter(...args);
 
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,

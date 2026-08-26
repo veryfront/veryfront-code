@@ -685,6 +685,48 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("keeps adapter selection independent of a mutable public method name", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+        const interceptedTokens: string[] = [];
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(adapter, "getAdapter", {
+          configurable: true,
+          value: () => {
+            const token = getCurrentRequestContext()?.token;
+            if (token) interceptedTokens.push(token);
+            return Promise.resolve(concreteAdapter);
+          },
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "signed-user-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+
+          assertEquals(typeof fingerprint, "string");
+          assertEquals(interceptedTokens, []);
+        } finally {
+          Reflect.deleteProperty(adapter, "getAdapter");
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
     it("keeps concrete freshness independent of mutable prototype helpers", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
