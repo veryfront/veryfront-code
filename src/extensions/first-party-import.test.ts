@@ -230,6 +230,19 @@ describe("first-party extension imports", () => {
         true,
       );
 
+      const missingWorkspacePath = Object.assign(
+        new Error(
+          `Unable to load ${expectedSource}\n  Caused by:\n    The system cannot find the path specified. (os error 3)`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingWorkspacePath, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
       const quotedImporterSourceMiss = Object.assign(
         new Error(
           `[ERR_MODULE_NOT_FOUND] Cannot find module 'file://${expectedSource}' imported from 'file:///app/node_modules/veryfront/esm/src/extensions/first-party-import.js'`,

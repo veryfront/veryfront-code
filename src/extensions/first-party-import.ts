@@ -404,7 +404,7 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
   // callers still compare the captured path exactly with the expected source.
   const denoFilesystemLoad = ReflectApply(
     RegExpPrototypeExec,
-    /^Unable to load ([^\r\n]+)\r?\n {2}Caused by:\r?\n {4}(?:No such file or directory|The system cannot find the file specified\.?) \(os error 2\)$/,
+    /^Unable to load ([^\r\n]+)\r?\n {2}Caused by:\r?\n {4}(?:(?:No such file or directory|The system cannot find the file specified\.?) \(os error 2\)|The system cannot find the path specified\.? \(os error 3\))$/,
     [message],
   ) as RegExpExecArray | null;
   if (denoFilesystemLoad) return denoFilesystemLoad[1];
