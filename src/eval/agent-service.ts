@@ -358,11 +358,58 @@ function getToolCallEntry(
   return next;
 }
 
+function applyToolCallStatusEvent(
+  toolCalls: Map<string, PendingToolCall>,
+  event: Record<string, unknown>,
+  index: number,
+): boolean {
+  if (
+    getAgUiSseStringField(event, "type") !== agUiSseEventTypes.custom ||
+    getAgUiSseStringField(event, "name") !== "tool-call-status" ||
+    !isRecord(event.value)
+  ) {
+    return false;
+  }
+
+  const value = event.value;
+  const id = getAgUiSseStringField(value, "toolCallId");
+  const name = getAgUiSseStringField(value, "toolCallName");
+  if (!id && !name) return true;
+
+  const entry = getToolCallEntry(toolCalls, id ?? `name:${name ?? index}`, id, name);
+  if (Object.hasOwn(value, "arguments")) entry.call.input = value.arguments;
+  if (Object.hasOwn(value, "result")) {
+    entry.call.output = value.result;
+  } else if (Object.hasOwn(value, "output")) {
+    entry.call.output = value.output;
+  }
+
+  const status = getAgUiSseStringField(value, "status");
+  const error = Object.hasOwn(value, "error") ? stringifyError(value.error) : undefined;
+  const failed = value.isError === true || error !== undefined ||
+    status === "failed" || status === "error" || status === "cancelled" || status === "canceled" ||
+    (typeof value.exitCode === "number" && value.exitCode !== 0);
+  if (status === "denied") {
+    entry.call.status = "denied";
+  } else if (status === "skipped") {
+    entry.call.status = "skipped";
+  } else if (failed) {
+    entry.call.status = "error";
+  } else if (status === "completed") {
+    entry.call.status = "ok";
+  }
+  if (failed) entry.call.error = error ?? "Tool call failed";
+
+  return true;
+}
+
 function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[] {
   const toolCalls = new Map<string, PendingToolCall>();
 
   for (const [index, event] of events.entries()) {
     const type = getAgUiSseStringField(event, "type");
+
+    if (applyToolCallStatusEvent(toolCalls, event, index)) continue;
 
     if (type === agUiSseEventTypes.toolCallStart) {
       const name = getAgUiSseStringField(event, "toolCallName");
@@ -437,8 +484,10 @@ function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) 
 
 function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | undefined {
   const inputTokens = readNonNegativeNumber(record.inputTokens) ??
+    readNonNegativeNumber(record.input_tokens) ??
     readNonNegativeNumber(record.promptTokens);
   const outputTokens = readNonNegativeNumber(record.outputTokens) ??
+    readNonNegativeNumber(record.output_tokens) ??
     readNonNegativeNumber(record.completionTokens);
   const totalTokens = readNonNegativeNumber(record.totalTokens) ??
     (inputTokens !== undefined || outputTokens !== undefined
@@ -457,6 +506,7 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     readNonNegativeNumber(record.cacheReadTokens) ??
     readNonNegativeNumber(record.cache_read_input_tokens);
   const reasoningTokens = readNonNegativeNumber(record.reasoningTokens) ??
+    readNonNegativeNumber(record.reasoning_output_tokens) ??
     readNonNegativeNumber(record.reasoning_tokens);
   const providerInputCostUsd = readNonNegativeNumber(record.providerInputCostUsd) ??
     readNonNegativeNumber(record.provider_input_cost_usd);
@@ -522,9 +572,18 @@ function readEvalUsage(value: unknown): EvalUsage | undefined {
 function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage | undefined {
   for (const event of [...events].reverse()) {
     const type = getAgUiSseStringField(event, "type");
-    if (type !== agUiSseEventTypes.runFinished) continue;
-
-    return readEvalUsage(event.metadata) ?? readEvalUsage(event.usage) ?? readEvalUsage(event);
+    if (type === agUiSseEventTypes.runFinished) {
+      const usage = readEvalUsage(event.metadata) ?? readEvalUsage(event.usage) ??
+        readEvalUsage(event);
+      if (usage) return usage;
+    }
+    if (
+      type === agUiSseEventTypes.custom &&
+      getAgUiSseStringField(event, "name") === "codex.turn.completed"
+    ) {
+      const usage = readEvalUsage(event.value);
+      if (usage) return usage;
+    }
   }
   return undefined;
 }
