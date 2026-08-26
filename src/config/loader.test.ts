@@ -1549,6 +1549,22 @@ export default config as const;
 
         assertEquals(prose.message.includes("registry.internal"), false);
         assertStringIncludes(prose.message, "(see [url])");
+
+        const period = await loadFailure(
+          "vf-config-paren-period-",
+          `throw new Error("Failed (see https://registry.internal/x). Retry");\n`,
+        );
+
+        assertEquals(period.message.includes("registry.internal"), false);
+        assertStringIncludes(period.message, "Failed (see [url]). Retry");
+
+        const comma = await loadFailure(
+          "vf-config-paren-comma-",
+          `throw new Error("Failed (see https://registry.internal/x), then retry");\n`,
+        );
+
+        assertEquals(comma.message.includes("registry.internal"), false);
+        assertStringIncludes(comma.message, "Failed (see [url]), then retry");
       });
 
       it("reports a CSI-glued file URL as a path, not a remote URL", async () => {

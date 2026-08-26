@@ -1737,20 +1737,19 @@ const CSI_GLUED_URL =
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/g;
-// The third alternative -- a lone `(` or `)` followed by something non-blank --
-// is what keeps an unbalanced parenthesis from ending the match. Without it the
+//
+// The final two alternatives keep an unbalanced parenthesis from ending the
+// match. Without them the
 // hostname redacted but the tail did not, so
 // `https://host/a(TOKEN/c.ts` came back as `[url](TOKEN/c.ts` and a query-string
 // token printed verbatim into the caller-visible error
 // (veryfront-issue-inbox#845). It reproduces on `origin/main`, so this is a
 // pre-existing gap rather than one introduced with the URL passes.
 //
-// The lookahead is load-bearing, not decoration. `Failed (see https://host/x)`
-// must keep its own closing bracket: a trailing `)` has nothing but the end of
-// the token after it, so it stays outside the match and the sentence still
-// reads as prose.
+// The distinct lookaheads are load-bearing. A lone opening parenthesis may
+// precede any non-blank URL tail. A lone closing parenthesis continues only
+// before a URL-like character, so prose punctuation in
+// `Failed (see https://host/x). Retry` stays outside the match.
 //
 // Dropping the balanced branch instead would be simpler and 25x faster, and was
 // rejected. It takes the quadratic guard's probe from ~45ms to ~0.2ms, which
@@ -1762,6 +1761,16 @@ const SCHEME_URL =
 // assumed: on the guard's own `"ab://(".repeat(20_000)` input the probe moved
 // 22ms -> 53ms against an unchanged control, still 2x per doubling.
 //
+// Keep this source shared by every URL shape. Apart from preventing the four
+// redactors from drifting, the extraction keeps each complete expression below
+// the static-analysis complexity threshold.
+const URL_TOKEN_TAIL_SOURCE = String
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?=[^\s"'.,;:)\]]))+`;
+const SCHEME_URL = new RegExp(
+  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "g",
+);
+
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -1804,8 +1813,10 @@ const SCHEME_URL =
 // minimum is not enough to separate a scheme from prose glued to a drive letter.
 // A glued *URL* still redacts: the match simply starts later in the token, so
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
-const MALFORMED_SCHEME_URL =
-  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
+const MALFORMED_SCHEME_URL = new RegExp(
+  String.raw`(?:https?|wss?|ftp):/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gi",
+);
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
 // the two-slash form, but neither pattern above matches it -- both require at
@@ -1818,15 +1829,20 @@ const MALFORMED_SCHEME_URL =
 // case-insensitive, and the two patterns above get that free from `[A-Za-z]`; a
 // literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
 // and the hostname survived into the caller-visible detail.
-const ZERO_SLASH_SCHEME_URL =
-  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
+const ZERO_SLASH_SCHEME_URL = new RegExp(
+  String.raw`(?:https?|wss?|ftp):(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gi",
+);
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
 // past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
 // home directory was redacted either way -- but it reported a local path as a
 // remote URL, which is this PR's original misclassification running backwards.
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
+const FILE_URL_ABSOLUTE_PATH = new RegExp(
+  String.raw`file:///${URL_TOKEN_TAIL_SOURCE}`,
+  "gi",
+);
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in
