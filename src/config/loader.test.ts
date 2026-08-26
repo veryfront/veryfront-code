@@ -1003,6 +1003,17 @@ export default config as const;
         assertEquals(error.message.includes("registry.internal"), false);
       });
 
+      it("redacts a URL with parenthesized userinfo without consuming trailing prose", async () => {
+        const error = await loadFailure(
+          "vf-config-parenthesized-userinfo-",
+          `throw new Error("Fetch https://user(name):<TOKEN>@registry.internal/config.ts) failed");\n`,
+        );
+
+        assertStringIncludes(error.message, "Fetch [url]) failed");
+        assertEquals(error.message.includes("user(name)"), false);
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
       it("redacts a single-slash URL-like token without misclassifying Windows paths", async () => {
         const error = await loadFailure(
           "vf-config-single-slash-url-",
@@ -1075,6 +1086,29 @@ export default config as const;
         assertStringIncludes(error.message, "[path]");
         assertEquals(error.message.includes("/home/example"), false);
         assertEquals(error.message.includes("38:2"), false);
+      });
+
+      it("strips an eight-bit CSI sequence before redacting a machine path", async () => {
+        const csi = String.fromCharCode(0x9b);
+        const error = await loadFailure(
+          "vf-config-eight-bit-csi-path-",
+          `throw new Error("Failed to load ${csi}31m/home/example/project/veryfront.config.ts");\n`,
+        );
+
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("31m"), false);
+      });
+
+      it("redacts credentials both before and after stripping CSI sequences", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-ansi-credential-",
+          `throw new Error("${escape}[API_KEY=<TOKEN>");\n`,
+        );
+
+        assertEquals(error.message.includes("<TOKEN>"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
       });
 
       it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {

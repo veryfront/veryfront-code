@@ -1640,7 +1640,7 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // form a true-colour sequence uses (`ESC[38:2:255:0:0m`), whose residue then
 // defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
 // deno-lint-ignore no-control-regex
-const ANSI_CSI_SEQUENCE = /\u001B\[[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
 // A remote config URL is redacted whole rather than picked apart: AGENTS.md
 // counts private hostnames among the values user-facing output must not carry,
 // and the caller cannot tell an internal registry from a public CDN by looking
@@ -1655,17 +1655,17 @@ const ANSI_CSI_SEQUENCE = /\u001B\[[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007
 // end of the input at every position starting with a letter, so a long
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s"'()]+/g;
+const SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/(?:[^\s"'()]|\([^\s"'()]*\))+/g;
 // The malformed single-slash form, kept separate from SCHEME_URL rather than
 // folded in as an alternation: two plain patterns read more clearly than one
 // branching expression, and each stays independently checkable.
 //
 // The scheme needs at least two characters here, which is what keeps a genuine
 // `C:/Users/...` out -- a drive letter is always exactly one.
-const MALFORMED_SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)[^\s"'()]+/g;
+const MALFORMED_SCHEME_URL = /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"'()]|\([^\s"'()]*\))+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"'()]*\))+/g;
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in
@@ -1748,11 +1748,16 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
-  // De-colorize first. An escape sequence sitting inside a credential leaves it
-  // noncontiguous, so sanitizeUrlCredentials would not match it -- and stripping
-  // the sequence afterwards would rejoin the halves into a usable secret with no
-  // sanitiser left to run.
-  const deColorized = replaceMatchesWithCapturedExec(message, ANSI_CSI_SEQUENCE, "");
+  // Sanitize on both sides of de-colorization. A sequence inside a credential
+  // can make it noncontiguous before removal, while a CSI final byte can also
+  // consume the first character of a key such as API_KEY. Either ordering alone
+  // can therefore expose a usable value after the transformation.
+  const initiallyRedacted = sanitizeUrlCredentials(message);
+  const deColorized = replaceMatchesWithCapturedExec(
+    initiallyRedacted,
+    ANSI_CSI_SEQUENCE,
+    "",
+  );
   const redacted = sanitizeUrlCredentials(deColorized);
   const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
     "";
