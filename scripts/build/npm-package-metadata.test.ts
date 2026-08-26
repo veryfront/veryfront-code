@@ -57,6 +57,37 @@ it("exports CLI framework dependencies as public package subpaths", async () => 
   }
 });
 
+it("keeps host environment controls outside public platform exports", async () => {
+  const [denoConfig, tsconfig] = await Promise.all([
+    Deno.readTextFile(new URL("deno.json", repoRoot)).then(JSON.parse),
+    Deno.readTextFile(new URL("tsconfig.json", repoRoot)).then(JSON.parse),
+  ]);
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+  const paths = tsconfig.compilerOptions.paths as Record<string, string[]>;
+  const publicEnvModule = "./src/platform/compat/process/env-public.ts";
+
+  assertEquals(exports["./platform/env"], publicEnvModule);
+  assertEquals(imports["veryfront/platform/env"], publicEnvModule);
+  assertEquals(paths["veryfront/platform/env"], [publicEnvModule]);
+
+  const [platformBarrel, platformEnv] = await Promise.all([
+    Deno.readTextFile(new URL("src/platform/index.ts", repoRoot)),
+    import(new URL(publicEnvModule, repoRoot).href),
+  ]);
+
+  for (
+    const internalExport of [
+      "getEnvOverlayStorage",
+      "getHostEnv",
+      "getTrustedProjectEnvSnapshot",
+      "registerTrustedProjectEnvSnapshot",
+    ]
+  ) {
+    assertEquals(platformBarrel.includes(internalExport), false);
+    assertEquals(internalExport in platformEnv, false);
+  }
+});
 it("keeps process-wide Sentry controls internal", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile(new URL("deno.json", repoRoot)),
