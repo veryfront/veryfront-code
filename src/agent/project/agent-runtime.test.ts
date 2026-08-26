@@ -258,6 +258,22 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
   }]);
 });
 
+Deno.test("project agent runtime preserves code agent delegate denials", async () => {
+  const coordinator = agent({
+    id: "restricted-coordinator",
+    system: "Do not call the writer.",
+    skills: [],
+    delegates: ["writer"],
+    tools: { agent_writer: false },
+  });
+
+  const definition = await createRuntimeAgentDefinitionFromAgent(coordinator);
+
+  assertEquals(definition.tools, undefined);
+  assertEquals(definition.deniedTools, ["agent_writer"]);
+  assertEquals(definition.delegates, ["writer"]);
+});
+
 Deno.test("project agent runtime carries explicit skill tool denials into hosted definitions", async () => {
   registerSkill("triage", {
     id: "triage",

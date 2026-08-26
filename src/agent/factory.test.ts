@@ -22,7 +22,7 @@ import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
-import type { ModelRuntime } from "#veryfront/provider";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 function createSkill(id: string, description: string) {
@@ -520,6 +520,54 @@ description: Excluded skill
     assertEquals(typeof assistant.config.tools["agent_ingestion-agent"], "object");
     assertEquals(assistant.config.delegates, ["ingestion-agent"]);
     assertEquals(toolRegistry.has("agent_ingestion-agent"), false);
+  });
+
+  it("keeps explicit delegate denials authoritative", () => {
+    const assistant = agent({
+      id: "restricted-orchestrator",
+      system: "Do not call the writer.",
+      skills: [],
+      delegates: ["writer"],
+      tools: { agent_writer: false },
+    });
+
+    if (!assistant.config.tools || assistant.config.tools === true) {
+      throw new Error("Expected an agent tool map");
+    }
+    assertEquals(assistant.config.tools.agent_writer, false);
+  });
+
+  it("removes explicitly denied provider-native tools", async () => {
+    let observedToolNames: string[] = [];
+    const model: ModelRuntime<ModelRuntimeCallOptions> = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate(options) {
+        observedToolNames = options.tools?.map((definition) => definition.name) ?? [];
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: "restricted-provider-tools",
+      model: "anthropic/claude-sonnet-4-6",
+      system: "Use only permitted provider tools.",
+      skills: [],
+      providerTools: ["web_search", "web_fetch"],
+      tools: { web_search: false },
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Use an allowed tool." });
+
+    assertEquals(assistant.config.providerTools, ["web_fetch"]);
+    assertEquals(observedToolNames, ["web_fetch"]);
   });
 
   it("materializes explicitly requested invoke_agent for direct runtimes", async () => {

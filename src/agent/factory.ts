@@ -148,6 +148,19 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
+/** Keep explicit project-tool denials authoritative over provider-native bindings. */
+function resolveProviderToolsConfiguration(
+  config: Pick<AgentConfig, "providerTools" | "tools">,
+): string[] | undefined {
+  const providerTools = config.providerTools;
+  const toolSelection = config.tools;
+  if (providerTools === undefined || toolSelection === undefined || toolSelection === true) {
+    return providerTools;
+  }
+
+  return providerTools.filter((toolName) => toolSelection[toolName] !== false);
+}
+
 /** Everything the public surface closes over, named so the closure is visible. */
 interface AgentInstanceDeps {
   id: string;
@@ -372,9 +385,15 @@ function resolveToolsConfiguration(input: {
       });
     }
     if (delegates.length > 0) {
+      const delegateTools = buildAgentDelegateTools({ delegates, selfId: id });
+      for (const toolName of Object.keys(delegateTools)) {
+        if (merged?.[toolName] === false) {
+          delete delegateTools[toolName];
+        }
+      }
       merged = {
         ...(merged ?? {}),
-        ...buildAgentDelegateTools({ delegates, selfId: id }),
+        ...delegateTools,
       };
     }
   }
@@ -520,6 +539,9 @@ function createAgent<TOutput = never>(
   const publicConfig: ResolvedAgentConfig = {
     ...config,
     ...(delegates === undefined ? {} : { delegates }),
+    ...(config.providerTools === undefined
+      ? {}
+      : { providerTools: resolveProviderToolsConfiguration(config) }),
     model: resolveConfiguredAgentModel(config.model),
   };
 
