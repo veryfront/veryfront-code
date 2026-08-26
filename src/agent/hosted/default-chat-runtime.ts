@@ -3,6 +3,7 @@ import {
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
   type ToolExecutionContext,
+  type ToolSet,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
 import {
@@ -57,6 +58,9 @@ import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+
+const apply = Reflect.apply;
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -201,7 +205,7 @@ async function buildToolAssembly(
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
   const localTools = await input.buildLocalTools(input.taskContext);
-  return prepareHostedChatRuntimeToolAssembly({
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
     ...(liveProjectSteering === undefined ? {} : {
@@ -216,11 +220,7 @@ async function buildToolAssembly(
           availableToolNames: modelVisibleToolNames,
         }),
     }),
-    localTools: scopeHostedLocalTools({
-      tools: localTools,
-      taskContext: input.taskContext,
-      cloudContext: input.cloudContext,
-    }),
+    localTools,
     hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
@@ -269,6 +269,14 @@ async function buildToolAssembly(
       }
     },
   });
+  return {
+    ...toolAssembly,
+    runtimeTools: scopeHostedRuntimeTools({
+      tools: toolAssembly.runtimeTools,
+      taskContext: input.taskContext,
+      cloudContext: input.cloudContext,
+    }),
+  };
 }
 
 function createRuntimeAgentConfig(input: {
@@ -386,17 +394,23 @@ function withoutHostedCredentials<TResult>(input: {
   );
 }
 
-function scopeHostedLocalTools(input: {
-  tools: HostToolSet;
+function snapshotHostedToolResult(result: unknown): unknown {
+  if (result === undefined) return undefined;
+  const snapshot = snapshotBoundedJsonValue(result);
+  if (!snapshot.success) {
+    throw new TypeError("Hosted project tool result must be a bounded JSON value");
+  }
+  return snapshot.value;
+}
+
+function scopeHostedRuntimeTools(input: {
+  tools: ToolSet;
   taskContext: DefaultHostedChatRuntimeTaskContext;
   cloudContext: VeryfrontCloudContext;
-}): HostToolSet {
+}): ToolSet {
   return Object.fromEntries(
     Object.entries(input.tools).map(([toolName, tool]) => {
       const execute = tool.execute;
-      if (typeof execute !== "function") {
-        return [toolName, tool];
-      }
       return [
         toolName,
         {
@@ -405,7 +419,10 @@ function scopeHostedLocalTools(input: {
             withoutHostedCredentials({
               taskContext: input.taskContext,
               cloudContext: input.cloudContext,
-              operation: async () => await execute(toolInput, context),
+              operation: async () =>
+                snapshotHostedToolResult(
+                  await apply(execute, tool, [toolInput, context]),
+                ),
             }),
         },
       ];

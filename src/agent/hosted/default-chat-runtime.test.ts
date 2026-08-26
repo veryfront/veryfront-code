@@ -473,8 +473,12 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
   clearModelProviders();
   let modelCallCount = 0;
   let providerFactoryToken: string | undefined;
+  let validatorCloudToken: string | undefined;
+  let validatorFilesystemToken: string | undefined;
   let toolCloudToken: string | undefined;
   let toolFilesystemToken: string | undefined;
+  let receiverPreserved = false;
+  let lazyResultReads = 0;
 
   registerModelProvider("test", () => {
     providerFactoryToken = getCurrentVeryfrontCloudContext()?.apiToken;
@@ -532,11 +536,38 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
       },
       buildLocalTools: () => ({
         inspect_credentials: {
-          ...localTool("Inspect ambient credentials"),
-          execute: () => {
+          receiverMarker: "host-tool-definition",
+          description: "Inspect ambient credentials",
+          inputSchema: {
+            parse: (value: unknown) => {
+              validatorCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
+              validatorFilesystemToken = getCurrentProjectRequestContext()?.token;
+              return value;
+            },
+          },
+          inputSchemaJson: {
+            type: "object" as const,
+            properties: {},
+            additionalProperties: false,
+          },
+          execute(this: { receiverMarker?: string }) {
+            receiverPreserved = this.receiverMarker === "host-tool-definition";
             toolCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
             toolFilesystemToken = getCurrentProjectRequestContext()?.token;
-            return { ok: true };
+            const result = {
+              toJSON: () => {
+                lazyResultReads += 1;
+                return { token: getCurrentVeryfrontCloudContext()?.apiToken };
+              },
+            } as { token?: string; toJSON: () => unknown };
+            Object.defineProperty(result, "token", {
+              enumerable: true,
+              get: () => {
+                lazyResultReads += 1;
+                return getCurrentVeryfrontCloudContext()?.apiToken;
+              },
+            });
+            return result;
           },
         },
       }),
@@ -558,8 +589,12 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
     );
 
     assertEquals(providerFactoryToken, "visitor-token");
+    assertEquals(validatorCloudToken, undefined);
+    assertEquals(validatorFilesystemToken, "");
     assertEquals(toolCloudToken, undefined);
     assertEquals(toolFilesystemToken, "");
+    assertEquals(receiverPreserved, true);
+    assertEquals(lazyResultReads, 0);
   } finally {
     clearModelProviders();
   }
