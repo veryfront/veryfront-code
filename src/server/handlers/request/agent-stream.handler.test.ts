@@ -2652,7 +2652,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunFinished");
   });
 
-  it("uses the verified request credential for the exact agent source context", async () => {
+  it("limits the verified request credential to framework-owned source setup", async () => {
+    let observedFrameworkCacheCredential:
+      | ReturnType<typeof getVerifiedCacheApiCredential>
+      | undefined;
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
@@ -2673,6 +2676,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const handler = createTestAgentStreamHandler({
       loadAgentSourceEnvironment: (_ctx, source, target, token) => {
+        observedFrameworkCacheCredential = getVerifiedCacheApiCredential();
         observedEnvironmentTarget = {
           environmentName: source.type === "environment" ? source.environmentName : source.type,
           environmentId: target.runtimeTargetEnvironmentId ?? null,
@@ -2787,11 +2791,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       environmentId: "10000000-1000-4000-8000-100000000098",
       token: "request-scoped-user-token",
     });
-    assertEquals(observedCacheCredential, {
+    assertEquals(observedFrameworkCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",
       projectSlug: "demo-project",
     });
+    assertEquals(observedCacheCredential, undefined);
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 

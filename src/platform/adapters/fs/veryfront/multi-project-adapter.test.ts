@@ -4,6 +4,7 @@ import {
   assertEquals,
   assertExists,
   assertInstanceOf,
+  assertNotEquals,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -18,6 +19,7 @@ import {
   setRequestScopedFile,
   wrapWithCurrentContext,
 } from "./multi-project-adapter.ts";
+import { VeryfrontFSAdapter } from "./adapter.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
   return new MultiProjectFSAdapter({
@@ -318,25 +320,25 @@ describe("MultiProjectFSAdapter", () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
         let freshnessReason: string | undefined;
-        let sourceSnapshotVersion = 6;
         let freshnessChecks = 0;
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.mdx", content: "current source" }],
+          sourceSnapshotVersion: 6,
+          sourceSnapshotFingerprint: undefined,
+          ensureSourceSnapshotFresh(reason?: string) {
+            freshnessReason = reason;
+            freshnessChecks++;
+            if (freshnessChecks === 1) this.sourceSnapshotVersion++;
+            return Promise.resolve();
+          },
+          getSourceSnapshotVersion() {
+            return this.sourceSnapshotVersion;
+          },
+        }) as VeryfrontFSAdapter;
 
         (adapter as any).manager = {
           getAdapter() {
-            return Promise.resolve({
-              ensureSourceSnapshotFresh(reason?: string) {
-                freshnessReason = reason;
-                freshnessChecks++;
-                if (freshnessChecks === 1) sourceSnapshotVersion++;
-                return Promise.resolve();
-              },
-              getSourceSnapshotVersion() {
-                return sourceSnapshotVersion;
-              },
-              getSourceSnapshotFingerprint() {
-                return "snapshot-7";
-              },
-            });
+            return Promise.resolve(concreteAdapter);
           },
           getStats: () => ({ adapters: 0, stats: [] }),
           dispose: () => {},
@@ -351,7 +353,7 @@ describe("MultiProjectFSAdapter", () => {
               await adapter.ensureSourceSnapshotFresh("page-routing");
               assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
               assertEquals(await adapter.getSourceSnapshotVersion(), 7);
-              assertEquals(await adapter.getSourceSnapshotFingerprint(), "snapshot-7");
+              assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
 
               setRequestScopedFile("file:pages/index.mdx", "current-content");
               await adapter.ensureSourceSnapshotFresh("page-routing");
@@ -365,6 +367,50 @@ describe("MultiProjectFSAdapter", () => {
         }
 
         assertEquals(freshnessReason, "page-routing");
+      });
+    });
+
+    it("uses the captured concrete fingerprint method after project prototype mutation", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalFingerprint = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "getSourceSnapshotFingerprint",
+        );
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "getSourceSnapshotFingerprint", {
+          configurable: true,
+          value: () => Promise.resolve("project-spoofed-fingerprint"),
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(typeof fingerprint, "string");
+          assertNotEquals(fingerprint, "project-spoofed-fingerprint");
+        } finally {
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "getSourceSnapshotFingerprint",
+            originalFingerprint!,
+          );
+          (adapter as any).manager = originalManager;
+        }
       });
     });
 

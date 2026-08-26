@@ -23,6 +23,11 @@ export function runWithVerifiedCacheApiCredential<T>(
   );
 }
 
+/** Wraps project-authored work so it cannot inherit a verified user credential. */
+export function withoutVerifiedCacheApiCredential<T>(fn: () => T): () => T {
+  return () => verifiedCredentialStorage.run(null, fn);
+}
+
 export function getVerifiedCacheApiCredential():
   | VerifiedControlPlaneCacheCredential
   | undefined {

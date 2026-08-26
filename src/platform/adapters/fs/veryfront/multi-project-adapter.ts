@@ -3,7 +3,7 @@ import { INITIALIZATION_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
-import type { VeryfrontFSAdapter } from "./adapter.ts";
+import { VeryfrontFSAdapter } from "./adapter.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import { captureByteReadCapabilities } from "../../file-system-capabilities.ts";
@@ -27,6 +27,9 @@ const logger = baseLogger.component("multi-project-fs-adapter");
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+const IntrinsicReflectApply = Reflect.apply;
+const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
+  VeryfrontFSAdapter.prototype.getSourceSnapshotFingerprint;
 
 export class MultiProjectFSAdapter implements FSAdapter {
   readonly symlinkSemantics = "none" as const;
@@ -287,9 +290,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getSourceSnapshotFingerprint(): Promise<string | undefined> {
     const adapter = await this.getAdapter();
-    return typeof adapter.getSourceSnapshotFingerprint === "function"
-      ? await adapter.getSourceSnapshotFingerprint()
-      : undefined;
+    return await IntrinsicReflectApply(
+      VeryfrontFSAdapterGetSourceSnapshotFingerprint,
+      adapter,
+      [],
+    );
   }
 
   dispose(): void {

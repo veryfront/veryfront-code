@@ -7,7 +7,10 @@ import {
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
-import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import {
+  runWithVerifiedCacheApiCredential,
+  withoutVerifiedCacheApiCredential,
+} from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
@@ -908,7 +911,7 @@ export class AgentStreamHandler extends BaseHandler {
             return await this.withAgentSourceContext(
               projectScopedContext,
               payload.agentSource,
-              async () => {
+              withoutVerifiedCacheApiCredential(async () => {
                 if (requestSourceFingerprint !== undefined) {
                   const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
                     projectScopedContext,
@@ -1025,7 +1028,7 @@ export class AgentStreamHandler extends BaseHandler {
                     return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
                   },
                 );
-              },
+              }),
             );
           },
         );
