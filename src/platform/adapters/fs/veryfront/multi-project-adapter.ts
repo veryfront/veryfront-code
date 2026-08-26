@@ -41,6 +41,8 @@ const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapte
 const ProxyFSAdapterManagerDispose = ProxyFSAdapterManagerPrototype.dispose;
 const ProxyFSAdapterManagerGetStats = ProxyFSAdapterManagerPrototype.getStats;
 const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
+const VeryfrontFSAdapterReadFile = VeryfrontFSAdapterPrototype.readFile;
+const VeryfrontFSAdapterReadTextFile = VeryfrontFSAdapterPrototype.readTextFile;
 const VeryfrontFSAdapterRefreshSourceSnapshot = VeryfrontFSAdapterPrototype.refreshSourceSnapshot;
 const VeryfrontFSAdapterEnsureSourceSnapshotFresh =
   VeryfrontFSAdapterPrototype.ensureSourceSnapshotFresh;
@@ -248,7 +250,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async readFile(path: string): Promise<string> {
     const adapter = await this.#getAdapter();
-    return adapter.readFile(path);
+    return isConcreteVeryfrontFSAdapter(adapter)
+      ? await IntrinsicReflectApply(VeryfrontFSAdapterReadFile, adapter, [path]) as string
+      : await adapter.readFile(path);
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
@@ -269,7 +273,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async readTextFile(path: string): Promise<string> {
     const adapter = await this.#getAdapter();
-    return adapter.readTextFile(path);
+    return isConcreteVeryfrontFSAdapter(adapter)
+      ? await IntrinsicReflectApply(VeryfrontFSAdapterReadTextFile, adapter, [path]) as string
+      : await adapter.readTextFile(path);
   }
 
   async readOptionalTextFile(path: string): Promise<string> {

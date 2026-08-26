@@ -960,7 +960,16 @@ describe("VeryfrontFSAdapter", () => {
         content: "x".repeat(32 * 1_024 * 1_024),
       }];
 
-      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+      let timerRan = false;
+      const timer = setTimeout(() => {
+        timerRan = true;
+      }, 0);
+      try {
+        assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+        assertEquals(timerRan, true, "large source contents must yield to the task queue");
+      } finally {
+        clearTimeout(timer);
+      }
     });
 
     it("fingerprints a snapshot larger than the former file-count cap", async () => {

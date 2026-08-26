@@ -32,6 +32,8 @@ type CapturedContextRunner = <T>(
   },
 ) => Promise<T>;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicTextDecoder = TextDecoder;
+const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 
 function captureOptionalMethod(value: FSAdapter, key: string): CapturedMethod | undefined {
   const seen = new Set<object>();
@@ -213,7 +215,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       const result = await IntrinsicReflectApply(readFile, fsAdapter, [path]) as
         | string
         | Uint8Array;
-      return typeof result === "string" ? result : new TextDecoder().decode(result);
+      if (typeof result === "string") return result;
+      const decoder = new IntrinsicTextDecoder();
+      return IntrinsicReflectApply(TextDecoderPrototypeDecode, decoder, [result]) as string;
     };
     publishFrozen(this, "readFile", this.#textFileReader);
     const semantics = Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
