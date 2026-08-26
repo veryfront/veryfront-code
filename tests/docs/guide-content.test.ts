@@ -96,6 +96,49 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("requires server-verified authentication for the workflow handler example", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows-advanced.md", repoRoot),
+    );
+
+    assertStringIncludes(
+      guide,
+      "Its `getSession(request)` function must verify",
+    );
+    assertStringIncludes(guide, "a signed, HttpOnly, same-origin session cookie");
+    assertStringIncludes(
+      guide,
+      "Do not decode an unsigned cookie or",
+    );
+  });
+
+  it("documents the complete cross-origin workflow hook CORS surface", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows-advanced.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "export function OPTIONS(request: Request): Response");
+    assertStringIncludes(guide, '"Access-Control-Allow-Origin": applicationOrigin');
+    assertStringIncludes(guide, '"Access-Control-Allow-Credentials": "true"');
+    assertStringIncludes(guide, '"Access-Control-Allow-Methods": "GET, POST, OPTIONS"');
+    assertStringIncludes(
+      guide,
+      '"Access-Control-Allow-Headers": "Authorization, Content-Type, X-CSRF-Token"',
+    );
+    assertStringIncludes(guide, "return cors(request, await handlers.GET(request));");
+    assertStringIncludes(guide, "return cors(request, await handlers.POST(request));");
+  });
+
+  it("describes the server-bound workflow approval identity", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "The body-level `approver`");
+    assertStringIncludes(guide, "is compatibility input, not an identity claim");
+    assertStringIncludes(guide, "server-derived identity is what the workflow context persists");
+  });
+
   it("keeps the workflow EventSource example terminal-safe and wire-accurate", async () => {
     const guide = await Deno.readTextFile(
       new URL("docs/guides/workflows-advanced.md", repoRoot),

@@ -427,7 +427,9 @@ export const POST = createAgUiHandler("content-agent");
     `import { createWorkflowHandler } from "veryfront/workflow";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: () => "critical-flow-test",
+});
 `,
   );
 }
