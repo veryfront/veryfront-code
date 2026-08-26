@@ -902,9 +902,19 @@ describe("security/application-auth OIDC metadata", () => {
   });
 
   it("does not let poisoned Map.has or size bypass pending metadata capacity", async () => {
-    const cache = createOidcMetadataCache({ maxEntries: 1 });
+    const cacheTtlSeconds = 60;
+    const requestTimeoutMs = 5_000;
+    const cache = createOidcMetadataCache({ ttlSeconds: cacheTtlSeconds, maxEntries: 1 });
     const issuerA = "https://pending-primordial-a.example.com";
     const issuerB = "https://pending-primordial-b.example.com";
+    const issuerBCacheKey = [
+      "oidc-metadata-cache-v1",
+      issuerB,
+      "https-only",
+      `${requestTimeoutMs}`,
+      `${cacheTtlSeconds * 1_000}`,
+      "0",
+    ].reduce((key, field) => `${key}${field.length}:${field}`, "");
     let releaseFirst: ((response: Response) => void) | undefined;
     const firstResponse = new Promise<Response>((resolve) => {
       releaseFirst = resolve;
@@ -924,7 +934,7 @@ describe("security/application-auth OIDC metadata", () => {
             Map.prototype,
             "has",
             function (this: Map<unknown, unknown>, key: unknown): boolean {
-              if (typeof key === "string" && key.includes(issuerB)) return true;
+              if (key === issuerBCacheKey) return true;
               return TestReflectApply(TestMapPrototypeHas, this, [key]) as boolean;
             },
           ),
@@ -932,7 +942,7 @@ describe("security/application-auth OIDC metadata", () => {
         ];
         try {
           await assertRejects(
-            () => cache.get({ issuer: issuerB }),
+            () => cache.get({ issuer: issuerB, timeoutMs: requestTimeoutMs }),
             TypeError,
             "capacity",
           );
