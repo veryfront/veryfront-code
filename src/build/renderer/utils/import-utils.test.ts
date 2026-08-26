@@ -461,6 +461,13 @@ describe("build/renderer/utils/import-utils", () => {
         ),
         ["./child.mdx"],
       );
+      assertEquals(
+        extractImports(
+          '{(() => { const ratio = (() =>\n{}) / value; return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
     });
 
     it("ignores trailing comments when carrying regex context", () => {
