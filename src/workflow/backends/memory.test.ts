@@ -1661,7 +1661,7 @@ describe("MemoryBackend", () => {
       );
     });
 
-    it("restores a claimed event at the head so mailbox order survives a rollback", async () => {
+    it("restores a claimed event to its publication position", async () => {
       await backend.appendRunEvent("run-events", {
         id: "evt-old",
         eventName: "payment.confirmed",
@@ -1684,6 +1684,56 @@ describe("MemoryBackend", () => {
         "evt-old",
         "a restored event must be consumed before events published after it, or a " +
           "transient delivery failure reorders the run's mail",
+      );
+    });
+
+    it("preserves publication order when concurrent claims roll back", async () => {
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-first", { nodeId: "first-wait" }),
+      );
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-second", { nodeId: "second-wait" }),
+      );
+      await backend.appendRunEvent("run-events", {
+        id: "evt-first",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(1),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-second",
+        eventName: "payment.confirmed",
+        payload: { seq: 2 },
+        publishedAt: new Date(2),
+      });
+
+      const first = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-first",
+        "payment.confirmed",
+      );
+      const second = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-second",
+        "payment.confirmed",
+      );
+      assertExists(first);
+      assertExists(second);
+
+      // This completion order used to prepend second after first and reverse
+      // the mailbox to evt-second,evt-first.
+      await backend.restoreRunEventDelivery("run-events", "evw-first", first);
+      await backend.restoreRunEventDelivery("run-events", "evw-second", second);
+
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-first",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-second",
       );
     });
 

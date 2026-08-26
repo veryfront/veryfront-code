@@ -104,6 +104,11 @@ interface DrainSession {
   resolveIdle: () => void;
 }
 
+interface ClaimRecoverySelection {
+  deliveryEventIds: ReadonlySet<string>;
+  timedWaitIds: ReadonlySet<string>;
+}
+
 /** Strip backend-only fields so callers never see worker ownership. */
 function projectEventWait(wait: PersistedPendingEventWait): PendingEventWait {
   const {
@@ -135,6 +140,8 @@ function timedWaitClaimKey(runId: string, waitId: string): string {
 export class EventWaitManager {
   private config: EventWaitManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
+  /** One restart-recovery pass when periodic expiration sweeping is disabled. */
+  private startupClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Shared accumulator and completion barrier for same-backend, same-run drain passes. */
@@ -166,6 +173,7 @@ export class EventWaitManager {
     }
     this.drainSessions = drainSessions;
     this.ensureExpirationChecker();
+    this.ensureStartupClaimRecovery();
   }
 
   /**
@@ -189,6 +197,59 @@ export class EventWaitManager {
       });
     }, interval);
     unrefTimer(this.expirationTimer);
+  }
+
+  /**
+   * Recover claims left by a previous process even when expiry sweeping is
+   * intentionally disabled. Waiting until the claim-recovery age makes this
+   * safe for a replacement created immediately after its predecessor exits.
+   */
+  private ensureStartupClaimRecovery(): void {
+    if (
+      this.startupClaimRecoveryTimer !== undefined || this.destroyed ||
+      (this.config.expirationCheckInterval ?? 0) > 0
+    ) return;
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+
+    // Snapshot immediately. The delayed recovery must never sweep claims this
+    // manager creates later; those have their own in-flight reconciliation and
+    // retry timers, and treating them as abandoned would race their owner.
+    const snapshot = Promise.all([
+      backend.listRunEventDeliveryClaims(),
+      backend.listTimedEventWaitClaims(),
+    ]);
+    void snapshot.then(([deliveryClaims, timedClaims]) => {
+      if (this.destroyed || deliveryClaims.length + timedClaims.length === 0) return;
+      const recoveryDelay = Math.max(
+        0,
+        this.config.deliveryClaimRecoveryDelay ?? DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
+      );
+      const now = Date.now();
+      const remainingDelays = [
+        ...deliveryClaims.map((claim) =>
+          Math.max(0, recoveryDelay - (now - claim.claimedAt.getTime()))
+        ),
+        ...timedClaims.map((wait) =>
+          Math.max(0, recoveryDelay - (now - (wait.claimedAt?.getTime() ?? now)))
+        ),
+      ];
+      const delay = Math.max(...remainingDelays);
+      const selection: ClaimRecoverySelection = {
+        deliveryEventIds: new Set(deliveryClaims.map((claim) => claim.event.id)),
+        timedWaitIds: new Set(timedClaims.map((wait) => wait.id)),
+      };
+      this.startupClaimRecoveryTimer = setTimeout(() => {
+        this.startupClaimRecoveryTimer = undefined;
+        if (this.destroyed) return;
+        void this.recoverAndDrainAbandonedDeliveries(selection).catch((error) => {
+          logger.error("Startup event-wait claim recovery failed", error);
+        });
+      }, delay);
+      unrefTimer(this.startupClaimRecoveryTimer);
+    }).catch((error) => {
+      logger.error("Could not inspect event-wait claims during startup recovery", error);
+    });
   }
 
   /**
@@ -904,7 +965,10 @@ export class EventWaitManager {
   }
 
   /** Recover durable claims left behind before delivery or finalization committed. */
-  private async recoverAbandonedDeliveries(runId?: string): Promise<Set<string>> {
+  private async recoverAbandonedDeliveries(
+    runId?: string,
+    selection?: ClaimRecoverySelection,
+  ): Promise<Set<string>> {
     const backend = this.config.backend;
     const restoredRunIds = new Set<string>();
     if (this.destroyed || !hasEventWaitSupport(backend)) return restoredRunIds;
@@ -912,6 +976,7 @@ export class EventWaitManager {
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS;
 
     for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
+      if (selection && !selection.deliveryEventIds.has(claim.event.id)) continue;
       if (Date.now() - claim.claimedAt.getTime() < recoveryDelay) continue;
       let run: WorkflowRun | null;
       try {
@@ -966,6 +1031,7 @@ export class EventWaitManager {
       }
     }
     for (const wait of await backend.listTimedEventWaitClaims(runId)) {
+      if (selection && !selection.timedWaitIds.has(wait.id)) continue;
       if (this.activeTimedWaitClaims.has(timedWaitClaimKey(wait.runId, wait.id))) continue;
       if (
         wait.claimedAt !== undefined &&
@@ -1020,6 +1086,24 @@ export class EventWaitManager {
     return restoredRunIds;
   }
 
+  /** Recover abandoned claims and promptly retry any restored mailbox state. */
+  private async recoverAndDrainAbandonedDeliveries(
+    selection?: ClaimRecoverySelection,
+  ): Promise<void> {
+    for (const runId of await this.recoverAbandonedDeliveries(undefined, selection)) {
+      if (this.destroyed) return;
+      try {
+        await this.drain(runId, false);
+      } catch (error) {
+        logger.error(
+          "Failed to drain a recovered run during event-wait claim recovery",
+          { runId },
+          error,
+        );
+      }
+    }
+  }
+
   /**
    * Undo a claimed-but-undelivered event so the run stays wakeable.
    *
@@ -1030,10 +1114,9 @@ export class EventWaitManager {
    * an event the publisher was told was accepted would be lost unless it
    * happened to retry. `restoreRunEventDelivery` closes that window.
    *
-   * The event goes back to the head of the mailbox: it was the oldest with
-   * its name when it was claimed, and re-appending it at the tail would
-   * deliver a later same-name event before it on the next drain, reordering
-   * the run's mail after a transient failure.
+   * The backend restores the event to its publication-order position. Two
+   * concurrent claims can roll back in either order, so blindly prepending
+   * each one would reverse otherwise FIFO delivery.
    */
   private async rollBackDelivery(
     wait: PersistedPendingEventWait,
@@ -1334,17 +1417,7 @@ export class EventWaitManager {
     const backend = this.config.backend;
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
 
-    for (const runId of await this.recoverAbandonedDeliveries()) {
-      try {
-        await this.drain(runId, false);
-      } catch (error) {
-        logger.error(
-          "Failed to drain a recovered run during the event-wait sweep",
-          { runId },
-          error,
-        );
-      }
-    }
+    await this.recoverAndDrainAbandonedDeliveries();
 
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
     const activeRunIds = new Set<string>();
@@ -1438,6 +1511,10 @@ export class EventWaitManager {
     this.committedResumeRetryTimers.clear();
     this.committedResumeRetryAttempts.clear();
     this.activeTimedWaitClaims.clear();
+    if (this.startupClaimRecoveryTimer !== undefined) {
+      clearTimeout(this.startupClaimRecoveryTimer);
+      this.startupClaimRecoveryTimer = undefined;
+    }
     if (this.expirationTimer === undefined) return;
     clearInterval(this.expirationTimer);
     this.expirationTimer = undefined;

@@ -84,6 +84,30 @@ describe("hasEventWaitSupport", () => {
         "runs whose waits can never be persisted",
     );
 
+    // The executor ownership gate intentionally needs fewer methods than a
+    // full queue worker. Event support must use that exact gate or a custom
+    // direct executor can assign workerId without requiring the fenced append.
+    const directExecutor = new MemoryBackend() as unknown as Record<string, unknown>;
+    directExecutor["savePendingEventWaitIfStatusAndWorker"] = undefined;
+    for (
+      const workerOnlyMethod of [
+        "enqueue",
+        "dequeue",
+        "acknowledge",
+        "acquireLock",
+        "releaseLock",
+        "findStalledRuns",
+        "claimStalledRun",
+      ]
+    ) {
+      directExecutor[workerOnlyMethod] = undefined;
+    }
+    assertEquals(
+      hasEventWaitSupport(directExecutor as unknown as WorkflowBackend),
+      false,
+      "execution ownership without the fenced wait append is unsupported even without a queue",
+    );
+
     // A backend with no execution ownership at all never assigns a workerId,
     // so the plain append suffices and the owned variant stays optional.
     const ownerless = new MemoryBackend() as unknown as Record<string, unknown>;

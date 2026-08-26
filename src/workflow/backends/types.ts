@@ -664,6 +664,26 @@ type WithEventWaitSupport =
     >
   >;
 
+type WithExecutionOwnershipSupport =
+  & WorkflowBackend
+  & Required<
+    Pick<
+      WorkflowBackend,
+      | "updateRunIfStatusAndWorker"
+      | "saveCheckpointIfStatusAndWorker"
+      | "savePendingApprovalIfStatusAndWorker"
+    >
+  >;
+
+/** Check whether the executor assigns durable runs a worker owner. */
+export function hasExecutionOwnershipSupport(
+  backend: WorkflowBackend,
+): backend is WithExecutionOwnershipSupport {
+  return typeof backend.updateRunIfStatusAndWorker === "function" &&
+    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
+    typeof backend.savePendingApprovalIfStatusAndWorker === "function";
+}
+
 /**
  * Check whether durable event waits are available.
  *
@@ -705,7 +725,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.finalizeRunEventDelivery === "function" &&
     typeof backend.hasRunEventDeliveryReceipt === "function" &&
     hasRunPatchKeyMergeSupport(backend) &&
-    (!hasWorkerSupport(backend) ||
+    (!hasExecutionOwnershipSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")
   );
 }

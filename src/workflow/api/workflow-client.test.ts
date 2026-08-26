@@ -3492,6 +3492,61 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("recovers a committed claim at startup when periodic sweeping is disabled", async () => {
+    const sharedBackend = new MemoryBackend();
+    const parked = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const definition = workflow({
+      id: "startup-abandoned-delay-claim",
+      steps: [delayNode("pause", "1h")],
+    });
+    parked.register(definition);
+    let recovering: WorkflowClient | undefined;
+    try {
+      const handle = await parked.start(definition.id, {});
+      await handle.settled();
+      const [wait] = await parked.getPendingEventWaits(handle.runId);
+      assertExists(wait);
+      const pausedRun = await sharedBackend.getRun(handle.runId);
+      assertExists(pausedRun);
+      const pausedState = pausedRun.nodeStates.pause;
+      assertExists(pausedState);
+
+      parked.getEventWaitManager().stop();
+      assertEquals(
+        await sharedBackend.resolvePendingEventWait(handle.runId, wait.id, "delivered"),
+        true,
+      );
+      await sharedBackend.updateRun(handle.runId, {
+        nodeStates: {
+          pause: {
+            ...pausedState,
+            status: "completed",
+            output: { delayed: true },
+            completedAt: new Date(),
+          },
+        },
+      });
+
+      recovering = createWorkflowClient({
+        backend: sharedBackend,
+        eventWait: { expirationCheckInterval: 0, deliveryClaimRecoveryDelay: 0 },
+      });
+      recovering.register(definition);
+
+      await waitFor(
+        async () => (await recovering!.getRun(handle.runId))?.status === "completed",
+        { message: "startup claim recovery did not resume the committed delay" },
+      );
+      assertEquals(await sharedBackend.listTimedEventWaitClaims(handle.runId), []);
+    } finally {
+      await parked.destroy();
+      await recovering?.destroy();
+    }
+  });
+
   it("recovers an event timeout claimed before the run failure committed", async () => {
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({

@@ -25,6 +25,7 @@ import type {
 import { generateId, parseDuration } from "../types.ts";
 import {
   hasEventWaitSupport,
+  hasExecutionOwnershipSupport,
   hasRunPatchKeyMergeSupport,
   restoreRunStateIfStatus,
   updateRunIfStatus,
@@ -71,12 +72,6 @@ const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 const CANCELLED_WAIT_CLEANUP_RETRY_BASE_MS = 1_000;
 const CANCELLED_WAIT_CLEANUP_RETRY_MAX_MS = 60_000;
 const MAX_CANCELLED_WAIT_CLEANUP_ATTEMPTS = 8;
-
-function supportsExecutionOwnership(backend: WorkflowBackend): boolean {
-  return typeof backend.updateRunIfStatusAndWorker === "function" &&
-    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
-    typeof backend.savePendingApprovalIfStatusAndWorker === "function";
-}
 
 /**
  * Workflow executor configuration
@@ -295,7 +290,7 @@ export class WorkflowExecutor {
       }
       : undefined;
     const injectedProjectEnv = mergeInjectedWorkflowEnv(undefined, getProcessEnv());
-    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+    const executionWorkerId = hasExecutionOwnershipSupport(this.config.backend)
       ? `run-execution:${generateId("exec")}`
       : undefined;
 
@@ -384,7 +379,7 @@ export class WorkflowExecutor {
       }
     }
 
-    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+    const executionWorkerId = hasExecutionOwnershipSupport(this.config.backend)
       ? `run-execution:${generateId("exec")}`
       : undefined;
     const reactivated = await updateRunIfStatus(

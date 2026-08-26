@@ -129,6 +129,7 @@ export class MemoryBackend implements WorkflowBackend {
   private approvals = new Map<string, PersistedPendingApproval[]>();
   private eventWaits = new Map<string, PersistedPendingEventWait[]>();
   private runEvents = new Map<string, RunEventEnvelope[]>();
+  private nextRunEventPublicationOrder = 0;
   private runEventClaims = new Map<string, Map<string, RunEventDeliveryClaim>>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
@@ -865,7 +866,10 @@ export class MemoryBackend implements WorkflowBackend {
     }
     const mailbox = existingMailbox ?? [];
     try {
-      appendRetainedRunEvent(mailbox, event);
+      appendRetainedRunEvent(mailbox, {
+        ...event,
+        _publicationOrder: this.nextRunEventPublicationOrder++,
+      } as RunEventEnvelope);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -974,7 +978,7 @@ export class MemoryBackend implements WorkflowBackend {
 
   /**
    * Undo a claimed-but-undelivered delivery: the wait returns to pending and
-   * the event to the head of its mailbox as one step.
+   * the event to its publication-order mailbox position as one step.
    *
    * Composed from this backend's own restore primitives so that subclassed
    * fakes keep observing them; every mutation is synchronous in-memory state,

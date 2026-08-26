@@ -5,6 +5,11 @@ import {
 } from "../limits.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
+interface RetainedRunEventEnvelope extends RunEventEnvelope {
+  /** In-memory backend sequence used when multiple publishes share one millisecond. */
+  _publicationOrder?: number;
+}
+
 function isResolved(wait: PersistedPendingEventWait): boolean {
   return wait.status !== "pending" && wait.claimedAt === undefined;
 }
@@ -93,12 +98,12 @@ export function takeRetainedRunEvent(
 }
 
 /**
- * Return a claimed event to the head of the mailbox after delivery failed.
+ * Return a claimed event to its publication-order position after delivery failed.
  *
- * The claimed event was the oldest with its name, and waits consume matching
- * events oldest-first, so it goes back at the front: re-appending it at the
- * tail would deliver an event published later ahead of it after a transient
- * failure. No bound is enforced here on purpose: the event already held a
+ * Concurrent claims can roll back in either order. Unconditionally prepending
+ * each event would reverse two claims restored A-then-B into B,A, so insert by
+ * the backend publication sequence (falling back to the durable timestamp)
+ * instead. No bound is enforced here on purpose: the event already held a
  * place in this mailbox when it was claimed, and refusing the restore would
  * lose an event that was durably accepted.
  */
@@ -106,5 +111,15 @@ export function restoreRetainedRunEvent(
   mailbox: RunEventEnvelope[],
   event: RunEventEnvelope,
 ): void {
-  mailbox.unshift(structuredClone(event));
+  const snapshot = structuredClone(event);
+  const snapshotOrder = (snapshot as RetainedRunEventEnvelope)._publicationOrder;
+  const insertionIndex = mailbox.findIndex((candidate) => {
+    const candidateOrder = (candidate as RetainedRunEventEnvelope)._publicationOrder;
+    if (snapshotOrder !== undefined && candidateOrder !== undefined) {
+      return candidateOrder > snapshotOrder;
+    }
+    return candidate.publishedAt.getTime() > snapshot.publishedAt.getTime();
+  });
+  if (insertionIndex === -1) mailbox.push(snapshot);
+  else mailbox.splice(insertionIndex, 0, snapshot);
 }
