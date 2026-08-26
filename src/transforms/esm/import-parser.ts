@@ -57,6 +57,7 @@ const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
 // inherited adapter properties. Capture the intrinsics it depends on at module
 // initialization, as the path compatibility layer does for its own operations.
 const ReflectApply = Reflect.apply;
+const ArrayPush = Array.prototype.push;
 const PromiseConstructor = Promise;
 const PromiseAll = Promise.all;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -68,6 +69,16 @@ const StringReplaceAll = String.prototype.replaceAll;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 const windowsHost = isWindowsPlatform();
+
+/**
+ * Records a parse result through the captured push intrinsic. Which imports a
+ * parse reports is a security decision: a replaced Array.prototype.push that
+ * selectively drops an approved dependency would leave the compiled parent's
+ * original `file://` import without a bound read or rewrite entry.
+ */
+function arrayPush<T>(target: T[], value: T): void {
+  ReflectApply(ArrayPush, target, [value]);
+}
 
 function stringEndsWith(value: string, search: string): boolean {
   return ReflectApply(StringEndsWith, value, [search]) as boolean;
@@ -207,12 +218,12 @@ export async function parseLocalImports(
         // An in-project symlink may canonicalize to a target whose suffix
         // differs from the link's. The import keeps the type the author
         // addressed; the canonical path is only what gets read.
-        if (stringEndsWith(resolved.requestedPath, ".css")) cssImports.push(entry);
-        else localImports.push(entry);
+        if (stringEndsWith(resolved.requestedPath, ".css")) arrayPush(cssImports, entry);
+        else arrayPush(localImports, entry);
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier: authoredSpecifier,
         fromFile: filePath,
         reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
@@ -224,14 +235,14 @@ export async function parseLocalImports(
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
       if (resolved) {
         if (resolved.endsWith(".css")) {
-          cssImports.push({ specifier, absolutePath: resolved });
+          arrayPush(cssImports, { specifier, absolutePath: resolved });
         } else {
-          localImports.push({ specifier, absolutePath: resolved });
+          arrayPush(localImports, { specifier, absolutePath: resolved });
         }
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
         reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
@@ -250,12 +261,12 @@ export async function parseLocalImports(
           resolvedPath: resolved.resolvedPath,
           projectContained: true as const,
         };
-        if (stringEndsWith(resolved.requestedPath, ".css")) cssImports.push(entry);
-        else localImports.push(entry);
+        if (stringEndsWith(resolved.requestedPath, ".css")) arrayPush(cssImports, entry);
+        else arrayPush(localImports, entry);
         continue;
       }
 
-      missingImports.push({
+      arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
         reason: `Alias path not found: @/${aliasPath}`,
@@ -268,7 +279,7 @@ export async function parseLocalImports(
     const parsed = parseCrossProjectImport(specifier);
     if (!parsed) continue;
 
-    crossProjectImports.push({
+    arrayPush(crossProjectImports, {
       specifier,
       projectSlug: parsed.projectSlug,
       version: parsed.version,
