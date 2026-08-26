@@ -324,7 +324,7 @@ Deno.test("resolveHostedRuntimeRequestConfig only lets request tool overrides na
 });
 
 Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested legacy delegation", () => {
-  const resolve = (skills: true | string[] | undefined) =>
+  const resolve = (skills: boolean | string[] | undefined) =>
     resolveHostedRuntimeRequestConfig({
       request: {
         runtimeOverrides: { allowedTools: ["get_file", "invoke_agent"] },
@@ -338,7 +338,9 @@ Deno.test("resolveHostedRuntimeRequestConfig preserves explicitly requested lega
 
   assertEquals(resolve(["plan"]), ["get_file", "invoke_agent"]);
   assertEquals(resolve(true), ["get_file", "invoke_agent"]);
-  assertEquals(resolve(undefined), ["get_file"]);
+  assertEquals(resolve(undefined), ["get_file", "invoke_agent"]);
+  assertEquals(resolve(false), ["get_file"]);
+  assertEquals(resolve([]), ["get_file"]);
 });
 
 Deno.test("resolveHostedRuntimeRequestConfig distinguishes unrestricted and omitted agent tools", () => {

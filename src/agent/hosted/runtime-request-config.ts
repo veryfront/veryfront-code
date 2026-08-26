@@ -159,7 +159,8 @@ export function resolveHostedRuntimeAllowedTools(input: {
     return [...configuredToolNames];
   }
 
-  const hasImplicitLegacyDelegation = input.configuredSkills === true ||
+  const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
+    input.configuredSkills === true ||
     (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
   return [...new Set(input.requestedTools)].filter((toolName) =>
     configuredToolNames.has(toolName) ||
