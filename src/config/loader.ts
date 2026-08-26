@@ -1644,14 +1644,14 @@ const ANSI_SGR_SEQUENCE = /\u001B\[[0-9;]*[A-Za-z]/g;
 //
 // Deliberately unanchored on the left, so a scheme glued to preceding text
 // (`3https://host/x`) is still recognised as a URL rather than falling through
-// to the Windows pattern. Requiring both slashes is what keeps a genuine
-// `C:/Users/...` out: with one slash allowed, that path would match here and be
-// reported as `[url]` instead of `[path]`.
-const REMOTE_URL = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'()]+/g;
+// to the Windows pattern. A single-slash form requires a scheme of at least two
+// characters, which catches malformed `https:/host/x` without misclassifying
+// the genuine Windows path `C:/Users/...` as a URL.
+const REMOTE_URL = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|[A-Za-z][A-Za-z0-9+.-]+:\/(?!\/))[^\s"'()]+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
-const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+const WINDOWS_ABSOLUTE_PATH = /(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function replaceMatchesWithCapturedExec(

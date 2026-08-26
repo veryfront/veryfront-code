@@ -1003,6 +1003,18 @@ export default config as const;
         assertEquals(error.message.includes("registry.internal"), false);
       });
 
+      it("redacts a single-slash URL-like token without misclassifying Windows paths", async () => {
+        const error = await loadFailure(
+          "vf-config-single-slash-url-",
+          `throw new Error("Fetch https:/registry.internal/config.ts beside C:/Users/alice/config.ts");\n`,
+        );
+
+        assertStringIncludes(error.message, "Fetch [url] beside [path]");
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("C:/Users"), false);
+        assertEquals(error.message.includes("http[path]"), false);
+      });
+
       it("redacts a colorized machine path instead of leaving SGR residue in front of it", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
