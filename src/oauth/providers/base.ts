@@ -1131,15 +1131,7 @@ export class OAuthService extends OAuthProvider {
     if (!stored) return null;
     const { tokens } = stored;
 
-    if (this.isSupersededGrant(tokens)) {
-      // Invalidate only the exact row that was classified. An unconditional
-      // clear could race a concurrent reauthorization and delete the freshly
-      // written least-privilege grant (the ABA problem the snapshot revision
-      // exists to prevent). When the store cannot express a revision-guarded
-      // delete, fail safe by leaving the row in place: it is never served.
-      if (stored.revision && typeof this.tokenStore?.compareAndClearTokens === "function") {
-        await this.tokenStore.compareAndClearTokens(this.serviceId, userId, stored.revision);
-      }
+    if (await this.isRejectedSupersededSnapshot(userId, stored)) {
       return null;
     }
 
@@ -1206,6 +1198,7 @@ export class OAuthService extends OAuthProvider {
         const current = await this.readTokenSnapshot(userId);
         if (!current) return null;
         const { tokens, revision } = current;
+        if (await this.isRejectedSupersededSnapshot(userId, current)) return null;
         const now = Date.now();
         if (tokens.expiresAt === undefined) return tokens.accessToken;
         if (!tokens.refreshToken) return now < tokens.expiresAt ? tokens.accessToken : null;
@@ -1285,8 +1278,25 @@ export class OAuthService extends OAuthProvider {
   private async readCurrentUnexpiredAccessToken(userId: string): Promise<string | null> {
     const current = await this.readTokenSnapshot(userId);
     if (!current) return null;
+    if (await this.isRejectedSupersededSnapshot(userId, current)) return null;
     const expiresAt = current.tokens.expiresAt;
     return expiresAt === undefined || Date.now() < expiresAt ? current.tokens.accessToken : null;
+  }
+
+  private async isRejectedSupersededSnapshot(
+    userId: string,
+    snapshot: { tokens: OAuthTokens; revision?: string },
+  ): Promise<boolean> {
+    if (!this.isSupersededGrant(snapshot.tokens)) return false;
+    // Invalidate only the exact row that was classified. An unconditional
+    // clear could race a concurrent reauthorization and delete the freshly
+    // written least-privilege grant (the ABA problem the snapshot revision
+    // exists to prevent). When the store cannot express a revision-guarded
+    // delete, fail safe by leaving the row in place: it is never served.
+    if (snapshot.revision && typeof this.tokenStore?.compareAndClearTokens === "function") {
+      await this.tokenStore.compareAndClearTokens(this.serviceId, userId, snapshot.revision);
+    }
+    return true;
   }
 
   /**

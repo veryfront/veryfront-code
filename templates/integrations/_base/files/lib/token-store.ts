@@ -22,24 +22,11 @@ import {
 
 export type OAuthToken = OAuthTokens;
 
-interface RevisionClearCapableTokenStore extends RefreshCapableTokenStore {
-  compareAndClearTokens(
-    serviceId: string,
-    userId: string,
-    expectedRevision: string,
-  ): Promise<boolean>;
-}
-
 /**
  * Application-facing store used by both Veryfront OAuth handlers and the
  * generated integration clients.
  */
-export interface TokenStore extends RevisionClearCapableTokenStore {
-  compareAndClearTokens(
-    serviceId: string,
-    userId: string,
-    expectedRevision: string,
-  ): Promise<boolean>;
+export interface TokenStore extends RefreshCapableTokenStore {
   getToken(userId: string, serviceId: string): Promise<OAuthToken | null>;
   setToken(userId: string, serviceId: string, token: OAuthToken): Promise<void>;
   revokeToken(userId: string, serviceId: string): Promise<void>;
@@ -51,7 +38,6 @@ const REQUIRED_STORE_METHODS = [
   "getTokenSnapshot",
   "setTokens",
   "compareAndSetTokens",
-  "compareAndClearTokens",
   "withTokenRefreshLock",
   "clearTokens",
   "setState",
@@ -82,7 +68,7 @@ function allowsProcessLocalStorage(): boolean {
 
 function assertRefreshCapableStore(
   store: RefreshCapableTokenStore,
-): asserts store is RevisionClearCapableTokenStore {
+): asserts store is RefreshCapableTokenStore {
   if (!store || typeof store !== "object") {
     throw new TypeError("OAuth token store must be an object");
   }
@@ -101,6 +87,7 @@ function assertRefreshCapableStore(
  */
 export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
   assertRefreshCapableStore(store);
+  const compareAndClearTokens = store.compareAndClearTokens?.bind(store);
 
   return {
     getTokens(serviceId: string, userId: string): Promise<OAuthTokens | null> {
@@ -127,13 +114,17 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
       return store.compareAndSetTokens(serviceId, userId, expectedRevision, tokens);
     },
 
-    compareAndClearTokens(
-      serviceId: string,
-      userId: string,
-      expectedRevision: string,
-    ): Promise<boolean> {
-      return store.compareAndClearTokens(serviceId, userId, expectedRevision);
-    },
+    ...(compareAndClearTokens
+      ? {
+        compareAndClearTokens(
+          serviceId: string,
+          userId: string,
+          expectedRevision: string,
+        ): Promise<boolean> {
+          return compareAndClearTokens(serviceId, userId, expectedRevision);
+        },
+      }
+      : {}),
 
     withTokenRefreshLock<T>(
       serviceId: string,
@@ -171,7 +162,7 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
       const snapshot = await store.getTokenSnapshot(serviceId, userId);
       if (!snapshot) return false;
       if (isSupersededOAuthGrant(serviceId, snapshot.tokens)) {
-        await store.compareAndClearTokens(serviceId, userId, snapshot.revision);
+        await clearSupersededToken(store, serviceId, userId, snapshot.revision);
         return false;
       }
       return snapshot.tokens.expiresAt === undefined || snapshot.tokens.expiresAt > Date.now();
@@ -181,6 +172,31 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
 
 function unexpiredAccessToken(token: OAuthToken, now = Date.now()): string | null {
   return token.expiresAt === undefined || now < token.expiresAt ? token.accessToken : null;
+}
+
+async function clearSupersededToken(
+  store: RefreshCapableTokenStore,
+  serviceId: string,
+  userId: string,
+  revision: string,
+): Promise<void> {
+  if (typeof store.compareAndClearTokens === "function") {
+    await store.compareAndClearTokens(serviceId, userId, revision);
+  }
+}
+
+async function currentAllowedAccessToken(
+  store: RefreshCapableTokenStore,
+  serviceId: string,
+  userId: string,
+): Promise<string | null> {
+  const snapshot = await store.getTokenSnapshot(serviceId, userId);
+  if (!snapshot) return null;
+  if (isSupersededOAuthGrant(serviceId, snapshot.tokens)) {
+    await clearSupersededToken(store, serviceId, userId, snapshot.revision);
+    return null;
+  }
+  return unexpiredAccessToken(snapshot.tokens);
 }
 
 /**
@@ -199,7 +215,7 @@ export async function getRefreshableAccessToken(
 
   const initialToken = initial.tokens;
   if (isSupersededOAuthGrant(serviceId, initialToken)) {
-    await store.compareAndClearTokens(serviceId, userId, initial.revision);
+    await clearSupersededToken(store, serviceId, userId, initial.revision);
     return null;
   }
   const now = Date.now();
@@ -218,7 +234,7 @@ export async function getRefreshableAccessToken(
 
     const token = current.tokens;
     if (isSupersededOAuthGrant(serviceId, token)) {
-      await store.compareAndClearTokens(serviceId, userId, current.revision);
+      await clearSupersededToken(store, serviceId, userId, current.revision);
       return null;
     }
     const lockedNow = Date.now();
@@ -236,8 +252,7 @@ export async function getRefreshableAccessToken(
     } catch {
       // A provider failure must not unconditionally delete a row that may
       // have been replaced by a concurrent reconnect outside the lock.
-      const latest = await store.getTokens(serviceId, userId);
-      return latest ? unexpiredAccessToken(latest) : null;
+      return await currentAllowedAccessToken(store, serviceId, userId);
     }
 
     refreshed = {
@@ -255,8 +270,7 @@ export async function getRefreshableAccessToken(
     );
     if (replaced) return refreshed.accessToken;
 
-    const latest = await store.getTokens(serviceId, userId);
-    return latest ? unexpiredAccessToken(latest) : null;
+    return await currentAllowedAccessToken(store, serviceId, userId);
   });
 }
 
@@ -329,7 +343,10 @@ export const tokenStore: TokenStore = {
     );
   },
   compareAndClearTokens(serviceId, userId, expectedRevision) {
-    return getDefaultTokenStore().compareAndClearTokens(serviceId, userId, expectedRevision);
+    const compareAndClearTokens = getDefaultTokenStore().compareAndClearTokens;
+    return compareAndClearTokens
+      ? compareAndClearTokens(serviceId, userId, expectedRevision)
+      : Promise.resolve(false);
   },
   withTokenRefreshLock(serviceId, userId, operation) {
     return getDefaultTokenStore().withTokenRefreshLock(serviceId, userId, operation);

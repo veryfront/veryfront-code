@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { MemoryTokenStore } from "veryfront/oauth";
+import { MemoryTokenStore, type RefreshCapableTokenStore } from "veryfront/oauth";
 import {
   configureTokenStore,
   createDefaultTokenStore,
@@ -74,6 +74,42 @@ describe("generated OAuth token store", () => {
       TypeError,
       "withTokenRefreshLock",
     );
+  });
+
+  it("fails closed on superseded grants when revision-guarded delete is unavailable", async () => {
+    const memory = new MemoryTokenStore("legacy-clearless");
+    const clearlessStore = {
+      getTokens: (serviceId, userId) => memory.getTokens(serviceId, userId),
+      getTokenSnapshot: (serviceId, userId) => memory.getTokenSnapshot(serviceId, userId),
+      setTokens: (serviceId, userId, tokens) => memory.setTokens(serviceId, userId, tokens),
+      compareAndSetTokens: (serviceId, userId, expectedRevision, tokens) =>
+        memory.compareAndSetTokens(serviceId, userId, expectedRevision, tokens),
+      withTokenRefreshLock: (serviceId, userId, operation) =>
+        memory.withTokenRefreshLock(serviceId, userId, operation),
+      clearTokens: (serviceId, userId) => memory.clearTokens(serviceId, userId),
+      setState: (state, metadata) => memory.setState(state, metadata),
+      consumeState: (state) => memory.consumeState(state),
+    } satisfies RefreshCapableTokenStore;
+    const store = createTokenStore(clearlessStore);
+    await store.setTokens("drive", "alice", {
+      accessToken: "legacy-drive-token",
+      refreshToken: "legacy-refresh",
+      scope: "https://www.googleapis.com/auth/drive",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const token = await getRefreshableAccessToken(
+      store,
+      "drive",
+      "alice",
+      async () => {
+        throw new Error("refresh must not be reached");
+      },
+    );
+
+    assertEquals(await store.isConnected("alice", "drive"), false);
+    assertEquals(token, null);
+    assertEquals((await memory.getTokens("drive", "alice"))?.accessToken, "legacy-drive-token");
   });
 
   it("fails closed unless memory storage is explicitly allowed", () => {
@@ -299,6 +335,35 @@ describe("generated OAuth token store", () => {
 
     assertEquals(accessToken, "reauthorized");
     assertEquals((await store.getTokens("github", "alice"))?.accessToken, "reauthorized");
+  });
+
+  it("does not return a superseded latest token after refresh loses CAS", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-cas-superseded"));
+    await store.setTokens("drive", "alice", {
+      accessToken: "expired-readonly",
+      refreshToken: "refresh-1",
+      scope:
+        "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+      expiresAt: Date.now() - 1,
+    });
+
+    const accessToken = await getRefreshableAccessToken(
+      store,
+      "drive",
+      "alice",
+      async () => {
+        await store.setTokens("drive", "alice", {
+          accessToken: "legacy-drive-token",
+          refreshToken: "legacy-refresh",
+          scope: "https://www.googleapis.com/auth/drive",
+          expiresAt: Date.now() + 60_000,
+        });
+        return { accessToken: "stale-refresh", expiresAt: Date.now() + 60_000 };
+      },
+    );
+
+    assertEquals(accessToken, null);
+    assertEquals(await store.getTokens("drive", "alice"), null);
   });
 
   it("retains the token row when the provider refresh fails", async () => {
