@@ -719,8 +719,7 @@ async function refreshAgentSourceSnapshot(
       await IntrinsicReflectApply(refreshSourceSnapshot, fs, [reason]);
       return true;
     }
-    await IntrinsicReflectApply(ensureSourceSnapshotFresh, fs, [reason]);
-    return true;
+    return false;
   }
   const refreshSourceSnapshot = fs.refreshSourceSnapshot;
   if (typeof refreshSourceSnapshot !== "function") return false;

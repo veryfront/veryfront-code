@@ -3344,6 +3344,48 @@ describe("server/handlers/request/agent-stream.handler", () => {
     ]);
   });
 
+  it("rejects ensure-only adapters without strict freshness options", async () => {
+    const ensureReasons: Array<string | undefined> = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter([]);
+    Reflect.deleteProperty(fs, "sourceSnapshotFreshnessOptionsVersion");
+    Reflect.deleteProperty(fs, "refreshSourceSnapshot");
+    fs.ensureSourceSnapshotFresh = (reason) => {
+      ensureReasons.push(reason);
+      return Promise.resolve();
+    };
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      ctx,
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(ensureReasons, []);
+  });
+
   it("enters wrapped custom multi-project source contexts through captured dispatch", async () => {
     const contextTokens: string[] = [];
     const customAdapter = {

@@ -84,6 +84,7 @@ export function createNoopEnvAdapter(publicKeyPem: string): EnvironmentAdapter {
 }
 
 export type SourceContextTestFsAdapter = FileSystemAdapter & {
+  sourceSnapshotFreshnessOptionsVersion: 1;
   getUnderlyingAdapter(): FileSystemAdapter;
   isVeryfrontAdapter(): boolean;
   isMultiProjectMode(): boolean;
@@ -137,6 +138,7 @@ export function createNoopFsAdapter(
     getUnderlyingAdapter: () => adapter,
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
+    sourceSnapshotFreshnessOptionsVersion: 1,
     ensureSourceSnapshotFresh: () => Promise.resolve(),
     getSourceSnapshotFingerprint: () => "stable-test-snapshot",
     runWithContext: async (
