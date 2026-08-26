@@ -1028,6 +1028,38 @@ export default config as const;
         assertEquals(error.message.includes("((x))"), false);
       });
 
+      it("redacts a zero-slash special-scheme URL", async () => {
+        const error = await loadFailure(
+          "vf-config-zero-slash-scheme-",
+          `throw new Error("Fetch https:registry.internal/config.ts failed");\n`,
+        );
+
+        // `https:host/x` parses to `https://host/x`, so the hostname is as real
+        // as in the two-slash form. Both URL patterns above require a slash, and
+        // POSIX_ABSOLUTE_PATH refuses `/config.ts` after an alphanumeric.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("does not treat a drive letter or ordinary prose as a zero-slash URL", async () => {
+        const drive = await loadFailure(
+          "vf-config-zero-slash-drive-",
+          `throw new Error("Load " + String.fromCharCode(67) + ":/Users/alice/veryfront.config.ts");\n`,
+        );
+
+        assertStringIncludes(drive.message, "[path]");
+        assertEquals(drive.message.includes("alice"), false);
+
+        // The scheme list is closed for exactly this reason: a generic
+        // `scheme:` shape would claim prose, and at one character, drive letters.
+        const prose = await loadFailure(
+          "vf-config-zero-slash-prose-",
+          `throw new Error("warning:something happened");\n`,
+        );
+
+        assertStringIncludes(prose.message, "warning:something happened");
+      });
+
       it("redacts a URL whose userinfo contains an apostrophe", async () => {
         const error = await loadFailure(
           "vf-config-apostrophe-userinfo-",

@@ -1696,6 +1696,15 @@ const SCHEME_URL =
 // `C:/Users/...` out -- a drive letter is always exactly one.
 const MALFORMED_SCHEME_URL =
   /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+// The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
+// parses to `https://registry.internal/x`, so the hostname is just as real as in
+// the two-slash form, but neither pattern above matches it -- both require at
+// least one slash -- and POSIX_ABSOLUTE_PATH refuses `/x` because it follows an
+// alphanumeric. Restricted to the special schemes rather than the generic
+// `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
+// (`warning:something`) and, at one character, drive letters.
+const ZERO_SLASH_SCHEME_URL =
+  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
@@ -1761,6 +1770,7 @@ function redactMachinePaths(value: string): string {
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]");
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
