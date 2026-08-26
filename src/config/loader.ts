@@ -1,6 +1,13 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
-import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
+import {
+  basename,
+  dirname,
+  extname,
+  join,
+  resolve,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   isExtendedFSAdapter,
@@ -16,7 +23,7 @@ import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/const
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT, DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
-import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError, symlink } from "#veryfront/platform/compat/fs.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
@@ -89,6 +96,7 @@ const ReflectApply = Reflect.apply;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ReflectGet = Reflect.get;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -2506,6 +2514,36 @@ function loadHostedConfigFromSource(
   );
 }
 
+function isBunAsyncModuleRequireError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const message = ObjectGetOwnPropertyDescriptor(error, "message");
+  if (!message || !("value" in message) || typeof message.value !== "string") {
+    return false;
+  }
+  return ReflectApply(
+    StringPrototypeStartsWith,
+    message.value,
+    ['require() async module "'],
+  ) as boolean &&
+    ReflectApply(
+      StringPrototypeEndsWith,
+      message.value,
+      ['" is unsupported. use "await import()" instead.'],
+    ) as boolean;
+}
+
+async function importFreshBunAsyncConfig(absolutePath: string): Promise<object> {
+  const fs = createFileSystem();
+  const aliasRoot = await fs.makeTempDir({ prefix: "vf-bun-config-import-" });
+  const projectAlias = join(aliasRoot, "project");
+  try {
+    await symlink(dirname(absolutePath), projectAlias);
+    return await import(toFileUrl(join(projectAlias, basename(absolutePath))).href);
+  } finally {
+    await fs.remove(aliasRoot, { recursive: true });
+  }
+}
+
 async function loadAndMergeConfig(
   configPath: string,
   cacheKey: string,
@@ -2533,9 +2571,24 @@ async function loadAndMergeConfig(
 
   if (isBun) {
     logger.debug("Using project config import for Bun", { configPath });
-    const configUrl = toFileUrl(resolve(configPath));
-    configUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
-    const configModule = await import(configUrl.href);
+    const absolutePath = resolve(configPath);
+    const { createRequire } = await import("node:module");
+    const projectRequire = createRequire(toFileUrl(absolutePath));
+    // Bun ignores query strings when caching file modules. Its CommonJS bridge
+    // loads TypeScript and ESM config files with project-relative resolution,
+    // and deleting the exact cache entry gives edits and failed imports a real
+    // retry without copying into or writing beside the project.
+    ReflectApply(ReflectDeleteProperty, Reflect, [
+      projectRequire.cache,
+      projectRequire.resolve(absolutePath),
+    ]);
+    let configModule: object;
+    try {
+      configModule = projectRequire(absolutePath) as object;
+    } catch (error) {
+      if (!isBunAsyncModuleRequireError(error)) throw error;
+      configModule = await importFreshBunAsyncConfig(absolutePath);
+    }
     return validateAndMergeConfig(selectConfigModuleValue(configModule));
   }
 
