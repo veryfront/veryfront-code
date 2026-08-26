@@ -249,8 +249,8 @@ export function startProductionServer(
         enableSSRClientOnlyFetching();
 
         // A dedicated single-project runtime carries the capability implicitly.
-        // Shared runtimes always route executable project code to an isolated
-        // project runtime. The former operator override is diagnostic only.
+        // A shared runtime carries it only where the operator grants it here; without
+        // a grant it routes executable project code to an isolated project runtime.
         //
         // Computed before discovery so startup and request handling share one
         // value. They disagreed before issue-inbox#363: discovery hardcoded a
@@ -301,9 +301,17 @@ export function startProductionServer(
         if (executionPosture.overrideIgnored) {
           logger.warn("Host project execution override is ignored", {
             overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
-            reason: sharedRuntime
-              ? "shared runtimes require isolated project execution"
-              : "dedicated runtimes already allow project execution",
+            reason: "dedicated runtimes already allow project execution",
+          });
+        } else if (sharedRuntime && executionPosture.allowHostProjectCodeExecution) {
+          // The grant is active, not merely present. Say so at startup: an operator
+          // upgrading into this build can have a formerly stale setting silently become
+          // effective, and the absence of an "ignored" warning must not be the only
+          // signal that same-process tenant execution is switched on.
+          logger.warn("Shared runtime is executing tenant project code by operator grant", {
+            overrideEnv: HOST_PROJECT_EXECUTION_OVERRIDE_ENV,
+            reason:
+              "tenant code runs in this shared process; per-request separation is source scoping, not a tenant boundary",
           });
         }
 

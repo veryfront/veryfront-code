@@ -1272,9 +1272,16 @@ export interface IsolationPosture {
    * `api.effective` true, API routes fail closed rather than execute.
    */
   apiPreparationSupported: boolean;
-  /** @deprecated Always false. The former override no longer grants execution. */
+  /**
+   * Always false here: this posture reports the sandbox worker isolation surfaces and
+   * does not resolve the host-execution grant, which is decided per request from
+   * host-owned context in security/project-locality.ts. A shared runtime CAN execute
+   * tenant code when an operator grants it (veryfront-issue-inbox#848), so do not read
+   * this field as evidence that it does not. `hostExecutionOverrideConfigured` below
+   * reports whether the grant is present.
+   */
   hostExecutionGranted: false;
-  /** Whether the deprecated VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION setting is present. */
+  /** Whether the VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION grant is present. */
   hostExecutionOverrideConfigured: boolean;
   /** True when at least one surface actually resolved to isolated execution. */
   inForce: boolean;

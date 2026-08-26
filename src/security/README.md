@@ -397,10 +397,10 @@ it would tell an anonymous caller which realm tenant code runs in.
 
 A dedicated single-project runtime may execute
 prepared API source in its local worker pool. A shared multi-project/proxy
-runtime never executes tenant API source in the host process or a same-process
-Worker: API ownership returns the typed
-`project-execution-unavailable` 503 response until the request is routed to a
-genuinely external or dedicated isolated project runtime. Raw-path server-data
+runtime does so only where an operator has granted host execution at the
+host-owned entrypoint (see below); without that grant, API ownership returns
+the typed `project-execution-unavailable` 503 response until the request is
+routed to a genuinely external or dedicated isolated project runtime. Raw-path server-data
 modules are local-only; remote data and renderer-backed module endpoints return
 503 before resolving project modules. Shared-runtime CORS preflights never
 import route modules to discover methods, and component-snippet requests fail
@@ -435,21 +435,30 @@ dedicated single-project runtimes grant the capability at their host-owned
 entrypoints. Shared proxy runtimes reject these operations before reading or
 evaluating tenant modules.
 
-## Deprecated shared execution override
+## Shared execution grant
 
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` no longer grants host execution. A
-shared runtime always rejects same-process tenant execution and routes it to a
-dedicated isolated project runtime. A dedicated single-project runtime already
-has the required capability, so the setting changes no supported topology.
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grants host execution to a shared
+runtime. Without it a shared runtime rejects same-process tenant execution and
+routes to a dedicated isolated project runtime. A dedicated single-project
+runtime already has the capability, so there the setting changes no supported
+topology and is reported as ignored.
 
-Veryfront still reads an affirmative value at server startup so it can report
-stale deployment configuration. The startup warning states that the setting is
-ignored and explains whether the runtime is shared or already dedicated. The
-read uses `getHostEnv`, so a project environment variable cannot manufacture
-the operator diagnostic.
+**Granting it is a deliberate reduction in isolation.** Tenant code then runs in
+the shared process, where per-request separation is source scoping and not a
+tenant boundary, and ambient runtime channels can expose host state outside the
+scoped environment facade. Do not set it on a runtime that serves tenants which
+must not observe one another.
 
-Remove the deprecated setting. Shared multi-project execution must use a
-separately limited external process or container.
+It exists because this platform's own shared rendering and executor runtime has
+no dedicated isolated runtime to route to: without the grant, preview rendering
+and tenant `/api/*` return 503 and agent chat fails
+(veryfront-issue-inbox#848, #356). The grant is retired by routing hosted
+project execution to a dedicated runtime, not by dropping it while that routing
+does not exist.
+
+Startup warns in both directions: that the grant is active on a shared runtime,
+or that it is present but ignored on a dedicated one. The read uses
+`getHostEnv`, so a project environment variable cannot manufacture the grant.
 
 `WORKER_ISOLATION_SSR=1` additionally requires explicit registration of an
 `IsolatedSsrRendererProvider`. The provider supplies a local, offline renderer

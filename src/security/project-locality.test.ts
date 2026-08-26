@@ -101,11 +101,18 @@ describe("security/project-locality isolated runtime requirement", () => {
     );
   });
 
-  it("denies shared host execution even when the entrypoint grants the capability", () => {
+  it("honours an operator grant of host execution on a shared runtime", () => {
+    // The platform's shared rendering and executor runtime has no dedicated isolated
+    // runtime to route to, so denying the grant here returns 503
+    // PROJECT_EXECUTION_UNAVAILABLE on preview and tenant /api/*
+    // (veryfront-issue-inbox#848). Granting re-accepts the posture production already
+    // runs: tenant code executes in the shared process, where per-request separation
+    // is source scoping and not a tenant boundary. Retiring it belongs with routing
+    // execution to a dedicated runtime (#356).
     assertEquals(
       requiresIsolatedProjectRuntime({ ...sharedRuntime, allowHostProjectCodeExecution: true }),
-      true,
-      "ambient runtime channels keep shared host execution unsafe",
+      false,
+      "an explicit operator grant must reach the execution surfaces",
     );
   });
 
@@ -165,9 +172,11 @@ describe("security/project-locality isolated runtime requirement", () => {
   });
 
   it("uses one topology snapshot for the host-execution decision", () => {
+    // No grant, so the decision turns on topology alone -- which is what this
+    // invariant guards. The provider disagrees with itself after the first call, so a
+    // second read would flip the answer to "not shared" and wrongly skip isolation.
     let calls = 0;
     const runtime = {
-      allowHostProjectCodeExecution: true,
       adapter: {
         fs: {
           isMultiProjectMode: () => calls++ === 0,

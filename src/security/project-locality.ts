@@ -100,20 +100,25 @@ export function isExplicitlyLocalProject(value: unknown): boolean {
  * An explicitly local development project retains the historical capability.
  * A standalone production runtime can grant the narrower capability without
  * enabling development-only rendering, caching, diagnostics, or HTTP policy.
- * A shared runtime cannot grant it because ambient runtime channels can expose
- * host state outside the scoped environment facade. Every ambiguous value
- * fails closed.
+ * A shared runtime honours an explicit operator grant from its host-owned
+ * entrypoint; ambient runtime channels can then expose host state outside the
+ * scoped environment facade, which is the accepted cost of this deployment.
+ * Without a grant a shared runtime still fails closed, as does every ambiguous
+ * value.
  */
 export function isHostProjectCodeExecutionAllowed(value: unknown): boolean {
-  return isHostProjectCodeExecutionAllowedForTopology(value, isSharedProjectRuntime(value));
+  return isHostProjectCodeExecutionAllowedForTopology(value);
 }
 
-function isHostProjectCodeExecutionAllowedForTopology(
-  value: unknown,
-  sharedRuntime: boolean,
-): boolean {
-  return isExplicitlyLocalProject(value) ||
-    (!sharedRuntime && isExplicitHostProjectCodeExecutionAllowed(value));
+function isHostProjectCodeExecutionAllowedForTopology(value: unknown): boolean {
+  // The grant is topology-independent: a shared runtime honours it too. Denying it here
+  // discarded the capability the host-owned entrypoint had already granted, so preview
+  // and tenant /api/* returned 503 with no isolated runtime to route to
+  // (veryfront-issue-inbox#848). Ambient runtime channels can still expose host state
+  // outside the scoped environment facade -- that is the accepted cost of running this
+  // platform's shared executor, and it is retired by routing execution to a dedicated
+  // runtime (#356), not by dropping the capability here.
+  return isExplicitlyLocalProject(value) || isExplicitHostProjectCodeExecutionAllowed(value);
 }
 
 /**
@@ -138,8 +143,10 @@ export function isExplicitHostProjectCodeExecutionAllowed(
  * cannot drift apart.
  */
 export function requiresIsolatedProjectRuntime(value: unknown): boolean {
+  // Sample the topology once: a re-read can disagree with itself, and the first
+  // observation must stay authoritative for the whole decision.
   const sharedRuntime = isSharedProjectRuntime(value);
-  return !isHostProjectCodeExecutionAllowedForTopology(value, sharedRuntime) && sharedRuntime;
+  return !isHostProjectCodeExecutionAllowedForTopology(value) && sharedRuntime;
 }
 
 /**
