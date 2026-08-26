@@ -15,16 +15,14 @@ import { ClientComponent } from './ClientComponent.tsx'
 import { db } from './database.ts'
 
 export default async function ServerComponent() {
-  const data = await db.query('...')
-  return <ClientComponent data={data} />
+  const { rows } = await db.query<{ id: number; name: string }>('SELECT id, name FROM users')
+  return <ClientComponent data={rows} />
 }
 
 // ClientComponent.tsx
 'use client';
 
-import type { User } from './types.ts'
-
-export function ClientComponent({ data }: { data: User[] }) {
+export function ClientComponent({ data }: { data: { id: number; name: string }[] }) {
   return <ul>{data.map((user) => <li key={user.id}>{user.name}</li>)}</ul>
 }`,
   }),
