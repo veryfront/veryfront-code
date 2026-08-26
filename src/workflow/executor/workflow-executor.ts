@@ -54,6 +54,7 @@ import {
   toPersistedWorkflowContext,
 } from "../runtime/workflow-run-control.ts";
 import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
+import { reconcileApprovalDecisionClaimsBeforeRetry } from "../runtime/approval-manager.ts";
 import { validateWorkflowPathSegment } from "../dsl/validation.ts";
 import { captureWorkflowNodes } from "./workflow-definition-snapshot.ts";
 
@@ -401,6 +402,28 @@ export class WorkflowExecutor {
         detail: `Cannot retry workflow run "${runId}": status changed before retry started.`,
       });
     }
+
+    try {
+      await reconcileApprovalDecisionClaimsBeforeRetry(this.config.backend, runId);
+    } catch (error) {
+      await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        ["pending"],
+        {
+          status: "failed",
+          workerId: run.workerId,
+          error: run.error,
+          completedAt: run.completedAt ?? new Date(),
+        },
+        executionWorkerId,
+      );
+      throw error;
+    }
+
+    const reconciledRun = await this.config.backend.getRun(runId);
+    if (!reconciledRun) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    if (reconciledRun.status !== "pending") return;
 
     const settled = runWithWorkflowSourceIntegrationPolicy(
       run,

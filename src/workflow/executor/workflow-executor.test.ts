@@ -937,6 +937,63 @@ describe("workflow/executor/workflow-executor", () => {
     }
   });
 
+  it("applies a retained approval decision before retry execution starts", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "retry-retained-approval",
+        steps: [waitForApproval("review")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("retry-retained-approval"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        review: {
+          nodeId: "review",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "approval", message: "approve me", payload: {} },
+        },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    await backend.savePendingApproval(run.id, {
+      id: "apr-retry-retained",
+      nodeId: "review",
+      message: "approve me",
+      payload: {},
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await backend.updateApproval(run.id, "apr-retry-retained", {
+      approved: true,
+      approver: "reviewer",
+    });
+
+    await executor.retry(run.id);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = await backend.getRun(run.id);
+      if (current?.status === "completed" || current?.status === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals((completed?.context.review as { approved?: boolean })?.approved, true);
+    assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
+  });
+
   it("fences a started execution after stalled ownership is replaced", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, heartbeatInterval: 60_000 });

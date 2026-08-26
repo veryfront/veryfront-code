@@ -1101,7 +1101,7 @@ describe("ApprovalManager", () => {
       assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
 
-    it("finalizes a retained decision claim when a failed run is not retried within one day", async () => {
+    it("retains a failed run decision claim beyond one day for a later retry", async () => {
       using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
       backend = new FailOnApprovalDecisionBackend();
       const executor = { resume: () => Promise.resolve() } as unknown as WorkflowExecutor;
@@ -1130,14 +1130,10 @@ describe("ApprovalManager", () => {
       await manager.approve(runId, "apr-abandoned-failed-decision", "reviewer");
       assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
 
-      await time.tickAsync(24 * 60 * 60 * 1_000 - 1);
+      await time.tickAsync(30 * 24 * 60 * 60 * 1_000);
       await manager.checkApprovalDecisionClaims();
+
       assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
-
-      await time.tickAsync(1);
-      await manager.checkApprovalDecisionClaims();
-
-      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
       assertEquals((await backend.getRun(runId))?.status, "failed");
     });
 

@@ -62,6 +62,132 @@ const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
 
+/**
+ * Merge top-level JSON objects without decoding their values through Redis's
+ * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
+ * Lua table and then encodes it as `{}`. Keeping each value as its original
+ * JSON slice preserves arrays and every other nested value byte-for-byte while
+ * the script atomically replaces or deletes top-level map entries.
+ */
+const JSON_OBJECT_PATCH_LUA = String.raw`
+local function skipJsonWhitespace(value, position)
+  while position <= #value do
+    local byte = string.byte(value, position)
+    if byte == 32 or byte == 9 or byte == 10 or byte == 13 then
+      position = position + 1
+    else
+      break
+    end
+  end
+  return position
+end
+
+local function scanJsonString(value, position)
+  if string.sub(value, position, position) ~= '"' then
+    error('Expected a JSON object key')
+  end
+  position = position + 1
+  local escaped = false
+  while position <= #value do
+    local character = string.sub(value, position, position)
+    if escaped then
+      escaped = false
+    elseif character == '\\' then
+      escaped = true
+    elseif character == '"' then
+      return position + 1
+    end
+    position = position + 1
+  end
+  error('Unterminated JSON string')
+end
+
+local function scanJsonValue(value, position)
+  position = skipJsonWhitespace(value, position)
+  local first = string.sub(value, position, position)
+  if first == '"' then return scanJsonString(value, position) end
+
+  if first == '{' or first == '[' then
+    local depth = 0
+    local inString = false
+    local escaped = false
+    while position <= #value do
+      local character = string.sub(value, position, position)
+      if inString then
+        if escaped then
+          escaped = false
+        elseif character == '\\' then
+          escaped = true
+        elseif character == '"' then
+          inString = false
+        end
+      elseif character == '"' then
+        inString = true
+      elseif character == '{' or character == '[' then
+        depth = depth + 1
+      elseif character == '}' or character == ']' then
+        depth = depth - 1
+        if depth == 0 then return position + 1 end
+      end
+      position = position + 1
+    end
+    error('Unterminated JSON container')
+  end
+
+  local start = position
+  while position <= #value do
+    local character = string.sub(value, position, position)
+    local byte = string.byte(value, position)
+    if character == ',' or character == '}' or
+      byte == 32 or byte == 9 or byte == 10 or byte == 13 then
+      break
+    end
+    position = position + 1
+  end
+  if position == start then error('Expected a JSON value') end
+  return position
+end
+
+local function parseJsonObject(value)
+  local fields = {}
+  local position = skipJsonWhitespace(value, 1)
+  if string.sub(value, position, position) ~= '{' then
+    error('Run patch field must be a JSON object')
+  end
+  position = skipJsonWhitespace(value, position + 1)
+  if string.sub(value, position, position) == '}' then return fields end
+
+  while position <= #value do
+    local keyStart = position
+    position = scanJsonString(value, position)
+    local key = cjson.decode(string.sub(value, keyStart, position - 1))
+    position = skipJsonWhitespace(value, position)
+    if string.sub(value, position, position) ~= ':' then
+      error('Expected a colon after a JSON object key')
+    end
+    position = skipJsonWhitespace(value, position + 1)
+    local valueStart = position
+    position = scanJsonValue(value, position)
+    fields[key] = string.sub(value, valueStart, position - 1)
+    position = skipJsonWhitespace(value, position)
+
+    local delimiter = string.sub(value, position, position)
+    if delimiter == '}' then return fields end
+    if delimiter ~= ',' then error('Expected a comma between JSON object entries') end
+    position = skipJsonWhitespace(value, position + 1)
+  end
+  error('Unterminated JSON object')
+end
+
+local function encodeJsonObject(fields)
+  local entries = {}
+  for key, value in pairs(fields) do
+    table.insert(entries, cjson.encode(key) .. ':' .. value)
+  end
+  return '{' .. table.concat(entries, ',') .. '}'
+end
+`;
+
 function appendStorageSchemaVersion(base: string): string {
   return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
 }
@@ -146,30 +272,23 @@ return 1`;
  */
 const UPDATE_RUN_SCRIPT = `-- observable-run-update
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
-local preserveArrays = cjson.decode_array_with_array_mt
-if preserveArrays then preserveArrays(true) end
-local function decodePatchJson(value)
-  if not preserveArrays and string.find(value, '%[%s*%]') then
-    error('Redis cjson cannot preserve empty arrays during a run patch')
-  end
-  return cjson.decode(value)
-end
+${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+    local current = parseJsonObject(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
     local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
+    redis.call('hset', KEYS[1], 'nodeStates', encodeJsonObject(current))
   elseif field == 'contextDeletes' then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
+    local current = parseJsonObject(redis.call('hget', KEYS[1], 'context') or '{}')
     local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'context', cjson.encode(current))
+    redis.call('hset', KEYS[1], 'context', encodeJsonObject(current))
   elseif field == 'nodeStates' or field == 'context' then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = decodePatchJson(value)
+    local current = parseJsonObject(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = parseJsonObject(value)
     for key, changed in pairs(patch) do current[key] = changed end
-    redis.call('hset', KEYS[1], field, cjson.encode(current))
+    redis.call('hset', KEYS[1], field, encodeJsonObject(current))
   else
     redis.call('hset', KEYS[1], field, value)
   end
@@ -215,30 +334,23 @@ const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
 local expectedCount = tonumber(ARGV[1])
 local replaceMaps = ARGV[expectedCount + 8] == '1'
-local preserveArrays = cjson.decode_array_with_array_mt
-if preserveArrays then preserveArrays(true) end
-local function decodePatchJson(value)
-  if not preserveArrays and string.find(value, '%[%s*%]') then
-    error('Redis cjson cannot preserve empty arrays during a run patch')
-  end
-  return cjson.decode(value)
-end
+${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+    local current = parseJsonObject(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
     local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'nodeStates', cjson.encode(current))
+    redis.call('hset', KEYS[1], 'nodeStates', encodeJsonObject(current))
   elseif field == 'contextDeletes' then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
+    local current = parseJsonObject(redis.call('hget', KEYS[1], 'context') or '{}')
     local deleted = cjson.decode(value)
     for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'context', cjson.encode(current))
+    redis.call('hset', KEYS[1], 'context', encodeJsonObject(current))
   elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
-    local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = decodePatchJson(value)
+    local current = parseJsonObject(redis.call('hget', KEYS[1], field) or '{}')
+    local patch = parseJsonObject(value)
     for key, changed in pairs(patch) do current[key] = changed end
-    redis.call('hset', KEYS[1], field, cjson.encode(current))
+    redis.call('hset', KEYS[1], field, encodeJsonObject(current))
   else
     redis.call('hset', KEYS[1], field, value)
   end

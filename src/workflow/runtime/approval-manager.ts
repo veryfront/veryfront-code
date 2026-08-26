@@ -32,22 +32,72 @@ const logger = baseLogger.component("approval-manager");
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS = 30_000;
-// Failed runs can be retried manually, so preserve a racing decision long
-// enough for operator recovery without reserving approval storage forever.
-const FAILED_DECISION_CLAIM_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 
 function shouldRetainDecisionClaim(
   outcome: WorkflowRunControlReconcileOutcome,
   decision: ApprovalDecision,
   canResume: boolean,
-  claimAgeMs?: number,
 ): boolean {
   const failedRunMayStillRetry = outcome.status === "skipped-terminal" &&
-    outcome.run?.status === "failed" &&
-    (claimAgeMs === undefined || claimAgeMs < FAILED_DECISION_CLAIM_RETENTION_MS);
+    outcome.run?.status === "failed";
   return failedRunMayStillRetry ||
     (decision.approved && outcome.run?.status === "waiting" && !canResume);
+}
+
+function reconstructApprovalDecision(
+  approval: PersistedPendingApproval,
+): ApprovalDecision {
+  if (approval.status !== "approved" && approval.status !== "rejected") {
+    throw new Error("Approval decision claim has no decided status");
+  }
+  return ApprovalDecisionSchema.parse({
+    approved: approval.status === "approved",
+    approver: approval.decidedBy,
+    ...(approval.comment === undefined ? {} : { comment: approval.comment }),
+    ...(approval.decisionData === undefined ? {} : { data: approval.decisionData }),
+  });
+}
+
+/** @internal Apply retained decisions after retry reactivates a failed run. */
+export async function reconcileApprovalDecisionClaimsBeforeRetry(
+  backend: WorkflowBackend,
+  runId: string,
+): Promise<void> {
+  const listClaims = backend.listApprovalDecisionClaims;
+  if (!listClaims) return;
+
+  const claims = await listClaims.call(backend, runId);
+  for (const claim of claims) {
+    if (claim.runId !== runId) continue;
+    const { approval } = claim;
+    if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Approval decision claim "${approval.id}" has no valid decision time`,
+      });
+    }
+    const decision = reconstructApprovalDecision(approval);
+    const run = await backend.getRun(runId);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    if (run.nodeStates[approval.nodeId]?.status !== "completed") {
+      const outcome = await reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "approval-decision",
+          runId,
+          approvalId: approval.id,
+          nodeId: approval.nodeId,
+          decision,
+          decidedAt: approval.decidedAt,
+          maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
+        },
+      });
+      if (outcome.status === "skipped-terminal") continue;
+    }
+
+    await backend.finalizeApprovalDecision?.(runId, approval.id);
+  }
 }
 
 /** Receives detached approval and run snapshots. Mutating them does not change persisted state. */
@@ -397,15 +447,7 @@ export class ApprovalManager {
 
       let decision: ApprovalDecision;
       try {
-        decision = ApprovalDecisionSchema.parse({
-          approved: approval.status === "approved",
-          approver: approval.decidedBy,
-          ...(approval.comment === undefined ? {} : { comment: approval.comment }),
-          ...(approval.decisionData === undefined ? {} : { data: approval.decisionData }),
-        });
-        if (approval.status !== "approved" && approval.status !== "rejected") {
-          throw new Error("Approval decision claim has no decided status");
-        }
+        decision = reconstructApprovalDecision(approval);
       } catch (error) {
         logger.error(
           "Cannot reconstruct a durable approval decision claim",
@@ -447,13 +489,11 @@ export class ApprovalManager {
               : undefined,
           },
         });
-        const claimAgeMs = Date.now() - approval.decidedAt.getTime();
         if (
           shouldRetainDecisionClaim(
             outcome,
             decision,
             this.config.executor !== undefined,
-            claimAgeMs,
           )
         ) {
           continue;

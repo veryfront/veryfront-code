@@ -1933,14 +1933,36 @@ describe("RedisBackend", () => {
       assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
       assertStringIncludes(
         mockRedis.lastScript,
-        "cjson.decode_array_with_array_mt",
-        "Redis patch merges must preserve nested array identity when the runtime supports it",
+        "parseJsonObject",
+        "Redis patch merges must preserve raw nested JSON values on standard Redis cjson",
       );
-      assertStringIncludes(
-        mockRedis.lastScript,
-        "cannot preserve empty arrays",
-        "older Redis cjson runtimes must reject ambiguous empty-array patches instead of corrupting them",
+      assertEquals(
+        mockRedis.lastScript.includes("cannot preserve empty arrays"),
+        false,
+        "standard Redis must accept user-bearing empty arrays",
       );
+    });
+
+    it("preserves empty arrays in context and node-state merge patches", async () => {
+      await backend.createRun(createTestRun("run-empty-array-patches"));
+
+      await backend.updateRun("run-empty-array-patches", {
+        context: { input: { tags: [] }, result: [] },
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "completed",
+            attempt: 1,
+            output: [],
+          },
+        },
+      });
+
+      const updated = await backend.getRun("run-empty-array-patches");
+      assertEquals(updated?.context, { input: { tags: [] }, result: [] });
+      assertEquals(updated?.nodeStates.step?.output, []);
+      assertStringIncludes(mockRedis.lastScript, "parseJsonObject");
+      assertEquals(mockRedis.lastScript.includes("decode_array_with_array_mt"), false);
     });
 
     it("applies explicit context deletions without replacing concurrent keys", async () => {
