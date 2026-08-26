@@ -10,6 +10,7 @@ import {
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { metrics } from "./index.ts";
 
 describe("metrics public SDK", () => {
@@ -422,6 +423,49 @@ describe("metrics public SDK", () => {
     );
     assertEquals(
       (requests[0]?.init?.headers as Record<string, string>).Authorization,
+      "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
+    );
+  });
+
+  it("does not expose internal metrics credentials to a replaced Base64 encoder", async () => {
+    const originalBtoa = Object.getOwnPropertyDescriptor(globalThis, "btoa");
+    const observedValues: string[] = [];
+    const requests: RequestInit[] = [];
+
+    await withEnv({
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      await withMockFetch(
+        ((_url: string | URL | Request, init?: RequestInit) => {
+          requests.push(init ?? {});
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          Object.defineProperty(globalThis, "btoa", {
+            configurable: true,
+            writable: true,
+            value: (value: string) => {
+              observedValues.push(value);
+              return "forged-authorization";
+            },
+          });
+          try {
+            metrics.counter("vf_internal_metric_total", 1);
+            await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+          } finally {
+            if (originalBtoa) Object.defineProperty(globalThis, "btoa", originalBtoa);
+            else Reflect.deleteProperty(globalThis, "btoa");
+          }
+        },
+      );
+    });
+
+    assertEquals(observedValues, []);
+    assertEquals(
+      (requests[0]?.headers as Record<string, string>).Authorization,
       "Basic aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz",
     );
   });

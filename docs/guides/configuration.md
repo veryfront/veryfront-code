@@ -88,12 +88,19 @@ defineConfig({
 ```ts
 defineConfig({
   build: {
-    outDir: "dist", // Output directory
+    outDir: "dist", // Project-relative production output directory
     trailingSlash: false, // Add trailing slashes to URLs
     serverExternalPackages: ["knex", "@prisma/client"],
   },
 });
 ```
+
+For the default production preset, `build.outDir` must resolve to a child of the
+project directory. Veryfront clears this directory before writing the build.
+Use `veryfront build --output <dir>` when a one-off build must write outside the
+project. The embedded preset does not clear its output root, so
+`build.outDir` can resolve outside the project when you use
+`veryfront build --preset embedded`.
 
 Use `serverExternalPackages` for npm packages that must run only on the server,
 such as database, cache, or messaging clients. Veryfront leaves these imports

@@ -69,6 +69,7 @@ import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
+import { ProxyRequestHostError, resolveProxyRequestHost } from "./request-host.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
 import { type ProxyRequestLifecycle, runProxyRequestLifecycle } from "./request-lifecycle.ts";
 import {
@@ -726,10 +727,39 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
 }
 
 /**
+ * A rejected Host header is untrusted input and may carry a customer domain,
+ * private hostname, or secret-like value, so log only its shape — never the
+ * verbatim value (AGENTS.md, "Secret and internal-detail safety").
+ */
+function describeRejectedHostHeader(host: string | null): string {
+  if (host === null) return "<missing>";
+  if (host.length === 0) return "<empty>";
+  return `<redacted, ${host.length} chars>`;
+}
+
+/**
  * Main router.
  */
 async function router(req: Request): Promise<Response> {
-  const url = new URL(req.url);
+  let url: URL;
+  try {
+    url = new URL(req.url);
+    // Deno builds req.url from the request target and the client's Host header
+    // verbatim, so a Host that is not a valid URL authority (empty, embedded
+    // space, "[", a non-numeric port) yields a req.url the parser rejects —
+    // and an absolute-form target with an invalid Host parses fine, so the
+    // authority must be validated explicitly too, or host-independent routes
+    // (health, stats) would serve requests every other route rejects. Reject
+    // both here instead of letting a TypeError escape the handler as Deno's
+    // generic 500 with a bare stack line. A missing Host never reaches this
+    // point: Deno rejects Host-less HTTP/1.1 requests before the handler.
+    resolveProxyRequestHost(req, url);
+  } catch {
+    proxyLogger.warn(`400 ${req.method} <invalid request target or Host header>`, {
+      host: describeRejectedHostHeader(req.headers.get("host")),
+    });
+    return jsonErrorResponse(400, { error: "Bad Request" });
+  }
 
   if (url.pathname === "/_proxy/health") {
     return Response.json({ service: "veryfront-proxy", status: "ok" });
@@ -765,6 +795,16 @@ async function router(req: Request): Promise<Response> {
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);
+    if (error instanceof ProxyRequestHostError) {
+      // An absolute-form request target with an empty Host header parses as a
+      // URL, but Host validation rejects it downstream ("" is not nullish, so
+      // the url.host fallback never fires). Map it to 400 here instead of
+      // letting it escape as Deno's generic 500.
+      proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
+        host: describeRejectedHostHeader(req.headers.get("host")),
+      });
+      return jsonErrorResponse(400, { error: "Bad Request" });
+    }
     throw error;
   }
 }

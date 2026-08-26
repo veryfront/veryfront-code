@@ -41,6 +41,7 @@ import {
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -756,7 +757,7 @@ function snapshotRuntimeSkillReferences(
     if (value === null) return null;
     normalized.add(value);
   }
-  return Object.freeze([...normalized].sort()) as string[];
+  return Object.freeze([...normalized].sort(compareStrings)) as string[];
 }
 
 function hasValidRuntimeLoadedSkillReferenceDirectories(

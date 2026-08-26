@@ -9,12 +9,8 @@ import {
 import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import {
-  clearModelProviders,
-  getCurrentVeryfrontCloudContext,
-  type ModelRuntime,
-  registerModelProvider,
-} from "#veryfront/provider";
+import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,

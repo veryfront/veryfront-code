@@ -37,6 +37,10 @@ export interface ContextAwareCacheLookupResult {
   lookupDurationMs: number;
 }
 
+function hasResponseMetadata(result: RenderResult): boolean {
+  return Object.keys(result.headers ?? {}).length > 0 || (result.cookies?.length ?? 0) > 0;
+}
+
 export class ContextAwareCacheCoordinator {
   private store: CacheStore;
   private ttlMs: number | undefined;
@@ -73,6 +77,24 @@ export class ContextAwareCacheCoordinator {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
           recordCacheLookup("miss", lookupDurationMs);
           logger.debug("Cache miss", {
+            slug,
+            cacheKey,
+            projectId: ctx.projectId,
+            environment: ctx.environment,
+            lookupDurationMs,
+          });
+          return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+        }
+
+        if (hasResponseMetadata(cached.result)) {
+          if (this.store.deleteIfUnchanged) {
+            await this.store.deleteIfUnchanged(cacheKey, cached);
+          } else {
+            await this.store.delete(cacheKey);
+          }
+          const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+          recordCacheLookup("miss", lookupDurationMs);
+          logger.debug("Rejected response-metadata-bearing cache entry", {
             slug,
             cacheKey,
             projectId: ctx.projectId,

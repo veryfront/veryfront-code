@@ -3,7 +3,7 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { runWithVeryfrontCloudContext } from "#veryfront/provider";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
 
 const FIXED_NOW = new Date("2026-03-08T12:00:00.000Z");

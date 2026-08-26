@@ -114,6 +114,16 @@ describe("WorkflowClient", () => {
     await client.destroy();
   });
 
+  it("rejects dot-only custom run IDs", async () => {
+    for (const runId of [".", ".."] as const) {
+      await assertRejects(
+        () => client.start("test-workflow", {}, { runId }),
+        VeryfrontError,
+        "path segment",
+      );
+    }
+  });
+
   describe("typed approval payload", () => {
     const schemaWorkflow = workflow({
       id: "typed-approval-workflow",

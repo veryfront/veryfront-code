@@ -35,8 +35,12 @@ veryfront serve
 ```
 
 `veryfront build` writes browser assets to `build.outDir`, which defaults to
-`dist/`. API routes, agents, workflows, and tasks remain in the project source
-and are loaded by `veryfront serve`.
+`dist/`. For the default production preset, this configured directory must be
+inside the project because Veryfront clears it before writing. Use
+`veryfront build --output <dir>` for a one-off external destination. The
+embedded preset does not clear its output root and allows an external
+`build.outDir`. API routes, agents, workflows, and tasks remain in the project
+source and are loaded by `veryfront serve`.
 
 Before uploading source, verify that `build.outDir` contains the browser assets
 and that server-executed API routes, agents, workflows, and tasks remain in the
