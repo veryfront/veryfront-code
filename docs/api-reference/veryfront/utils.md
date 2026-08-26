@@ -114,7 +114,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `encodeBase64Bytes`                   | Encode raw bytes as standard base64.                                                                                                                                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L36)              |
 | `endRequest`                          | Request payload for end.                                                                                                                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L73)             |
 | `fnv1aHash`                           | FNV-1a hash for strings - returns hex string                                                                                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L128)            |
-| `getBaseLogger`                       | Get an immutable base logger without request context awareness.                                                                                                                                                                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1092)        |
+| `getBaseLogger`                       | Get an immutable base logger without request context awareness.                                                                                                                                                                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L42)           |
 | `getBundleManifestStore`              | Return bundle manifest store.                                                                                                                                                                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/bundle-manifest.ts#L259)       |
 | `getDenoStdNodeBase`                  | Return Deno std node base.                                                                                                                                                                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L82)          |
 | `getLockfileEntryForBuild`            | Read a lockfile entry on a build or dev-server hot path.                                                                                                                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L1464)      |
@@ -177,14 +177,14 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 
 ### Constants
 
-| Name             | Description | Source                                                                                           |
-| ---------------- | ----------- | ------------------------------------------------------------------------------------------------ |
-| `agentLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1083) |
-| `bundlerLogger`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1081) |
-| `cliLogger`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1075) |
-| `logger`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1086) |
-| `rendererLogger` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1079) |
-| `serverLogger`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1077) |
+| Name             | Description | Source                                                                                        |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| `agentLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L49) |
+| `bundlerLogger`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L50) |
+| `cliLogger`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L51) |
+| `logger`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L52) |
+| `rendererLogger` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L54) |
+| `serverLogger`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L55) |
 
 ## Deep imports
 
@@ -220,7 +220,7 @@ import { colorize, createRequestLogger, createRunUserLogger } from "veryfront/ut
 | `formatErrorText`            | Format a serialized error for text output.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L193)           |
 | `formatTimestamp`            | Format a timestamp as HH:MM:SS.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L128)           |
 | `formatValue`                | Format a value for log output (handles strings, numbers, booleans, objects).                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L159)           |
-| `getBaseLogger`              | Get an immutable base logger without request context awareness.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1092)        |
+| `getBaseLogger`              | Get an immutable base logger without request context awareness.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L42)           |
 | `getDefaultLevel`            | Determine the log level based on environment variables. Exported for testing purposes.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L179)         |
 | `getRequestContext`          |                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L26) |
 | `getRequestLogger`           |                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L30) |
@@ -248,12 +248,12 @@ import { colorize, createRequestLogger, createRunUserLogger } from "veryfront/ut
 
 #### Constants
 
-| Name             | Description | Source                                                                                           |
-| ---------------- | ----------- | ------------------------------------------------------------------------------------------------ |
-| `agentLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1083) |
-| `bundlerLogger`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1081) |
-| `cliLogger`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1075) |
-| `logger`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1086) |
-| `proxyLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1084) |
-| `rendererLogger` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1079) |
-| `serverLogger`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1077) |
+| Name             | Description | Source                                                                                        |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| `agentLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L49) |
+| `bundlerLogger`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L50) |
+| `cliLogger`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L51) |
+| `logger`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L52) |
+| `proxyLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L53) |
+| `rendererLogger` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L54) |
+| `serverLogger`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L55) |
