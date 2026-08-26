@@ -9,7 +9,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
@@ -18,9 +18,12 @@ const DEPENDENCY_MISSING_SLUG = "dependency-missing";
 const CONFIG_PARSE_ERROR_SLUG = "config-parse-error";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
+  __bunConfigHasTopLevelAwaitForTests,
+  __evictBunProjectConfigModulesForTests,
   __getHostedConfigFlightStateForTests,
   __getHostedConfigSourceReadStateForTests,
   __getTrustedConfigFlightStateForTests,
+  __isBunWorkspaceMemberDirectoryForTests,
   __observePromiseForTests,
   __setHostedConfigEvaluatorForTests,
   clearConfigCache,
@@ -32,6 +35,7 @@ import {
   mergeConfigs,
   rewriteBareVeryfrontConfigImports,
   rewriteProjectConfigImports,
+  rewriteProjectConfigImportsFromProject,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -338,11 +342,1185 @@ export default config as const;
       assertStringIncludes(rewritten, 'from "file:///project/local.js"');
       assertEquals(rewritten.includes('from "veryfront"'), false);
     });
+
+    it("resolves relative staged imports with URL suffixes", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(`${projectDir}/helper.ts`, 'export default "helper";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import query from "./helper.ts?mode=config";\n' +
+            'import fragment from "./helper.ts#entry";\n' +
+            "export default { query, fragment };\n",
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/helper.ts?mode=config");
+        assertStringIncludes(rewritten, "/helper.ts#entry");
+      }, { prefix: "vf-config-relative-suffix-" });
+    });
+
+    it("does not reject a staged config for a disabled optional import", async () => {
+      const source = 'if (false) await import("optional-plugin");\nexport default {};\n';
+      const rewritten = await rewriteProjectConfigImports(source, () => {
+        throw new Error("optional-plugin is not installed");
+      });
+
+      assertEquals(rewritten, source);
+    });
+
+    it("binds unresolved staged dynamic imports to the original project", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const source = 'export default async () => await import("missing-config-plugin");\n';
+        const rewritten = await rewriteProjectConfigImportsFromProject(source, configPath);
+
+        assertEquals(rewritten.includes('import("missing-config-plugin")'), false);
+        assertStringIncludes(rewritten, "data:text/javascript,");
+        assertStringIncludes(rewritten, "missing-config-plugin");
+      }, { prefix: "vf-config-bound-dynamic-import-" });
+    });
+
+    it("fails an executed unresolved dynamic import without using the temp module root", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const source = 'await import("missing-config-plugin");\nexport default {};\n';
+        const rewritten = await rewriteProjectConfigImportsFromProject(source, configPath);
+
+        const error = await assertRejects(() =>
+          import(`data:application/javascript;base64,${btoa(rewritten)}`)
+        );
+        assertInstanceOf(error, Error);
+        assertStringIncludes(error.message, 'Cannot find package "missing-config-plugin"');
+        assertEquals(error.message.includes(projectDir), false);
+      }, { prefix: "vf-config-executed-bound-dynamic-import-" });
+    });
+
+    it("keeps resolved staged dynamic imports syntactically lazy", async () => {
+      const rewritten = await rewriteProjectConfigImports(
+        'export default async () => import("installed-plugin");\n',
+        () => "file:///project/node_modules/installed-plugin/index.js",
+      );
+
+      assertEquals(
+        rewritten,
+        'export default async () => import("file:///project/node_modules/installed-plugin/index.js");\n',
+      );
+    });
+
+    it("uses ESM import conditions for staged project package imports", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-dual-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-dual-package",
+            type: "module",
+            exports: {
+              ".": {
+                import: "./import.js",
+                require: "./require.js",
+              },
+              "./features/*": [
+                { browser: "./browser/*.js" },
+                {
+                  node: {
+                    import: "./features/*.js",
+                    require: "./require-features/*.js",
+                  },
+                },
+              ],
+            },
+          }),
+        );
+        await writeTextFile(`${packageDir}/import.js`, 'export default "import";\n');
+        await writeTextFile(`${packageDir}/require.js`, 'module.exports = "require";\n');
+        await mkdir(`${packageDir}/features`, { recursive: true });
+        await mkdir(`${packageDir}/require-features`, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/features/marker.js`,
+          'export default "import-feature";\n',
+        );
+        await writeTextFile(
+          `${packageDir}/require-features/marker.js`,
+          'module.exports = "require-feature";\n',
+        );
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import marker from "config-dual-package";\n' +
+            'import feature from "config-dual-package/features/marker";\n' +
+            "export default { title: `${marker}:${feature}` };\n",
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/config-dual-package/import.js");
+        assertStringIncludes(rewritten, "/config-dual-package/features/marker.js");
+        assertEquals(rewritten.includes("/config-dual-package/require.js"), false);
+        assertEquals(rewritten.includes("/require-features/marker.js"), false);
+      }, { prefix: "vf-config-esm-conditions-" });
+    });
+
+    it("uses ESM conditions for project package import aliases", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#config": { import: "./import.js", require: "./require.cjs" },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/import.js`, 'export default "import";\n');
+        await writeTextFile(`${projectDir}/require.cjs`, 'module.exports = "require";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "#config";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/import.js");
+        assertEquals(rewritten.includes("/require.cjs"), false);
+      }, { prefix: "vf-config-import-alias-" });
+    });
+
+    it("rejects invalid slash-prefixed project package import names", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "module", imports: { "#valid": "./import.js" } }),
+        );
+
+        for (const specifier of ["#", "#/", "#/nested"]) {
+          await assertRejects(
+            () =>
+              rewriteProjectConfigImportsFromProject(
+                `import value from ${JSON.stringify(specifier)};\nexport default value;\n`,
+                configPath,
+              ),
+            TypeError,
+            `Package import "${specifier}" is not a valid internal import name`,
+          );
+        }
+      }, { prefix: "vf-config-invalid-import-alias-" });
+    });
+
+    it("resolves external package targets from project import aliases", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-external-alias`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#config": "config-external-alias" },
+          }),
+        );
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-external-alias",
+            type: "module",
+            exports: { import: "./import.js", require: "./require.cjs" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/import.js`, 'export default "import";\n');
+        await writeTextFile(`${packageDir}/require.cjs`, 'module.exports = "require";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "#config";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/config-external-alias/import.js");
+        assertEquals(rewritten.includes("/config-external-alias/require.cjs"), false);
+      }, { prefix: "vf-config-external-import-alias-" });
+    });
+
+    it("prefers the most specific project import-alias pattern", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#*x": "./less-specific.js",
+              "#*xx": "./more-specific.js",
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/less-specific.js`, "export default 'less';\n");
+        await writeTextFile(`${projectDir}/more-specific.js`, "export default 'more';\n");
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "#axx";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/more-specific.js");
+        assertEquals(rewritten.includes("/less-specific.js"), false);
+      }, { prefix: "vf-config-specific-import-pattern-" });
+    });
+
+    it("uses ESM conditions for package self-references", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            name: "config-self-package",
+            type: "module",
+            exports: { import: "./import.js", require: "./require.cjs" },
+          }),
+        );
+        await writeTextFile(`${projectDir}/import.js`, 'export default "import";\n');
+        await writeTextFile(`${projectDir}/require.cjs`, 'module.exports = "require";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-self-package";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/import.js");
+        assertEquals(rewritten.includes("/require.cjs"), false);
+      }, { prefix: "vf-config-self-reference-" });
+    });
+
+    it("rejects forbidden package export path segments", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-forbidden-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(`${packageDir}/node_modules`, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-forbidden-package",
+            exports: "./node_modules/entry.js",
+          }),
+        );
+        await writeTextFile(`${packageDir}/node_modules/entry.js`, "export default {};\n");
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-forbidden-package";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          "contains a forbidden path segment",
+        );
+      }, { prefix: "vf-config-forbidden-export-" });
+    });
+
+    it("requires a nonempty capture for wildcard package exports", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-wildcard-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-wildcard-package",
+            type: "module",
+            exports: { "./feature*": "./index.js" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "feature";\n');
+
+        // A nonempty capture still selects the pattern, even when the target
+        // does not substitute it.
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-wildcard-package/featurex";\nexport default value;\n',
+          configPath,
+        );
+        assertStringIncludes(rewritten, "/config-wildcard-package/index.js");
+
+        // Native pattern matching never lets "./feature*" match "./feature".
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-wildcard-package/feature";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Package import "config-wildcard-package/feature" is not exported',
+        );
+      }, { prefix: "vf-config-empty-wildcard-" });
+    });
+
+    it("rejects forbidden wildcard captures before resolving package exports", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-capture-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(`${packageDir}/assets`, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-capture-package",
+            type: "module",
+            exports: { "./assets/*": "./index.js" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "assets";\n');
+
+        for (const subpath of ["node_modules", "..", "%2E%2E", "inner//gap"]) {
+          await assertRejects(
+            () =>
+              rewriteProjectConfigImportsFromProject(
+                `import value from ${
+                  JSON.stringify(`config-capture-package/assets/${subpath}`)
+                };\nexport default value;\n`,
+                configPath,
+              ),
+            TypeError,
+            "path segment",
+          );
+        }
+      }, { prefix: "vf-config-forbidden-capture-" });
+    });
+
+    it("rejects dot-prefixed bare package names", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/.plugin`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: ".plugin",
+            type: "module",
+            exports: "./index.js",
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "dot";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from ".plugin";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Package import ".plugin" is not a valid package specifier',
+        );
+      }, { prefix: "vf-config-dot-package-" });
+    });
+
+    it("rejects URL delimiters in bare package names", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        for (const specifier of ["config-package?variant", "config-package#variant"]) {
+          const packageDir = `${projectDir}/node_modules/${specifier}`;
+          await mkdir(packageDir, { recursive: true });
+          await writeTextFile(
+            `${packageDir}/package.json`,
+            JSON.stringify({ name: specifier, type: "module", exports: "./index.js" }),
+          );
+          await writeTextFile(`${packageDir}/index.js`, 'export default "shadow";\n');
+
+          await assertRejects(
+            () =>
+              rewriteProjectConfigImportsFromProject(
+                `import value from ${JSON.stringify(specifier)};\nexport default value;\n`,
+                configPath,
+              ),
+            TypeError,
+            `Package import "${specifier}" is not a valid package specifier`,
+          );
+        }
+      }, { prefix: "vf-config-package-url-delimiter-" });
+    });
+
+    it("leaves relative imports to the project resolver when the project defines exports", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        await mkdir(configDirectory, { recursive: true });
+        await writeTextFile(
+          `${configDirectory}/package.json`,
+          JSON.stringify({ name: "config-project", exports: "./index.js" }),
+        );
+        await writeTextFile(`${projectDir}/shared.js`, 'export default "shared";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import shared from "../shared.js";\nexport default { title: shared };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/shared.js");
+      }, { prefix: "vf-config-relative-import-" });
+    });
+
+    it("continues through unusable package export array entries", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-array-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-array-package",
+            type: "module",
+            exports: [null, "invalid-target", "./node_modules/bad.js", "./index.js"],
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "array";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-array-package";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/config-array-package/index.js");
+      }, { prefix: "vf-config-export-array-" });
+    });
+
+    it("gives bare Node built-ins precedence over shadow packages", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/fs`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "fs", exports: "./shadow.js" }),
+        );
+        await writeTextFile(`${packageDir}/shadow.js`, "export default 'shadow';\n");
+
+        const source = 'import fs from "fs";\nexport default { title: String(fs) };\n';
+        const rewritten = await rewriteProjectConfigImportsFromProject(source, configPath);
+
+        assertEquals(rewritten, source);
+        assertEquals(rewritten.includes("/node_modules/fs/shadow.js"), false);
+      }, { prefix: "vf-config-builtin-precedence-" });
+    });
+
+    it("does not fall back to require-only package exports", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-require-only`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-require-only",
+            exports: { require: "./require.cjs" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/require.cjs`, "module.exports = 'require';\n");
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-require-only";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Package import "config-require-only" is not exported',
+        );
+      }, { prefix: "vf-config-require-only-export-" });
+    });
+
+    it("rejects numeric conditional export keys as invalid package configuration", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-numeric-condition`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-numeric-condition",
+            type: "module",
+            exports: { ".": { "0": "./bad.js", default: "./good.js" } },
+          }),
+        );
+        await writeTextFile(`${packageDir}/good.js`, 'export default "good";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-numeric-condition";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          "Package export conditions cannot contain numeric property keys",
+        );
+      }, { prefix: "vf-config-numeric-condition-" });
+    });
+
+    it("preserves invalid package configuration inside export arrays", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-array-condition`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-array-condition",
+            type: "module",
+            exports: [{ "0": "./bad.js", default: "./bad.js" }, "./good.js"],
+          }),
+        );
+        await writeTextFile(`${packageDir}/good.js`, 'export default "good";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-array-condition";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          "Package export conditions cannot contain numeric property keys",
+        );
+      }, { prefix: "vf-config-array-condition-" });
+    });
+
+    it("rejects invalid active conditional export targets", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-invalid-condition`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-invalid-condition",
+            type: "module",
+            exports: { import: 42, default: "./good.js" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/good.js`, 'export default "good";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "config-invalid-condition";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          "Package export target is invalid",
+        );
+      }, { prefix: "vf-config-invalid-condition-target-" });
+    });
+
+    it("preserves query and fragment suffixes in package export targets", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-suffixed-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-suffixed-package",
+            type: "module",
+            exports: "./index.js?mode=config#entry",
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "suffix";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-suffixed-package";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/config-suffixed-package/index.js?mode=config#entry");
+        assertEquals(rewritten.includes("index.js%3Fmode=config"), false);
+      }, { prefix: "vf-config-export-suffix-" });
+    });
+
+    it("uses the captured URL href getter for package export targets", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-href-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-href-package",
+            type: "module",
+            exports: "./index.js",
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "href";\n');
+
+        const restoreHref = replacePropertyForTest(URL.prototype, "href", {
+          get() {
+            throw new Error("project-controlled URL href getter");
+          },
+        });
+        try {
+          const rewritten = await rewriteProjectConfigImportsFromProject(
+            'import value from "config-href-package";\nexport default value;\n',
+            configPath,
+          );
+          assertStringIncludes(rewritten, "/config-href-package/index.js");
+        } finally {
+          restoreHref();
+        }
+      }, { prefix: "vf-config-captured-href-" });
+    });
+
+    it("uses captured URL accessors for package export containment", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-url-accessor-package`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-url-accessor-package",
+            type: "module",
+            exports: "./index.js",
+          }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "accessors";\n');
+
+        const restores = ["protocol", "hostname", "pathname"].map((key) =>
+          replacePropertyForTest(URL.prototype, key, {
+            get() {
+              throw new Error(`project-controlled URL ${key} getter`);
+            },
+          })
+        );
+        try {
+          const rewritten = await rewriteProjectConfigImportsFromProject(
+            'import value from "config-url-accessor-package";\nexport default value;\n',
+            configPath,
+          );
+          assertStringIncludes(rewritten, "/config-url-accessor-package/index.js");
+        } finally {
+          for (let index = restores.length - 1; index >= 0; index--) restores[index]!();
+        }
+      }, { prefix: "vf-config-captured-url-accessors-" });
+    });
+
+    it("rejects a non-object nearest package manifest", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        await mkdir(configDirectory, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ imports: { "#config": "./ancestor.js" } }),
+        );
+        await writeTextFile(`${configDirectory}/package.json`, "null\n");
+        await writeTextFile(`${projectDir}/ancestor.js`, 'export default "ancestor";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "#config";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          "Package manifest must contain a JSON object",
+        );
+      }, { prefix: "vf-config-non-object-manifest-" });
+    });
+
+    it("rejects dot-relative package import targets", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        await mkdir(configDirectory, { recursive: true });
+        await writeTextFile(
+          `${configDirectory}/package.json`,
+          JSON.stringify({ type: "module", imports: { "#config": "../outside.js" } }),
+        );
+        await writeTextFile(`${projectDir}/outside.js`, 'export default "outside";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "#config";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Package import "#config" is not exported',
+        );
+      }, { prefix: "vf-config-dot-relative-import-target-" });
+    });
+
+    it("rejects encoded separators in bare package specifiers", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/p%2Fq`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "p%2Fq", type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "encoded";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "p%2Fq";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Package import "p%2Fq" is not a valid package specifier',
+        );
+      }, { prefix: "vf-config-encoded-separator-" });
+    });
+
+    it("rejects scheme-shaped imports before project package lookup", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/p:q`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({ name: "p:q", type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(`${packageDir}/index.js`, 'export default "package";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              'import value from "p:q";\nexport default value;\n',
+              configPath,
+            ),
+          TypeError,
+          'Config import "p:q" uses an unsupported URL scheme',
+        );
+      }, { prefix: "vf-config-scheme-shaped-import-" });
+    });
+
+    it("resolves external import-map targets from the declaring package scope", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        await mkdir(configDirectory, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "module", imports: { "#dep": "config-scope-dep" } }),
+        );
+        const rootDependency = `${projectDir}/node_modules/config-scope-dep`;
+        await mkdir(rootDependency, { recursive: true });
+        await writeTextFile(
+          `${rootDependency}/package.json`,
+          JSON.stringify({
+            name: "config-scope-dep",
+            type: "module",
+            exports: "./root.js",
+          }),
+        );
+        await writeTextFile(`${rootDependency}/root.js`, 'export default "root";\n');
+        const nestedDependency = `${configDirectory}/node_modules/config-scope-dep`;
+        await mkdir(nestedDependency, { recursive: true });
+        await writeTextFile(
+          `${nestedDependency}/package.json`,
+          JSON.stringify({
+            name: "config-scope-dep",
+            type: "module",
+            exports: "./nested.js",
+          }),
+        );
+        await writeTextFile(`${nestedDependency}/nested.js`, 'export default "nested";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "#dep";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/node_modules/config-scope-dep/root.js");
+        assertEquals(rewritten.includes("/app/node_modules/config-scope-dep/"), false);
+      }, { prefix: "vf-config-import-map-scope-" });
+    });
+
+    it("stops package lookup at the nearest installed directory", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        const nearerPackage = `${configDirectory}/node_modules/config-nearest-pkg`;
+        const ancestorPackage = `${projectDir}/node_modules/config-nearest-pkg`;
+        await mkdir(nearerPackage, { recursive: true });
+        await mkdir(ancestorPackage, { recursive: true });
+        // The nearer installation has no package.json: project resolution
+        // stops there and uses its legacy entry point.
+        await writeTextFile(`${nearerPackage}/index.js`, 'module.exports = "nearer";\n');
+        await writeTextFile(
+          `${ancestorPackage}/package.json`,
+          JSON.stringify({
+            name: "config-nearest-pkg",
+            type: "module",
+            exports: "./ancestor.js",
+          }),
+        );
+        await writeTextFile(`${ancestorPackage}/ancestor.js`, 'export default "ancestor";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "config-nearest-pkg";\nexport default { title: value };\n',
+          configPath,
+        );
+
+        assertStringIncludes(rewritten, "/app/node_modules/config-nearest-pkg/index.js");
+        assertEquals(rewritten.includes("/ancestor.js"), false);
+      }, { prefix: "vf-config-nearest-install-" });
+    });
+
+    it("preserves non-not-found dynamic import resolution failures", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageDir = `${projectDir}/node_modules/config-require-only-dynamic`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "config-require-only-dynamic",
+            exports: { require: "./require.cjs" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/require.cjs`, "module.exports = 'require';\n");
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'await import("config-require-only-dynamic");\nexport default {};\n',
+          configPath,
+        );
+
+        const error = await assertRejects(() =>
+          import(`data:application/javascript;base64,${btoa(rewritten)}`)
+        );
+        assertInstanceOf(error, Error);
+        assertStringIncludes(
+          error.message,
+          'Package import "config-require-only-dynamic" is not exported',
+        );
+        assertEquals(error.message.includes("Cannot find package"), false);
+      }, { prefix: "vf-config-preserved-dynamic-failure-" });
+    });
+  });
+
+  describe("Bun async config preflight", () => {
+    it("distinguishes module-evaluation awaits from deferred awaits", async () => {
+      assertEquals(
+        await __bunConfigHasTopLevelAwaitForTests(
+          "const value = await Promise.resolve(1); export default value;",
+        ),
+        true,
+      );
+      assertEquals(
+        await __bunConfigHasTopLevelAwaitForTests(
+          "const value = { [await Promise.resolve('key')]: true }; export default value;",
+        ),
+        true,
+      );
+      assertEquals(
+        await __bunConfigHasTopLevelAwaitForTests(
+          "async function deferred() { await Promise.resolve(); } export default deferred;",
+        ),
+        false,
+      );
+    });
   });
 
   describe("clearConfigCache", () => {
     it("should not throw when called on empty cache", () => {
       clearConfigCache();
+    });
+
+    it("evicts Bun project modules without ambient array iteration or Set.add", () => {
+      const cacheKey = "/project/config-helper.js";
+      const cache = TestObjectCreate(null) as Record<string, unknown>;
+      cache[cacheKey] = { children: [] };
+      const entry = {
+        cache,
+        keys: [cacheKey],
+        projectDirectory: "/project",
+      };
+      const restoreIterator = replacePropertyForTest(
+        Array.prototype,
+        Symbol.iterator,
+        {
+          value: () => {
+            throw new Error("ambient array iterator used");
+          },
+        },
+      );
+      const restoreSetAdd = replacePropertyForTest(Set.prototype, "add", {
+        value: () => {
+          throw new Error("ambient Set.add used");
+        },
+      });
+      try {
+        __evictBunProjectConfigModulesForTests(entry);
+      } finally {
+        restoreSetAdd();
+        restoreIterator();
+      }
+
+      assertEquals(TestObjectGetOwnPropertyDescriptor(cache, cacheKey), undefined);
+    });
+
+    it("retains descendants of Bun config modules referenced by external modules", () => {
+      const consumerKey = "/project/application-consumer.js";
+      const entryKey = "/project/config-entry.js";
+      const helperKey = "/project/config-helper.js";
+      const disposableKey = "/project/config-disposable.js";
+      const cache = TestObjectCreate(null) as Record<string, unknown>;
+      cache[consumerKey] = {
+        children: [{ filename: entryKey, id: entryKey }],
+      };
+      cache[entryKey] = {
+        children: [{ filename: helperKey, id: helperKey }],
+      };
+      cache[helperKey] = { children: [] };
+      cache[disposableKey] = { children: [] };
+
+      __evictBunProjectConfigModulesForTests({
+        cache,
+        keys: [entryKey, helperKey, disposableKey],
+        projectDirectory: "/project",
+      });
+
+      assert(TestObjectGetOwnPropertyDescriptor(cache, entryKey) !== undefined);
+      assert(TestObjectGetOwnPropertyDescriptor(cache, helperKey) !== undefined);
+      assertEquals(TestObjectGetOwnPropertyDescriptor(cache, disposableKey), undefined);
+    });
+
+    it("evicts Bun config modules despite unrelated post-load application modules", () => {
+      const postLoadKey = "/project/unrelated-post-load.js";
+      const helperKey = "/project/config-helper.js";
+      const cache = TestObjectCreate(null) as Record<string, unknown>;
+      cache[postLoadKey] = { children: [] };
+      cache[helperKey] = { children: [] };
+
+      __evictBunProjectConfigModulesForTests({
+        cache,
+        keys: [helperKey],
+        projectDirectory: "/project",
+      });
+
+      // A project-local module that appeared after config evaluation, with no
+      // observable edge into the tracked graph, must not pin stale config
+      // helpers in require.cache across reloads.
+      assertEquals(TestObjectGetOwnPropertyDescriptor(cache, helperKey), undefined);
+      assert(TestObjectGetOwnPropertyDescriptor(cache, postLoadKey) !== undefined);
+    });
+
+    it("retains config modules that post-load application modules reference", () => {
+      const postLoadKey = "/project/consuming-post-load.js";
+      const helperKey = "/project/config-helper.js";
+      const disposableKey = "/project/config-disposable.js";
+      const cache = TestObjectCreate(null) as Record<string, unknown>;
+      cache[postLoadKey] = { children: [{ filename: helperKey, id: helperKey }] };
+      cache[helperKey] = { children: [] };
+      cache[disposableKey] = { children: [] };
+
+      __evictBunProjectConfigModulesForTests({
+        cache,
+        keys: [helperKey, disposableKey],
+        projectDirectory: "/project",
+      });
+
+      assert(TestObjectGetOwnPropertyDescriptor(cache, helperKey) !== undefined);
+      assertEquals(TestObjectGetOwnPropertyDescriptor(cache, disposableKey), undefined);
+    });
+
+    it("retains accessor-backed Bun modules referenced through a proxied cache", () => {
+      // Bun's require cache serves entries through gets while reporting
+      // undefined own-descriptor values, and its Module objects expose
+      // children/filename/id through prototype accessors.
+      class AccessorModule {
+        #filename: string;
+        #children: AccessorModule[];
+        constructor(filename: string, children: AccessorModule[]) {
+          this.#filename = filename;
+          this.#children = children;
+        }
+        get filename(): string {
+          return this.#filename;
+        }
+        get id(): string {
+          return this.#filename;
+        }
+        get children(): AccessorModule[] {
+          return this.#children;
+        }
+      }
+      const consumerKey = "/project/application-consumer.cjs";
+      const helperKey = "/project/config-helper.cjs";
+      const disposableKey = "/project/config-disposable.cjs";
+      const backing = new Map<string, AccessorModule>();
+      const helper = new AccessorModule(helperKey, []);
+      backing.set(consumerKey, new AccessorModule(consumerKey, [helper]));
+      backing.set(helperKey, helper);
+      backing.set(disposableKey, new AccessorModule(disposableKey, []));
+      const cache = new Proxy(TestObjectCreate(null) as Record<string, unknown>, {
+        ownKeys: () => Array.from(backing.keys()),
+        getOwnPropertyDescriptor: (_target, key) =>
+          typeof key === "string" && backing.has(key)
+            ? { value: undefined, writable: true, enumerable: true, configurable: true }
+            : undefined,
+        get: (_target, key) => typeof key === "string" ? backing.get(key) : undefined,
+        deleteProperty: (_target, key) => {
+          if (typeof key === "string") backing.delete(key);
+          return true;
+        },
+      });
+
+      __evictBunProjectConfigModulesForTests({
+        cache,
+        keys: [helperKey, disposableKey],
+        projectDirectory: "/project",
+      });
+
+      assert(backing.has(helperKey));
+      assertEquals(backing.has(disposableKey), false);
+    });
+
+    it("widens Bun module tracking only to declaring workspace members", () => {
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
+          "packages/*",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app/nested", [
+          "packages/*",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", {
+          packages: ["packages/*"],
+        }),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/apps/deep/site", [
+          "apps/**",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/tools/cli", [
+          "tools/cli",
+        ]),
+        true,
+      );
+      // The reported widening bug: a config under packages/ must not adopt a
+      // root that only declares services/*.
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
+          "services/*",
+        ]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages", ["packages/*"]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo", ["packages/*"]),
+        false,
+      );
+      // Negation patterns are ignored rather than trusted for widening.
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
+          "!packages/app",
+        ]),
+        false,
+      );
+    });
+
+    it("matches Bun workspace brace and character-class globs", () => {
+      for (const member of ["app", "api"]) {
+        assertEquals(
+          __isBunWorkspaceMemberDirectoryForTests("/repo", `/repo/packages/${member}`, [
+            "packages/{app,api}",
+          ]),
+          true,
+        );
+      }
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/web", [
+          "packages/{app,api}",
+        ]),
+        false,
+      );
+      // An alternative may span a path separator.
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/tools/nested/lib", [
+          "{packages/app,tools/nested/lib}",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
+          "packages/[ab]*",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/web", [
+          "packages/[ab]*",
+        ]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/lib-c", [
+          "packages/lib-[a-d]",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/lib-z", [
+          "packages/lib-[a-d]",
+        ]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
+          "packages/[!x]*",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/xen", [
+          "packages/[!x]*",
+        ]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/ab", [
+          "packages/a?",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/abc", [
+          "packages/a?",
+        ]),
+        false,
+      );
+      // Unmatched braces and brackets stay literal.
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/{app", [
+          "packages/{app",
+        ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/[a", [
+          "packages/[a",
+        ]),
+        true,
+      );
+
+      const alternatives = Array.from({ length: 70 }, (_, index) => `p${index}`).join(",");
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/p69", [
+          `packages/{${alternatives}}`,
+        ]),
+        true,
+      );
     });
 
     it("should invalidate previously cached configs", async () => {
