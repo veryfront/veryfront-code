@@ -116,13 +116,10 @@ resolve: {
   "missing-deps": {
     message: "Required dependencies not found",
     steps: [
-      "Check that React is in your import map",
-      "Ensure all peer dependencies are included",
+      "Install the package named in the error with your project package manager",
+      "Ensure the dependency is declared in your project manifest or import map",
       "Run 'veryfront doctor' to verify setup",
     ],
-    example: `// Minimum required imports
-"react": "https://esm.sh/react@19.1.1",
-"react-dom": "https://esm.sh/react-dom@19.1.1"`,
   },
 };
 

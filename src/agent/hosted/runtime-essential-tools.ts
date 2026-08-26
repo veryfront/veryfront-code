@@ -6,8 +6,16 @@ export type ResolveHostedRuntimeAllowedToolNamesInput = {
   allowedToolNames?: HostedRuntimeAllowedToolNames;
   localToolNames: Iterable<string>;
   availableSkillIds?: readonly string[];
-  /** Preserve universal skill infrastructure for an empty configured selector. */
-  includeRuntimeEssentialToolsWhenEmpty?: boolean;
+  /**
+   * Provenance marker: the selector was built from the agent's own trusted
+   * config (no request-level `allowedTools` override), which carries the
+   * legacy runtime-essential inclusion semantics. Config-derived selectors
+   * keep universal skill infrastructure when empty and keep skill delegation
+   * (`invoke_agent`) for empty and non-empty configured sets alike.
+   * Request- or delegation-derived selectors must leave this unset so they
+   * never gain essential tools the caller did not request.
+   */
+  configDerivedSelector?: boolean;
 };
 
 // Script execution is intentionally not runtime-essential under allowlists:
@@ -53,7 +61,7 @@ export function resolveHostedRuntimeAllowedToolNames(
     return resolvedToolNames;
   }
 
-  if (allowedToolNames.size === 0 && !input.includeRuntimeEssentialToolsWhenEmpty) {
+  if (allowedToolNames.size === 0 && !input.configDerivedSelector) {
     return allowedToolNames;
   }
 
@@ -70,7 +78,7 @@ export function resolveHostedRuntimeAllowedToolNames(
   // reference tool. Explicit request-level empty allowlists return above and
   // remain deny-all.
   if (
-    (resolvedToolNames.size > 0 || input.includeRuntimeEssentialToolsWhenEmpty) &&
+    (resolvedToolNames.size > 0 || input.configDerivedSelector) &&
     (!hasKnownSkillManifest || hasAuthorizedSkills)
   ) {
     for (const toolName of SKILL_RUNTIME_TOOL_NAMES) {
@@ -80,13 +88,15 @@ export function resolveHostedRuntimeAllowedToolNames(
     }
   }
 
-  if (!hasAuthorizedSkills) {
-    return resolvedToolNames;
-  }
-
-  for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {
-    if (localToolNames.has(toolName)) {
-      resolvedToolNames.add(toolName);
+  // Delegation is keyed on selector provenance, not on emptiness: a legacy
+  // skill-enabled agent keeps invoke_agent whether its trusted config omits
+  // tools or declares a non-empty set, while a request- or delegation-derived
+  // allowlist never has delegation appended to it.
+  if (input.configDerivedSelector && hasAuthorizedSkills) {
+    for (const toolName of SKILL_DELEGATION_TOOL_NAMES) {
+      if (localToolNames.has(toolName)) {
+        resolvedToolNames.add(toolName);
+      }
     }
   }
 

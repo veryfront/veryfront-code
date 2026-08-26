@@ -202,15 +202,29 @@ describe("RSC action authorization provider", () => {
     let observedAuthorization: string | undefined;
     let observedHeaders: Readonly<Record<string, string | undefined>> | undefined;
     let observedProject: unknown;
+    let observedIdentity: unknown;
     let observedSameSignal = true;
     let providerMutationSucceeded = true;
-    const actionParams = params(counters, [original]);
+    const applicationIdentity = {
+      issuer: "https://issuer.example.test",
+      subject: "user-123",
+      email: "user@example.test",
+      groups: ["editors"],
+      roles: ["author"],
+      groupsComplete: true,
+      claims: { department: "docs" },
+    };
+    const actionParams = {
+      ...params(counters, [original]),
+      applicationIdentity,
+    };
     const originalSignal = actionParams.req.signal;
     const provider: RscActionAuthorizationProvider = {
       authorize(providerRequest, context) {
         observedHasBody = Object.hasOwn(providerRequest, "body");
         observedAuthorization = providerRequest.headers.authorization;
         observedHeaders = providerRequest.headers;
+        observedIdentity = Object.getOwnPropertyDescriptor(providerRequest, "identity")?.value;
         observedSameSignal = providerRequest.signal === originalSignal;
         observedProject = {
           projectId: context.projectId,
@@ -247,6 +261,13 @@ describe("RSC action authorization provider", () => {
       cookie: "session=application-cookie",
     });
     assertEquals(observedSameSignal, false);
+    assertEquals(observedIdentity, applicationIdentity);
+    assertEquals(observedIdentity === applicationIdentity, false);
+    assertEquals(Object.isFrozen(observedIdentity), true);
+    assertEquals(
+      Object.isFrozen((observedIdentity as { claims: object }).claims),
+      true,
+    );
     assertEquals(providerMutationSucceeded, false);
     assertEquals(observedProject, {
       projectId: "project-id",

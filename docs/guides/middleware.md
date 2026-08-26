@@ -218,6 +218,13 @@ A signed channel dispatch bypasses root middleware on the same terms. This is th
 
 Production loading is fail-closed. If a declared middleware file cannot be read, compiled, or validated as a middleware export, a dedicated server does not start and a shared server returns an error only for the affected project request. Failed shared loads are not cached, so a corrected deployment can recover without restarting unrelated projects. Development loading remains nonfatal and reports the loading error in the server log.
 
+## Application authorization after login
+
+Use [Application authentication](./application-auth.md) when the whole app needs
+a framework-owned login boundary. Veryfront admits the request before
+middleware runs, then middleware can apply application authorization using the
+normalized identity. Keep per-route policy in middleware or route code.
+
 ## Example: site-wide HTTP Basic Auth
 
 A common use of root middleware is password-gating an entire site: a staging

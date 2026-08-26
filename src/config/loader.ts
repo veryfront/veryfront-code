@@ -1,6 +1,13 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
-import { extname, join, resolve, toFileUrl } from "#veryfront/compat/path/index.ts";
+import {
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  resolve,
+  toFileUrl,
+} from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   isExtendedFSAdapter,
@@ -11,6 +18,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
+import { isValidServerExternalPackageName } from "./server-external-packages.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -20,6 +28,7 @@ import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
   CONFIG_VALIDATION_FAILED,
+  DEPENDENCY_MISSING,
   INITIALIZATION_ERROR,
   SERVICE_OVERLOADED,
 } from "#veryfront/errors/error-registry.ts";
@@ -34,6 +43,8 @@ import { currentRequestContext } from "#veryfront/platform/request-context-acces
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
 import {
@@ -56,8 +67,11 @@ import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 // crosses a tenant boundary later in the same process, so its cache identity,
 // singleflight state, and immutable result must not depend on ambient methods.
 const IntrinsicMap = Map;
+const IntrinsicSet = Set;
 const IntrinsicPromise = Promise;
 const IntrinsicTextDecoder = TextDecoder;
+const IntrinsicErrorPrototype = Error.prototype;
+const IntrinsicObjectPrototype = Object.prototype;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
 const IntrinsicAbortController = AbortController;
@@ -81,14 +95,35 @@ const PromiseReject = Promise.reject;
 const PromiseResolve = Promise.resolve;
 const PromiseWithResolvers = Promise.withResolvers;
 const ReflectApply = Reflect.apply;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const ReflectGet = Reflect.get;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+const StringPrototypeTrim = String.prototype.trim;
+const SetPrototypeHas = Set.prototype.has;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
+const SymbolToPrimitive = Symbol.toPrimitive;
 const SymbolSpecies = Symbol.species;
+const SymbolToStringTag = Symbol.toStringTag;
 const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
+const bunDescriptor = ObjectGetOwnPropertyDescriptor(globalThis, "Bun");
+const CapturedBun = bunDescriptor && "value" in bunDescriptor ? bunDescriptor.value : undefined;
+const bunResolveSyncDescriptor = typeof CapturedBun === "object" && CapturedBun !== null
+  ? ObjectGetOwnPropertyDescriptor(CapturedBun, "resolveSync")
+  : undefined;
+const CapturedBunResolveSync = bunResolveSyncDescriptor && "value" in bunResolveSyncDescriptor &&
+    typeof bunResolveSyncDescriptor.value === "function"
+  ? bunResolveSyncDescriptor.value as (specifier: string, from: string) => string
+  : undefined;
 const abortControllerSignalGetter = ObjectGetOwnPropertyDescriptor(
   AbortController.prototype,
   "signal",
@@ -112,6 +147,9 @@ const intrinsicMapSizeGetter = mapSizeGetter as () => number;
 const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions();
 const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
 const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
+const NODE_BUILTIN_PACKAGE_NAMES: ReadonlySet<string> = new IntrinsicSet(NODE_BUILTINS);
+
+type RuntimeReflectionRecord = Record<PropertyKey, unknown>;
 
 function freezeObject<T>(value: T): T {
   return ReflectApply(ObjectFreeze, Object, [value]) as T;
@@ -136,6 +174,10 @@ function isFrozen(value: object): boolean {
 
 function ownKeys(value: object): PropertyKey[] {
   return ReflectApply(ReflectOwnKeys, Reflect, [value]) as PropertyKey[];
+}
+
+function reflectGet(value: RuntimeReflectionRecord, key: PropertyKey): unknown {
+  return ReflectApply(ReflectGet, Reflect, [value, key]) as unknown;
 }
 
 function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -1586,6 +1628,46 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
+const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
+const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
+
+function replaceMatchesWithCapturedExec(
+  value: string,
+  pattern: RegExp,
+  replacement: string,
+): string {
+  pattern.lastIndex = 0;
+  let output = "";
+  let offset = 0;
+  try {
+    while (true) {
+      const match = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
+        | RegExpExecArray
+        | null;
+      if (match === null) break;
+      const matched = match[0];
+      if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
+      output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
+      output += replacement;
+      offset = pattern.lastIndex;
+    }
+    output += ReflectApply(StringPrototypeSlice, value, [offset]) as string;
+    return output;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function redactMachinePaths(value: string): string {
+  let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
+  return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
+}
 
 /**
  * Return the one-line summary of `error`, or `undefined` when it has none.
@@ -1597,18 +1679,24 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
  * prefix in a status-400 detail.
  */
 function summarizeConfigLoadCause(error: unknown): string | undefined {
-  const message = error instanceof Error
-    ? error.message
-    : typeof error === "string"
+  const message = typeof error === "string"
     ? error
+    : isIntrinsicError(error)
+    ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
   const redacted = sanitizeUrlCredentials(message);
-  const firstLine = redacted.split("\n", 1)[0]?.replace(CONTROL_CHARACTERS, " ").trim() ?? "";
-  if (firstLine.length === 0) return undefined;
-  return firstLine.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
-    ? `${firstLine.slice(0, MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1)}…`
-    : firstLine;
+  const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
+    "";
+  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
+  const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
+  if (clean.length === 0) return undefined;
+  return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
+    ? `${ReflectApply(StringPrototypeSlice, clean, [
+      0,
+      MAX_CONFIG_LOAD_CAUSE_CHARACTERS - 1,
+    ]) as string}…`
+    : clean;
 }
 
 /**
@@ -1628,10 +1716,622 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
     : `Failed to load ${configFile}: ${summary}`;
 }
 
+/**
+ * The installable package a resolution failure names, or `undefined`.
+ *
+ * Only a bare specifier is fixable by installing dependencies. Every runtime
+ * reports a missing relative *file* through the same phrasing as a missing
+ * package, so telling that reader to run `npm install` for a file they have
+ * not written yet would be the same misdirection this classification exists to
+ * remove. The shape of the specifier, not the error code, is what separates
+ * them.
+ *
+ * Rejected here, each for a reader an install would not help:
+ * - `./x`, `/x`, `\\x`, and UNC paths are files, on either path separator;
+ * - `#x` is a package-internal subpath import;
+ * - any URI scheme, which also covers `C:\\...` since a drive letter parses as
+ *   one;
+ * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
+ *   already rejects: no package named `@/lib/config` exists to install.
+ * - Node built-in roots, where an invalid subpath cannot be fixed by installing
+ *   a package with the same name;
+ * - npm-reserved roots, which package managers reject even though their lexical
+ *   shape resembles a package name.
+ *
+ * Returns the package name rather than the whole specifier. That is the part
+ * the reader installs -- `pkg` for `pkg/deep/path` -- and it drops the subpath,
+ * which is the only part of a bare specifier that can carry arbitrary
+ * author-written text. The result is bounded and stripped of control characters
+ * for the same reason `summarizeConfigLoadCause` does it: this string reaches
+ * `VeryfrontError.message` and its context, which callers log.
+ */
+function missingPackageName(specifier: string): string | undefined {
+  const hasNpmPrefix = ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
+  const hasJsrPrefix = ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean;
+  const hasRuntimePrefix = hasNpmPrefix || hasJsrPrefix;
+  const bare = hasRuntimePrefix
+    ? ReflectApply(StringPrototypeSlice, specifier, [4]) as string
+    : specifier;
+  if (bare.length === 0) return undefined;
+  if (ReflectApply(RegExpPrototypeExec, /^[./\\#]/, [bare]) !== null) return undefined;
+  if (ReflectApply(StringPrototypeIncludes, bare, ["\\"]) as boolean) return undefined;
+  if (ReflectApply(RegExpPrototypeExec, /^[a-zA-Z][a-zA-Z0-9+.-]*:/, [bare]) !== null) {
+    return undefined;
+  }
+
+  const parsed = parseBarePackageSpecifier(bare);
+  if (parsed === null) return undefined;
+
+  // Only `npm:`/`jsr:` specifiers carry a version. Node and Bun cannot resolve a
+  // plain `left-pad@1.3.0` at all, so installing `left-pad` would not help --
+  // that is invalid import syntax, not an absent package.
+  if (!hasRuntimePrefix && parsed.version !== null) return undefined;
+
+  // A specifier with a subpath cannot be classified from the message alone.
+  // Node reports `require("installed-pkg/missing")` for an *installed* package
+  // as `Cannot find module 'installed-pkg/missing'`, identical in shape to a
+  // package that is genuinely absent -- so naming the package root would tell
+  // a reader to install something they already have, and the subpath, which is
+  // the real fault, is not installable at all. Falling through to the parse
+  // error keeps the runtime's own message, which names the whole specifier.
+  if (parsed.subpath !== null) return undefined;
+  if (
+    !hasRuntimePrefix &&
+    ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [parsed.packageName]) as boolean
+  ) {
+    return undefined;
+  }
+  if (
+    hasJsrPrefix
+      ? !isValidServerExternalPackageName(parsed.packageName)
+      : !isInstallableLegacyNpmPackageName(parsed.packageName)
+  ) {
+    return undefined;
+  }
+  const lowercasePackageName = ReflectApply(
+    StringPrototypeToLowerCase,
+    parsed.packageName,
+    [],
+  ) as string;
+  if (lowercasePackageName === "node_modules" || lowercasePackageName === "favicon.ico") {
+    return undefined;
+  }
+
+  const replaced = replaceMatchesWithCapturedExec(
+    sanitizeUrlCredentials(parsed.packageName),
+    CONTROL_CHARACTERS,
+    " ",
+  );
+  const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
+  if (clean.length === 0) return undefined;
+  return clean;
+}
+
+const LEGACY_NPM_PACKAGE_NAME_PATTERN =
+  /^(?:[A-Za-z0-9-][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
+const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
+
+/** Accept existing npm names without broadening server-external configuration. */
+function isInstallableLegacyNpmPackageName(packageName: string): boolean {
+  return packageName.length <= MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH &&
+    ReflectApply(
+        RegExpPrototypeExec,
+        LEGACY_NPM_PACKAGE_NAME_PATTERN,
+        [packageName],
+      ) !== null;
+}
+
+/**
+ * How far to walk `cause` when looking for the runtime's resolution error.
+ *
+ * The loader wraps import failures on its way out, so the runtime's own error
+ * is rarely the outermost one. The bound keeps a self-referential chain from
+ * spinning.
+ */
+const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
+const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
+
+function isIntrinsicError(value: unknown): value is Error & RuntimeReflectionRecord {
+  if (typeof value !== "object") return false;
+  let prototype: object | null;
+  try {
+    prototype = ReflectApply(ObjectGetPrototypeOf, Object, [value]) as object | null;
+    for (let depth = 0; prototype !== null && depth < 16; depth += 1) {
+      if (prototype === IntrinsicErrorPrototype) return true;
+      prototype = ReflectApply(ObjectGetPrototypeOf, Object, [prototype]) as object | null;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function readOwnDataString(
+  value: RuntimeReflectionRecord,
+  key: PropertyKey,
+): string | undefined {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+  return readDataDescriptorString(descriptor);
+}
+
+function readDataDescriptorString(
+  descriptor: PropertyDescriptor | undefined,
+): string | undefined {
+  if (descriptor === undefined || !("value" in descriptor)) return undefined;
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
+}
+
+function readAccessorString(
+  value: RuntimeReflectionRecord,
+  key: PropertyKey,
+): string | undefined {
+  let accessorValue: unknown;
+  try {
+    accessorValue = reflectGet(value, key);
+  } catch {
+    return undefined;
+  }
+  return typeof accessorValue === "string" ? accessorValue : undefined;
+}
+
+function isBunResolveMessagePrototypeAccessor(
+  descriptor: PropertyDescriptor | undefined,
+  options: Readonly<{ hasSetter: boolean }>,
+): boolean {
+  return descriptor !== undefined &&
+    typeof descriptor.get === "function" &&
+    (options.hasSetter ? typeof descriptor.set === "function" : descriptor.set === undefined) &&
+    descriptor.enumerable === true &&
+    descriptor.configurable === false &&
+    !("value" in descriptor);
+}
+
+function isBunResolveMessagePrototypeData(
+  descriptor: PropertyDescriptor | undefined,
+  options: Readonly<{
+    type: "function" | "string";
+    writable: boolean;
+    enumerable: boolean;
+    configurable: boolean;
+    value?: string;
+  }>,
+): boolean {
+  if (
+    descriptor === undefined ||
+    !("value" in descriptor) ||
+    descriptor.writable !== options.writable ||
+    descriptor.enumerable !== options.enumerable ||
+    descriptor.configurable !== options.configurable ||
+    typeof descriptor.value !== options.type
+  ) {
+    return false;
+  }
+
+  return options.value === undefined || descriptor.value === options.value;
+}
+
+function hasReducedBunResolveMessagePrototypeSurface(
+  prototype: RuntimeReflectionRecord,
+): boolean {
+  const keys = ownKeys(prototype);
+  if (keys.length !== 3) return false;
+
+  let hasCode = false;
+  let hasMessage = false;
+  let hasName = false;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "code") {
+      hasCode = true;
+    } else if (key === "message") {
+      hasMessage = true;
+    } else if (key === "name") {
+      hasName = true;
+    } else {
+      return false;
+    }
+  }
+
+  return hasCode && hasMessage && hasName;
+}
+
+function hasNativeBunResolveMessagePrototypeSurface(
+  prototype: RuntimeReflectionRecord,
+): boolean {
+  const keys = ownKeys(prototype);
+  if (keys.length !== 15) return false;
+
+  let hasCode = false;
+  let hasColumn = false;
+  let hasImportKind = false;
+  let hasLevel = false;
+  let hasLine = false;
+  let hasMessage = false;
+  let hasPosition = false;
+  let hasReferrer = false;
+  let hasSpecifier = false;
+  let hasToJSON = false;
+  let hasToString = false;
+  let hasName = false;
+  let hasConstructor = false;
+  let hasToPrimitive = false;
+  let hasToStringTag = false;
+
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "code") {
+      hasCode = true;
+    } else if (key === "column") {
+      hasColumn = true;
+    } else if (key === "importKind") {
+      hasImportKind = true;
+    } else if (key === "level") {
+      hasLevel = true;
+    } else if (key === "line") {
+      hasLine = true;
+    } else if (key === "message") {
+      hasMessage = true;
+    } else if (key === "position") {
+      hasPosition = true;
+    } else if (key === "referrer") {
+      hasReferrer = true;
+    } else if (key === "specifier") {
+      hasSpecifier = true;
+    } else if (key === "toJSON") {
+      hasToJSON = true;
+    } else if (key === "toString") {
+      hasToString = true;
+    } else if (key === "name") {
+      hasName = true;
+    } else if (key === "constructor") {
+      hasConstructor = true;
+    } else if (key === SymbolToPrimitive) {
+      hasToPrimitive = true;
+    } else if (key === SymbolToStringTag) {
+      hasToStringTag = true;
+    } else {
+      return false;
+    }
+  }
+
+  if (
+    !hasCode ||
+    !hasColumn ||
+    !hasImportKind ||
+    !hasLevel ||
+    !hasLine ||
+    !hasMessage ||
+    !hasPosition ||
+    !hasReferrer ||
+    !hasSpecifier ||
+    !hasToJSON ||
+    !hasToString ||
+    !hasName ||
+    !hasConstructor ||
+    !hasToPrimitive ||
+    !hasToStringTag
+  ) {
+    return false;
+  }
+
+  return isBunResolveMessagePrototypeAccessor(
+    getOwnPropertyDescriptor(prototype, "column"),
+    { hasSetter: false },
+  ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "importKind"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "level"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "line"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "position"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "referrer"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeAccessor(
+      getOwnPropertyDescriptor(prototype, "specifier"),
+      { hasSetter: false },
+    ) &&
+    isBunResolveMessagePrototypeData(getOwnPropertyDescriptor(prototype, "toJSON"), {
+      type: "function",
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    }) &&
+    isBunResolveMessagePrototypeData(getOwnPropertyDescriptor(prototype, "toString"), {
+      type: "function",
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    }) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, "constructor"),
+      {
+        type: "function",
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      },
+    ) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, SymbolToPrimitive),
+      {
+        type: "function",
+        writable: false,
+        enumerable: false,
+        configurable: true,
+      },
+    ) &&
+    isBunResolveMessagePrototypeData(
+      getOwnPropertyDescriptor(prototype, SymbolToStringTag),
+      {
+        type: "string",
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        value: "ResolveMessage",
+      },
+    );
+}
+
+function hasBunResolveMessagePrototypeSurface(prototype: RuntimeReflectionRecord): boolean {
+  return hasReducedBunResolveMessagePrototypeSurface(prototype) ||
+    hasNativeBunResolveMessagePrototypeSurface(prototype);
+}
+
+function isBunResolveMessageAccessorObject(value: RuntimeReflectionRecord): boolean {
+  try {
+    if (ownKeys(value).length !== 0) return false;
+    if (getOwnPropertyDescriptor(value, "code") !== undefined) return false;
+    if (getOwnPropertyDescriptor(value, "message") !== undefined) return false;
+
+    const rawPrototype = getPrototypeOf(value);
+    if (rawPrototype === null || getPrototypeOf(rawPrototype) !== IntrinsicObjectPrototype) {
+      return false;
+    }
+    const prototype = rawPrototype as RuntimeReflectionRecord;
+    if (!hasBunResolveMessagePrototypeSurface(prototype)) {
+      return false;
+    }
+    if (
+      !isBunResolveMessagePrototypeAccessor(
+        getOwnPropertyDescriptor(prototype, "code"),
+        { hasSetter: false },
+      )
+    ) {
+      return false;
+    }
+    if (
+      !isBunResolveMessagePrototypeAccessor(
+        getOwnPropertyDescriptor(prototype, "message"),
+        { hasSetter: true },
+      )
+    ) {
+      return false;
+    }
+
+    const name = readDataDescriptorString(
+      getOwnPropertyDescriptor(prototype, "name"),
+    );
+    return name === "ResolveMessage";
+  } catch {
+    return false;
+  }
+}
+
+function missingPackageNameFromBunResolveMessageObject(
+  value: RuntimeReflectionRecord,
+): string | undefined {
+  const ownCode = readOwnDataString(value, "code");
+  const ownMessage = readOwnDataString(value, "message");
+  const hasBunResolveMessageAccessors = ownCode === undefined || ownMessage === undefined
+    ? isBunResolveMessageAccessorObject(value)
+    : false;
+  const code = ownCode ??
+    (hasBunResolveMessageAccessors ? readAccessorString(value, "code") : undefined);
+  if (code !== BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE) return undefined;
+  const message = ownMessage ??
+    (hasBunResolveMessageAccessors ? readAccessorString(value, "message") : undefined);
+  if (message === undefined) return undefined;
+  const specifier = reportedMissingSpecifier(message);
+  return specifier === undefined ? undefined : missingPackageName(specifier);
+}
+
+/**
+ * Name the package a config module imports that the runtime cannot resolve.
+ *
+ * A config file whose imports do not resolve is not a malformed config file:
+ * the remedy is installing dependencies, not editing syntax. Classifying it as
+ * a parse error sends the reader to inspect a file that is fine, while the
+ * detail line already carries the real cause.
+ *
+ * Returns `undefined` for resolution failures an install cannot fix -- an
+ * unknown subpath of a package that *is* installed resolves the package and
+ * rejects the export, and its reported specifier (`./config`) is not bare, so
+ * it stays with the parse-error family.
+ */
+function unresolvedConfigDependency(error: unknown): string | undefined {
+  let current: unknown = error;
+  // Captured WeakSet, like the rest of this module: a trusted config can replace
+  // `globalThis.Set` or poison its prototype before throwing, and a cycle guard
+  // that invoked project code would leak that exception in place of the
+  // classification. The walker only tracks objects, so a WeakSet fits.
+  const seen = new IntrinsicWeakSet<object>();
+  for (let depth = 0; depth < MAX_CONFIG_LOAD_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) return undefined;
+    if (weakSetHas(seen, current)) return undefined;
+    weakSetAdd(seen, current);
+    if (!isIntrinsicError(current)) {
+      return missingPackageNameFromBunResolveMessageObject(
+        current as RuntimeReflectionRecord,
+      );
+    }
+    let message: string | undefined;
+    try {
+      message = typeof current.message === "string" ? current.message : undefined;
+    } catch {
+      message = undefined;
+    }
+    const specifier = message === undefined ? undefined : reportedMissingSpecifier(message);
+    const packageName = specifier === undefined ? undefined : missingPackageName(specifier);
+    if (packageName !== undefined) return packageName;
+    // `cause` on a config-thrown error can be a getter that throws. Reading it
+    // defensively, as the sibling `errorChain` does, keeps a hostile accessor
+    // from escaping in place of the classification.
+    try {
+      current = current.cause;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The specifier a runtime says it could not resolve, or `undefined`.
+ *
+ * Anchored on purpose: a config author's own `Setup failed: Module not found
+ * "db"` quotes a resolver phrase without being one, and classifying it as a
+ * missing dependency would hand that reader the wrong remedy.
+ *
+ * Deno appends an ANSI-coloured `hint:` line and an `at <location>` line to its
+ * resolution errors, so the real message is three lines where the pattern
+ * expects one. The first line is retried rather than the anchors loosened.
+ *
+ * These formats are also recognised, for a different purpose, by
+ * `reportedMissingSpecifier` in `src/extensions/first-party-import.ts`. That
+ * module is a published export path whose generated API reference is
+ * CI-checked, so its matcher is deliberately not exported; a runtime whose
+ * phrasing changes needs updating in both places.
+ */
+function reportedMissingSpecifier(message: string): string | undefined {
+  const firstLine = firstLineIfOnlyRuntimeTrailerFollows(message);
+  const candidateCount = firstLine === undefined ? 1 : 2;
+
+  for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
+    const line = candidateIndex === 0 ? message : firstLine ?? message;
+    for (
+      let patternIndex = 0;
+      patternIndex < MISSING_SPECIFIER_PATTERNS.length;
+      patternIndex += 1
+    ) {
+      const pattern = MISSING_SPECIFIER_PATTERNS[patternIndex]!;
+      // Captured intrinsics, like the rest of this module: a trusted config
+      // executes in the shared host realm and can poison `String.prototype`
+      // before throwing, and a classifier that threw would leave the caller
+      // with the poisoned result instead of a VeryfrontError.
+      const match = ReflectApply(RegExpPrototypeExec, pattern, [line]) as
+        | RegExpExecArray
+        | null;
+      if (match?.[1] !== undefined) return match[1];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * What an ANSI SGR sequence leaves behind once its ESC is gone.
+ *
+ * Deno colours its hint and location lines. Stripping the escape with the
+ * existing {@link CONTROL_CHARACTERS} pass leaves `[36m`-shaped residue, which
+ * would otherwise sit between the indent and the keyword and defeat the trailer
+ * test below. Written without the control character itself so the regex stays
+ * within `no-control-regex`; it only ever gates that test, never the specifier
+ * that gets extracted.
+ */
+const SGR_RESIDUE = /\[[0-9;]*m/g;
+
+/** The only Deno trailers this classifier may discard after a resolution error. */
+const RUNTIME_TRAILER_LINE =
+  /^\s*(?:hint:\s+(?:If you want to use (?:the npm|a JSR) package, try running `deno add (?:npm|jsr):[^`]+`|try running `deno add`)|at\s+(?:file|https?|npm|jsr):\S+:\d+:\d+)$/;
+
+/**
+ * The first line, but only when every line after it is a runtime trailer.
+ *
+ * Deno appends a `hint:` line and an `at <location>` line to its resolution
+ * errors, so the real message is three lines where the patterns expect one.
+ * Retrying on the first line unconditionally would defeat the end anchor for
+ * *any* multi-line message: `new Error("Cannot find module 'db'\ninitialization
+ * failed")` is an application error, and matching its first line would answer
+ * an uninstalled dependency for it. Requiring the remainder to be trailers
+ * keeps the anchor meaningful for everything else.
+ */
+function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
+  const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
+  if (lines.length < 2) return undefined;
+  for (let index = 1; index < lines.length; index += 1) {
+    const stripped = replaceMatchesWithCapturedExec(lines[index]!, CONTROL_CHARACTERS, "");
+    const line = replaceMatchesWithCapturedExec(stripped, SGR_RESIDUE, "");
+    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
+    if (ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null) {
+      return undefined;
+    }
+  }
+  return lines[0];
+}
+
+/** Anchored resolution-failure formats, per runtime. */
+const MISSING_SPECIFIER_PATTERNS: readonly RegExp[] = [
+  // Node (`imported from <path>`) and Bun (`from '<path>'`, sometimes prefixed
+  // `ResolveMessage:`). The importer suffix is required so ordinary application
+  // errors like `Cannot find module 'db'` do not masquerade as resolver output.
+  /^(?:ResolveMessage:\s+)?(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+(?:imported\s+from\s+(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+|from\s+["'](?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\)[^"']+["'])$/,
+  // Deno's complete single-line form.
+  /^Module not found\s+["']([^"']+)["']\.$/,
+  // Deno, when the importer resolves out of the global npm cache.
+  /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
+  // Deno, for a specifier no import map or node_modules entry claims.
+  /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
+  /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+  // Node CommonJS. Legitimately multi-line, so it is matched against the whole
+  // message; the trailing lines are part of the pattern rather than noise after
+  // it, which is why the first-line retry must not be what handles this form.
+  /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
+];
+
+/**
+ * Build the error for a config module that failed to load.
+ *
+ * Split from the throw sites so every path that loads a config module -- local
+ * file, hosted source, hosted source selection -- classifies the same failure
+ * the same way.
+ */
+function configLoadFailure(configFile: string, error: unknown): VeryfrontError {
+  const dependency = unresolvedConfigDependency(error);
+  if (dependency !== undefined) {
+    return DEPENDENCY_MISSING.create({
+      detail: `${configFile} imports "${dependency}", which is not installed`,
+      cause: error,
+      context: { configFile, packageName: dependency },
+    });
+  }
+  return CONFIG_PARSE_ERROR.create({
+    detail: configLoadFailureDetail(configFile, error),
+    cause: error,
+    context: { configFile },
+  });
+}
+
 async function loadConfigFromTempFile(
   source: string,
   configPath: string,
   loadUrl: (tempFile: string) => string,
+  rewriteSource: (source: string) => Promise<string> = rewriteBareVeryfrontConfigImports,
 ): Promise<unknown> {
   const fs = createFileSystem();
   const originalExt = extname(configPath) || ".mjs";
@@ -1650,7 +2350,7 @@ async function loadConfigFromTempFile(
   try {
     await fs.writeTextFile(
       tempFile,
-      await rewriteBareVeryfrontConfigImports(processedSource),
+      await rewriteSource(processedSource),
     );
     const configModule = await import(loadUrl(tempFile));
     return selectConfigModuleValue(configModule);
@@ -1712,6 +2412,82 @@ export async function rewriteBareVeryfrontConfigImports(source: string): Promise
       rewritten.slice(specifier.e);
   }
   return rewritten;
+}
+
+type ProjectConfigImportResolver = (specifier: string) => string;
+
+function asResolvedConfigSpecifier(resolved: string): string {
+  return isAbsolute(resolved) ? toFileUrl(resolved).href : resolved;
+}
+
+async function createProjectConfigImportResolver(
+  configPath: string,
+): Promise<ProjectConfigImportResolver> {
+  if (isBun && CapturedBunResolveSync && CapturedBun) {
+    const from = dirname(configPath);
+    return (specifier) => {
+      const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [specifier, from]);
+      if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+      return asResolvedConfigSpecifier(resolved);
+    };
+  }
+
+  const { createRequire } = await import("node:module");
+  const projectRequire = createRequire(toFileUrl(configPath));
+  const resolveSpecifier = projectRequire.resolve;
+  return (specifier) => {
+    const resolved = ReflectApply(resolveSpecifier, projectRequire, [specifier]);
+    if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+    return asResolvedConfigSpecifier(resolved);
+  };
+}
+
+function keepsConfigImportSpecifier(specifier: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, specifier, ["data:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["file:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["http:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["https:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["node:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
+}
+
+/** @internal Rewrite staged imports with a resolver bound to their original project. */
+export async function rewriteProjectConfigImports(
+  source: string,
+  resolveSpecifier: ProjectConfigImportResolver,
+): Promise<string> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+
+  const imports = lexer.parse(source);
+  let rewritten = source;
+  for (let index = imports.length - 1; index >= 0; index--) {
+    const imported = imports[index];
+    const specifier = imported?.n;
+    if (!imported || specifier === undefined || specifier === null) continue;
+    const replacement = specifier === "veryfront"
+      ? VERYFRONT_CONFIG_SHIM_URL
+      : keepsConfigImportSpecifier(specifier)
+      ? specifier
+      : resolveSpecifier(specifier);
+    if (replacement === specifier) continue;
+    const before = ReflectApply(StringPrototypeSlice, rewritten, [0, imported.s]) as string;
+    const after = ReflectApply(StringPrototypeSlice, rewritten, [imported.e]) as string;
+    rewritten = before + replacement + after;
+  }
+  return rewritten;
+}
+
+/** @internal Resolve staged config imports from the original project module root. */
+export async function rewriteProjectConfigImportsFromProject(
+  source: string,
+  configPath: string,
+): Promise<string> {
+  return await rewriteProjectConfigImports(
+    source,
+    await createProjectConfigImportResolver(configPath),
+  );
 }
 
 /** @internal */
@@ -1836,6 +2612,35 @@ function loadHostedConfigFromSource(
   );
 }
 
+function isBunAsyncModuleRequireError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const message = ObjectGetOwnPropertyDescriptor(error, "message");
+  if (!message || !("value" in message) || typeof message.value !== "string") {
+    return false;
+  }
+  return ReflectApply(
+    StringPrototypeStartsWith,
+    message.value,
+    ['require() async module "'],
+  ) as boolean &&
+    ReflectApply(
+      StringPrototypeEndsWith,
+      message.value,
+      ['" is unsupported. use "await import()" instead.'],
+    ) as boolean;
+}
+
+async function importFreshBunAsyncConfig(absolutePath: string): Promise<object> {
+  const fs = createFileSystem();
+  const source = await fs.readTextFile(absolutePath);
+  return await loadConfigFromTempFile(
+    source,
+    absolutePath,
+    (tempFile) => toFileUrl(tempFile).href,
+    (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
+  ) as object;
+}
+
 async function loadAndMergeConfig(
   configPath: string,
   cacheKey: string,
@@ -1861,21 +2666,45 @@ async function loadAndMergeConfig(
     );
   }
 
-  // Bun and compiled Deno binaries can't dynamically import TypeScript files directly.
-  // We need to read the source, write to a temp file, and import from there.
-  if (isBun || isDenoCompiled) {
-    logger.debug("Using temp file import for Bun/compiled Deno", {
+  if (isBun) {
+    logger.debug("Using project config import for Bun", { configPath });
+    const absolutePath = resolve(configPath);
+    const { createRequire } = await import("node:module");
+    const projectRequire = createRequire(toFileUrl(absolutePath));
+    // Bun ignores query strings when caching file modules. Its CommonJS bridge
+    // loads TypeScript and ESM config files with project-relative resolution,
+    // and deleting the exact cache entry gives edits and failed imports a real
+    // retry without copying into or writing beside the project.
+    ReflectApply(ReflectDeleteProperty, Reflect, [
+      projectRequire.cache,
+      projectRequire.resolve(absolutePath),
+    ]);
+    let configModule: object;
+    try {
+      configModule = projectRequire(absolutePath) as object;
+    } catch (error) {
+      if (!isBunAsyncModuleRequireError(error)) throw error;
+      configModule = await importFreshBunAsyncConfig(absolutePath);
+    }
+    return validateAndMergeConfig(selectConfigModuleValue(configModule));
+  }
+
+  // Compiled Deno binaries can't dynamically import TypeScript files directly.
+  // Read the source, transpile when needed, and import it from a temp file.
+  if (isDenoCompiled) {
+    logger.debug("Using temp file import for compiled Deno", {
       configPath,
-      isBun,
       isDenoCompiled,
     });
     const fs = createFileSystem();
     const source = await fs.readTextFile(configPath);
+    const absolutePath = resolve(configPath);
 
     const userConfig = await loadConfigFromTempFile(
       source,
-      configPath,
+      absolutePath,
       (tempFile) => toFileUrl(tempFile).href,
+      (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
     );
     logger.debug("Successfully loaded config via temp file", {
       configPath,
@@ -2291,11 +3120,7 @@ function getConfigInternal(
                 }
                 if (isPreservedConfigLoadError(error)) throw error;
                 logger.warn("Failed to load config file", { configFile });
-                throw CONFIG_PARSE_ERROR.create({
-                  detail: configLoadFailureDetail(configFile, error),
-                  cause: error,
-                  context: { configFile },
-                });
+                throw configLoadFailure(configFile, error);
               }
             }
 
@@ -2361,11 +3186,7 @@ function getConfigInternal(
           } catch (error) {
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
-            throw CONFIG_PARSE_ERROR.create({
-              detail: configLoadFailureDetail(configFile, error),
-              cause: error,
-              context: { configFile },
-            });
+            throw configLoadFailure(configFile, error);
           }
         }
 
@@ -2491,11 +3312,7 @@ export async function evaluateHostedConfigSource(
       throw translateHostedConfigEvaluationError(error, options.source.fileName);
     }
     if (isPreservedConfigLoadError(error)) throw error;
-    throw CONFIG_PARSE_ERROR.create({
-      detail: configLoadFailureDetail(options.source.fileName, error),
-      cause: error,
-      context: { configFile: options.source.fileName },
-    });
+    throw configLoadFailure(options.source.fileName, error);
   }
 }
 
