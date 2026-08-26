@@ -25,6 +25,11 @@ interface RootGuard {
 
 type WriterRequest =
   | {
+    operation: "ensure-parents";
+    rootGuard: RootGuard;
+    parentParts: string[];
+  }
+  | {
     operation: "create";
     rootGuard: RootGuard;
     parentParts: string[];
@@ -41,6 +46,11 @@ type WriterRequest =
   };
 
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+
+interface CreatedDirectory {
+  parts: string[];
+  identity: FileIdentity;
+}
 
 function identity(info: Deno.FileInfo): FileIdentity {
   if (typeof info.dev !== "number" || typeof info.ino !== "number") return null;
@@ -107,11 +117,25 @@ async function validatePinnedDirectory(guard: RootGuard): Promise<void> {
   if (await Deno.realPath(".") !== guard.realPath) throw new TypeError("unsafe-directory");
 }
 
-async function enterPinnedParent(parts: unknown): Promise<void> {
+async function enterPinnedParent(
+  parts: unknown,
+  createMissing: boolean,
+): Promise<CreatedDirectory[]> {
   if (!Array.isArray(parts) || parts.length > 64) throw new TypeError("unsafe-directory");
+  const created: CreatedDirectory[] = [];
+  const traversed: string[] = [];
   for (const part of parts) {
     validateName(part);
-    const before = await Deno.lstat(part);
+    let before: Deno.FileInfo;
+    let createdCurrent = false;
+    try {
+      before = await Deno.lstat(part);
+    } catch (error) {
+      if (!createMissing || !(error instanceof Deno.errors.NotFound)) throw error;
+      await Deno.mkdir(part);
+      before = await Deno.lstat(part);
+      createdCurrent = true;
+    }
     if (!before.isDirectory || before.isSymlink) throw new TypeError("unsafe-directory");
     const beforeIdentity = identity(before);
     const beforeRealPath = beforeIdentity === null ? await Deno.realPath(part) : null;
@@ -123,7 +147,10 @@ async function enterPinnedParent(parts: unknown): Promise<void> {
     } else if (await Deno.realPath(".") !== beforeRealPath) {
       throw new TypeError("unsafe-directory");
     }
+    traversed.push(part);
+    if (createdCurrent) created.push({ parts: [...traversed], identity: beforeIdentity });
   }
+  return created;
 }
 
 async function removeOwnedFile(name: string, expected: FileIdentity): Promise<void> {
@@ -183,9 +210,16 @@ async function createFile(request: Extract<WriterRequest, { operation: "create" 
 export async function runSecureScaffoldWriterProcess(): Promise<number> {
   try {
     const request = await readRequest();
-    validateName(request.name);
     await validatePinnedDirectory(request.rootGuard);
-    await enterPinnedParent(request.parentParts);
+    const directories = await enterPinnedParent(
+      request.parentParts,
+      request.operation === "ensure-parents",
+    );
+    if (request.operation === "ensure-parents") {
+      console.log(JSON.stringify({ ok: true, directories }));
+      return 0;
+    }
+    validateName(request.name);
     if (request.operation === "create") {
       const createdIdentity = await createFile(request);
       console.log(JSON.stringify({ ok: true, identity: createdIdentity }));

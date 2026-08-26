@@ -57,6 +57,24 @@ it("exports CLI framework dependencies as public package subpaths", async () => 
   }
 });
 
+it("exports cross-runtime platform tooling as public package subpaths", async () => {
+  const denoConfig = JSON.parse(
+    await Deno.readTextFile(new URL("deno.json", repoRoot)),
+  );
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+
+  for (
+    const [subpath, source] of [
+      ["platform", "./src/platform/index.ts"],
+      ["platform/path", "./src/platform/compat/path/index.ts"],
+    ] as const
+  ) {
+    assertEquals(exports[`./${subpath}`], source);
+    assertEquals(imports[`veryfront/${subpath}`], source);
+  }
+});
+
 it("keeps host environment controls outside public platform exports", async () => {
   const [denoConfig, tsconfig] = await Promise.all([
     Deno.readTextFile(new URL("deno.json", repoRoot)).then(JSON.parse),
@@ -88,6 +106,7 @@ it("keeps host environment controls outside public platform exports", async () =
     assertEquals(internalExport in platformEnv, false);
   }
 });
+
 it("keeps process-wide Sentry controls internal", async () => {
   const denoConfig = JSON.parse(
     await Deno.readTextFile(new URL("deno.json", repoRoot)),
@@ -122,22 +141,6 @@ it("keeps process-wide Sentry controls internal", async () => {
     agentBarrel.includes("createNodeHostedAgentServiceRuntimeInfrastructure"),
     false,
   );
-});
-
-it("exports cross-runtime platform tooling as public package subpaths", async () => {
-  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
-  const exports = denoConfig.exports as Record<string, string>;
-  const imports = denoConfig.imports as Record<string, string>;
-
-  for (
-    const [subpath, source] of [
-      ["platform", "./src/platform/index.ts"],
-      ["platform/path", "./src/platform/compat/path/index.ts"],
-    ] as const
-  ) {
-    assertEquals(exports[`./${subpath}`], source);
-    assertEquals(imports[`veryfront/${subpath}`], source);
-  }
 });
 
 it("npm package provenance metadata points at veryfront-code", async () => {

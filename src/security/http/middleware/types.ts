@@ -61,32 +61,13 @@ export interface TrustedProxyAuthConfig {
   };
 }
 
-/** One supported application authentication mode. */
-export type AuthConfig =
-  | {
-    basic: BasicAuthConfig;
-    bearer?: never;
-    oidc?: never;
-    trustedProxy?: never;
-  }
-  | {
-    basic?: never;
-    bearer: BearerAuthConfig;
-    oidc?: never;
-    trustedProxy?: never;
-  }
-  | {
-    basic?: never;
-    bearer?: never;
-    oidc: OidcAuthConfig;
-    trustedProxy?: never;
-  }
-  | {
-    basic?: never;
-    bearer?: never;
-    oidc?: never;
-    trustedProxy: TrustedProxyAuthConfig;
-  };
+/** Application authentication. Runtime validation requires exactly one configured mode. */
+export interface AuthConfig {
+  basic?: BasicAuthConfig;
+  bearer?: BearerAuthConfig;
+  oidc?: OidcAuthConfig;
+  trustedProxy?: TrustedProxyAuthConfig;
+}
 
 export type { CsrfConfig } from "../../csrf/helpers.ts";
 

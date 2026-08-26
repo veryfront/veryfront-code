@@ -386,14 +386,14 @@ async function writeGuardedMultiFilePlan(
     let createdIdentity: FileIdentity = null;
     let createCompleted = false;
     const create = async () => {
-      createdIdentity = await runSecureScaffoldWriter({
+      createdIdentity = (await runSecureScaffoldWriter({
         operation: "create",
         rootGuard: secureRootGuard,
         parentParts,
         name: basename(file.path),
         content: file.content,
         failAfterBytes: options.failWriteAfterBytes,
-      });
+      })).identity;
       createCompleted = true;
     };
     try {
@@ -428,7 +428,19 @@ async function writeGuardedMultiFilePlan(
   try {
     for (const file of normalizedFiles.files) {
       await assertRootIdentity(root, rootGuard, realPath);
-      await ensureSafeParentDirectories(root, dirname(file.path), createdDirs, identity);
+      const relativeParent = relative(root, dirname(file.path));
+      const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
+      const ensured = await runSecureScaffoldWriter({
+        operation: "ensure-parents",
+        rootGuard: secureRootGuard,
+        parentParts,
+      });
+      for (const directory of ensured.directories) {
+        createdDirs.push({
+          path: join(root, ...directory.parts),
+          identity: directory.identity,
+        });
+      }
       await options.beforeWrite?.(file);
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
       if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
@@ -616,6 +628,11 @@ interface SecureRootGuard extends RootGuard {
 
 type SecureWriterRequest =
   | {
+    operation: "ensure-parents";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+  }
+  | {
     operation: "create";
     rootGuard: SecureRootGuard;
     parentParts: string[];
@@ -635,6 +652,17 @@ interface SecureWriterResponse {
   ok: boolean;
   code?: string;
   identity?: FileIdentity;
+  directories?: SecureCreatedDirectory[];
+}
+
+interface SecureCreatedDirectory {
+  parts: string[];
+  identity: FileIdentity;
+}
+
+interface SecureWriterResult {
+  identity: FileIdentity;
+  directories: SecureCreatedDirectory[];
 }
 
 interface SecureWriterCommand {
@@ -688,7 +716,7 @@ function timeMs(value: Date | null | undefined): number | null {
   return value instanceof Date ? value.getTime() : null;
 }
 
-async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<FileIdentity> {
+async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<SecureWriterResult> {
   const writerCommand = buildSecureScaffoldWriterCommand();
   const child = new Deno.Command(writerCommand.command, {
     args: writerCommand.args,
@@ -724,7 +752,10 @@ async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<Fi
     }
     throw new Error("Secure scaffold writer failed");
   }
-  return response.identity ?? null;
+  return {
+    identity: response.identity ?? null,
+    directories: response.directories ?? [],
+  };
 }
 
 function buildSecureScaffoldWriterCommand(options?: {
@@ -855,32 +886,6 @@ async function findUnsafeExistingPrefix(root: string, target: string): Promise<s
     }
   }
   return null;
-}
-
-async function ensureSafeParentDirectories(
-  root: string,
-  parent: string,
-  createdDirs: OwnedPath[],
-  identity: (info: Deno.FileInfo) => FileIdentity,
-): Promise<void> {
-  const relativeParent = relative(root, parent);
-  let current = root;
-  for (const part of pathParts(relativeParent)) {
-    current = join(current, part);
-    try {
-      const stat = await Deno.lstat(current);
-      if (stat.isSymlink || !stat.isDirectory) {
-        throw new Error(`Unsafe scaffold path: ${relative(root, current)}`);
-      }
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-      await Deno.mkdir(current);
-      createdDirs.push({
-        path: current,
-        identity: identity(await Deno.lstat(current)),
-      });
-    }
-  }
 }
 
 async function pathExists(path: string): Promise<boolean> {

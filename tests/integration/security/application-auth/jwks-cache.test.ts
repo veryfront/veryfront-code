@@ -6,10 +6,7 @@ import {
   assertRejects,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  observeFetchRequestInit,
-  withMockFetch,
-} from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { testDelay } from "#veryfront/testing/timing.ts";
 import {
   createJwksCache,
@@ -25,30 +22,20 @@ const TestReflectApply = Reflect.apply;
 
 const JWKS_URI = "https://issuer.example.com/jwks.json";
 
-function replacePropertyForTest(
-  target: object,
-  key: PropertyKey,
-  value: unknown,
-): () => void {
+function replacePropertyForTest(target: object, key: PropertyKey, value: unknown): () => void {
   const descriptor = TestReflectApply(
     TestObjectGetOwnPropertyDescriptor,
     undefined,
     [target, key],
   ) as PropertyDescriptor | undefined;
-  if (descriptor === undefined) {
-    throw new Error(`Expected ${String(key)} descriptor`);
-  }
+  if (descriptor === undefined) throw new Error(`Expected ${String(key)} descriptor`);
   TestReflectApply(TestObjectDefineProperty, undefined, [
     target,
     key,
     { ...descriptor, value },
   ]);
   return () => {
-    TestReflectApply(TestObjectDefineProperty, undefined, [
-      target,
-      key,
-      descriptor,
-    ]);
+    TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);
   };
 }
 
@@ -154,12 +141,7 @@ describe("security/application-auth JWKS cache", () => {
         Promise.resolve(
           jsonResponse(
             jwks([
-              {
-                kty: "oct",
-                kid: "symmetric-encryption",
-                use: "enc",
-                k: "secret",
-              },
+              { kty: "oct", kid: "symmetric-encryption", use: "enc", k: "secret" },
               { ...RSA_KEY, kid: "rsa-encryption", use: "enc" },
               RSA_KEY,
             ]),
@@ -182,12 +164,7 @@ describe("security/application-auth JWKS cache", () => {
       () =>
         withMockFetch(
           () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
-          () =>
-            createJwksCache().getKey({
-              jwksUri: loopbackUri,
-              kid: "rsa-1",
-              alg: "RS256",
-            }),
+          () => createJwksCache().getKey({ jwksUri: loopbackUri, kid: "rsa-1", alg: "RS256" }),
         ),
       TypeError,
       "HTTPS",
@@ -208,8 +185,7 @@ describe("security/application-auth JWKS cache", () => {
           allowInsecureLoopback: true,
         });
         await assertRejects(
-          () =>
-            cache.getKey({ jwksUri: loopbackUri, kid: "rsa-1", alg: "RS256" }),
+          () => cache.getKey({ jwksUri: loopbackUri, kid: "rsa-1", alg: "RS256" }),
           TypeError,
           "HTTPS",
         );
@@ -312,14 +288,11 @@ describe("security/application-auth JWKS cache", () => {
       function (value: unknown, ...args: unknown[]): string | undefined {
         if (
           value !== null && typeof value === "object" &&
-          "issuer" in value && "jwksUri" in value &&
-          "allowInsecureLoopback" in value
+          "issuer" in value && "jwksUri" in value && "allowInsecureLoopback" in value
         ) {
           return '"attacker-controlled-cache-key"';
         }
-        return TestReflectApply(TestJSONStringify, JSON, [value, ...args]) as
-          | string
-          | undefined;
+        return TestReflectApply(TestJSONStringify, JSON, [value, ...args]) as string | undefined;
       },
     );
 
@@ -374,12 +347,7 @@ describe("security/application-auth JWKS cache", () => {
         () =>
           withMockFetch(
             () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
-            () =>
-              cache.getKey({
-                jwksUri: JWKS_URI,
-                kid: "attacker-key",
-                alg: "RS256",
-              }),
+            () => cache.getKey({ jwksUri: JWKS_URI, kid: "attacker-key", alg: "RS256" }),
           ),
         TypeError,
         "kid",
@@ -400,9 +368,7 @@ describe("security/application-auth JWKS cache", () => {
     await withMockFetch(
       () => {
         fetches += 1;
-        return fetches === 1
-          ? firstResponse
-          : Promise.resolve(jsonResponse(jwks([RSA_KEY])));
+        return fetches === 1 ? firstResponse : Promise.resolve(jsonResponse(jwks([RSA_KEY])));
       },
       async () => {
         const first = cache.getKey({
@@ -415,12 +381,8 @@ describe("security/application-auth JWKS cache", () => {
           Map.prototype,
           "has",
           function (this: Map<unknown, unknown>, key: unknown): boolean {
-            if (typeof key === "string" && key.includes("pending-map-b")) {
-              return true;
-            }
-            return TestReflectApply(TestMapPrototypeHas, this, [
-              key,
-            ]) as boolean;
+            if (typeof key === "string" && key.includes("pending-map-b")) return true;
+            return TestReflectApply(TestMapPrototypeHas, this, [key]) as boolean;
           },
         );
         try {
@@ -463,9 +425,7 @@ describe("security/application-auth JWKS cache", () => {
     const key = await withMockFetch(
       () =>
         Promise.resolve(
-          jsonResponse(
-            jwks([{ kty: "oct", use: "sig", k: "secret" }, keyWithoutKid]),
-          ),
+          jsonResponse(jwks([{ kty: "oct", use: "sig", k: "secret" }, keyWithoutKid])),
         ),
       () => createJwksCache().getKey({ jwksUri: JWKS_URI, alg: "RS256" }),
     );
@@ -495,10 +455,7 @@ describe("security/application-auth JWKS cache", () => {
     await withMockFetch(
       () =>
         jsonResponse(
-          JSON.stringify({
-            keys: [RSA_KEY],
-            issuer: "https://issuer.example.test",
-          }),
+          JSON.stringify({ keys: [RSA_KEY], issuer: "https://issuer.example.test" }),
         ),
       async () => {
         const cache = createJwksCache();
@@ -532,34 +489,16 @@ describe("security/application-auth JWKS cache", () => {
 
   it("validates RSA and EC public key material before caching signing keys", async () => {
     const keys = await generatedKeys();
-    const validRsa = {
-      ...keys.rsa2048,
-      kid: "rsa-generated",
-      alg: "RS256",
-      use: "sig",
-    };
-    const validEc = {
-      ...keys.ecP256,
-      kid: "ec-generated",
-      alg: "ES256",
-      use: "sig",
-    };
+    const validRsa = { ...keys.rsa2048, kid: "rsa-generated", alg: "RS256", use: "sig" };
+    const validEc = { ...keys.ecP256, kid: "ec-generated", alg: "ES256", use: "sig" };
 
     const cache = createJwksCache();
     const [rsaKey, ecKey] = await withMockFetch(
       () => Promise.resolve(jsonResponse(jwks([validRsa, validEc]))),
       async () =>
         await Promise.all([
-          cache.getKey({
-            jwksUri: JWKS_URI,
-            kid: "rsa-generated",
-            alg: "RS256",
-          }),
-          cache.getKey({
-            jwksUri: JWKS_URI,
-            kid: "ec-generated",
-            alg: "ES256",
-          }),
+          cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-generated", alg: "RS256" }),
+          cache.getKey({ jwksUri: JWKS_URI, kid: "ec-generated", alg: "ES256" }),
         ]),
     );
 
@@ -580,10 +519,7 @@ describe("security/application-auth JWKS cache", () => {
 
     for (
       const [key, message] of [
-        [
-          { ...keys.rsa1024, kid: "rsa-small", alg: "RS256", use: "sig" },
-          "2048",
-        ],
+        [{ ...keys.rsa1024, kid: "rsa-small", alg: "RS256", use: "sig" }, "2048"],
         [{ ...validRsa, kid: "rsa-exponent", e: "Aw" }, "exponent"],
         [{ ...validRsa, kid: "rsa-malformed", n: "AQ" }, "2048"],
         [{ ...validEc, kid: "ec-short-x", x: "AQ" }, "coordinate"],
@@ -603,9 +539,7 @@ describe("security/application-auth JWKS cache", () => {
     let importAttempted = false;
     crypto.subtle.importKey = function (): Promise<CryptoKey> {
       importAttempted = true;
-      return Promise.reject(
-        new DOMException("forced import failure", "DataError"),
-      );
+      return Promise.reject(new DOMException("forced import failure", "DataError"));
     };
     try {
       const imported = await withMockFetch(
@@ -636,12 +570,7 @@ describe("security/application-auth JWKS cache", () => {
       () =>
         withMockFetch(
           () => Promise.resolve(new Response("", { status: 301 })),
-          () =>
-            createJwksCache().getKey({
-              jwksUri: JWKS_URI,
-              kid: "rsa-1",
-              alg: "RS256",
-            }),
+          () => createJwksCache().getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
         ),
       TypeError,
       "redirect",
@@ -661,16 +590,9 @@ describe("security/application-auth JWKS cache", () => {
         withMockFetch(
           () =>
             Promise.resolve(
-              new Response(stream, {
-                headers: { "content-type": "application/json" },
-              }),
+              new Response(stream, { headers: { "content-type": "application/json" } }),
             ),
-          () =>
-            createJwksCache().getKey({
-              jwksUri: JWKS_URI,
-              kid: "rsa-1",
-              alg: "RS256",
-            }),
+          () => createJwksCache().getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
         ),
       TypeError,
       "size",
@@ -715,17 +637,8 @@ describe("security/application-auth JWKS cache", () => {
     await assertRejects(
       () =>
         withMockFetch(
-          () =>
-            Promise.resolve(
-              jsonResponse(jwks([{ ...RSA_ROTATED_KEY, alg: "PS256" }])),
-            ),
-          () =>
-            cache.getKey({
-              jwksUri: JWKS_URI,
-              kid: "rsa-1",
-              alg: "RS256",
-              forceRefresh: true,
-            }),
+          () => Promise.resolve(jsonResponse(jwks([{ ...RSA_ROTATED_KEY, alg: "PS256" }]))),
+          () => cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256", forceRefresh: true }),
         ),
       TypeError,
       "compatible",
@@ -735,8 +648,7 @@ describe("security/application-auth JWKS cache", () => {
       () =>
         withMockFetch(
           () => Promise.resolve(jsonResponse(jwks([EC_KEY]))),
-          () =>
-            cache.getKey({ jwksUri: JWKS_URI, kid: "missing", alg: "RS256" }),
+          () => cache.getKey({ jwksUri: JWKS_URI, kid: "missing", alg: "RS256" }),
         ),
       TypeError,
       "kid",
@@ -783,26 +695,15 @@ describe("security/application-auth JWKS cache", () => {
         return jsonResponse(jwks([RSA_KEY]));
       },
       async () => {
-        const first = cache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "unknown",
-          alg: "RS256",
-        });
-        const second = cache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "unknown",
-          alg: "RS256",
-        });
+        const first = cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" });
+        const second = cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" });
         await testDelay(10);
         releaseRefresh?.();
         return await Promise.allSettled([first, second]);
       },
     );
 
-    assertEquals(outcomes.map((outcome) => outcome.status), [
-      "rejected",
-      "rejected",
-    ]);
+    assertEquals(outcomes.map((outcome) => outcome.status), ["rejected", "rejected"]);
     assertEquals(forcedRefreshCalls, 1);
   });
 
@@ -851,26 +752,12 @@ describe("security/application-auth JWKS cache", () => {
     const keys = await withMockFetch(
       () => {
         calls += 1;
-        return Promise.resolve(
-          jsonResponse(jwks([calls === 1 ? RSA_KEY : rotatedEcKey])),
-        );
+        return Promise.resolve(jsonResponse(jwks([calls === 1 ? RSA_KEY : rotatedEcKey])));
       },
       async () => {
-        const rsa = await cache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "rsa-1",
-          alg: "RS256",
-        });
-        const ec = await cache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "rsa-1",
-          alg: "ES256",
-        });
-        const cachedEc = await cache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "rsa-1",
-          alg: "ES256",
-        });
+        const rsa = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
+        const ec = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "ES256" });
+        const cachedEc = await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "ES256" });
         return { rsa, ec, cachedEc };
       },
     );
@@ -888,16 +775,13 @@ describe("security/application-auth JWKS cache", () => {
     const rotated = await withMockFetch(
       () => {
         calls += 1;
-        return Promise.resolve(
-          jsonResponse(jwks([calls === 3 ? RSA_ROTATED_KEY : RSA_KEY])),
-        );
+        return Promise.resolve(jsonResponse(jwks([calls === 3 ? RSA_ROTATED_KEY : RSA_KEY])));
       },
       async () => {
         await cache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
         for (let attempt = 0; attempt < 3; attempt += 1) {
           await assertRejects(
-            () =>
-              cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" }),
+            () => cache.getKey({ jwksUri: JWKS_URI, kid: "unknown", alg: "RS256" }),
             TypeError,
             "kid",
           );
@@ -961,9 +845,7 @@ describe("security/application-auth JWKS cache", () => {
     const recovered = await withMockFetch(
       () => {
         calls += 1;
-        return Promise.resolve(
-          jsonResponse(jwks([calls === 2 ? RSA_ROTATED_KEY : RSA_KEY])),
-        );
+        return Promise.resolve(jsonResponse(jwks([calls === 2 ? RSA_ROTATED_KEY : RSA_KEY])));
       },
       async () => {
         const observed = await getJwksKeyWithFreshness(cache, {
@@ -987,11 +869,7 @@ describe("security/application-auth JWKS cache", () => {
   it("expires stale entries, evicts failed loads, bounds LRU entries, coalesces concurrency, and stays per-instance", async () => {
     let now = 1_000;
     let calls = 0;
-    const cache = createJwksCache({
-      ttlSeconds: 1,
-      maxEntries: 2,
-      now: () => now,
-    });
+    const cache = createJwksCache({ ttlSeconds: 1, maxEntries: 2, now: () => now });
     await withMockFetch(
       () => {
         calls += 1;
@@ -1015,12 +893,7 @@ describe("security/application-auth JWKS cache", () => {
             fail
               ? Promise.resolve(new Response("bad", { status: 503 }))
               : Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
-          () =>
-            failureCache.getKey({
-              jwksUri: JWKS_URI,
-              kid: "rsa-1",
-              alg: "RS256",
-            }),
+          () => failureCache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
         ),
       TypeError,
       "failed",
@@ -1028,16 +901,11 @@ describe("security/application-auth JWKS cache", () => {
     fail = false;
     const recovered = await withMockFetch(
       () => Promise.resolve(jsonResponse(jwks([RSA_KEY]))),
-      () =>
-        failureCache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
+      () => failureCache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" }),
     );
     assertEquals(recovered.kid, "rsa-1");
 
-    const lruCache = createJwksCache({
-      ttlSeconds: 60,
-      maxEntries: 2,
-      now: () => now,
-    });
+    const lruCache = createJwksCache({ ttlSeconds: 60, maxEntries: 2, now: () => now });
     let lruCalls = 0;
     await withMockFetch(
       () => {
@@ -1086,11 +954,7 @@ describe("security/application-auth JWKS cache", () => {
         return pendingResponse;
       },
       async () => {
-        const firstLoad = coalescingCache.getKey({
-          jwksUri: JWKS_URI,
-          kid: "rsa-1",
-          alg: "RS256",
-        });
+        const firstLoad = coalescingCache.getKey({ jwksUri: JWKS_URI, kid: "rsa-1", alg: "RS256" });
         const secondLoad = coalescingCache.getKey({
           jwksUri: JWKS_URI,
           kid: "rsa-1",
@@ -1135,21 +999,9 @@ describe("security/application-auth JWKS cache", () => {
         });
       },
       async () => {
-        const firstLoadA = cache.getKey({
-          jwksUri: uriA,
-          kid: "rsa-1",
-          alg: "RS256",
-        });
-        const secondLoadA = cache.getKey({
-          jwksUri: uriA,
-          kid: "rsa-1",
-          alg: "RS256",
-        });
-        const saturatedB = cache.getKey({
-          jwksUri: uriB,
-          kid: "rsa-1",
-          alg: "RS256",
-        }).then(
+        const firstLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
+        const secondLoadA = cache.getKey({ jwksUri: uriA, kid: "rsa-1", alg: "RS256" });
+        const saturatedB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" }).then(
           () => "resolved" as const,
           (error: unknown) => error,
         );
@@ -1163,11 +1015,7 @@ describe("security/application-auth JWKS cache", () => {
           saturatedB,
         ]);
 
-        const recoveredB = cache.getKey({
-          jwksUri: uriB,
-          kid: "rsa-1",
-          alg: "RS256",
-        });
+        const recoveredB = cache.getKey({ jwksUri: uriB, kid: "rsa-1", alg: "RS256" });
         await testDelay(1);
         resolvers.get(uriB)?.(jsonResponse(jwks([RSA_KEY])));
         return {
@@ -1182,10 +1030,7 @@ describe("security/application-auth JWKS cache", () => {
 
     assertEquals(result.firstA, result.secondA);
     assert(result.saturatedOutcome instanceof TypeError);
-    assertEquals(
-      result.saturatedOutcome.message,
-      "JWKS cache pending load capacity reached",
-    );
+    assertEquals(result.saturatedOutcome.message, "JWKS cache pending load capacity reached");
     assertEquals(result.recoveredB.kid, "rsa-1");
     assertEquals(result.fetchesAtCapacity, [uriA]);
     assertEquals(fetches, [uriA, uriB]);

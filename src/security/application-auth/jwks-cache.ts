@@ -55,7 +55,7 @@ const NATIVE_GET_KEY_WITH_FRESHNESS = Symbol("Veryfront.nativeJwksCacheGetKeyWit
 
 export type PublicJwk = Readonly<{
   readonly kty: "RSA" | "EC";
-  readonly kid: string;
+  readonly kid?: string;
   readonly use?: "sig";
   readonly alg?: string;
   readonly n?: string;
@@ -87,7 +87,7 @@ export interface JwksCache {
 }
 
 interface JwksDocument {
-  readonly keys: ReadonlyMap<string, PublicJwk>;
+  readonly keys: ReadonlyMap<string | number, PublicJwk>;
 }
 
 interface SettledCacheEntry {
@@ -435,7 +435,7 @@ async function parseJwksDocument(
   if (!ArrayIsArray(keys) || keys.length < 1 || keys.length > MAX_KEYS) {
     throw new TypeError("JWKS keys must contain 1 through 100 keys");
   }
-  const output = new NativeMap<string, PublicJwk>();
+  const output = new NativeMap<string | number, PublicJwk>();
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index];
     const selected = requestedKid !== undefined && isPlainObject(key) && key.kid === requestedKid;
@@ -446,10 +446,14 @@ async function parseJwksDocument(
       if (selected || !(error instanceof TypeError)) throw error;
       continue;
     }
-    if (mapHas(output, parsed.kid)) {
-      throw new TypeError("JWKS keys must not contain duplicate kid values");
+    if (parsed.kid !== undefined) {
+      if (mapHas(output, parsed.kid)) {
+        throw new TypeError("JWKS keys must not contain duplicate kid values");
+      }
+      mapSet(output, parsed.kid, parsed);
+    } else {
+      mapSet(output, index, parsed);
     }
-    mapSet(output, parsed.kid, parsed);
   }
   return ObjectFreeze({ keys: output });
 }
@@ -474,7 +478,7 @@ async function parsePublicJwk(value: unknown): Promise<PublicJwk> {
   if (!isPlainObject(value)) {
     throw new TypeError("JWKS key must be a plain object");
   }
-  const kid = parseKid(value.kid);
+  const kid = value.kid === undefined ? undefined : parseKid(value.kid);
   const use = value.use;
   if (use !== undefined && use !== "sig") {
     throw new TypeError("JWKS key use must be absent or sig");
@@ -498,7 +502,7 @@ async function parsePublicJwk(value: unknown): Promise<PublicJwk> {
 
 async function parseRsaKey(
   value: { readonly [key: string]: unknown },
-  kid: string,
+  kid: string | undefined,
   use: unknown,
   alg: string | undefined,
   keyOps: readonly ["verify"] | undefined,
@@ -514,7 +518,7 @@ async function parseRsaKey(
   }
   const key = freezeKey({
     kty: "RSA",
-    kid,
+    ...(kid === undefined ? {} : { kid }),
     ...(use === "sig" ? { use: "sig" as const } : {}),
     ...(alg === undefined ? {} : { alg }),
     n,
@@ -527,7 +531,7 @@ async function parseRsaKey(
 
 async function parseEcKey(
   value: { readonly [key: string]: unknown },
-  kid: string,
+  kid: string | undefined,
   use: unknown,
   alg: string | undefined,
   keyOps: readonly ["verify"] | undefined,
@@ -556,7 +560,7 @@ async function parseEcKey(
   }
   const key = freezeKey({
     kty: "EC",
-    kid,
+    ...(kid === undefined ? {} : { kid }),
     ...(use === "sig" ? { use: "sig" as const } : {}),
     ...(alg === undefined ? {} : { alg }),
     crv,

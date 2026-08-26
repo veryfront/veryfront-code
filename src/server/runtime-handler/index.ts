@@ -440,7 +440,15 @@ export function createVeryfrontHandler(
 
         if (requiresApplicationAuth) {
           const authResult = await handleApplicationAuthRequest(req, minimalCtx);
-          if (authResult?.response) return authResult.response;
+          if (authResult?.response) {
+            const terminalResponse = authResult.response;
+            const response = await applyCORSHeaders({
+              request: req,
+              response: terminalResponse,
+              config: minimalCtx.securityConfig?.cors,
+            });
+            return response ?? terminalResponse;
+          }
           minimalCtx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
           minimalCtx.applicationIdentityHeaderNames =
             authResult?.metadata?.applicationIdentityHeaderNames ?? [];

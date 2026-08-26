@@ -840,6 +840,39 @@ describe("server/runtime-handler/index", () => {
     assertEquals(response.status, 200);
   });
 
+  it("applies the configured CORS policy to monitoring auth failures", async () => {
+    const allowedOrigin = "https://client.example";
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          cors: { origin: [allowedOrigin], credentials: true },
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } satisfies VeryfrontConfig,
+    });
+    const request = new Request("http://localhost/_health", {
+      headers: { origin: allowedOrigin },
+    });
+    recordRequestPeerFromTransport(request, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
+
+    const response = await handler(request);
+
+    assertEquals(response.status, 401);
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), allowedOrigin);
+    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), "true");
+    assertEquals(response.headers.get("Vary"), "Origin");
+  });
+
   it("uses the trusted forwarded origin for OIDC on the monitoring fast path", async () => {
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     const provider = await createMockOidcProvider({
