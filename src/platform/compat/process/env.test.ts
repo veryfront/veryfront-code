@@ -2,10 +2,43 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
+import { registerTrustedProjectEnvSnapshot } from "./env.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("host environment access", () => {
+  denoOnlyIt("passes only the active project environment to direct subprocesses", async () => {
+    const hostKey = "VF_SCOPE_SUBPROCESS_HOST_ONLY";
+    const projectKey = "VF_SCOPE_SUBPROCESS_PROJECT_ONLY";
+    const previousHost = Deno.env.get(hostKey);
+    Deno.env.set(hostKey, "host-secret");
+    let snapshot: Readonly<Record<string, string>> | undefined;
+    registerTrustedProjectEnvSnapshot(() => snapshot);
+    snapshot = { [projectKey]: "project-value" };
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `console.log(JSON.stringify({ host: Deno.env.get(${
+            JSON.stringify(hostKey)
+          }) ?? null, project: Deno.env.get(${JSON.stringify(projectKey)}) ?? null }))`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(output.success, new TextDecoder().decode(output.stderr));
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout).trim()),
+        { host: null, project: "project-value" },
+      );
+    } finally {
+      snapshot = undefined;
+      if (previousHost === undefined) Deno.env.delete(hostKey);
+      else Deno.env.set(hostKey, previousHost);
+    }
+  });
+
   denoOnlyIt("ignores forged test overlays when env permission is granted", async () => {
     const moduleUrl = new URL("./env.ts", import.meta.url).href;
     const source = `

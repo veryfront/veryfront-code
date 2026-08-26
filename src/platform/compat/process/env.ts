@@ -130,6 +130,52 @@ export function getHostEnv(key: string): string | undefined {
 
 let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
 let denoEnvViewInstalled = false;
+let denoCommandViewInstalled = false;
+
+function installProjectScopedDenoCommand(
+  getSnapshot: () => ProjectEnvSnapshot | undefined,
+): void {
+  if (denoCommandViewInstalled || !denoRuntime) return;
+
+  const HostCommand = denoRuntime.Command;
+  const hostOutput = HostCommand.prototype.output;
+  const hostOutputSync = HostCommand.prototype.outputSync;
+  const hostSpawn = HostCommand.prototype.spawn;
+
+  class ProjectScopedCommand {
+    readonly #command: Deno.Command;
+
+    constructor(command: string | URL, options: Deno.CommandOptions = {}) {
+      const snapshot = getSnapshot();
+      const scopedOptions = snapshot === undefined ? options : {
+        ...options,
+        clearEnv: true,
+        env: { ...projectScopedEnvRecord(snapshot), ...options.env },
+      };
+      this.#command = new HostCommand(command, scopedOptions);
+    }
+
+    output(): Promise<Deno.CommandOutput> {
+      return apply(hostOutput, this.#command, []);
+    }
+
+    outputSync(): Deno.CommandOutput {
+      return apply(hostOutputSync, this.#command, []);
+    }
+
+    spawn(): Deno.ChildProcess {
+      return apply(hostSpawn, this.#command, []);
+    }
+  }
+
+  ObjectDefineProperty(denoRuntime, "Command", {
+    value: ProjectScopedCommand,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
+  denoCommandViewInstalled = true;
+}
 
 function installProjectScopedDenoEnv(
   getSnapshot: () => ProjectEnvSnapshot | undefined,
@@ -165,6 +211,7 @@ export function registerTrustedProjectEnvSnapshot(
     throw new Error("Project environment snapshot bridge is already registered");
   }
   installProjectScopedDenoEnv(getter);
+  installProjectScopedDenoCommand(getter);
   _trustedProjectEnvSnapshot = getter;
   installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
 }

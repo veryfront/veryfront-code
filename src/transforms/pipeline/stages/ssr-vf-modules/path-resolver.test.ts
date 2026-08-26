@@ -131,14 +131,39 @@ describe("resolveFrameworkFile", () => {
     });
   }
 
+  it("refuses an unexported host-environment wrapper as a tenant entry", async () => {
+    const fs = createMockFs(
+      new Proxy({}, {
+        has: () => true,
+        get: () => "export function getHostTelemetryEnv() {}",
+      }) as Record<string, string>,
+    );
+
+    assertEquals(
+      await resolveFrameworkFile(
+        "/_vf_modules/_veryfront/observability/tracing/telemetry-env.js",
+        fs,
+        () => Promise.resolve(true),
+      ),
+      null,
+    );
+  });
+
   it("still resolves the public platform/env facade", async () => {
-    const sourcePath = join(FRAMEWORK_ROOT, "src", "platform", "env.ts");
+    const sourcePath = join(
+      FRAMEWORK_ROOT,
+      "src",
+      "platform",
+      "compat",
+      "process",
+      "env-public.ts",
+    );
     const files: Record<string, string> = {
-      [sourcePath]: 'export { getEnv } from "./compat/process/env.ts";',
+      [sourcePath]: 'export { getEnv } from "./env.ts";',
     };
     const fs = createMockFs(files);
     const result = await resolveFrameworkFile(
-      "/_vf_modules/_veryfront/platform/env.js?ssr=true",
+      "/_vf_modules/_veryfront/platform/compat/process/env-public.js?ssr=true",
       fs,
       createExistsFn(files),
     );

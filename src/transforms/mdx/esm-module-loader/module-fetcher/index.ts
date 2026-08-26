@@ -22,7 +22,9 @@ import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { canonicalizeContainedModulePath } from "../resolution/module-path.ts";
-import { isPrivilegedFrameworkSourceKey } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import {
+  isPublicFrameworkSourceKey,
+} from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getTransformCacheKey, getVersionedPathCacheKey } from "./cache-keys.ts";
 import { resolveNestedImportBase, resolveNestedModuleImports } from "./nested-imports.ts";
 import { readDistributedCache } from "./distributed-cache.ts";
@@ -166,7 +168,7 @@ function frameworkSourceKeyOf(modulePath: string): string | null {
 }
 
 /**
- * Return whether a privileged framework module fetch must be refused.
+ * Return whether a tenant requested a framework module outside public exports.
  *
  * Privileged implementation modules (the host process env seam) may only be
  * fetched as transitive dependencies of framework source — a fetch whose
@@ -175,22 +177,23 @@ function frameworkSourceKeyOf(modulePath: string): string | null {
  * lookup, so a copy cached for the framework graph is never handed to a
  * tenant-requested import.
  */
-function isRefusedPrivilegedModuleFetch(
+function isRefusedTenantFrameworkModuleFetch(
   normalizedPath: string,
   parentModulePath: string | undefined,
   expectedCacheKey: string | undefined,
 ): boolean {
   const frameworkKey = frameworkSourceKeyOf(normalizedPath);
-  if (frameworkKey === null || !isPrivilegedFrameworkSourceKey(frameworkKey)) {
-    return false;
-  }
+  if (frameworkKey === null) return false;
 
-  if (parentModulePath === undefined) return true;
+  if (parentModulePath === undefined) {
+    return !isPublicFrameworkSourceKey(frameworkKey);
+  }
   const normalizedParent = canonicalizeContainedModulePath(
     unwrapDependencyPinningPath(parentModulePath, expectedCacheKey),
   );
   if (normalizedParent === null) return true;
-  return frameworkSourceKeyOf(normalizedParent) === null;
+  if (frameworkSourceKeyOf(normalizedParent) !== null) return false;
+  return !isPublicFrameworkSourceKey(frameworkKey);
 }
 
 /**
@@ -211,8 +214,8 @@ export async function fetchAndCacheModule(
   );
   const projectSlug = context.projectSlug || "unknown";
 
-  if (isRefusedPrivilegedModuleFetch(normalizedPath, parentModulePath, expectedCacheKey)) {
-    log.warn(`${LOG_PREFIX_MDX_LOADER} Refusing privileged framework module for tenant import`, {
+  if (isRefusedTenantFrameworkModuleFetch(normalizedPath, parentModulePath, expectedCacheKey)) {
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Refusing non-public framework module for tenant import`, {
       projectSlug,
       normalizedPath,
       parentModulePath,

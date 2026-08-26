@@ -5,6 +5,7 @@ import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { createFileSystem, isNotFoundError } from "./fs.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "./published-runtime-helpers.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
+import denoConfig from "#deno-config" with { type: "json" };
 
 /**
  * Reject candidate paths that contain traversal indicators — plain `..`,
@@ -33,43 +34,34 @@ export function isSafeFrameworkSourceKey(candidate: string): boolean {
   return !hasDangerousSegments(candidate);
 }
 
-/**
- * Framework subtrees that tenant module loading must never resolve directly.
- *
- * `platform/compat/process` holds the host process seam: `getHostEnv()`, the
- * captured host environment record, the scoped-write bookkeeping, and process
- * mutators. Tenant code reaches framework source through supported package
- * exports (for environment access, `veryfront/platform/env`), and the
- * implementation modules stay reachable for the framework's own transform
- * graph, which resolves transitive imports through separate trusted paths.
- * Serving these modules as tenant-requested entry points would let a project
- * import `getHostEnv` and read host-only secrets while its project
- * environment overlay is active.
- */
-const PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES = [
-  "platform/compat/process",
-  "platform/cloud/resolver",
-] as const;
-
 const FRAMEWORK_SOURCE_KEY_EXT_RE = /\.(?:src|tsx|ts|jsx|js|mjs|cjs|mdx|md|json)$/;
 
-/**
- * Return whether a tenant-supplied framework source key names a privileged
- * implementation module that must not be served to tenant module loading.
- *
- * The key is compared after stripping any query suffix and trailing module
- * extensions (including `.src` embedded-source suffixes), so
- * `platform/compat/process/env`, `platform/compat/process/env.ts`, and
- * `platform/compat/process/env.js?ssr=true` all match.
- */
-export function isPrivilegedFrameworkSourceKey(candidate: string): boolean {
-  let normalized = candidate.replace(/\?.*$/, "").replace(/\/+$/, "");
+function normalizeFrameworkSourceKey(candidate: string): string {
+  let normalized = candidate.replace(/\?.*$/, "").replace(/^\.\/src\//, "").replace(/\/+$/, "");
   while (FRAMEWORK_SOURCE_KEY_EXT_RE.test(normalized)) {
     normalized = normalized.replace(FRAMEWORK_SOURCE_KEY_EXT_RE, "");
   }
-  return PRIVILEGED_FRAMEWORK_SOURCE_PREFIXES.some((prefix) =>
-    normalized === prefix || normalized.startsWith(`${prefix}/`)
-  );
+  return normalized;
+}
+
+const publicConfig = denoConfig as {
+  exports?: Record<string, string>;
+  imports?: Record<string, string>;
+};
+const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
+  [
+    ...Object.values(publicConfig.exports ?? {}),
+    ...Object.entries(publicConfig.imports ?? {})
+      .filter(([specifier]) => specifier === "veryfront" || specifier.startsWith("veryfront/"))
+      .map(([, target]) => target),
+  ]
+    .filter((target) => target.startsWith("./src/"))
+    .map(normalizeFrameworkSourceKey),
+);
+
+/** Return whether a framework source key is the target of a public export. */
+export function isPublicFrameworkSourceKey(candidate: string): boolean {
+  return PUBLIC_FRAMEWORK_SOURCE_KEYS.has(normalizeFrameworkSourceKey(candidate));
 }
 
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);

@@ -434,6 +434,22 @@ describe("module-fetcher", () => {
       );
       assertEquals(result, null);
     });
+
+    it("refuses an unexported host-environment wrapper as a tenant entry", async () => {
+      const ctx = createModuleFetcherContext(
+        "/cache",
+        untouchableAdapter,
+        "/project",
+        "proj-privileged",
+        { strictMissingModules: true },
+      );
+
+      const result = await fetchAndCacheModule(
+        "/_vf_modules/_veryfront/observability/tracing/telemetry-env.js",
+        ctx,
+      );
+      assertEquals(result, null);
+    });
   });
 
   describe("strictMissingModules", () => {
