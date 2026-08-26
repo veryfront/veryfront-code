@@ -152,6 +152,39 @@ function restoreEnv(key: string, value: string | undefined): void {
   setEnv(key, value);
 }
 
+it("caps eager hosted tools when tool_search is denied", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Use only authorized tools.",
+      model: "openai/gpt-5.4",
+      deniedTools: ["tool_search"],
+    },
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: (taskContext) => {
+      capturedContext = taskContext;
+      return Object.fromEntries(
+        Array.from({ length: 129 }, (_, index) => [
+          `local_tool_${String(index).padStart(3, "0")}`,
+          localTool(`Local tool ${index}`),
+        ]),
+      );
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
+  assertEquals(capturedContext.availableToolNames?.includes("tool_search"), false);
+});
+
 it("preserves layered cache metadata through hosted provider dispatch", async () => {
   clearModelProviders();
   let capturedPrompt: unknown;
@@ -273,6 +306,78 @@ it("assembles registry skill context when live steering is absent", async () => 
     assertStringIncludes(systemPrompt, '"skillId":"deploy"');
   } finally {
     skillRegistryInternal.clearAll();
+    clearModelProviders();
+  }
+});
+
+it("hides live steering skills in final rendering when load_skill is denied", async () => {
+  clearModelProviders();
+  let capturedPrompt: unknown;
+  registerModelProvider("test", () => ({
+    provider: "test",
+    modelId: "test/denied-skill-loader",
+    doGenerate: () => Promise.reject(new Error("unused")),
+    doStream(options: unknown) {
+      capturedPrompt = (options as { prompt?: unknown }).prompt;
+      return Promise.resolve({ stream: createTextStream() });
+    },
+  }));
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        authToken: "token-1",
+        instructions: "Plain hosted instructions",
+        model: "test/denied-skill-loader",
+        deniedTools: ["load_skill"],
+        liveProjectSteering: {
+          agent: {
+            id: "agent-1",
+            name: "Agent",
+            description: "Agent description",
+            instructions: "Plain hosted instructions",
+            tools: true,
+          },
+          initialSkills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy the project",
+            instructions: "Use the deployment checklist.",
+            allowedTools: [],
+          }],
+        },
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({ load_skill: localTool("Load a skill") }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the stream so provider dispatch completes.
+        }
+      },
+    );
+
+    const systemPrompt = (capturedPrompt as Array<{ role?: string; content?: unknown }>)
+      .filter((message) => message.role === "system" && typeof message.content === "string")
+      .map((message) => message.content)
+      .join("\n\n");
+    assertEquals(systemPrompt.includes("<available_skills>"), false);
+    assertEquals(systemPrompt.includes('"skillId":"deploy"'), false);
+  } finally {
     clearModelProviders();
   }
 });

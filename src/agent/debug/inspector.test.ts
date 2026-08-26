@@ -116,4 +116,35 @@ describe("inspectAgent report body", () => {
       "the report lists the agent's configured tools",
     );
   });
+
+  it("does not report explicitly denied tools as available", async () => {
+    const echo = tool({
+      id: "inspector_echo_denials",
+      description: "Echo the input back",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: async () => "echoed",
+    });
+    const inspected = agent({
+      id: "inspect-with-denials",
+      model: "hosted/inspect-with-denials",
+      system: "test",
+      maxSteps: 1,
+      tools: {
+        inspector_echo_denials: echo,
+        load_skill: false,
+        load_skill_reference: false,
+        execute_skill_script: false,
+      },
+      resolveModelTransport: () =>
+        Promise.resolve({ model: stubModel("hosted/inspect-with-denials") }),
+    });
+
+    const report = await inspectAgent(inspected, "hi");
+
+    assertEquals(
+      report.tools.available,
+      ["inspector_echo_denials"],
+      "explicit false entries are denials, not callable tools",
+    );
+  });
 });

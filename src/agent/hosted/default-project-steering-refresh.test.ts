@@ -301,6 +301,35 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Fresh instructions:"), true);
   });
 
+  it("suppresses refreshed skills when the loader is unavailable", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+    const input = createRefreshInput({
+      toolAssembly: {
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+        runtimeTools: {},
+        remoteToolSources: [],
+        localToolNames: ["sleep"],
+        remoteToolNames: [],
+        providerToolNames: [],
+        availableToolNames: ["sleep"],
+        toolLoadingMode: "deferred",
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = systemText(await refresh(input));
+
+    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(system.includes("Fresh instructions:build"), false);
+    assertEquals(system.includes("Fresh instructions:"), true);
+  });
+
   it("refreshes omitted selectors dynamically but does not broaden explicit allowlists", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
