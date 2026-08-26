@@ -859,6 +859,8 @@ describe("VeryfrontFSAdapter", () => {
       };
       const previousIndex = Object.getOwnPropertyDescriptor(Array.prototype, "0");
       let setterCalls = 0;
+      let firstHash: Promise<string | undefined> | undefined;
+      let changedHash: Promise<string | undefined> | undefined;
 
       Object.defineProperty(Array.prototype, "0", {
         configurable: true,
@@ -868,14 +870,11 @@ describe("VeryfrontFSAdapter", () => {
       });
       try {
         internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
-        const first = await adapter.getSourceSnapshotFingerprint();
+        firstHash = adapter.getSourceSnapshotFingerprint();
 
         internals.sourceSnapshotVersion += 1;
         internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
-        const changed = await adapter.getSourceSnapshotFingerprint();
-
-        assertNotEquals(changed, first);
-        assertEquals(setterCalls, 0);
+        changedHash = adapter.getSourceSnapshotFingerprint();
       } finally {
         if (previousIndex) {
           Object.defineProperty(Array.prototype, "0", previousIndex);
@@ -883,6 +882,10 @@ describe("VeryfrontFSAdapter", () => {
           Reflect.deleteProperty(Array.prototype, "0");
         }
       }
+
+      if (!firstHash || !changedHash) throw new Error("Fingerprint hashing did not start");
+      assertNotEquals(await changedHash, await firstHash);
+      assertEquals(setterCalls, 0);
     });
 
     it("does not iterate through a mutable source-list hook", async () => {
