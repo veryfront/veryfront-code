@@ -737,27 +737,65 @@ describe("formatUserError environment gating", () => {
     });
   });
 
-  it("does not call live String prototype hooks while sanitizing stacks", async () => {
-    const error = new Error("unknown error mutated_string_last_index_of");
-    error.stack = [
-      "Error: unknown error mutated_string_last_index_of",
+  it("does not call live String prototype hooks across the public formatting path", async () => {
+    const unknown = new Error("unknown error mutated_string_hooks");
+    unknown.stack = [
+      "Error: unknown error mutated_string_hooks",
       "    at publicHandler (/srv/app.ts:1:1)",
+      "    at 2001:db8::dead (file:///app/a.ts:2:2)",
     ].join("\n");
+    const known = new Error("veryfront.config.ts not found");
 
-    await withEnv({ VERYFRONT_ENV: "development" }, () => {
-      const originalLastIndexOf = String.prototype.lastIndexOf;
-      let output: string;
+    await withEnv({ VERYFRONT_ENV: " development " }, () => {
+      const poisonedMethods = [
+        "endsWith",
+        "includes",
+        "indexOf",
+        "lastIndexOf",
+        "slice",
+        "split",
+        "startsWith",
+        "toLowerCase",
+        "trim",
+      ] as const;
+      const originalDescriptors = new Map<PropertyKey, PropertyDescriptor | undefined>();
+      let unknownOutput: string;
+      let knownOutput: string;
+
       try {
-        String.prototype.lastIndexOf = () => {
-          throw new Error("live String.lastIndexOf must not run");
-        };
-        output = formatUserError(error);
+        for (const method of poisonedMethods) {
+          originalDescriptors.set(
+            method,
+            Object.getOwnPropertyDescriptor(String.prototype, method),
+          );
+          Object.defineProperty(String.prototype, method, {
+            configurable: true,
+            value() {
+              throw new Error(`live String.${method} must not run`);
+            },
+            writable: true,
+          });
+        }
+
+        unknownOutput = formatUserError(unknown);
+        knownOutput = formatUserError(known);
       } finally {
-        String.prototype.lastIndexOf = originalLastIndexOf;
+        for (const method of poisonedMethods) {
+          const descriptor = originalDescriptors.get(method);
+          if (descriptor) {
+            Object.defineProperty(String.prototype, method, descriptor);
+          } else {
+            delete String.prototype[method];
+          }
+        }
       }
 
-      assert(output.includes("publicHandler"));
-      assertEquals(output.includes("live String.lastIndexOf"), false);
+      assert(unknownOutput.includes("publicHandler"));
+      assertEquals(unknownOutput.includes("2001:db8::dead"), false);
+      assert(knownOutput.includes("How to fix:"));
+      assert(knownOutput.includes("veryfront.config.ts"));
+      assertEquals(unknownOutput.includes("live String."), false);
+      assertEquals(knownOutput.includes("live String."), false);
       return Promise.resolve();
     });
   });

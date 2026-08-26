@@ -89,7 +89,7 @@ function buildSolutionDetailsLines(
 
   if (solution.example) {
     lines.push("", options?.exampleLabel ?? cyan("Example:"));
-    for (const line of solution.example.split("\n")) {
+    for (const line of splitString(solution.example, "\n")) {
       lines.push(`  ${dim(line)}`);
     }
   }
