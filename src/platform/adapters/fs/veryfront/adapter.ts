@@ -58,6 +58,8 @@ import {
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
+export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES = 32 * 1_024 * 1_024;
+export const MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES = 10_000;
 const ArrayPrototypeSort = Array.prototype.sort;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -66,6 +68,7 @@ const IntrinsicMap = Map;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
@@ -89,6 +92,15 @@ interface SourceSnapshotFile {
 }
 
 type SourceSnapshotFileKey = keyof SourceSnapshotFile;
+type SourceSnapshotRecord = readonly [
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+  string | number | null,
+];
 
 function getOwnSourceSnapshotValue(
   file: SourceSnapshotFile,
@@ -149,34 +161,100 @@ function frameSourceSnapshotValue(value: string | number | null): string {
   return `${type}${serialized.length}:${serialized}`;
 }
 
-function serializeSourceSnapshotFile(file: SourceSnapshotFile): string {
-  return frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "path")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "id")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "version_id")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "content")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "type")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "size")) +
-    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "updated_at"));
+function captureSourceSnapshotRecord(file: SourceSnapshotFile): SourceSnapshotRecord {
+  return [
+    getOwnSourceSnapshotValue(file, "path"),
+    getOwnSourceSnapshotValue(file, "id"),
+    getOwnSourceSnapshotValue(file, "version_id"),
+    getOwnSourceSnapshotValue(file, "content"),
+    getOwnSourceSnapshotValue(file, "type"),
+    getOwnSourceSnapshotValue(file, "size"),
+    getOwnSourceSnapshotValue(file, "updated_at"),
+  ];
 }
 
-function serializeSourceSnapshot(files: SourceSnapshotFile[]): string {
-  const records: string[] = [];
-  for (let index = 0; index < files.length; index++) {
-    IntrinsicObjectDefineProperty(records, records.length, {
+function serializeSourceSnapshotRecord(record: SourceSnapshotRecord): string {
+  let serialized = "";
+  for (let index = 0; index < record.length; index++) {
+    serialized += frameSourceSnapshotValue(record[index]!);
+  }
+  return serialized;
+}
+
+function utf8ByteLength(value: string): number {
+  let byteLength = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    if (codeUnit <= 0x7f) {
+      byteLength += 1;
+    } else if (codeUnit <= 0x7ff) {
+      byteLength += 2;
+    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < value.length) {
+      const next = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index + 1]) as number;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        byteLength += 4;
+        index += 1;
+      } else {
+        byteLength += 3;
+      }
+    } else {
+      byteLength += 3;
+    }
+  }
+  return byteLength;
+}
+
+function sourceSnapshotFrameSize(value: string | number | null): {
+  characters: number;
+  utf8Bytes: number;
+} {
+  if (value === null) return { characters: 1, utf8Bytes: 1 };
+  const serialized = typeof value === "number" ? `${value}` : value;
+  const prefixLength = 2 + `${serialized.length}`.length;
+  return {
+    characters: prefixLength + serialized.length,
+    utf8Bytes: prefixLength + utf8ByteLength(serialized),
+  };
+}
+
+async function computeSourceSnapshotFingerprint(
+  files: SourceSnapshotFile[],
+): Promise<string | undefined> {
+  if (files.length > MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES) return undefined;
+
+  const recordDigests: string[] = [];
+  let totalBytes = 0;
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    const record = captureSourceSnapshotRecord(files[fileIndex]!);
+    let recordCharacters = 0;
+    let recordBytes = 0;
+    for (let valueIndex = 0; valueIndex < record.length; valueIndex++) {
+      const size = sourceSnapshotFrameSize(record[valueIndex]!);
+      recordCharacters += size.characters;
+      recordBytes += size.utf8Bytes;
+    }
+    const recordPrefixBytes = 2 + `${recordCharacters}`.length;
+    const framedRecordBytes = recordPrefixBytes + recordBytes;
+    if (framedRecordBytes > MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES - totalBytes) {
+      return undefined;
+    }
+    totalBytes += framedRecordBytes;
+
+    IntrinsicObjectDefineProperty(recordDigests, recordDigests.length, {
       configurable: true,
       enumerable: true,
-      value: serializeSourceSnapshotFile(files[index]!),
+      value: await computeHash(serializeSourceSnapshotRecord(record)),
       writable: true,
     });
   }
-  IntrinsicReflectApply(ArrayPrototypeSort, records, []);
+  IntrinsicReflectApply(ArrayPrototypeSort, recordDigests, []);
 
-  let serialized = "";
-  for (let index = 0; index < records.length; index++) {
-    const record = records[index]!;
-    serialized += `r${record.length}:${record}`;
+  let canonicalDigests = "";
+  for (let index = 0; index < recordDigests.length; index++) {
+    const digest = recordDigests[index]!;
+    canonicalDigests += `h${digest.length}:${digest}`;
   }
-  return serialized;
+  return await computeHash(canonicalDigests);
 }
 
 interface BranchSnapshotRecoveryOptions<T> {
@@ -1337,9 +1415,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return this.sourceSnapshotFingerprint.value;
     }
 
-    const serialized = serializeSourceSnapshot(files);
     const value = (async () => {
-      const fingerprint = await computeHash(serialized);
+      const fingerprint = await computeSourceSnapshotFingerprint(files);
       return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
         ? fingerprint
         : undefined;

@@ -97,6 +97,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import type { SourceSnapshotFreshnessOptions } from "#veryfront/platform/adapters/base.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -691,7 +692,11 @@ type SourceContextFsWrapper = {
       environmentName?: string | null;
     },
   ) => Promise<R>;
-  ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
+  ensureSourceSnapshotFresh?: (
+    reason?: string,
+    options?: SourceSnapshotFreshnessOptions,
+  ) => Promise<void>;
+  sourceSnapshotFreshnessOptionsVersion?: 1;
   refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   getSourceSnapshotFingerprint?: () =>
     | string
@@ -705,6 +710,15 @@ async function refreshAgentSourceSnapshot(
 ): Promise<boolean> {
   const ensureSourceSnapshotFresh = fs.ensureSourceSnapshotFresh;
   if (typeof ensureSourceSnapshotFresh === "function") {
+    if (fs.sourceSnapshotFreshnessOptionsVersion === 1) {
+      await IntrinsicReflectApply(ensureSourceSnapshotFresh, fs, [reason, { maxAgeMs: 0 }]);
+      return true;
+    }
+    const refreshSourceSnapshot = fs.refreshSourceSnapshot;
+    if (typeof refreshSourceSnapshot === "function") {
+      await IntrinsicReflectApply(refreshSourceSnapshot, fs, [reason]);
+      return true;
+    }
     await IntrinsicReflectApply(ensureSourceSnapshotFresh, fs, [reason]);
     return true;
   }

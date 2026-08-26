@@ -8,7 +8,11 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { VeryfrontFSAdapter } from "./adapter.ts";
+import {
+  MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES,
+  MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES,
+  VeryfrontFSAdapter,
+} from "./adapter.ts";
 import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -948,6 +952,30 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
       assertEquals(inheritedGetterCalls, 0);
+    });
+
+    it("withholds fingerprints that exceed the total snapshot byte budget", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [{
+        path: "pages/oversized.tsx",
+        content: "x".repeat(MAX_SOURCE_SNAPSHOT_FINGERPRINT_BYTES),
+      }];
+
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = new Array(MAX_SOURCE_SNAPSHOT_FINGERPRINT_FILES + 1).fill({
+        path: "pages/repeated.tsx",
+      });
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = [{ path: "pages/bounded.tsx", content: "source" }];
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
     });
 
     it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {

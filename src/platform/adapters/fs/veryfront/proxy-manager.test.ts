@@ -70,6 +70,17 @@ async function assertGetAdapterRejects(
 }
 
 describe("ProxyFSAdapterManager", () => {
+  it("keeps credential-bearing adapter collections outside the public object graph", () => {
+    const manager = createManager();
+    try {
+      const ownProperties = Object.getOwnPropertyNames(manager);
+      assertEquals(ownProperties.includes("adapters"), false);
+      assertEquals(ownProperties.includes("pendingAdapters"), false);
+    } finally {
+      manager.dispose();
+    }
+  });
+
   it("uses the validation method captured before project code can replace it", async () => {
     const manager = createManager({
       adapterFactory: (config) => {

@@ -9,14 +9,38 @@ const verifiedCredentialStorage = new AsyncLocalStorage<
   VerifiedControlPlaneCacheCredential | null
 >();
 const IntrinsicReflectApply = Reflect.apply;
-const AsyncLocalStoragePrototypeRun = AsyncLocalStorage.prototype.run;
-const AsyncLocalStoragePrototypeGetStore = AsyncLocalStorage.prototype.getStore;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(verifiedCredentialStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(verifiedCredentialStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(verifiedCredentialStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(verifiedCredentialStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
 
 function runWithCredentialStore<T>(
   store: VerifiedControlPlaneCacheCredential | null,
   fn: () => T,
 ): T {
-  return IntrinsicReflectApply(AsyncLocalStoragePrototypeRun, verifiedCredentialStorage, [
+  return IntrinsicReflectApply(AsyncLocalStorageRun, verifiedCredentialStorage, [
     store,
     fn,
   ]) as T;
@@ -42,7 +66,7 @@ export function getVerifiedCacheApiCredential():
   | VerifiedControlPlaneCacheCredential
   | undefined {
   return IntrinsicReflectApply(
-    AsyncLocalStoragePrototypeGetStore,
+    AsyncLocalStorageGetStore,
     verifiedCredentialStorage,
     [],
   ) || undefined;

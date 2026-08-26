@@ -23,10 +23,38 @@ export interface RequestContext {
 
 export const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
 const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
 const AsyncLocalStorageExit = AsyncLocalStoragePrototype.exit;
+IntrinsicObjectDefineProperty(asyncLocalStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "exit", {
+  configurable: false,
+  value: AsyncLocalStorageExit,
+  writable: false,
+});
 
 function getRequestContextStore(): RequestContext | undefined {
   return IntrinsicReflectApply(AsyncLocalStorageGetStore, asyncLocalStorage, []) as

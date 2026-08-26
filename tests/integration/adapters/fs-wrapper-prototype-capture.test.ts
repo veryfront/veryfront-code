@@ -16,6 +16,17 @@ import type {
   ContextualFSAdapter,
   FSAdapter,
 } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  getCurrentRequestContext,
+  runWithoutRequestContext,
+  runWithRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getActiveSourceIntegrationPolicy,
+  runWithExactSourceIntegrationPolicy,
+} from "#veryfront/integrations/source-policy-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const baseConfig = {
   veryfront: {
@@ -76,6 +87,53 @@ function withPollutedObjectPrototype<T>(
 }
 
 describe("FSAdapterWrapper optional-method capture under prototype pollution", () => {
+  it("keeps request and source-policy contexts independent of mutable async hooks", async () => {
+    const descriptors = new Map(
+      ["disable", "enterWith", "exit", "getStore", "run"].map((key) => [
+        key,
+        Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, key)!,
+      ]),
+    );
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project AsyncLocalStorage hook must not run");
+    };
+    for (const key of descriptors.keys()) {
+      Object.defineProperty(AsyncLocalStorage.prototype, key, {
+        configurable: true,
+        value: poison,
+      });
+    }
+
+    try {
+      const policy = normalizeSourceIntegrationPolicy({ allow: { gmail: {} } });
+      await runWithRequestContext(
+        { projectSlug: "my-slug", token: "signed-user-token" },
+        async () => {
+          assertEquals(getCurrentRequestContext()?.token, "signed-user-token");
+          assertEquals(
+            runWithoutRequestContext(() => getCurrentRequestContext()),
+            null,
+          );
+          assertEquals(getCurrentRequestContext()?.token, "signed-user-token");
+          assertEquals(
+            runWithExactSourceIntegrationPolicy(
+              policy,
+              getActiveSourceIntegrationPolicy,
+            ),
+            policy,
+          );
+        },
+      );
+    } finally {
+      for (const [key, descriptor] of descriptors) {
+        Object.defineProperty(AsyncLocalStorage.prototype, key, descriptor);
+      }
+    }
+    assertEquals(poisonedCalls, 0);
+  });
+
   it("delegates fingerprints through the captured Reflect.apply intrinsic", async () => {
     const fingerprint = () => "trusted-snapshot";
     const fsAdapter = {
@@ -219,14 +277,19 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
 
   it("keeps credential-bearing adapter lookup independent of mutable timing hooks", async () => {
     const adapter = new MultiProjectFSAdapter(baseConfig);
-    const selectedAdapter = new VeryfrontFSAdapter(baseConfig);
+    const manager = new ProxyFSAdapterManager({
+      baseConfig,
+      adapterFactory: (config) => {
+        const selectedAdapter = new VeryfrontFSAdapter(config);
+        selectedAdapter.initialize = () => Promise.resolve();
+        return selectedAdapter;
+      },
+    });
     const internals = adapter as unknown as {
       manager: ProxyFSAdapterManager;
     };
     const originalManager = internals.manager;
-    internals.manager = {
-      getAdapter: () => Promise.resolve(selectedAdapter),
-    } as unknown as ProxyFSAdapterManager;
+    internals.manager = manager;
     const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
     let poisonedCalls = 0;
 
@@ -247,8 +310,8 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       if (originalNow) Object.defineProperty(performance, "now", originalNow);
       else Reflect.deleteProperty(performance, "now");
       internals.manager = originalManager;
+      manager.dispose();
       adapter.dispose();
-      selectedAdapter.dispose();
     }
 
     assertEquals(poisonedCalls, 0);

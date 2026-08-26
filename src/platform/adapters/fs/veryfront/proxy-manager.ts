@@ -45,6 +45,8 @@ const subtleDigest = crypto.subtle.digest.bind(crypto.subtle);
 const textEncoder = new TextEncoder();
 const NativeUint8Array = Uint8Array;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicPerformance = performance;
+const PerformanceNow = IntrinsicPerformance.now;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
 type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
@@ -59,6 +61,10 @@ function captureGetAdapterParamsValidator(): void {
   const schema = getGetAdapterParamsSchema();
   capturedGetAdapterParamsSchema = schema;
   capturedGetAdapterParamsSchemaSafeParse = schema.safeParse;
+}
+
+function performanceNow(): number {
+  return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
 }
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
@@ -105,8 +111,8 @@ interface ProxyFSAdapterManagerConfig {
 }
 
 export class ProxyFSAdapterManager {
-  private adapters = new Map<string, ProjectAdapter>();
-  private pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
+  #adapters = new Map<string, ProjectAdapter>();
+  #pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
   private adapterFactory: (config: FSAdapterConfig) => VeryfrontFSAdapter;
   private baseConfig: FSAdapterConfig;
   private maxAdapters: number;
@@ -147,7 +153,7 @@ export class ProxyFSAdapterManager {
     branch?: string | null,
     onResolved?: (initializedNow: boolean) => void,
   ): Promise<VeryfrontFSAdapter> {
-    const getAdapterStartTime = performance.now();
+    const getAdapterStartTime = performanceNow();
 
     const effectiveProductionMode = productionMode ?? false;
     // All three must use the same predicate the cache key uses, or an identity
@@ -236,11 +242,11 @@ export class ProxyFSAdapterManager {
       environmentName: effectiveEnvironmentName,
       branch: effectiveBranch,
       cacheKey: diagnosticCacheKey,
-      hasExisting: this.adapters.has(cacheKey),
-      totalCachedAdapters: this.adapters.size,
+      hasExisting: this.#adapters.has(cacheKey),
+      totalCachedAdapters: this.#adapters.size,
     });
 
-    const existing = this.adapters.get(cacheKey);
+    const existing = this.#adapters.get(cacheKey);
     if (existing) {
       existing.lastAccessed = Date.now();
 
@@ -263,16 +269,16 @@ export class ProxyFSAdapterManager {
       return existing.adapter;
     }
 
-    const pending = this.pendingAdapters.get(cacheKey);
+    const pending = this.#pendingAdapters.get(cacheKey);
     if (pending) {
       logger.debug("Waiting for pending adapter creation", {
         cacheKey: diagnosticCacheKey,
         projectSlug,
       });
 
-      const waitStartTime = performance.now();
+      const waitStartTime = performanceNow();
       const adapter = await pending;
-      const initialized = this.adapters.get(cacheKey);
+      const initialized = this.#adapters.get(cacheKey);
       if (!initialized) {
         adapter.dispose();
         throw CACHE_INVARIANT_VIOLATION.create({
@@ -294,8 +300,8 @@ export class ProxyFSAdapterManager {
 
       logger.debug("Pending adapter ready", {
         cacheKey: diagnosticCacheKey,
-        waitDuration: `${(performance.now() - waitStartTime).toFixed(2)}ms`,
-        totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+        waitDuration: `${(performanceNow() - waitStartTime).toFixed(2)}ms`,
+        totalDuration: `${(performanceNow() - getAdapterStartTime).toFixed(2)}ms`,
       });
 
       onResolved?.(true);
@@ -307,7 +313,7 @@ export class ProxyFSAdapterManager {
     // initialize without bound and then commit past maxAdapters. Reuse an LRU
     // completed slot when possible; if every slot is initializing, fail fast
     // without starting more work.
-    if (this.adapters.size + this.pendingAdapters.size >= this.maxAdapters) {
+    if (this.#adapters.size + this.#pendingAdapters.size >= this.maxAdapters) {
       const evicted = this.evictLeastRecentlyUsed();
       if (!evicted) {
         throw SERVICE_OVERLOADED.create({
@@ -319,7 +325,7 @@ export class ProxyFSAdapterManager {
     logger.debug("Creating new adapter", {
       cacheKey: diagnosticCacheKey,
       projectSlug,
-      elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+      elapsedBeforeCreate: `${(performanceNow() - getAdapterStartTime).toFixed(2)}ms`,
     });
 
     const adapter = await this.#createAdapter(
@@ -465,7 +471,7 @@ export class ProxyFSAdapterManager {
       releaseId,
       environmentName,
       branch,
-      totalCachedAdapters: this.adapters.size,
+      totalCachedAdapters: this.#adapters.size,
     });
 
     const config: FSAdapterConfig = {
@@ -522,7 +528,7 @@ export class ProxyFSAdapterManager {
     // Defer initialization until after its promise is registered. This makes
     // capacity admission atomic even when initialize() throws synchronously.
     const initPromise = Promise.resolve().then(async (): Promise<VeryfrontFSAdapter> => {
-      const initStartTime = performance.now();
+      const initStartTime = performanceNow();
 
       logger.debug("Adapter initialization START", {
         cacheKey: diagnosticCacheKey,
@@ -536,16 +542,16 @@ export class ProxyFSAdapterManager {
         logger.debug("Adapter initialization DONE", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+          duration: `${(performanceNow() - initStartTime).toFixed(2)}ms`,
         });
 
-        this.adapters.set(cacheKey, projectAdapter);
+        this.#adapters.set(cacheKey, projectAdapter);
         return adapter;
       } catch (error) {
         logger.error("Adapter initialization failed", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+          duration: `${(performanceNow() - initStartTime).toFixed(2)}ms`,
           error: error instanceof Error ? error.message : String(error),
         });
 
@@ -563,11 +569,11 @@ export class ProxyFSAdapterManager {
         throw error;
       } finally {
         projectAdapter.initializing = undefined;
-        this.pendingAdapters.delete(cacheKey);
+        this.#pendingAdapters.delete(cacheKey);
       }
     });
 
-    this.pendingAdapters.set(cacheKey, initPromise);
+    this.#pendingAdapters.set(cacheKey, initPromise);
     return initPromise;
   }
 
@@ -575,7 +581,7 @@ export class ProxyFSAdapterManager {
     let oldestCacheKey: string | null = null;
     let oldestTime = Infinity;
 
-    for (const [cacheKey, adapter] of this.adapters) {
+    for (const [cacheKey, adapter] of this.#adapters) {
       if (adapter.lastAccessed < oldestTime) {
         oldestCacheKey = cacheKey;
         oldestTime = adapter.lastAccessed;
@@ -584,28 +590,28 @@ export class ProxyFSAdapterManager {
 
     if (!oldestCacheKey) return false;
 
-    const adapter = this.adapters.get(oldestCacheKey);
+    const adapter = this.#adapters.get(oldestCacheKey);
     if (!adapter) return false;
     logger.debug("Evicting LRU adapter", {
       cacheKey: buildDiagnosticCacheKey(adapter.identity),
     });
 
     adapter.adapter.dispose();
-    this.adapters.delete(oldestCacheKey);
+    this.#adapters.delete(oldestCacheKey);
     return true;
   }
 
   private cleanupIdleAdapters(): void {
     const now = Date.now();
 
-    for (const [cacheKey, adapter] of this.adapters) {
+    for (const [cacheKey, adapter] of this.#adapters) {
       if (now - adapter.lastAccessed <= this.maxIdleMs) continue;
 
       logger.debug("Removing idle adapter", {
         cacheKey: buildDiagnosticCacheKey(adapter.identity),
       });
       adapter.adapter.dispose();
-      this.adapters.delete(cacheKey);
+      this.#adapters.delete(cacheKey);
     }
   }
 
@@ -618,7 +624,7 @@ export class ProxyFSAdapterManager {
     projectId?: string,
   ): boolean {
     this.assertValidSelection(projectSlug, productionMode, releaseId);
-    return Array.from(this.adapters.values()).some(({ identity }) =>
+    return Array.from(this.#adapters.values()).some(({ identity }) =>
       this.matchesAdapterSelection(
         identity,
         projectSlug,
@@ -641,7 +647,7 @@ export class ProxyFSAdapterManager {
   ): void {
     this.assertValidSelection(projectSlug, productionMode, releaseId);
     let evicted = false;
-    for (const [cacheKey, { identity }] of this.adapters) {
+    for (const [cacheKey, { identity }] of this.#adapters) {
       if (
         !this.matchesAdapterSelection(
           identity,
@@ -660,13 +666,13 @@ export class ProxyFSAdapterManager {
   }
 
   private evictAdapterByCacheKey(cacheKey: string): void {
-    const adapter = this.adapters.get(cacheKey);
+    const adapter = this.#adapters.get(cacheKey);
     if (!adapter) return;
     logger.debug("Evicting adapter", {
       cacheKey: buildDiagnosticCacheKey(adapter.identity),
     });
     adapter.adapter.dispose();
-    this.adapters.delete(cacheKey);
+    this.#adapters.delete(cacheKey);
   }
 
   private matchesAdapterSelection(
@@ -705,7 +711,7 @@ export class ProxyFSAdapterManager {
     const stats: Record<string, CacheStats> = {};
     const diagnosticKeyCounts = new Map<string, number>();
 
-    for (const adapter of this.adapters.values()) {
+    for (const adapter of this.#adapters.values()) {
       const diagnosticKey = buildDiagnosticCacheKey(adapter.identity);
       const keyCount = (diagnosticKeyCounts.get(diagnosticKey) ?? 0) + 1;
       diagnosticKeyCounts.set(diagnosticKey, keyCount);
@@ -713,7 +719,7 @@ export class ProxyFSAdapterManager {
       stats[statsKey] = adapter.adapter.getCacheStats();
     }
 
-    return { adapters: this.adapters.size, stats };
+    return { adapters: this.#adapters.size, stats };
   }
 
   dispose(): void {
@@ -722,14 +728,14 @@ export class ProxyFSAdapterManager {
       this.cleanupTimer = undefined;
     }
 
-    for (const adapter of this.adapters.values()) {
+    for (const adapter of this.#adapters.values()) {
       logger.debug("Disposing adapter", {
         cacheKey: buildDiagnosticCacheKey(adapter.identity),
       });
       adapter.adapter.dispose();
     }
 
-    this.adapters.clear();
+    this.#adapters.clear();
     logger.debug("Disposed");
   }
 }

@@ -117,16 +117,41 @@ describe("verified cache API credential context", () => {
 
   it("clears the credential through captured async-context operations", async () => {
     const verifiedClaims = await createVerifiedClaims("signed-body-token");
-    const originalRun = AsyncLocalStorage.prototype.run;
+    const originalDisable = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "disable",
+    )!;
+    const originalEnterWith = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "enterWith",
+    )!;
+    const originalGetStore = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "getStore",
+    )!;
+    const originalRun = Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, "run")!;
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project AsyncLocalStorage hook must not run");
+    };
+    Object.defineProperty(AsyncLocalStorage.prototype, "disable", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "getStore", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "run", {
+      configurable: true,
+      value: poison,
+    });
     try {
-      AsyncLocalStorage.prototype.run = function <R>(
-        _store: unknown,
-        callback: (...args: unknown[]) => R,
-        ...args: unknown[]
-      ): R {
-        return callback(...args);
-      };
-
       await runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
         assertEquals(getVerifiedCacheApiCredential()?.token, "signed-body-token");
         const observed = await withoutVerifiedCacheApiCredential(async () =>
@@ -134,8 +159,12 @@ describe("verified cache API credential context", () => {
         )();
         assertEquals(observed, undefined);
       });
+      assertEquals(poisonedCalls, 0);
     } finally {
-      AsyncLocalStorage.prototype.run = originalRun;
+      Object.defineProperty(AsyncLocalStorage.prototype, "disable", originalDisable);
+      Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", originalEnterWith);
+      Object.defineProperty(AsyncLocalStorage.prototype, "getStore", originalGetStore);
+      Object.defineProperty(AsyncLocalStorage.prototype, "run", originalRun);
     }
   });
 });
