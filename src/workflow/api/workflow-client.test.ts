@@ -2132,7 +2132,7 @@ class RetryDuringTerminalCleanupBackend extends MemoryBackend {
         })
       );
     });
-    return { ...run, status: "failed" };
+    return { ...run, status: "cancelled" };
   }
 }
 
@@ -3385,7 +3385,10 @@ describe("WorkflowClient durable event waits", () => {
     try {
       failingClient.register(workflow({
         id: "bounded-delivery-finalization-retry",
-        steps: [waitForEvent("gate", { eventName: "gate.ready" })],
+        steps: [
+          waitForEvent("gate", { eventName: "gate.ready" }),
+          waitForApproval("keep-active", { message: "keep the delivery claim recoverable" }),
+        ],
       }));
       const handle = await failingClient.start("bounded-delivery-finalization-retry", {});
       await handle.settled();
@@ -3399,6 +3402,15 @@ describe("WorkflowClient durable event waits", () => {
         failing.finalizationAttempts,
         8,
         "a persistent backend failure must not keep a one-second retry loop alive forever",
+      );
+
+      await failingClient.getEventWaitManager().checkExpiredEventWaits();
+      assertEquals(failing.finalizationAttempts, 9);
+      await time.tickAsync(1_000);
+      assertEquals(
+        failing.finalizationAttempts,
+        10,
+        "exhausting one retry series must not leak its counter or suppress a later recovery",
       );
     } finally {
       await failingClient.destroy();
@@ -3583,7 +3595,8 @@ describe("WorkflowClient durable event waits", () => {
 
       assertEquals(
         await racingClient.publishEvent(handle.runId, "payment.confirmed", { amount: 9 }),
-        "delivery-failed",
+        "buffered",
+        "mail restored after a sibling failure must remain buffered for retry",
       );
       assertEquals((await racingClient.getPendingEventWaits(handle.runId)).length, 1);
       assertEquals(
@@ -4097,6 +4110,32 @@ describe("WorkflowClient durable event waits", () => {
     await waitFor(async () => (await client.getRun(runId))?.status === "completed");
   });
 
+  it("claims on-time buffered mail before its deadline timer expires the wait", async () => {
+    client.register(workflow({
+      id: "timer-honors-on-time-buffered-event",
+      steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: 500 })],
+    }));
+    const handle = await client.start("timer-honors-on-time-buffered-event", {});
+    await handle.settled();
+    const [wait] = await client.getPendingEventWaits(handle.runId);
+    assertExists(wait?.expiresAt);
+    assert(
+      Date.now() < wait.expiresAt.getTime(),
+      "the test envelope must enter the durable mailbox before the deadline",
+    );
+    await backend.appendRunEvent(handle.runId, {
+      id: "evt-before-timer-deadline",
+      eventName: "gate.ready",
+      payload: { arrived: "on-time" },
+      publishedAt: new Date(),
+    });
+
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed", {
+      timeout: 2_000,
+      message: "the deadline timer expired a wait whose event was already buffered on time",
+    });
+  });
+
   it("marks a timed-out wait node failed so retry can schedule it again", async () => {
     // The timeout has to serve twice: short enough for the first park to fail
     // promptly, long enough for the retried park to still be pending when the
@@ -4203,6 +4242,21 @@ describe("WorkflowClient durable event waits", () => {
       ["sibling"],
       "terminal cleanup must not cancel live sibling waits on a retryable failed run",
     );
+
+    assertEquals(
+      await client.publishEvent(handle.runId, "sibling.ready", { duringFailure: true }),
+      "buffered",
+      "a failed run must retain mail that its retryable sibling wait can still consume",
+    );
+    await client.retry(handle.runId);
+    await waitFor(
+      async () =>
+        (await client.getPendingEventWaits(handle.runId)).some((wait) => wait.nodeId === "failed"),
+    );
+    await client.publishEvent(handle.runId, "failed.ready", {});
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed", {
+      message: "retry did not consume the sibling event published while the run was failed",
+    });
   });
 
   it("keeps an expired deadline replayable when failing the run does not commit", async () => {

@@ -1310,6 +1310,11 @@ describe("MemoryBackend", () => {
         "the rollback must report the wait returned to pending",
       );
       assertEquals(
+        await backend.restoreRunEventDelivery("run-events", "evw-1", claimed),
+        false,
+        "a replacement manager repeating the rollback must not restore the envelope twice",
+      );
+      assertEquals(
         (await backend.getPendingEventWaits("run-events")).map((wait) => wait.id),
         ["evw-1"],
         "the wait must be pending again so a later publish can wake the run",
@@ -1318,6 +1323,11 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-claim",
         "the rolled-back event must be back at the head of the mailbox",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-later",
+        "an idempotent rollback must leave exactly one copy of the claimed envelope",
       );
     });
 

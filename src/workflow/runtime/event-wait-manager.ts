@@ -29,6 +29,10 @@ const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const MAX_DELIVERY_FINALIZATION_ATTEMPTS = 8;
 const MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS = 8;
 const ACTIVE_WAIT_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
+const MAILBOX_RETAINING_RUN_STATUSES: WorkflowRun["status"][] = [
+  ...ACTIVE_WAIT_STATUSES,
+  "failed",
+];
 const expiryTimersByBackend = new WeakMap<
   WorkflowBackend,
   Map<string, Map<EventWaitManager, ReturnType<typeof setTimeout>>>
@@ -304,7 +308,7 @@ export class EventWaitManager {
     // An absent run is not terminal: publishing to a reserved id before the run
     // starts is the case the mailbox exists to serve.
     const run = await backend.getRun(runId);
-    if (run && !ACTIVE_WAIT_STATUSES.includes(run.status)) return "run-terminal";
+    if (run && !MAILBOX_RETAINING_RUN_STATUSES.includes(run.status)) return "run-terminal";
 
     const envelope: RunEventEnvelope = {
       id: generateId("evt"),
@@ -313,6 +317,10 @@ export class EventWaitManager {
       publishedAt: new Date(),
     };
     await backend.appendRunEvent(runId, envelope);
+    // Failed runs are retryable but cannot reconcile a delivery until retry()
+    // makes them active again. Preserve the event for the sibling wait instead
+    // of claiming and immediately rolling it back against the failed run.
+    if (run?.status === "failed") return "buffered";
     const outcome = await this.drain(runId, true);
 
     // The outcome reports what happened to THIS envelope. With concurrent
@@ -321,17 +329,17 @@ export class EventWaitManager {
     // told "delivered" about an envelope that was not would retry and
     // duplicate the event.
     if (outcome.deliveredEventIds.has(envelope.id)) return "delivered";
-    if (outcome.failedEventIds.has(envelope.id)) return "delivery-failed";
 
     // Re-check for a terminal transition that landed between the status check
-    // above and the append. The documented outcome for a finished run is
-    // `run-terminal`, and its mail can never be consumed, so reclaim what this
-    // name has buffered rather than leaving it stranded.
+    // above and the append. Failed remains mailbox-retaining because retry can
+    // still consume the restored envelope; completed and cancelled cannot.
     const latest = await backend.getRun(runId);
-    if (latest && !ACTIVE_WAIT_STATUSES.includes(latest.status)) {
+    if (latest?.status === "failed") return "buffered";
+    if (latest && !MAILBOX_RETAINING_RUN_STATUSES.includes(latest.status)) {
       await backend.removeRunEvent(runId, envelope.id);
       return "run-terminal";
     }
+    if (outcome.failedEventIds.has(envelope.id)) return "delivery-failed";
     if (outcome.terminal) return "run-terminal";
     return "buffered";
   }
@@ -374,7 +382,11 @@ export class EventWaitManager {
    * fail for reasons that have nothing to do with the other waits parked on it,
    * and one such failure must not stop the rest of this run's mail.
    */
-  private async drain(runId: string, waitForIdle: boolean): Promise<DrainOutcome> {
+  private async drain(
+    runId: string,
+    waitForIdle: boolean,
+    expireOverdueWaits = true,
+  ): Promise<DrainOutcome> {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) {
       return {
@@ -421,14 +433,16 @@ export class EventWaitManager {
           wait.expiresAt,
         );
         if (!event && overdue) {
-          try {
-            await this.expire(wait);
-          } catch (error) {
-            logger.error(
-              "Failed to expire an overdue event wait before matching",
-              { runId, waitId: wait.id },
-              error,
-            );
+          if (expireOverdueWaits) {
+            try {
+              await this.expire(wait, true);
+            } catch (error) {
+              logger.error(
+                "Failed to expire an overdue event wait before matching",
+                { runId, waitId: wait.id },
+                error,
+              );
+            }
           }
           continue;
         }
@@ -517,8 +531,11 @@ export class EventWaitManager {
   ): void {
     if (this.destroyed || this.finalizationRetryTimers.has(event.id)) return;
     const attempt = (this.finalizationRetryAttempts.get(event.id) ?? 0) + 1;
+    if (attempt >= MAX_DELIVERY_FINALIZATION_ATTEMPTS) {
+      this.finalizationRetryAttempts.delete(event.id);
+      return;
+    }
     this.finalizationRetryAttempts.set(event.id, attempt);
-    if (attempt >= MAX_DELIVERY_FINALIZATION_ATTEMPTS) return;
     const retryDelay = Math.min(
       MIN_EXPIRY_RETRY_DELAY_MS * 2 ** (attempt - 1),
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
@@ -542,8 +559,11 @@ export class EventWaitManager {
   private scheduleDeliveryRetry(runId: string): void {
     if (this.destroyed || this.deliveryRetryTimers.has(runId)) return;
     const attempt = (this.deliveryRetryAttempts.get(runId) ?? 0) + 1;
+    if (attempt > MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS) {
+      this.deliveryRetryAttempts.delete(runId);
+      return;
+    }
     this.deliveryRetryAttempts.set(runId, attempt);
-    if (attempt > MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS) return;
     const retryDelay = Math.min(
       MIN_EXPIRY_RETRY_DELAY_MS * 2 ** (attempt - 1),
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
@@ -844,9 +864,31 @@ export class EventWaitManager {
    * the same way an expired approval does. Either way the run stops consuming
    * capacity on a deadline it declared and then ignored.
    */
-  private async expire(wait: PersistedPendingEventWait): Promise<void> {
+  private async expire(
+    wait: PersistedPendingEventWait,
+    mailboxChecked = false,
+  ): Promise<void> {
     const backend = this.config.backend;
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
+
+    if (wait.waitKind === "event" && !mailboxChecked) {
+      const outcome = await this.drain(wait.runId, false, false);
+      if (outcome.failedEventIds.size > 0) this.scheduleDeliveryRetry(wait.runId);
+      const stillPending = (await backend.getPendingEventWaits(wait.runId)).some(
+        (candidate) => candidate.id === wait.id,
+      );
+      if (!stillPending) return;
+      const buffered = await backend.peekRunEvent(wait.runId, wait.eventName);
+      if (
+        buffered && wait.expiresAt &&
+        buffered.publishedAt.getTime() <= wait.expiresAt.getTime()
+      ) {
+        // Delivery rolled back, so the event still won the deadline. Preserve
+        // the wait and let prompt/periodic reconciliation retry the envelope.
+        this.scheduleDeliveryRetry(wait.runId);
+        return;
+      }
+    }
 
     // A delay's deadline is its delivery, so the record resolves as delivered
     // rather than expired: the node completed on time, it did not time out.

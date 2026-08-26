@@ -907,6 +907,8 @@ export class MemoryBackend implements WorkflowBackend {
     waitId: string,
     event: RunEventEnvelope,
   ): Promise<boolean> {
+    const claim = this.runEventClaims.get(runId)?.get(event.id);
+    if (!claim || claim.wait.id !== waitId) return Promise.resolve(false);
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
     if (restored) {
@@ -916,7 +918,7 @@ export class MemoryBackend implements WorkflowBackend {
     // The event goes back even when the wait belongs to another actor now: it
     // held its mailbox place before the claim.
     const mailbox = this.runEvents.get(runId) ?? [];
-    restoreRetainedRunEvent(mailbox, event);
+    restoreRetainedRunEvent(mailbox, claim.event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
     return Promise.resolve(restored);
