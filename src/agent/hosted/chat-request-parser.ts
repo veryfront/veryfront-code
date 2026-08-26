@@ -155,6 +155,10 @@ async function withVerifiedRunEventAppendToken(
   parsedRequest: ParsedHostedChatRequest,
   verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
   trustServerEnvelope: boolean,
+  verifiedContext?: Pick<
+    ChatRequestContext,
+    "runtimeTargetKind" | "runtimeTargetEnvironmentId"
+  >,
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
@@ -189,6 +193,9 @@ async function withVerifiedRunEventAppendToken(
   const verifiedRequest: ParsedHostedChatRequest = {
     ...parsedRequest,
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    ...(verifiedContext
+      ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
+      : {}),
     ...(grantedIntegrationToolNames.length > 0
       ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
       : {}),
@@ -622,6 +629,10 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     parsedRequest,
     options.verifyRunEventAppendToken,
     true,
+    {
+      runtimeTargetKind: chatRequest.data.context.runtimeTargetKind,
+      runtimeTargetEnvironmentId: chatRequest.data.context.runtimeTargetEnvironmentId,
+    },
   );
   if (verifiedRequest instanceof Response) {
     return verifiedRequest;
@@ -634,20 +645,5 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       { status: 403 },
     );
   }
-
-  if (!verifiedRequest.serverEnvelopeVerified) {
-    return verifiedRequest;
-  }
-
-  // The verified run-event credential lives in module-private ingress state
-  // keyed by the exact object identity of `verifiedRequest`, so the runtime
-  // target metadata is grafted onto that same object rather than a spread
-  // copy — returning a copy would orphan the credential lookup downstream.
-  const runtimeContext = chatRequest.data.context;
-  verifiedRequest.validatedContext = {
-    ...verifiedRequest.validatedContext,
-    runtimeTargetKind: runtimeContext.runtimeTargetKind,
-    runtimeTargetEnvironmentId: runtimeContext.runtimeTargetEnvironmentId,
-  };
   return verifiedRequest;
 }
