@@ -14,7 +14,10 @@ import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
 } from "./project-middleware.ts";
-import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
+import {
+  finishPreviewDocumentSourceSnapshot,
+  seedPreviewDocumentSourceSnapshot,
+} from "../handlers/request/source-snapshot-freshness.ts";
 
 interface ActiveFsContext {
   projectSlug: string;
@@ -263,6 +266,79 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(
       rejection.message.includes("changed after request configuration was derived"),
       true,
+    );
+  });
+
+  it("rejects a source change before loading preview middleware", async () => {
+    let sourceVersion = 1;
+    let loadCount = 0;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    sourceVersion++;
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => {
+        loadCount++;
+        return Promise.resolve([]);
+      },
+    });
+
+    await assertRejects(
+      () => execute(runtime, context),
+      Error,
+      "changed after request configuration was derived",
+    );
+    assertEquals(loadCount, 0);
+  });
+
+  it("retains the config marker after a downstream document handler releases it", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    await assertRejects(
+      () =>
+        execute(runtime, context, undefined, async () => {
+          await finishPreviewDocumentSourceSnapshot(context);
+          sourceVersion++;
+          return new Response("stale route response");
+        }),
+      Error,
+      "changed after request configuration was derived",
     );
   });
 

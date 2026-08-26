@@ -103,6 +103,29 @@ export function seedPreviewDocumentSourceSnapshot(
   preparedDocumentSnapshots.set(ctx, { ...marker, configBound: true });
 }
 
+/**
+ * Keep a config-bound marker alive across an upstream operation and validate
+ * both sides of it. A downstream document handler may release its WeakMap
+ * entry before returning through project middleware, so the retained value is
+ * the authority for the final check.
+ */
+export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
+  ctx: HandlerContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const retained = preparedDocumentSnapshots.get(ctx);
+  if (retained?.configBound !== true) return await operation();
+  if (!(await preparedDocumentSnapshotMatches(ctx, retained))) {
+    throwConfigSnapshotChanged(ctx);
+  }
+
+  const result = await operation();
+  if (!(await preparedDocumentSnapshotMatches(ctx, retained))) {
+    throwConfigSnapshotChanged(ctx);
+  }
+  return result;
+}
+
 function throwConfigSnapshotChanged(ctx: HandlerContext): never {
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
