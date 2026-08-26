@@ -238,9 +238,6 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
     ...runtimeOverrides,
     allowedTools: sanitizedAllowedTools,
   };
-  if (sanitizedAllowedTools.length === 0) {
-    delete nextRuntimeOverrides.allowedTools;
-  }
 
   const nextForwardedProps: Record<string, unknown> = {
     ...forwardedProps,

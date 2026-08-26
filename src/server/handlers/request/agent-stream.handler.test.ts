@@ -990,7 +990,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(capturedAllowedTools, undefined);
+    assertEquals(
+      capturedAllowedTools,
+      [],
+      "rejecting every forwarded grant must preserve an explicit deny-all filter",
+    );
   });
 
   it("loads and applies integration restrictions from the exact requested source", async () => {
@@ -1282,7 +1286,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
-    assertEquals(capturedAllowedTools, undefined);
+    assertEquals(
+      capturedAllowedTools,
+      [],
+      "dropping the only untrusted grant must preserve a deny-all remote filter",
+    );
   });
 
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
