@@ -2224,12 +2224,24 @@ describe("VeryfrontFSAdapter", () => {
         prototype,
         "invalidateDerivedSourceCaches",
       );
+      const originalIdentityLookup = Object.getOwnPropertyDescriptor(
+        prototype,
+        "getCurrentSourceSnapshotIdentity",
+      );
       let poisonedInvalidations = 0;
+      let poisonedIdentityLookups = 0;
       Object.defineProperty(prototype, "invalidateDerivedSourceCaches", {
         configurable: true,
         value: () => {
           poisonedInvalidations += 1;
           throw new Error("project invalidation hook must not run");
+        },
+      });
+      Object.defineProperty(prototype, "getCurrentSourceSnapshotIdentity", {
+        configurable: true,
+        value: () => {
+          poisonedIdentityLookups += 1;
+          throw new Error("project identity hook must not run");
         },
       });
       try {
@@ -2244,10 +2256,20 @@ describe("VeryfrontFSAdapter", () => {
             originalInvalidation,
           );
         }
+        if (originalIdentityLookup === undefined) {
+          Reflect.deleteProperty(prototype, "getCurrentSourceSnapshotIdentity");
+        } else {
+          Object.defineProperty(
+            prototype,
+            "getCurrentSourceSnapshotIdentity",
+            originalIdentityLookup,
+          );
+        }
       }
 
       assertEquals(listAllFilesCalls, 2);
       assertEquals(poisonedInvalidations, 0);
+      assertEquals(poisonedIdentityLookups, 0);
       assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
       assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
     });
