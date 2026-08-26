@@ -1,7 +1,7 @@
 /**
  * Browser half of the CSRF double-submit pattern.
  *
- * A production response sets a JS-readable CSRF cookie; every browser-issued
+ * A document response sets a JS-readable CSRF cookie; every browser-issued
  * mutation has to echo it back in the configured header or the server answers
  * `403`. Keep this module a client-safe leaf: it is imported by browser
  * bundles, so it must not reach for server-capable code.

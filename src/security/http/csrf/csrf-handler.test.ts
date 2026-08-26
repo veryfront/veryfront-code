@@ -883,6 +883,24 @@ describe("security/http/csrf/csrf-handler", () => {
       }
     });
 
+    it("continues checking exclusions after a root-only mismatch", async () => {
+      const ctx = createCtx({ excludePaths: ["/", "/api/webhooks"] });
+
+      for (const path of ["/", "/api/webhooks", "/api/webhooks/stripe"]) {
+        const result = await handler.handle(
+          new Request(`http://localhost${path}`, { method: "POST" }),
+          ctx,
+        );
+        assertEquals(result.continue, true, `${path} must match its exclusion`);
+      }
+
+      const protectedResult = await handler.handle(
+        new Request("http://localhost/api/cases", { method: "POST" }),
+        ctx,
+      );
+      assertEquals(protectedResult.response?.status, 403);
+    });
+
     it("should not skip paths not in excludePaths", async () => {
       const ctx = createCtx({ excludePaths: ["/api/webhooks"] });
       const req = new Request("http://localhost/api/submit", { method: "POST" });

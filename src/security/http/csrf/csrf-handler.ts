@@ -82,7 +82,10 @@ function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean 
   if (typeof csrfConfig !== "object" || !csrfConfig.excludePaths?.length) return false;
 
   for (const excludePath of csrfConfig.excludePaths) {
-    if (excludePath === "/") return pathname === "/";
+    if (excludePath === "/") {
+      if (pathname === "/") return true;
+      continue;
+    }
     if (pathname === excludePath || pathname.startsWith(excludePath + "/")) return true;
   }
   return false;
