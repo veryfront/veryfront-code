@@ -89,6 +89,10 @@ function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
   return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
 }
 
+function mapDeleteIfValue<K, V>(map: Map<K, V>, key: K, value: V): void {
+  if (mapGet(map, key) === value) mapDelete(map, key);
+}
+
 function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
 }
@@ -181,7 +185,7 @@ export async function getCachedWithBatching(
   try {
     return await promise;
   } finally {
-    if (mapGet(ctx.pending, key) === promise) mapDelete(ctx.pending, key);
+    mapDeleteIfValue(ctx.pending, key, promise);
   }
 }
 
