@@ -22,6 +22,12 @@
       "required": true,
       "sensitive": true,
       "docsUrl": "https://docs.weaviate.io/cloud/manage-clusters/connect"
+    },
+    {
+      "name": "WEAVIATE_CLUSTER_HOST",
+      "description": "Weaviate cluster REST endpoint host without scheme or port. Copy it from the cluster details.",
+      "required": true,
+      "sensitive": true
     }
   ],
   "tools": [
@@ -32,23 +38,24 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{clusterHost}/v1/schema",
-        "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
-            "required": true
-          }
-        },
+        "url": "https://{{env.WEAVIATE_CLUSTER_HOST}}/v1/schema",
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["classes"],
+            "collectionKeys": [
+              "classes"
+            ],
             "collectionName": "classes",
             "itemFields": [
-              { "name": "class" },
-              { "name": "description", "maxLength": 200 },
-              { "name": "vectorizer" }
+              {
+                "name": "class"
+              },
+              {
+                "name": "description",
+                "maxLength": 200
+              },
+              {
+                "name": "vectorizer"
+              }
             ],
             "omitted": "property definitions, module configs, and provider-specific payload fields"
           }
@@ -58,19 +65,11 @@
     {
       "id": "weaviate__graphql_query",
       "name": "Run GraphQL Query",
-      "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore — including nearText/nearVector search)",
+      "description": "Run a GraphQL query against the cluster (Get, Aggregate, Explore, including nearText/nearVector search)",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{clusterHost}/v1/graphql",
-        "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
-            "required": true
-          }
-        },
+        "url": "https://{{env.WEAVIATE_CLUSTER_HOST}}/v1/graphql",
         "body": {
           "query": {
             "type": "string",
@@ -91,14 +90,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{clusterHost}/v1/objects",
+        "url": "https://{{env.WEAVIATE_CLUSTER_HOST}}/v1/objects",
         "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
-            "required": true
-          },
           "class": {
             "type": "string",
             "in": "query",
@@ -125,14 +118,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{clusterHost}/v1/objects/{className}/{id}",
+        "url": "https://{{env.WEAVIATE_CLUSTER_HOST}}/v1/objects/{className}/{id}",
         "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
-            "required": true
-          },
           "className": {
             "type": "string",
             "in": "path",
@@ -155,15 +142,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{clusterHost}/v1/objects",
-        "params": {
-          "clusterHost": {
-            "type": "string",
-            "in": "path",
-            "description": "Weaviate cluster REST endpoint host, e.g. my-cluster-abc123.weaviate.cloud",
-            "required": true
-          }
-        },
+        "url": "https://{{env.WEAVIATE_CLUSTER_HOST}}/v1/objects",
         "body": {
           "class": {
             "type": "string",
@@ -203,14 +182,18 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["openai", "anthropic", "gemini"],
+  "suggestedWith": [
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
   "SETUP_GUIDE": {
     "title": "Weaviate Cloud Setup",
     "steps": [
       {
         "step": 1,
         "title": "Create a Weaviate Cloud account",
-        "description": "Sign up at https://console.weaviate.cloud — free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too."
+        "description": "Sign up at https://console.weaviate.cloud. Free 14-day sandbox clusters are available for testing. Self-hosted Weaviate with API-key auth enabled works too."
       },
       {
         "step": 2,
@@ -220,16 +203,16 @@
       {
         "step": 3,
         "title": "Store the key and note your host",
-        "description": "Add WEAVIATE_API_KEY=... to your .env file. Tools take the cluster host (without https://) as the clusterHost parameter, e.g. my-cluster-abc123.weaviate.cloud."
+        "description": "Add WEAVIATE_API_KEY=... to your .env file. Tools take the cluster host (without https://) as the WEAVIATE_CLUSTER_HOST environment variable, e.g. my-cluster-abc123.weaviate.cloud."
       },
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the Get Schema tool with your clusterHost."
+        "description": "With WEAVIATE_CLUSTER_HOST configured, run the Get Schema tool."
       }
     ],
     "notes": [
-      "Every tool needs the clusterHost parameter — there is no global Weaviate API host",
+      "Every tool needs the WEAVIATE_CLUSTER_HOST environment variable; there is no global Weaviate API host",
       "nearText GraphQL queries require a vectorizer module configured on the collection (and possibly a model-provider API key set on the cluster)",
       "Admin keys can read and write; read-only keys will get 403 on Create Object"
     ],
