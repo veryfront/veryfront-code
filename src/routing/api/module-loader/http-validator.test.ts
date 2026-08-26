@@ -227,6 +227,22 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should reject TypeScript import-equals aliases of global code generators", async () => {
+      for (
+        const source of [
+          `import Make = globalThis.Function; Make("return 1")();`,
+          `import run = globalThis.eval; run("1");`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a TypeScript import-equals value alias must retain generator capabilities",
+        );
+      }
+    });
+
     it("should reject computed dynamic code generation before module evaluation", async () => {
       await assertRejects(
         async () =>
@@ -791,6 +807,26 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "Object.assign can copy an own __proto__ property through the inherited setter",
       );
+      for (
+        const source of [
+          `const source = { __proto__() {} };`,
+          `const source = { ["__proto__"]() {} };`,
+          `const key = ["__", "proto__"].join(""); const source = { [key]() {} };`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `${source} const holder = {}; Object.assign(holder, source);` +
+                ` const make = holder.constructor;` +
+                ` make("return 1")();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          "Object.assign can copy an enumerable __proto__ method through the inherited setter",
+        );
+      }
       await assertRejects(
         async () =>
           await validateHTTPImports(
