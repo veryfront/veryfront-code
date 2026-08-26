@@ -470,24 +470,53 @@ function readBooleanEnv(name: string): boolean | undefined {
   throw new Error(`MLflow ${name} must be true or false.`);
 }
 
+type OAuthCredentialSource = "config" | "environment";
+
+function hasOAuthClientCredentials(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthTokenUrl"
+  >,
+): boolean {
+  return [
+    config.oauthTokenUrl,
+    config.oauthClientId,
+    config.oauthClientSecret,
+  ].some((value) => value !== undefined && value.length > 0);
+}
+
+function validateOAuthClientCredentials<
+  T extends Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthTokenUrl"
+  >,
+>(
+  config: T,
+  source: OAuthCredentialSource,
+): config is T & {
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthTokenUrl: string;
+} {
+  if (!hasOAuthClientCredentials(config)) return false;
+
+  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
+    throw new Error(
+      source === "config"
+        ? "MLflow OAuth config requires oauthTokenUrl, oauthClientId, and oauthClientSecret together."
+        : "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
+    );
+  }
+  return true;
+}
+
 function resolveOAuthClientCredentials(
   config: Pick<
     EvalReportMlflowExtensionConfig,
     "oauthClientId" | "oauthClientSecret" | "oauthScope" | "oauthTokenUrl"
   >,
 ): MlflowOAuthClientCredentialsConfig | undefined {
-  const configured = [
-    config.oauthTokenUrl,
-    config.oauthClientId,
-    config.oauthClientSecret,
-  ].some((value) => value !== undefined && value.length > 0);
-  if (!configured) return undefined;
-
-  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
-    throw new Error(
-      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
-    );
-  }
+  if (!validateOAuthClientCredentials(config, "config")) return undefined;
 
   return {
     tokenUrl: normalizeHttpUri(config.oauthTokenUrl, "OAuth token URL"),
@@ -525,17 +554,23 @@ async function createOAuthTrackingAuthHeaders(
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
+  if (config.fetch !== undefined && config.trackingUri === undefined) {
+    throw new Error("MLflow fetch requires trackingUri in the same extension config.");
+  }
+
   const configuredOAuthTokenUrl = config.oauthTokenUrl || undefined;
+  const hasConfiguredOAuthCredentials = hasOAuthClientCredentials(config);
   // Environment credentials may only use the environment-selected transport.
   // Config-controlled endpoints and fetch implementations must provide their
   // own credentials so host secrets never cross that trust boundary.
   const allowEnvironmentCredentials = config.trackingUri === undefined &&
-    config.fetch === undefined && !configuredOAuthTokenUrl;
+    config.fetch === undefined && !hasConfiguredOAuthCredentials;
   // Ambient artifact endpoints, UI settings, and experiment/run naming
   // describe the environment-selected tracking deployment. A configured
   // trackingUri targets a different deployment, so supply those settings in
   // the same configuration.
-  const allowEnvironmentDeploymentEndpoints = config.trackingUri === undefined;
+  const allowEnvironmentDeploymentEndpoints = config.trackingUri === undefined &&
+    config.fetch === undefined;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
@@ -1801,7 +1836,13 @@ export function createEvalReportMlflowExporter(
 }
 
 const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
-  const factoryConfig = resolveExporterConfig(normalizeConfig(config));
+  const normalizedFactoryConfig = normalizeConfig(config);
+  const oauthCredentialSource: OAuthCredentialSource = hasOAuthClientCredentials(
+      normalizedFactoryConfig,
+    )
+    ? "config"
+    : "environment";
+  const factoryConfig = resolveExporterConfig(normalizedFactoryConfig);
   let registry: EvalReportExporterRegistry | undefined;
   let registeredId: string | undefined;
 
@@ -1846,6 +1887,8 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
         );
         return;
       }
+
+      validateOAuthClientCredentials(factoryConfig, oauthCredentialSource);
 
       registry.register(
         new EvalReportMlflowExporter(

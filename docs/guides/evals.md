@@ -811,8 +811,9 @@ OAuth client credentials are also supported through
 Programmatic transport overrides do not inherit host credentials. When an
 extension config sets `trackingUri`, `fetch`, or `oauthTokenUrl`, provide its
 `trackingToken`, basic-auth fields, or complete OAuth client-credentials fields
-in that same config. For example, migrate a configured endpoint that previously
-relied on `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
+in that same config. A custom `fetch` also requires `trackingUri` in that config.
+For example, migrate a configured endpoint that previously relied on
+`MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
 
 ```ts
 import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
@@ -829,10 +830,11 @@ export default defineConfig({
 ```
 
 A configured `trackingUri` also does not inherit `MLFLOW_ARTIFACTS_URI`,
-`MLFLOW_ARTIFACTS_PORT`, or `MLFLOW_RUN_URL_TEMPLATE`. If that deployment needs
-an artifact proxy, set `artifactsUri` or `artifactsPort` in the same extension
-config. Set `runUrlTemplate` there when receipts must use a custom tracking UI
-route.
+`MLFLOW_ARTIFACTS_PORT`, `MLFLOW_EXPERIMENT_NAME`, `MLFLOW_RUN_NAME`, or
+`MLFLOW_RUN_URL_TEMPLATE`. If that deployment needs an artifact proxy, set
+`artifactsUri` or `artifactsPort` in the same extension config. Set
+`experimentName`, `runName`, and `runUrlTemplate` there when the deployment
+needs explicit run naming or a custom tracking UI route.
 
 Automatic CLI selection follows `MLFLOW_TRACKING_URI` only. After migrating a
 configured endpoint away from that variable, select the exporter explicitly
