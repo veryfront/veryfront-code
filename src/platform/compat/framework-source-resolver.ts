@@ -53,9 +53,9 @@ const publicExportSpecifiers = new Set(
     specifier === "." ? "veryfront" : `veryfront/${specifier.replace(/^\.\//, "")}`
   ),
 );
-const supportedFrameworkOverrideSpecifiers = [
-  ["veryfront", "veryfront/index.client"],
-  ["veryfront/workflow", "veryfront/workflow/react"],
+const supportedFrameworkOverrideTargetSpecifiers = [
+  "veryfront/index.client",
+  "veryfront/workflow/react",
 ] as const;
 const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
   [
@@ -63,12 +63,14 @@ const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
     ...Object.entries(publicConfig.imports ?? {})
       .filter(([specifier]) => publicExportSpecifiers.has(specifier))
       .map(([, target]) => target),
-    ...supportedFrameworkOverrideSpecifiers
-      .filter(([specifier]) => publicExportSpecifiers.has(specifier))
-      .flatMap(([, targetSpecifier]) => {
+    ...supportedFrameworkOverrideTargetSpecifiers
+      .flatMap((targetSpecifier) => {
         const target = publicConfig.imports?.[targetSpecifier];
         return target === undefined ? [] : [target];
       }),
+    // The SSR import map intentionally serves the browser-safe React barrel
+    // instead of the server-capable internal import target.
+    "./src/react/public.ts",
   ]
     .filter((target) => target.startsWith("./src/"))
     .map(normalizeFrameworkSourceKey),

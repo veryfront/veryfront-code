@@ -316,6 +316,11 @@ describe("framework-source-resolver public entry keys", () => {
     assertEquals(isPublicFrameworkSourceKey("platform/env.js"), true);
     assertEquals(isPublicFrameworkSourceKey("react/runtime/core.ts"), true);
     assertEquals(
+      isPublicFrameworkSourceKey("react/public.js"),
+      true,
+      "the supported veryfront/react SSR override must remain loadable",
+    );
+    assertEquals(
       isPublicFrameworkSourceKey("workflow/react/index.js"),
       true,
       "the supported veryfront/workflow SSR override must remain loadable",
