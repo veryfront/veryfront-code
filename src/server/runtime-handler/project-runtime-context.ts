@@ -285,6 +285,7 @@ export async function resolveProjectRuntimeContext(
       parsedDomain: projectRes.parsedDomain,
       pathname: input.url.pathname,
       isProxyMode: input.isProxyMode,
+      allowHostProjectCodeExecution: input.allowHostProjectCodeExecution === true,
       proxyTrusted: input.proxyTrust.proxyTrusted,
       ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
     })

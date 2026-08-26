@@ -1,11 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
-import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import type { HandlerContext } from "../types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MarkdownPreviewHandler } from "./markdown-preview.handler.ts";
 import { GitHubFSAdapter } from "#veryfront/platform/adapters/fs/github/adapter.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { seedPreviewDocumentSourceSnapshot } from "../request/source-snapshot-freshness.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -167,6 +175,56 @@ describe("MarkdownPreviewHandler host-execution capability", () => {
     // shared filesystem, otherwise a fallthrough returning no response passes.
     assertNotEquals(reads, 0, "the granted path must reach the project source read");
   });
+});
+
+Deno.test("MarkdownPreviewHandler rejects a generation newer than its bound config", async () => {
+  let sourceVersion = 1;
+  let sourceReads = 0;
+  const ctx = {
+    projectDir: "/remote/project",
+    projectSlug: "project",
+    projectId: "project-1",
+    proxyToken: "token",
+    isLocalProject: false,
+    requestContext: { branch: "feature", mode: "preview" },
+    parsedDomain: { branch: null },
+    adapter: {
+      fs: {
+        isMultiProjectMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => {
+          sourceVersion = 2;
+          return await fn();
+        },
+        getSourceSnapshotIdentity: () => "branch:project:feature",
+        getSourceSnapshotVersion: () => sourceVersion,
+        readFile: () => {
+          sourceReads++;
+          return Promise.resolve("# stale");
+        },
+      },
+    },
+    securityConfig: null,
+    allowHostProjectCodeExecution: true,
+  } as unknown as HandlerContext;
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:project:feature",
+    version: 1,
+  });
+
+  const rejection = await assertRejects(() =>
+    new MarkdownPreviewHandler().handle(
+      new Request("https://tenant.example/notes.md"),
+      ctx,
+    )
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(sourceReads, 0, "Markdown must reject before reading the newer generation");
 });
 
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {

@@ -118,6 +118,8 @@ interface AdapterResolutionOptions {
   pathname?: string;
   /** Whether running in proxy mode */
   isProxyMode: boolean;
+  /** Host admission decision for executing project-owned document handlers. */
+  allowHostProjectCodeExecution?: boolean;
   /** Result of an earlier proxy trust check, when already available. */
   proxyTrusted?: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
@@ -179,6 +181,9 @@ function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
 
 function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): boolean {
   if (!opts.isProxyMode || opts.proxyEnv === "production") return false;
+  // The shared-runtime denial runs after request context construction. Avoid a
+  // zero-age whole-source refresh for a document that no handler may execute.
+  if (opts.allowHostProjectCodeExecution === false) return false;
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return false;

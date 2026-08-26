@@ -1147,6 +1147,48 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(events, ["refresh-in-context", "render-in-context"]);
     });
 
+    it("prefers the authenticated request branch for multi-project rendering", async () => {
+      let renderedBranch: string | null | undefined;
+      const handler = new SSRHandler(createMockSSRService());
+      const { ctx } = makeExtendedCtx({}, {
+        allowHostProjectCodeExecution: true,
+        projectSlug: "preview-project",
+        projectId: "project-1",
+        requestContext: {
+          token: "project-token",
+          slug: "preview-project",
+          branch: "request-branch",
+          mode: "preview",
+        },
+        parsedDomain: {
+          slug: null,
+          branch: "domain-branch",
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        } as never,
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        runWithContext: (
+          slug: string,
+          token: string,
+          fn: () => Promise<HandlerResult>,
+          projectId?: string,
+          options?: { branch?: string | null },
+        ) => Promise<HandlerResult>;
+      };
+      fs.runWithContext = async (_slug, _token, fn, _projectId, options) => {
+        renderedBranch = options?.branch;
+        return await fn();
+      };
+
+      const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderedBranch, "request-branch");
+    });
+
     it("skips runWithContext when projectSlug is missing", async () => {
       const mockService = createMockSSRService();
       const handler = new SSRHandler(mockService);
@@ -1214,12 +1256,18 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         proxyToken: "ctx-token",
         parsedDomain: {
           slug: null,
-          branch: "dev",
+          branch: "domain-branch",
           environment: null,
           isVeryfrontDomain: false,
           isDraft: false,
           allowIframeEmbed: false,
         } as any,
+        requestContext: {
+          token: "ctx-token",
+          slug: "preview-project",
+          branch: "request-branch",
+          mode: "production",
+        },
         resolvedEnvironment: "production",
         releaseId: "rel-5",
       });
@@ -1227,7 +1275,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       await handler.handle(new Request("http://localhost/test"), ctx);
 
       assertEquals(calls.setRequestToken![0], "ctx-token");
-      assertEquals(calls.setRequestBranch![0], "dev");
+      assertEquals(calls.setRequestBranch![0], "request-branch");
       assertEquals(calls.setProductionMode![0], true);
       assertEquals(calls.setProductionMode![1], "rel-5");
     });

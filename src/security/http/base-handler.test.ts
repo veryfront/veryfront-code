@@ -365,6 +365,42 @@ describe("BaseHandler.withProxyContext", () => {
     );
   });
 
+  it("prefers the authenticated request branch in multi-project context", async () => {
+    const handler = new TestHandler();
+    let observedBranch: unknown;
+    const ctx = createMinimalCtx({
+      projectSlug: "my-project",
+      projectId: "project-123",
+      proxyToken: "vf_proxy_token",
+      requestContext: {
+        token: "vf_proxy_token",
+        slug: "my-project",
+        branch: "request-branch",
+        mode: "preview",
+      },
+      parsedDomain: { branch: "domain-branch" } as HandlerContext["parsedDomain"],
+      adapter: {
+        fs: {
+          isMultiProjectMode: () => true,
+          runWithContext: async (
+            _slug: string,
+            _token: string,
+            fn: () => Promise<unknown>,
+            _projectId?: string,
+            options?: Record<string, unknown>,
+          ) => {
+            observedBranch = options?.branch;
+            return await fn();
+          },
+        },
+      } as unknown as HandlerContext["adapter"],
+    });
+
+    await handler.testWithProxyContext(ctx, () => Promise.resolve("ok"));
+
+    assertEquals(observedBranch, "request-branch");
+  });
+
   it("emits metrics with project and environment labels in multi-project request context", async () => {
     const handler = new TestHandler();
     const counterCalls: unknown[] = [];

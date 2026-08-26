@@ -860,6 +860,47 @@ describe("adapter-factory", () => {
         identity: "branch:mutable-config-project:main",
         version: 1,
       });
+
+      freshnessCalls.length = 0;
+      sourceFresh = false;
+      const deniedResult = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/notes.md",
+        isProxyMode: true,
+        allowHostProjectCodeExecution: false,
+        prepareHostedConfigContext: async () => ({
+          sourceContext: { productionMode: false, branch: "main" },
+          preparedContext: await prepareDeclarativeConfigContext({
+            environmentName: "preview",
+            environment: { TENANT: "tenant-value" },
+          }),
+        }),
+      });
+
+      assertEquals(
+        freshnessCalls,
+        [{ reason: "config-load", maxAgeMs: undefined }],
+        "a denied shared-runtime document keeps the normal config freshness lease",
+      );
+      assertEquals(deniedResult.previewDocumentSourceSnapshot, undefined);
     });
 
     it("keeps subresource config loads on the normal freshness lease", async () => {
@@ -1302,7 +1343,7 @@ describe("adapter-factory", () => {
     // A release with no config file gets a legitimate 404 from the API. It used
     // to be re-thrown, so every request for such a project returned 404.
     const adapter = createMockAdapter({});
-    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
     adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
     adapter.fs.getSourceSnapshotVersion = () => 1;
@@ -1353,7 +1394,7 @@ describe("adapter-factory", () => {
     // Reading only the outermost object made the fallback fire for one shape and
     // not the other, so this project 404'd while an identical one did not.
     const adapter = createMockAdapter({});
-    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
     adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
     adapter.fs.getSourceSnapshotVersion = () => 1;
@@ -1397,7 +1438,7 @@ describe("adapter-factory", () => {
   it("rejects an absent config result when its source generation changes", async () => {
     let sourceVersion = 1;
     const adapter = createMockAdapter({});
-    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
     adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
     adapter.fs.getSourceSnapshotVersion = () => sourceVersion;

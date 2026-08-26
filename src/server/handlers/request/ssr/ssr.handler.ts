@@ -150,7 +150,7 @@ export class SSRHandler extends BaseHandler {
 
       if (ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
         const prodMode = isProductionMode(ctx);
-        const branch = ctx.parsedDomain?.branch ?? null;
+        const branch = ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
         // Framework-owned token: bypass project env overlay so proxy mode works
         // when a remote project overlay is active.
         const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
@@ -180,7 +180,9 @@ export class SSRHandler extends BaseHandler {
         // some adapters may not support them. Swallow those errors gracefully.
         try {
           if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
-          fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+          fsAdapter.setRequestBranch(
+            ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+          );
         } catch (e) {
           logger.warn("Non-critical adapter context setup failed (token/branch)", {
             error: e instanceof Error ? e.message : String(e),
