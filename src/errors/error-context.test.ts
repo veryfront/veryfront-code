@@ -756,6 +756,58 @@ describe("error-context", () => {
       }
     });
 
+    it("redacts Node null-byte path aliases in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        ["/private-read\0marker/nope", "/private-read\\x00marker/nope"],
+        ["C:\\private-stat\0marker\\nope", "C:\\private-stat\\x00marker\\nope"],
+        ["/private-directory\0marker/nope", "/private-directory\\x00marker/nope"],
+      ] as const;
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(`read failed for ${cases[0][1]}`)) } },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(`stat failed for ${cases[1][1]}`)) } },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error(`directory read failed for ${cases[2][1]}`),
+                );
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (let index = 0; index < cases.length; index++) {
+        const diagnostic = captured[index];
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(errorMessage.includes(cases[index]![1]), false);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
     it("fails closed for truncated single-segment paths in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;

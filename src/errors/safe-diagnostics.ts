@@ -594,6 +594,20 @@ function normalizePosixDoubleSeparatorPathForDiagnostic(path: string): string | 
   return normalizeFilesystemPathForDiagnostic(`/${sliceString(path, cursor)}`);
 }
 
+/** Derive the path spelling Node uses when reporting embedded NUL bytes. */
+function nodeNullEscapedFilesystemPath(path: string): string | undefined {
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < path.length; index++) {
+    if (charCodeAtString(path, index) !== 0) continue;
+    apply(arrayPush, parts, [sliceString(path, segmentStart, index), "\\x00"]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return undefined;
+  apply(arrayPush, parts, [sliceString(path, segmentStart)]);
+  return apply(arrayJoin, parts, [""]);
+}
+
 function minimumAbsolutePathPrefixLength(path: string): number {
   let index = 0;
   if (
@@ -778,6 +792,7 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
     normalizationSource,
   );
+  const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
   const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
   const rawNormalizedPlatformPath = normalizationSource === normalizedPath
     ? undefined
@@ -860,6 +875,9 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const jsonEscapedPath = jsonStringify(path);
   let redacted = redactPathFromText(diagnostic, path, replacement);
   redacted = redactPathFromText(redacted, jsonEscapedPath, replacement);
+  if (nodeNullEscapedPath !== undefined) {
+    redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
+  }
   if (normalizationSource !== path) {
     redacted = redactPathFromText(redacted, normalizationSource, replacement);
   }
@@ -900,6 +918,8 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
     containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
+    (nodeNullEscapedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
     (normalizationSource !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
     (normalizedPath !== path && normalizedPath !== normalizationSource &&
