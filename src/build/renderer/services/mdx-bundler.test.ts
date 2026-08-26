@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { withTempFile, writeTextFile } from "#veryfront/testing/index.ts";
+import { makeTempDirWithOptions, mkdir, remove, writeTextFile } from "#veryfront/testing/index.ts";
 import { toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   register,
@@ -104,10 +104,19 @@ async function importEmittedModule(
       },
     );
 
-  return await withTempFile(async (modulePath) => {
+  const moduleRoot = ".veryfront/mdx-emitted-modules";
+  await mkdir(moduleRoot, { recursive: true });
+  const moduleDirectory = await makeTempDirWithOptions({
+    dir: moduleRoot,
+    prefix: "vf-mdx-emitted-",
+  });
+  const modulePath = `${moduleDirectory}/module.mjs`;
+  try {
     await writeTextFile(modulePath, executable);
     return await import(toFileUrl(modulePath).href);
-  }, { prefix: "vf-mdx-emitted-", suffix: ".mjs" });
+  } finally {
+    await remove(moduleDirectory, { recursive: true }).catch(() => {});
+  }
 }
 
 function renderEmittedComponent(
