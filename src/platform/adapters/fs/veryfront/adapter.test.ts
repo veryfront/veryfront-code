@@ -200,9 +200,9 @@ describe("VeryfrontFSAdapter", () => {
 
       const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
       const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
-      const originalPerformInitialization = Object.getOwnPropertyDescriptor(
-        prototype,
-        "performInitialization",
+      const capabilityNames = ["performInitialization", "runSourceSnapshotMutation"];
+      const originalCapabilities = capabilityNames.map((name) =>
+        [name, Object.getOwnPropertyDescriptor(prototype, name)] as const
       );
       let poisonedCalls = 0;
       Object.defineProperty(performance, "now", {
@@ -212,26 +212,23 @@ describe("VeryfrontFSAdapter", () => {
           throw new Error("project performance hook must not run");
         },
       });
-      Object.defineProperty(prototype, "performInitialization", {
-        configurable: true,
-        value: () => {
-          poisonedCalls += 1;
-          throw new Error("project initialization hook must not run");
-        },
-      });
+      for (const name of capabilityNames) {
+        Object.defineProperty(prototype, name, {
+          configurable: true,
+          value: () => {
+            poisonedCalls += 1;
+            throw new Error(`project ${name} hook must not run`);
+          },
+        });
+      }
       try {
         await adapter.initialize();
       } finally {
         if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
         else Object.defineProperty(performance, "now", originalNow);
-        if (originalPerformInitialization === undefined) {
-          Reflect.deleteProperty(prototype, "performInitialization");
-        } else {
-          Object.defineProperty(
-            prototype,
-            "performInitialization",
-            originalPerformInitialization,
-          );
+        for (const [name, descriptor] of originalCapabilities) {
+          if (descriptor === undefined) Reflect.deleteProperty(prototype, name);
+          else Object.defineProperty(prototype, name, descriptor);
         }
         adapter.dispose();
       }
@@ -2224,9 +2221,35 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(typeof initialFingerprint, "string");
       (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
 
-      await adapter.ensureSourceSnapshotFresh("duplicate-path-refresh");
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const originalInvalidation = Object.getOwnPropertyDescriptor(
+        prototype,
+        "invalidateDerivedSourceCaches",
+      );
+      let poisonedInvalidations = 0;
+      Object.defineProperty(prototype, "invalidateDerivedSourceCaches", {
+        configurable: true,
+        value: () => {
+          poisonedInvalidations += 1;
+          throw new Error("project invalidation hook must not run");
+        },
+      });
+      try {
+        await adapter.ensureSourceSnapshotFresh("duplicate-path-refresh");
+      } finally {
+        if (originalInvalidation === undefined) {
+          Reflect.deleteProperty(prototype, "invalidateDerivedSourceCaches");
+        } else {
+          Object.defineProperty(
+            prototype,
+            "invalidateDerivedSourceCaches",
+            originalInvalidation,
+          );
+        }
+      }
 
       assertEquals(listAllFilesCalls, 2);
+      assertEquals(poisonedInvalidations, 0);
       assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
       assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
     });

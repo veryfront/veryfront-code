@@ -854,7 +854,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const files = await fetchFileListForContext(this.client, contentContext);
       const fileSummary = summarizeFileList(files);
 
-      const initialSnapshotApplied = await this.runSourceSnapshotMutation(async () => {
+      const initialSnapshotApplied = await this.#runSourceSnapshotMutation(async () => {
         const isSnapshotSuperseded = () =>
           this.contentContext !== contentContext ||
           this.getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
@@ -1130,7 +1130,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // the pre-poke listing would roll both the cache and this caller's
         // answer back to the older draft, so the write is serialized against
         // snapshot mutations and stands down when one won the race.
-        const applied = await this.runSourceSnapshotMutation(async () => {
+        const applied = await this.#runSourceSnapshotMutation(async () => {
           if (
             this.contentContext !== warmupContext ||
             this.sourceSnapshotVersion !== warmupSnapshotVersion
@@ -1238,7 +1238,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotCheckedAt = currentTime();
   }
 
-  private runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+  #runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
     const recovered = IntrinsicReflectApply(
       PromisePrototypeCatch,
       this.sourceSnapshotMutationTail,
@@ -1261,7 +1261,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     expectedSnapshotVersion = this.sourceSnapshotVersion,
   ): Promise<number | undefined> {
     const expectedContext = this.contentContext;
-    return this.runSourceSnapshotMutation(async () => {
+    return this.#runSourceSnapshotMutation(async () => {
       if (
         !expectedContext ||
         this.contentContext !== expectedContext ||
@@ -1301,7 +1301,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  private async invalidateDerivedSourceCaches(): Promise<void> {
+  async #invalidateDerivedSourceCaches(): Promise<void> {
     const projectId = this.client.getProjectId();
     const invalidations: Array<void | Promise<void>> = [];
 
@@ -1349,7 +1349,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const previousFiles = this.sourceSnapshotFiles;
     const previousVersion = this.sourceSnapshotVersion;
     const files = await fetchFileListForContext(this.client, refreshContext);
-    const result = await this.runSourceSnapshotMutation(async () => {
+    const result = await this.#runSourceSnapshotMutation(async () => {
       const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
         this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
@@ -1385,7 +1385,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
 
       if (sourceChanged) {
-        await this.invalidateDerivedSourceCaches();
+        await this.#invalidateDerivedSourceCaches();
         if (isSnapshotSuperseded()) {
           await this.cache.deleteAsync(cacheKey);
           return { applied: false, sourceChanged: false };
