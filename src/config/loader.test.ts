@@ -743,6 +743,7 @@ export default config as const;
             error.message.includes("not-an-export"),
             `error must name the subpath that failed to resolve, got: ${error.message}`,
           );
+          assertEquals(error.message.includes(projectDir), false);
         } finally {
           await Deno.remove(projectDir, { recursive: true });
         }
@@ -930,6 +931,19 @@ export default config as const;
 
           assertEquals(error.slug, expectedSlug);
         }
+      });
+
+      it("redacts machine paths while retaining the actionable package subpath", async () => {
+        const error = await loadFailure(
+          "vf-config-path-redaction-",
+          `throw new Error("Package subpath './config' is not defined by exports in /home/example/project/node_modules/pkg/package.json imported from C:\\\\Users\\\\example\\\\project\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(error.message, "./config");
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("C:\\Users\\example"), false);
       });
 
       it("classifies Bun resolver objects that do not inherit from Error", async () => {

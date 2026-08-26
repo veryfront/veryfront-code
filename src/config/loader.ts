@@ -1607,6 +1607,11 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
+const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
+const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function replaceMatchesWithCapturedExec(
   value: string,
@@ -1635,6 +1640,14 @@ function replaceMatchesWithCapturedExec(
   }
 }
 
+function redactMachinePaths(value: string): string {
+  let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
+  return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
+}
+
 /**
  * Return the one-line summary of `error`, or `undefined` when it has none.
  *
@@ -1655,7 +1668,7 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
     "";
   const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
-  const clean = ReflectApply(StringPrototypeTrim, replaced, []) as string;
+  const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS
     ? `${ReflectApply(StringPrototypeSlice, clean, [
