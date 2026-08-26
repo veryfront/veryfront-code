@@ -816,6 +816,7 @@ describe("resolveProjectRuntimeContext", () => {
       adapter,
       config: undefined,
       isProxyMode: true,
+      allowHostProjectCodeExecution: true,
       proxyTrust: { proxyTrusted: true },
       projectIdentity: {
         projectSlug: "generation-config-project",
