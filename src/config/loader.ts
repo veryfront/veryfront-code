@@ -1631,7 +1631,12 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/[^\s"'()]+/g;
-const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
+// The drive-letter alternative needs the same token boundary its quoted and
+// POSIX siblings already carry: without it, `[A-Za-z]:[\\/]` matches the `s:/`
+// inside `https:/`, and the rest of the URL is eaten as a Windows path. A
+// hosted-config failure then reports `http[path]` and loses the one token the
+// reader can act on (veryfront-issue-inbox#836).
+const WINDOWS_ABSOLUTE_PATH = /(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function replaceMatchesWithCapturedExec(

@@ -971,6 +971,22 @@ export default config as const;
         assertEquals(error.message.includes("C:\\Users\\example"), false);
       });
 
+      it("keeps a hosted config URL intact while still redacting machine paths", async () => {
+        const error = await loadFailure(
+          "vf-config-url-not-a-path-",
+          `throw new Error("Failed to fetch https://cdn.example.test/hosted/config.ts from /home/example/project/veryfront.config.ts");\n`,
+        );
+
+        // The drive-letter alternative used to match the `s:/` inside `https:/`
+        // and eat the rest of the URL, so this line arrived as `http[path]` --
+        // losing the only token the reader can act on (veryfront-issue-inbox#836).
+        assertStringIncludes(error.message, "https://cdn.example.test/hosted/config.ts");
+        assertEquals(error.message.includes("http[path]"), false);
+        // The real machine path on the same line is still redacted.
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+      });
+
       it("classifies Bun resolver objects that do not inherit from Error", async () => {
         const error = await loadFailure(
           "vf-config-bun-resolve-object-",
