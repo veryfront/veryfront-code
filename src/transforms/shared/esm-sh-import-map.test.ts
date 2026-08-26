@@ -378,12 +378,25 @@ describe("transforms/shared/esm-sh-import-map", () => {
   });
 
   it("recognizes wildcard SemVer ranges before file extensions", () => {
-    for (const version of ["1.x", "1.x.x", "1.2.x", "v1.X", "^1.x", "~1.2.x"] as const) {
+    for (
+      const version of [
+        "1.x",
+        "1.x.x",
+        "1.2.x",
+        "v1.X",
+        "^1.x",
+        "~1.2.x",
+        "%3E%3D1.x",
+        "%3C%3D1.2.x",
+        "%3E1.X",
+        "%3C1.2.*",
+      ] as const
+    ) {
       const mapping = `https://cdn.example/pkg@${version}`;
       assertEquals(
         resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
         `${mapping}/sub`,
-        `${version} is a package version range rather than a file extension`,
+        `${decodeURIComponent(version)} is a package version range rather than a file extension`,
       );
     }
   });

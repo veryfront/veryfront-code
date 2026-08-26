@@ -246,7 +246,7 @@ const SEMVER_VERSION_OR_RANGE = new RegExp(
     `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
 );
 const WILDCARD_SEMVER_RANGE = new RegExp(
-  `^(?:[~^])?v?${SEMVER_NUMERIC_IDENTIFIER}` +
+  `^(?:[~^]|[<>]=?)?v?${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:\\.[xX*](?:\\.[xX*])?|\\.${SEMVER_NUMERIC_IDENTIFIER}\\.[xX*])$`,
 );
 const NPM_DIST_TAG = /^[A-Za-z][0-9A-Za-z._-]*$/;
