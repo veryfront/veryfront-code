@@ -1382,6 +1382,10 @@ describe("integration endpoint specs", () => {
       assertEquals(new URL(endpoint.url).origin, "https://quickbooks.api.intuit.com");
       assertEquals(endpoint.params?.host, undefined);
     }
+
+    const setupGuide = JSON.stringify(quickbooks.setupGuide);
+    assertEquals(setupGuide.includes("cannot use that sandbox"), true);
+    assertEquals(setupGuide.includes("sample data for testing"), false);
   });
 
   it("exposes Airtable CRUD and schema mutation endpoint tools", () => {

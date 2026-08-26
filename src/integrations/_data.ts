@@ -45281,7 +45281,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 1,
         "title": "Create an Intuit developer account",
         "description":
-          "Sign up at https://developer.intuit.com/ — creating an app automatically provisions a QuickBooks Online sandbox company with sample data for testing.",
+          "Sign up at https://developer.intuit.com/. Intuit automatically provisions a sandbox company, but this connector uses the production API origin and cannot use that sandbox. Complete Intuit's app review and connect a production QuickBooks Online company.",
       }, {
         "step": 2,
         "title": "Create an app",
