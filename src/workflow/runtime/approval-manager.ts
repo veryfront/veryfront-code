@@ -15,6 +15,7 @@ import {
 } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
+import { unrefTimer } from "#veryfront/compat/process.ts";
 import {
   reconcileWorkflowRunControl,
   type WorkflowRunControlReconcileOutcome,
@@ -68,6 +69,10 @@ export async function reconcileApprovalDecisionClaimsBeforeRetry(
   if (!listClaims) return;
 
   const claims = await listClaims.call(backend, runId);
+  const prepared: Array<{
+    approval: PersistedPendingApproval;
+    decision: ApprovalDecision;
+  }> = [];
   for (const claim of claims) {
     if (claim.runId !== runId) continue;
     const { approval } = claim;
@@ -76,7 +81,11 @@ export async function reconcileApprovalDecisionClaimsBeforeRetry(
         detail: `Approval decision claim "${approval.id}" has no valid decision time`,
       });
     }
-    const decision = reconstructApprovalDecision(approval);
+    prepared.push({ approval, decision: reconstructApprovalDecision(approval) });
+  }
+
+  const finalizedApprovalIds: string[] = [];
+  for (const { approval, decision } of prepared) {
     const run = await backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
@@ -95,8 +104,14 @@ export async function reconcileApprovalDecisionClaimsBeforeRetry(
       });
       if (outcome.status === "skipped-terminal") continue;
     }
+    finalizedApprovalIds.push(approval.id);
+  }
 
-    await backend.finalizeApprovalDecision?.(runId, approval.id);
+  // A later claim can still fail after an earlier node was reconciled. Keep
+  // every claim durable until the whole batch succeeds so retry rollback can
+  // restore the run snapshot without discarding an already-consumed decision.
+  for (const approvalId of finalizedApprovalIds) {
+    await backend.finalizeApprovalDecision?.(runId, approvalId);
   }
 }
 
@@ -187,6 +202,8 @@ export class ApprovalManager {
   private responseSchemas = new Map<string, Schema<unknown>>();
   private activeDecisionClaims = new Set<string>();
   private decisionClaimReconciliation?: Promise<void>;
+  private decisionClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
+  private decisionClaimRecoveryAt?: number;
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
@@ -221,7 +238,12 @@ export class ApprovalManager {
       ? await waitConfig.payload(context)
       : waitConfig.payload;
 
-    const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
+    const nodeStartedAt = run.nodeStates[nodeId]?.startedAt;
+    const nodeStartedAtMs = nodeStartedAt === undefined
+      ? Number.NaN
+      : new Date(nodeStartedAt).getTime();
+    const timeoutBaseMs = Number.isFinite(nodeStartedAtMs) ? nodeStartedAtMs : Date.now();
+    const expiresAt = timeoutMs ? new Date(timeoutBaseMs + timeoutMs) : undefined;
 
     const approval: PersistedPendingApproval = {
       id: generateId("apr"),
@@ -440,10 +462,14 @@ export class ApprovalManager {
       if (this.destroyed) return;
       const claimKey = this.decisionClaimKey(runId, approval.id);
       if (this.activeDecisionClaims.has(claimKey)) continue;
-      if (
-        !approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime()) ||
-        Date.now() - approval.decidedAt.getTime() < recoveryDelay
-      ) continue;
+      if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) continue;
+      const claimAge = Date.now() - approval.decidedAt.getTime();
+      if (claimAge < recoveryDelay) {
+        if ((this.config.expirationCheckInterval ?? 0) <= 0) {
+          this.scheduleDecisionClaimRecovery(recoveryDelay - claimAge);
+        }
+        continue;
+      }
 
       let decision: ApprovalDecision;
       try {
@@ -513,6 +539,30 @@ export class ApprovalManager {
 
   private decisionClaimKey(runId: string, approvalId: string): string {
     return `${runId}\0${approvalId}`;
+  }
+
+  private scheduleDecisionClaimRecovery(delayMs: number): void {
+    if (this.destroyed) return;
+    const dueAt = Date.now() + Math.max(1, delayMs);
+    if (
+      this.decisionClaimRecoveryTimer !== undefined &&
+      this.decisionClaimRecoveryAt !== undefined &&
+      this.decisionClaimRecoveryAt <= dueAt
+    ) return;
+
+    if (this.decisionClaimRecoveryTimer !== undefined) {
+      clearTimeout(this.decisionClaimRecoveryTimer);
+    }
+    this.decisionClaimRecoveryAt = dueAt;
+    this.decisionClaimRecoveryTimer = setTimeout(() => {
+      this.decisionClaimRecoveryTimer = undefined;
+      this.decisionClaimRecoveryAt = undefined;
+      if (this.destroyed) return;
+      void this.checkApprovalDecisionClaims().catch((error) => {
+        logger.error("Approval decision claim recovery failed", error);
+      });
+    }, Math.max(1, dueAt - Date.now()));
+    unrefTimer(this.decisionClaimRecoveryTimer);
   }
 
   /** Process an approval decision */
@@ -704,11 +754,20 @@ export class ApprovalManager {
       }
       this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
 
-      await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
-        status: "failed",
-        error: { message: `Approval "${approval.id}" expired` },
-        completedAt: new Date(),
-      });
+      const failed = await updateRunIfStatus(
+        this.config.backend,
+        runId,
+        ["pending", "running", "waiting"],
+        {
+          status: "failed",
+          error: { message: `Approval "${approval.id}" expired` },
+          completedAt: new Date(),
+        },
+      );
+      if (!failed) {
+        const latest = await this.config.backend.getRun(runId);
+        if (latest?.status === "failed") continue;
+      }
       try {
         await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
       } catch (error) {
@@ -743,6 +802,12 @@ export class ApprovalManager {
   /** Stop the approval manager */
   stop(): void {
     this.destroyed = true;
+
+    if (this.decisionClaimRecoveryTimer !== undefined) {
+      clearTimeout(this.decisionClaimRecoveryTimer);
+      this.decisionClaimRecoveryTimer = undefined;
+      this.decisionClaimRecoveryAt = undefined;
+    }
 
     if (!this.expirationTimer) {
       return;

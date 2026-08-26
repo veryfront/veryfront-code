@@ -219,6 +219,47 @@ class CleanupTrackingBackend extends MemoryBackend {
   }
 }
 
+class RejectRetryFinalReadBackend extends MemoryBackend {
+  private rejectNextRead = false;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    if (updated && patch.status === "pending") this.rejectNextRead = true;
+    return updated;
+  }
+
+  override getRun(runId: string): Promise<WorkflowRun | null> {
+    if (this.rejectNextRead) {
+      this.rejectNextRead = false;
+      return Promise.reject(new Error("retry final run read unavailable"));
+    }
+    return super.getRun(runId);
+  }
+}
+
+class RejectSecondRetryDecisionBackend extends MemoryBackend {
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.nodeStates?.second?.status === "completed") {
+      return Promise.reject(new Error("second retained decision unavailable"));
+    }
+    return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
 describe("workflow/executor/workflow-executor", () => {
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
@@ -992,6 +1033,145 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(completed?.status, "completed");
     assertEquals((completed?.context.review as { approved?: boolean })?.approved, true);
     assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
+  });
+
+  it("restores the failed snapshot when the post-reactivation read fails", async () => {
+    const backend = new RejectRetryFinalReadBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-final-read-failure"),
+      status: "failed" as const,
+      currentNodes: ["failed-step"],
+      context: { input: {}, retained: { value: 1 } },
+      nodeStates: {
+        "failed-step": {
+          nodeId: "failed-step",
+          status: "failed" as const,
+          attempt: 1,
+          error: "original failure",
+        },
+      },
+      error: { message: "original failure" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "retry final run read unavailable",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals(restored?.currentNodes, run.currentNodes);
+    assertEquals(restored?.error, run.error);
+    assertEquals(restored?.completedAt, run.completedAt);
+  });
+
+  it("validates every retained decision before mutating retry state", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-decision-batch-validation"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+    await backend.updatePendingApproval(run.id, "apr-second", {
+      decidedAt: new Date(Number.NaN),
+    });
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "has no valid decision time",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals((await backend.listApprovalDecisionClaims(run.id)).length, 2);
+  });
+
+  it("rolls back a partially reconciled decision batch without finalizing claims", async () => {
+    const backend = new RejectSecondRetryDecisionBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-decision-batch-rollback"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      context: { input: {}, original: true },
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "second retained decision unavailable",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals(restored?.currentNodes, run.currentNodes);
+    assertEquals(restored?.error, run.error);
+    assertEquals(restored?.completedAt, run.completedAt);
+    assertEquals((await backend.listApprovalDecisionClaims(run.id)).length, 2);
   });
 
   it("fences a started execution after stalled ownership is replaced", async () => {

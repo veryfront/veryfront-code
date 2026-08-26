@@ -1933,8 +1933,13 @@ describe("RedisBackend", () => {
       assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
       assertStringIncludes(
         mockRedis.lastScript,
-        "parseJsonObject",
-        "Redis patch merges must preserve raw nested JSON values on standard Redis cjson",
+        "local current = cjson.decode(currentJson)",
+        "ordinary patches must stay on Redis's native cjson path",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "containsAmbiguousEmptyArray",
+        "only an ambiguous empty-array token should select the raw-slice fallback",
       );
       assertEquals(
         mockRedis.lastScript.includes("cannot preserve empty arrays"),
@@ -2030,7 +2035,7 @@ describe("RedisBackend", () => {
       assertEquals(mockRedis.lastArgs.includes("contextDeletes"), false);
       assertStringIncludes(
         mockRedis.lastScript,
-        "local deleted = cjson.decode(value)",
+        "local deleted = cjson.decode(deletedJson)",
         "known string-list deletion fields must not require Redis 8.4 array metadata",
       );
     });

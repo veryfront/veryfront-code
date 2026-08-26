@@ -186,6 +186,25 @@ export interface WorkflowRunControlReconcileOutcome {
   run?: WorkflowRun;
 }
 
+const possiblyCommittedReconciliationErrors = new WeakSet<object>();
+
+/** Consume the marker for an error raised after its run patch may have landed. */
+export function consumeWorkflowRunControlOutcomeMayBeCommitted(error: unknown): boolean {
+  if (!((typeof error === "object" && error !== null) || typeof error === "function")) {
+    return false;
+  }
+  const marked = possiblyCommittedReconciliationErrors.has(error);
+  if (marked) possiblyCommittedReconciliationErrors.delete(error);
+  return marked;
+}
+
+function markWorkflowRunControlOutcomeMayBeCommitted(error: unknown): unknown {
+  if ((typeof error === "object" && error !== null) || typeof error === "function") {
+    possiblyCommittedReconciliationErrors.add(error);
+  }
+  return error;
+}
+
 const DEFAULT_DECISION_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_RECONCILE_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
 
@@ -340,51 +359,70 @@ async function reconcileNodeOutcome(
     shouldResume: boolean;
     resume?(runId: string, expectedWorkerId?: string): Promise<void>;
     ownershipChurnDetail: string;
+    preserveCommittedOutcomeOnError?: boolean;
   },
 ): Promise<WorkflowRunControlReconcileOutcome> {
-  for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
-    const run = await backend.getRun(input.runId);
-    if (!run) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${input.runId}` });
-    }
-    if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
-      return { status: "skipped-terminal", run };
-    }
-
-    const expectedWorkerId = run.workerId;
-    const updated = await updateRunIfStatus(
-      backend,
-      input.runId,
-      ACTIVE_RECONCILE_STATUSES,
-      input.buildPatch(run),
-      expectedWorkerId,
-    );
-    if (!updated) {
-      const latest = await backend.getRun(input.runId);
-      if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
-        return { status: "skipped-terminal", run: latest ?? undefined };
+  let outcomeCommitted = false;
+  try {
+    for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
+      const run = await backend.getRun(input.runId);
+      if (!run) {
+        throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${input.runId}` });
       }
-      continue;
-    }
+      if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
+        return { status: "skipped-terminal", run };
+      }
 
-    const reconciledRun = await backend.getRun(input.runId);
-    if (!input.shouldResume || !input.resume) {
-      return { status: "reconciled", run: reconciledRun ?? undefined };
-    }
-
-    try {
-      await input.resume(input.runId, expectedWorkerId);
-      return { status: "reconciled", run: reconciledRun ?? undefined };
-    } catch (error) {
-      const latestRun = await backend.getRun(input.runId);
-      if (
-        latestRun && ACTIVE_RECONCILE_STATUSES.includes(latestRun.status) &&
-        latestRun.workerId !== expectedWorkerId
-      ) {
+      const expectedWorkerId = run.workerId;
+      let updated: boolean;
+      try {
+        updated = await updateRunIfStatus(
+          backend,
+          input.runId,
+          ACTIVE_RECONCILE_STATUSES,
+          input.buildPatch(run),
+          expectedWorkerId,
+        );
+      } catch (error) {
+        // A backend can reject after accepting a write. Treat that boundary as
+        // uncertain so callers never restore a durable event over a landed node.
+        throw input.preserveCommittedOutcomeOnError
+          ? markWorkflowRunControlOutcomeMayBeCommitted(error)
+          : error;
+      }
+      if (!updated) {
+        const latest = await backend.getRun(input.runId);
+        if (!latest || !ACTIVE_RECONCILE_STATUSES.includes(latest.status)) {
+          return { status: "skipped-terminal", run: latest ?? undefined };
+        }
         continue;
       }
-      throw error;
+      outcomeCommitted = true;
+
+      const reconciledRun = await backend.getRun(input.runId);
+      if (!input.shouldResume || !input.resume) {
+        return { status: "reconciled", run: reconciledRun ?? undefined };
+      }
+
+      try {
+        await input.resume(input.runId, expectedWorkerId);
+        return { status: "reconciled", run: reconciledRun ?? undefined };
+      } catch (error) {
+        const latestRun = await backend.getRun(input.runId);
+        if (
+          latestRun && ACTIVE_RECONCILE_STATUSES.includes(latestRun.status) &&
+          latestRun.workerId !== expectedWorkerId
+        ) {
+          continue;
+        }
+        throw error;
+      }
     }
+  } catch (error) {
+    if (outcomeCommitted && input.preserveCommittedOutcomeOnError) {
+      markWorkflowRunControlOutcomeMayBeCommitted(error);
+    }
+    throw error;
   }
 
   throw ORCHESTRATION_ERROR.create({ detail: input.ownershipChurnDetail });
@@ -495,6 +533,7 @@ function reconcileEventDelivery(
     runId: operation.runId,
     maxAttempts: operation.maxAttempts ?? DEFAULT_DECISION_RECONCILIATION_ATTEMPTS,
     shouldResume: true,
+    preserveCommittedOutcomeOnError: true,
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,

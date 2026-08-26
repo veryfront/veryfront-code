@@ -393,11 +393,11 @@ Events are buffered per run, so publishing before the node parks is safe: the
 wait consumes the buffered event as soon as it exists. `publishEvent` resolves
 to what it did with the event:
 
-| Outcome             | Meaning                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `"delivered"`       | A wait matched, its node completed, and the run moved on.                                                            |
-| `"buffered"`        | No wait matched yet. The event is held until one does.                                                               |
-| `"run-terminal"`    | The run has already finished, so the event was discarded rather than buffered.                                       |
+| Outcome             | Meaning                                                                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"delivered"`       | A wait matched, its node completed, and the run moved on.                                                                                                                                              |
+| `"buffered"`        | No wait matched yet. The event is held until one does.                                                                                                                                                 |
+| `"run-terminal"`    | The run has already finished, so the event was discarded rather than buffered.                                                                                                                         |
 | `"delivery-failed"` | A wait matched but delivery failed. Both were rolled back, so the run is still parked; call `retryEventDelivery(runId, eventName)` to retry the same buffered envelope without publishing a duplicate. |
 
 A run's mailbox holds a bounded number of unconsumed events. Because an event
@@ -419,22 +419,12 @@ indefinitely. `delay(id, duration)` uses the same machinery and completes its
 node once the duration elapses. Cancelling a run resolves its pending event
 waits, so a cancelled run no longer reports itself as parked.
 
-Durable event waits require a backend that implements them. The built-in
-`MemoryBackend` does; `RedisBackend` does not yet, so a run on Redis still
-parks with nothing able to wake it. Use `hasEventWaitSupport(backend)` to check
-before relying on `waitForEvent` or `delay`.
+Durable event waits require a backend that implements them. Both built-in
+backends, `MemoryBackend` and `RedisBackend`, do. Use
+`hasEventWaitSupport(backend)` to check a custom backend before relying on
+`waitForEvent` or `delay`.
 
-Two limitations are worth knowing before you rely on this:
-
-- **Nested waits are not recovery-safe yet.** A `waitForEvent`, `delay`, or
-  `waitForApproval` inside a `branch`, `parallel`, `loop`, `map`, or
-  `subWorkflow` surfaces to run control as a failed composite node, which it
-  cannot tell apart from a real failure. Publishing the event still wakes such
-  a run normally. What does not work is `resume(runId)` on a run parked on a
-  nested wait: it fails the run with a stalled-graph error even though the wait
-  is live. A wait directly in the workflow's own step list is unaffected. Keep
-  waits at the top level, or avoid bare `resume` on runs that use nested ones.
-- **`publishEvent` is run-scoped.** There is no broadcast by workflow id.
+`publishEvent` is run-scoped. There is no broadcast by workflow id.
 
 ## Workflow configuration
 

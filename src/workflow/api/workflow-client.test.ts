@@ -42,7 +42,8 @@ import {
   getPendingApprovalResponseSchemaId,
   projectPendingApproval,
 } from "../runtime/pending-approval-metadata.ts";
-import type { EventWaitManager } from "../runtime/event-wait-manager.ts";
+import { EventWaitManager } from "../runtime/event-wait-manager.ts";
+import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
@@ -2053,6 +2054,33 @@ class FailFirstDeliveryRunReadBackend extends MemoryBackend {
   }
 }
 
+class RejectCommittedOutcomeReadBackend extends MemoryBackend {
+  private deliveryCommitted = false;
+  private committedReads = 0;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    if (updated && patch.nodeStates?.gate?.status === "completed") {
+      this.deliveryCommitted = true;
+    }
+    return updated;
+  }
+
+  override getRun(runId: string): Promise<WorkflowRun | null> {
+    if (this.deliveryCommitted) {
+      this.committedReads++;
+      if (this.committedReads === 2) {
+        return Promise.reject(new Error("committed outcome read unavailable"));
+      }
+    }
+    return super.getRun(runId);
+  }
+}
+
 /**
  * Refuses to persist run failures on demand, so an expired wait's run
  * transition fails while everything else keeps working.
@@ -3822,6 +3850,58 @@ describe("WorkflowClient durable event waits", () => {
     } finally {
       await writer.destroy();
       await recovering.destroy();
+    }
+  });
+
+  it("preserves a delivery claim when the committed-outcome read is uncertain", async () => {
+    const uncertain = new RejectCommittedOutcomeReadBackend();
+    const runId = "run-uncertain-committed-outcome";
+    await uncertain.createRun({
+      id: runId,
+      workflowId: "uncertain-committed-outcome",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "running", attempt: 1 },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await uncertain.savePendingEventWait(runId, {
+      id: "evw-uncertain-commit",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await uncertain.appendRunEvent(runId, {
+      id: "evt-uncertain-commit",
+      eventName: "gate.ready",
+      payload: {},
+      publishedAt: new Date(),
+    });
+    const failingExecutor = {
+      resume: () => Promise.reject(new Error("resume unavailable")),
+    } as unknown as WorkflowExecutor;
+    const manager = new EventWaitManager({
+      backend: uncertain,
+      executor: failingExecutor,
+      expirationCheckInterval: 0,
+    });
+    try {
+      await manager.drainPendingEvents(runId);
+
+      assertEquals((await uncertain.getRun(runId))?.nodeStates.gate?.status, "completed");
+      assertEquals((await uncertain.listRunEventDeliveryClaims(runId)).length, 1);
+      assertEquals(await uncertain.peekRunEvent(runId, "gate.ready"), null);
+    } finally {
+      manager.stop();
     }
   });
 

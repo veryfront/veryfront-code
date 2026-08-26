@@ -13,6 +13,7 @@ import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { getConfiguredTimedWaitKind, INTERNAL_DELAY_EVENT_NAME } from "../timed-wait-state.ts";
 import { isCanonicalNonEmptyString } from "../dsl/validation.ts";
 import {
+  consumeWorkflowRunControlOutcomeMayBeCommitted,
   reconcileWorkflowRunControl,
   type WorkflowRunControlReconcileOutcome,
 } from "./workflow-run-control.ts";
@@ -604,7 +605,7 @@ export class EventWaitManager {
         try {
           reconciled = await this.deliver(wait, event.payload);
         } catch (error) {
-          if (await this.nodeOutcomeCommitted(wait)) {
+          if (consumeWorkflowRunControlOutcomeMayBeCommitted(error)) {
             outcome.failedEventIds.delete(event.id);
             outcome.deliveredEventIds.add(event.id);
             this.recordDeliveredEventReceipt(runId, event.id);
@@ -1039,12 +1040,8 @@ export class EventWaitManager {
   }
 
   private async nodeOutcomeCommitted(wait: PersistedPendingEventWait): Promise<boolean> {
-    try {
-      const run = await this.config.backend.getRun(wait.runId);
-      return run?.nodeStates[wait.nodeId]?.status === "completed";
-    } catch {
-      return false;
-    }
+    const run = await this.config.backend.getRun(wait.runId);
+    return run?.nodeStates[wait.nodeId]?.status === "completed";
   }
 
   private async deliver(
@@ -1185,7 +1182,7 @@ export class EventWaitManager {
             await this.finalizeTimedWaitClaim(wait);
           }
         } catch (error) {
-          if (await this.nodeOutcomeCommitted(wait)) {
+          if (consumeWorkflowRunControlOutcomeMayBeCommitted(error)) {
             this.scheduleCommittedResumeRetry(wait);
             logger.error(
               "Delay node committed but resuming the run failed",

@@ -256,6 +256,35 @@ describe("ApprovalManager", () => {
       assertEquals(run.status, "cancelled");
       assertEquals(run.error, undefined);
     });
+
+    it("retains an expired decision claim when a sibling failure wins", async () => {
+      backend = new FailOnApprovalDecisionBackend();
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 0,
+      });
+      const runId = "run-expiry-sibling-failure";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: { nodeId: "review", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-expiry-sibling-failure",
+        nodeId: "review",
+        message: "Expired review",
+        requestedAt: pastDate(2_000),
+        expiresAt: pastDate(1_000),
+        status: "pending",
+      });
+
+      await manager.checkExpiredApprovals();
+
+      assertEquals((await backend.getRun(runId))?.status, "failed");
+      assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
+    });
   });
 
   describe("createApproval", () => {
@@ -538,6 +567,33 @@ describe("ApprovalManager", () => {
 
       assertExists(persisted.expiresAt);
       assertEquals(persisted.expiresAt, new Date("2026-08-24T11:00:00.000Z"));
+    });
+
+    it("anchors expiresAt to when the approval node started", async () => {
+      using _time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-started-approval-timeout";
+      const run = createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date("2026-08-24T09:50:00.000Z"),
+          },
+        },
+      });
+      await backend.createRun(run);
+
+      const request = await manager.createApproval(
+        run,
+        "review",
+        { type: "wait", waitType: "approval", timeout: "1h" },
+        run.context,
+      );
+
+      assertEquals(request.expiresAt, new Date("2026-08-24T10:50:00.000Z"));
     });
 
     it("omits expiresAt when no timeout is supplied", async () => {
@@ -1060,6 +1116,44 @@ describe("ApprovalManager", () => {
         decidedAt: (run?.context.review as { decidedAt: string }).decidedAt,
       });
       assertEquals(resumeCalls, [[runId, undefined, "worker-current-owner"]]);
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
+    it("reschedules a young decision claim when periodic sweeping is disabled", async () => {
+      using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
+      const runId = "run-young-decision-claim";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: { nodeId: "review", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-young-decision-claim",
+        nodeId: "review",
+        message: "approve me",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(runId, "apr-young-decision-claim", {
+        approved: true,
+        approver: "reviewer",
+      });
+      const executor = { resume: () => Promise.resolve() } as unknown as WorkflowExecutor;
+
+      manager = new ApprovalManager({
+        backend,
+        executor,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 30_000,
+      });
+      await manager.checkApprovalDecisionClaims();
+      assertEquals((await backend.getRun(runId))?.nodeStates.review?.status, "running");
+
+      await time.tickAsync(30_000);
+      await manager.checkApprovalDecisionClaims();
+
+      assertEquals((await backend.getRun(runId))?.nodeStates.review?.status, "completed");
       assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
 

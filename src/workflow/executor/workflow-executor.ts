@@ -403,26 +403,35 @@ export class WorkflowExecutor {
       });
     }
 
+    let reconciledRun: WorkflowRun;
     try {
       await reconcileApprovalDecisionClaimsBeforeRetry(this.config.backend, runId);
+      const latest = await this.config.backend.getRun(runId);
+      if (!latest) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      reconciledRun = latest;
     } catch (error) {
-      await updateRunIfStatus(
+      await restoreRunStateIfStatus(
         this.config.backend,
         runId,
         ["pending"],
         {
           status: "failed",
+          context: run.context,
+          nodeStates: run.nodeStates,
+          currentNodes: run.currentNodes,
           workerId: run.workerId,
           error: run.error,
-          completedAt: run.completedAt ?? new Date(),
+          output: run.output,
+          startedAt: run.startedAt,
+          heartbeatAt: run.heartbeatAt,
+          completedAt: run.completedAt,
+          _traceContext: run._traceContext,
         },
         executionWorkerId,
       );
       throw error;
     }
 
-    const reconciledRun = await this.config.backend.getRun(runId);
-    if (!reconciledRun) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     if (reconciledRun.status !== "pending") return;
 
     const settled = runWithWorkflowSourceIntegrationPolicy(

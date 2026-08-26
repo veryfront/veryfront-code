@@ -65,9 +65,9 @@ const APPROVAL_RECOVERY_SCAN_COUNT = 100;
 /**
  * Merge top-level JSON objects without decoding their values through Redis's
  * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
- * Lua table and then encodes it as `{}`. Keeping each value as its original
- * JSON slice preserves arrays and every other nested value byte-for-byte while
- * the script atomically replaces or deletes top-level map entries.
+ * Lua table and then encodes it as `{}`. The native cjson path handles normal
+ * objects; only documents containing an ambiguous empty-array token use the
+ * raw-slice fallback that preserves nested values byte-for-byte.
  */
 const JSON_OBJECT_PATCH_LUA = String.raw`
 local function skipJsonWhitespace(value, position)
@@ -186,6 +186,37 @@ local function encodeJsonObject(fields)
   end
   return '{' .. table.concat(entries, ',') .. '}'
 end
+
+local function containsAmbiguousEmptyArray(value)
+  return string.find(value, '%[%s*%]') ~= nil
+end
+
+local function mergeJsonObjects(currentJson, patchJson)
+  if containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
+    local current = parseJsonObject(currentJson)
+    local patch = parseJsonObject(patchJson)
+    for key, changed in pairs(patch) do current[key] = changed end
+    return encodeJsonObject(current)
+  end
+
+  local current = cjson.decode(currentJson)
+  local patch = cjson.decode(patchJson)
+  for key, changed in pairs(patch) do current[key] = changed end
+  return next(current) == nil and '{}' or cjson.encode(current)
+end
+
+local function deleteJsonObjectFields(currentJson, deletedJson)
+  local deleted = cjson.decode(deletedJson)
+  if containsAmbiguousEmptyArray(currentJson) then
+    local current = parseJsonObject(currentJson)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    return encodeJsonObject(current)
+  end
+
+  local current = cjson.decode(currentJson)
+  for _, key in ipairs(deleted) do current[key] = nil end
+  return next(current) == nil and '{}' or cjson.encode(current)
+end
 `;
 
 function appendStorageSchemaVersion(base: string): string {
@@ -275,20 +306,14 @@ if redis.call('exists', KEYS[1]) == 0 then return 0 end
 ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
-    local deleted = cjson.decode(value)
-    for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'nodeStates', encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
   elseif field == 'contextDeletes' then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], 'context') or '{}')
-    local deleted = cjson.decode(value)
-    for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'context', encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
   elseif field == 'nodeStates' or field == 'context' then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = parseJsonObject(value)
-    for key, changed in pairs(patch) do current[key] = changed end
-    redis.call('hset', KEYS[1], field, encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], field) or '{}'
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
   else
     redis.call('hset', KEYS[1], field, value)
   end
@@ -337,20 +362,14 @@ local replaceMaps = ARGV[expectedCount + 8] == '1'
 ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
-    local deleted = cjson.decode(value)
-    for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'nodeStates', encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
   elseif field == 'contextDeletes' then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], 'context') or '{}')
-    local deleted = cjson.decode(value)
-    for _, key in ipairs(deleted) do current[key] = nil end
-    redis.call('hset', KEYS[1], 'context', encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
   elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
-    local current = parseJsonObject(redis.call('hget', KEYS[1], field) or '{}')
-    local patch = parseJsonObject(value)
-    for key, changed in pairs(patch) do current[key] = changed end
-    redis.call('hset', KEYS[1], field, encodeJsonObject(current))
+    local current = redis.call('hget', KEYS[1], field) or '{}'
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
   else
     redis.call('hset', KEYS[1], field, value)
   end
