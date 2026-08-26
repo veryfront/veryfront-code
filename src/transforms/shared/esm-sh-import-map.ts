@@ -24,7 +24,30 @@ import { isEsmShUrl, parseEsmShUrl } from "#veryfront/transforms/shared/esm-sh-s
  * `https://esm.sh/stable/` for `reservedNamePackage` to read as the package
  * named `stable`, the second being its root written as a directory.
  */
-const ESM_SH_BUILD_PREFIX = /^(https?:\/\/esm\.sh\/)(?:v\d+|stable)\/(?=[^?#])/;
+function stripEsmShBuildPrefix(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    /* expected: URL may be malformed */
+    return url;
+  }
+
+  const separator = parsed.pathname.indexOf("/", 1);
+  if (separator <= 1 || separator === parsed.pathname.length - 1) return url;
+
+  let prefix = parsed.pathname.slice(1, separator);
+  try {
+    prefix = decodeURIComponent(prefix);
+  } catch (_) {
+    /* expected: malformed escapes cannot name a build prefix */
+    return url;
+  }
+  if (prefix !== "stable" && !/^v\d+$/.test(prefix)) return url;
+
+  const pathStart = url.length - parsed.pathname.length - parsed.search.length - parsed.hash.length;
+  return url.slice(0, pathStart + 1) + url.slice(pathStart + separator + 1);
+}
 
 /** Removes a trailing separator from the path component, if there is one. */
 function stripTrailingSlash(url: string): string {
@@ -159,7 +182,7 @@ export function parseEsmShSpecifier(
   // Normalise before stripping the channel as well as before reading the tail.
   // Dot segments can otherwise hide a valid build prefix from the raw-string
   // pattern, leaving `v135` to be misread as the package coordinate.
-  const withoutBuildPrefix = normalized.replace(ESM_SH_BUILD_PREFIX, "$1");
+  const withoutBuildPrefix = stripEsmShBuildPrefix(normalized);
   const afterBuildChannel = withoutBuildPrefix !== normalized;
 
   // `pkg@18/.` and `pkg@18/` are the same path, but only the normalised form
@@ -217,7 +240,7 @@ const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
 const SEMVER_VERSION_OR_RANGE = new RegExp(
-  `^(?:[~^])?v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
+  `^(?:[~^]|[<>]=?)?v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?` +
     `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
@@ -402,7 +425,7 @@ function isSingleModuleMapping(mapping: string): boolean {
       // than a channel route. A build channel already occupying the first
       // segment does the same, since `v135/v8/sub` reads back as the package
       // `v8` while a bare `stable/sub` reads back as the package `sub`.
-      const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(classifiedMapping);
+      const hasBuildChannel = stripEsmShBuildPrefix(classifiedMapping) !== classifiedMapping;
       if (
         isReservedCoordinateName(classifiedPackageName) && parsed.version === null &&
         !hasBuildChannel

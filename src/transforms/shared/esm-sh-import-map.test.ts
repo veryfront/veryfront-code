@@ -359,6 +359,24 @@ describe("transforms/shared/esm-sh-import-map", () => {
     );
   });
 
+  it("recognizes comparator-prefixed prerelease ranges before file extensions", () => {
+    for (
+      const encodedRange of [
+        "%3E%3D1.2.3-alpha.beta",
+        "%3E1.2.3-rc.1",
+        "%3C%3D2.0.0-beta",
+        "%3C2.0.0-alpha",
+      ] as const
+    ) {
+      const mapping = `https://cdn.example/pkg@${encodedRange}`;
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        `${mapping}/sub`,
+        `${decodeURIComponent(encodedRange)} is a package range rather than a file extension`,
+      );
+    }
+  });
+
   it("recognizes wildcard SemVer ranges before file extensions", () => {
     for (const version of ["1.x", "1.x.x", "1.2.x", "v1.X", "^1.x", "~1.2.x"] as const) {
       const mapping = `https://cdn.example/pkg@${version}`;
@@ -439,6 +457,17 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "https://esm.sh/v8",
       "without a channel the collision stands and the mapping stays exact",
     );
+  });
+
+  it("decodes esm.sh build prefixes before classifying the following package", () => {
+    for (const buildPrefix of ["%73table", "%76%31%33%35"] as const) {
+      const mapping = `https://esm.sh/${buildPrefix}/react@18`;
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        `${mapping}/sub`,
+        `${buildPrefix} is a build route, so react remains the package coordinate`,
+      );
+    }
   });
 
   it("normalises dot segments before stripping an esm.sh build channel", () => {
