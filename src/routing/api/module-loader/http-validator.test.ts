@@ -1224,6 +1224,13 @@ describe("routing/api/module-loader/http-validator", () => {
         [],
       );
       await validateHTTPImports(
+        `const setProto = Object.setPrototypeOf;` +
+          ` let supported = true;` +
+          ` switch (setProto) { case undefined: supported = false; break; }` +
+          ` export { supported };`,
+        [],
+      );
+      await validateHTTPImports(
         `const flag = true;` +
           ` const objectSupport = typeof (Object.setPrototypeOf ?? undefined) === "function";` +
           ` const reflectSupport = (flag ? Reflect.setPrototypeOf : undefined) !== undefined;` +
@@ -2019,6 +2026,12 @@ describe("routing/api/module-loader/http-validator", () => {
       await validateHTTPImports(
         `const Command = Deno.Command;` +
           ` Command && registerSupport();` +
+          ` function registerSupport() {}`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Command = Deno.Command;` +
+          ` switch (Command) { case undefined: break; default: registerSupport(); }` +
           ` function registerSupport() {}`,
         [],
       );

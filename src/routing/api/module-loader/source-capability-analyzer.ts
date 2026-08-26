@@ -3300,7 +3300,7 @@ function isInertCapabilityInspection(
     (link.parent.operator === "typeof" || link.parent.operator === "!") &&
     link.key === "argument"
   ) return true;
-  if (isBooleanTestUse(link)) return true;
+  if (isInertControlFlowUse(link)) return true;
   return link.parent.type === "BinaryExpression" &&
     (link.parent.operator === "===" || link.parent.operator === "!==") &&
     (link.key === "left" || link.key === "right");
@@ -3322,13 +3322,14 @@ function isInertInspectionValueFlow(link: ParentLink): boolean {
     (link.key === "left" || link.key === "right");
 }
 
-function isBooleanTestUse(link: ParentLink): boolean {
-  return link.key === "test" &&
+function isInertControlFlowUse(link: ParentLink): boolean {
+  return (link.key === "test" &&
     (link.parent.type === "IfStatement" ||
       link.parent.type === "ConditionalExpression" ||
       link.parent.type === "WhileStatement" ||
       link.parent.type === "DoWhileStatement" ||
-      link.parent.type === "ForStatement");
+      link.parent.type === "ForStatement")) ||
+    (link.key === "discriminant" && link.parent.type === "SwitchStatement");
 }
 
 function isTrackedPrototypeMutatorInvocationUse(
