@@ -31,6 +31,7 @@ const logger = baseLogger.component("event-wait-manager");
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MIN_EXPIRY_RETRY_DELAY_MS = 1_000;
 const DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS = 60_000;
+const DEFAULT_CLAIM_RECOVERY_CHECK_INTERVAL_MS = 60_000;
 const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const MAX_DELIVERY_FINALIZATION_ATTEMPTS = 8;
 const MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS = 8;
@@ -62,6 +63,8 @@ export interface EventWaitManagerConfig {
   expirationCheckInterval?: number;
   /** Age after which an unfinished event claim is recoverable after a process exit (ms). */
   deliveryClaimRecoveryDelay?: number;
+  /** Interval for discovering event claims abandoned by another process (ms). */
+  claimRecoveryCheckInterval?: number;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -104,11 +107,6 @@ interface DrainSession {
   resolveIdle: () => void;
 }
 
-interface ClaimRecoverySelection {
-  deliveryEventIds: ReadonlySet<string>;
-  timedWaitIds: ReadonlySet<string>;
-}
-
 /** Strip backend-only fields so callers never see worker ownership. */
 function projectEventWait(wait: PersistedPendingEventWait): PendingEventWait {
   const {
@@ -140,8 +138,9 @@ function timedWaitClaimKey(runId: string, waitId: string): string {
 export class EventWaitManager {
   private config: EventWaitManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
-  /** One restart-recovery pass when periodic expiration sweeping is disabled. */
-  private startupClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
+  /** Independent discovery for claims abandoned after this manager starts. */
+  private claimRecoveryCheckTimer?: ReturnType<typeof setInterval>;
+  private claimRecoveryCheck?: Promise<void>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Shared accumulator and completion barrier for same-backend, same-run drain passes. */
@@ -163,6 +162,7 @@ export class EventWaitManager {
     this.config = {
       expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
       deliveryClaimRecoveryDelay: DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
+      claimRecoveryCheckInterval: DEFAULT_CLAIM_RECOVERY_CHECK_INTERVAL_MS,
       debug: false,
       ...config,
     };
@@ -173,7 +173,7 @@ export class EventWaitManager {
     }
     this.drainSessions = drainSessions;
     this.ensureExpirationChecker();
-    this.ensureStartupClaimRecovery();
+    this.ensureClaimRecoveryChecker();
   }
 
   /**
@@ -199,57 +199,41 @@ export class EventWaitManager {
     unrefTimer(this.expirationTimer);
   }
 
-  /**
-   * Recover claims left by a previous process even when expiry sweeping is
-   * intentionally disabled. Waiting until the claim-recovery age makes this
-   * safe for a replacement created immediately after its predecessor exits.
-   */
-  private ensureStartupClaimRecovery(): void {
+  /** Discover abandoned claims independently of deadline expiration sweeping. */
+  private ensureClaimRecoveryChecker(): void {
+    if (this.claimRecoveryCheckTimer !== undefined || this.destroyed) return;
+    const interval = this.config.claimRecoveryCheckInterval ?? 0;
     if (
-      this.startupClaimRecoveryTimer !== undefined || this.destroyed ||
-      (this.config.expirationCheckInterval ?? 0) > 0
+      interval <= 0 || (this.config.expirationCheckInterval ?? 0) > 0 ||
+      !hasEventWaitSupport(this.config.backend)
     ) return;
-    const backend = this.config.backend;
-    if (!hasEventWaitSupport(backend)) return;
 
-    // Snapshot immediately. The delayed recovery must never sweep claims this
-    // manager creates later; those have their own in-flight reconciliation and
-    // retry timers, and treating them as abandoned would race their owner.
-    const snapshot = Promise.all([
-      backend.listRunEventDeliveryClaims(),
-      backend.listTimedEventWaitClaims(),
-    ]);
-    void snapshot.then(([deliveryClaims, timedClaims]) => {
-      if (this.destroyed || deliveryClaims.length + timedClaims.length === 0) return;
-      const recoveryDelay = Math.max(
-        0,
-        this.config.deliveryClaimRecoveryDelay ?? DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
-      );
-      const now = Date.now();
-      const remainingDelays = [
-        ...deliveryClaims.map((claim) =>
-          Math.max(0, recoveryDelay - (now - claim.claimedAt.getTime()))
-        ),
-        ...timedClaims.map((wait) =>
-          Math.max(0, recoveryDelay - (now - (wait.claimedAt?.getTime() ?? now)))
-        ),
-      ];
-      const delay = Math.max(...remainingDelays);
-      const selection: ClaimRecoverySelection = {
-        deliveryEventIds: new Set(deliveryClaims.map((claim) => claim.event.id)),
-        timedWaitIds: new Set(timedClaims.map((wait) => wait.id)),
-      };
-      this.startupClaimRecoveryTimer = setTimeout(() => {
-        this.startupClaimRecoveryTimer = undefined;
-        if (this.destroyed) return;
-        void this.recoverAndDrainAbandonedDeliveries(selection).catch((error) => {
-          logger.error("Startup event-wait claim recovery failed", error);
-        });
-      }, delay);
-      unrefTimer(this.startupClaimRecoveryTimer);
-    }).catch((error) => {
-      logger.error("Could not inspect event-wait claims during startup recovery", error);
+    void this.checkAbandonedClaims().catch((error) => {
+      logger.error("Event-wait claim recovery failed", error);
     });
+    this.claimRecoveryCheckTimer = setInterval(() => {
+      void this.checkAbandonedClaims().catch((error) => {
+        logger.error("Event-wait claim recovery failed", error);
+      });
+    }, interval);
+    unrefTimer(this.claimRecoveryCheckTimer);
+  }
+
+  private checkAbandonedClaims(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (this.claimRecoveryCheck) return this.claimRecoveryCheck;
+
+    const check = this.recoverAndDrainAbandonedDeliveries();
+    this.claimRecoveryCheck = check;
+    void check.then(
+      () => {
+        if (this.claimRecoveryCheck === check) this.claimRecoveryCheck = undefined;
+      },
+      () => {
+        if (this.claimRecoveryCheck === check) this.claimRecoveryCheck = undefined;
+      },
+    );
+    return check;
   }
 
   /**
@@ -967,7 +951,6 @@ export class EventWaitManager {
   /** Recover durable claims left behind before delivery or finalization committed. */
   private async recoverAbandonedDeliveries(
     runId?: string,
-    selection?: ClaimRecoverySelection,
   ): Promise<Set<string>> {
     const backend = this.config.backend;
     const restoredRunIds = new Set<string>();
@@ -976,7 +959,7 @@ export class EventWaitManager {
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS;
 
     for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
-      if (selection && !selection.deliveryEventIds.has(claim.event.id)) continue;
+      if (this.drainSessions.has(claim.wait.runId)) continue;
       if (Date.now() - claim.claimedAt.getTime() < recoveryDelay) continue;
       let run: WorkflowRun | null;
       try {
@@ -1044,7 +1027,6 @@ export class EventWaitManager {
       }
     }
     for (const wait of await backend.listTimedEventWaitClaims(runId)) {
-      if (selection && !selection.timedWaitIds.has(wait.id)) continue;
       if (this.activeTimedWaitClaims.has(timedWaitClaimKey(wait.runId, wait.id))) continue;
       if (
         wait.claimedAt !== undefined &&
@@ -1110,10 +1092,8 @@ export class EventWaitManager {
   }
 
   /** Recover abandoned claims and promptly retry any restored mailbox state. */
-  private async recoverAndDrainAbandonedDeliveries(
-    selection?: ClaimRecoverySelection,
-  ): Promise<void> {
-    for (const runId of await this.recoverAbandonedDeliveries(undefined, selection)) {
+  private async recoverAndDrainAbandonedDeliveries(): Promise<void> {
+    for (const runId of await this.recoverAbandonedDeliveries()) {
       if (this.destroyed) return;
       try {
         await this.drain(runId, false);
@@ -1534,9 +1514,9 @@ export class EventWaitManager {
     this.committedResumeRetryTimers.clear();
     this.committedResumeRetryAttempts.clear();
     this.activeTimedWaitClaims.clear();
-    if (this.startupClaimRecoveryTimer !== undefined) {
-      clearTimeout(this.startupClaimRecoveryTimer);
-      this.startupClaimRecoveryTimer = undefined;
+    if (this.claimRecoveryCheckTimer !== undefined) {
+      clearInterval(this.claimRecoveryCheckTimer);
+      this.claimRecoveryCheckTimer = undefined;
     }
     if (this.expirationTimer === undefined) return;
     clearInterval(this.expirationTimer);

@@ -984,7 +984,6 @@ export async function executeWorkflowRunControl(
       // is nothing to do; otherwise re-announce every missing wait from the
       // exact runtime config retained by the DAG. A live first sibling must
       // not hide a later sibling whose process died before persisting it.
-      let reconstructed = false;
       for (const waiting of stalledWaitNodes) {
         if (
           await hasLiveNodeWait(
@@ -996,13 +995,13 @@ export async function executeWorkflowRunControl(
         ) continue;
         if (pausedRun.nodeStates[waiting.nodeId]?.status !== "running") continue;
         await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
-        reconstructed = true;
       }
-      if (reconstructed) {
-        await input.onWaitingBatchComplete?.(pausedRun);
-      }
+      // A live event wait may already have buffered mail whose publisher died
+      // before draining it. Run the batch-complete hook even when no wait had
+      // to be reconstructed so a resume can consume that durable envelope.
+      await input.onWaitingBatchComplete?.(pausedRun);
 
-      const latestRun = reconstructed ? await backend.getRun(runId) : pausedRun;
+      const latestRun = await backend.getRun(runId);
       if (!latestRun) return { status: "skipped" };
       if (latestRun.status !== "waiting") return { status: "waiting", run: latestRun };
 

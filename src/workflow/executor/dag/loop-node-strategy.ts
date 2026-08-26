@@ -11,6 +11,7 @@ import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { namespaceWorkflowNodes, removeWorkflowNodeNamespace } from "../../dsl/validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   applyContextPatch,
   applyRecordPatch,
@@ -24,6 +25,8 @@ interface ExecuteLoopNodeStrategyInput {
   config: LoopNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** Declared node ids in the graph that owns this loop node. */
+  parentNodeIds: ReadonlySet<string>;
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
 }
@@ -109,7 +112,7 @@ function fromPersistedNodeStates(
 export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime } = input;
+  const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const previousResults: unknown[] = [];
@@ -198,6 +201,16 @@ export async function executeLoopNodeStrategy(
         : config.steps;
     }
     runtime.abortSignal?.throwIfAborted();
+
+    const collidingChildId = [...collectWorkflowNodeIds(steps)].find((childId) =>
+      parentNodeIds.has(childId)
+    );
+    if (collidingChildId) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Loop node "${node.id}" generated child id "${collidingChildId}", ` +
+          "which collides with a declared node in the parent graph",
+      });
+    }
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9),

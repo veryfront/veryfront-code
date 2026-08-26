@@ -35,7 +35,9 @@ const logger = baseLogger.component("approval-manager");
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS = 30_000;
+const DEFAULT_DECISION_CLAIM_CHECK_INTERVAL_MS = 60_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
+const APPROVAL_CREATION_ALREADY_SETTLED = Symbol("approval-creation-already-settled");
 
 function shouldRetainDecisionClaim(
   outcome: WorkflowRunControlReconcileOutcome,
@@ -178,6 +180,8 @@ export interface ApprovalManagerConfig {
   expirationCheckInterval?: number;
   /** Age after which an unfinished decision claim is recoverable after a process exit (ms). */
   decisionClaimRecoveryDelay?: number;
+  /** Interval for discovering decision claims abandoned by another process (ms). */
+  decisionClaimCheckInterval?: number;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -228,23 +232,61 @@ export class ApprovalManager {
   private decisionClaimReconciliation?: Promise<void>;
   private decisionClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
   private decisionClaimRecoveryAt?: number;
+  private decisionClaimCheckTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
       expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
       decisionClaimRecoveryDelay: DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS,
+      decisionClaimCheckInterval: DEFAULT_DECISION_CLAIM_CHECK_INTERVAL_MS,
       debug: false,
       ...config,
     };
 
-    void this.checkApprovalDecisionClaims().catch((error) => {
-      logger.error("Approval decision claim recovery failed", error);
-    });
+    if ((this.config.decisionClaimCheckInterval ?? 0) > 0) {
+      void this.checkApprovalDecisionClaims().catch((error) => {
+        logger.error("Approval decision claim recovery failed", error);
+      });
+      this.startDecisionClaimChecker();
+    }
 
     const interval = this.config.expirationCheckInterval ?? 0;
     if (interval > 0) {
       this.startExpirationChecker();
     }
+  }
+
+  private async findApprovalCreationCollision(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<PersistedPendingApproval | typeof APPROVAL_CREATION_ALREADY_SETTLED | null> {
+    const pending = (await this.config.backend.getPendingApprovals(runId)).find((candidate) =>
+      isSameWaitNodeExecution(candidate, approval)
+    );
+    if (pending) return pending;
+
+    const claims = await this.config.backend.listApprovalDecisionClaims?.(runId) ?? [];
+    const claim = claims.find((candidate) =>
+      candidate.runId === runId && isSameWaitNodeExecution(candidate.approval, approval)
+    );
+    if (claim) return claim.approval;
+
+    const run = await this.config.backend.getRun(runId);
+    if (
+      !run || run.status === "completed" || run.status === "failed" || run.status === "cancelled"
+    ) {
+      return APPROVAL_CREATION_ALREADY_SETTLED;
+    }
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      }) || currentState?.status === "completed" || currentState?.status === "failed"
+    ) {
+      return APPROVAL_CREATION_ALREADY_SETTLED;
+    }
+    return null;
   }
 
   /** Create a pending approval request */
@@ -315,12 +357,13 @@ export class ApprovalManager {
           )
           : false;
         if (!saved) {
-          const existing = (await this.config.backend.getPendingApprovals(runId)).find(
-            (candidate) => isSameWaitNodeExecution(candidate, approval),
-          );
-          if (existing) {
+          const collision = await this.findApprovalCreationCollision(runId, approval);
+          if (collision) {
             if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
-            return projectApprovalRequest(runId, existing);
+            return projectApprovalRequest(
+              runId,
+              collision === APPROVAL_CREATION_ALREADY_SETTLED ? approval : collision,
+            );
           }
           throw ORCHESTRATION_ERROR.create({
             detail: "Workflow execution ownership changed before approval persistence",
@@ -335,11 +378,14 @@ export class ApprovalManager {
         }
         const saved = await saveIfAbsent.call(this.config.backend, runId, approval);
         if (!saved) {
-          const existing = (await this.config.backend.getPendingApprovals(runId)).find(
-            (candidate) => isSameWaitNodeExecution(candidate, approval),
-          );
+          const collision = await this.findApprovalCreationCollision(runId, approval);
           if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
-          if (existing) return projectApprovalRequest(runId, existing);
+          if (collision) {
+            return projectApprovalRequest(
+              runId,
+              collision === APPROVAL_CREATION_ALREADY_SETTLED ? approval : collision,
+            );
+          }
           throw ORCHESTRATION_ERROR.create({
             detail: "Atomic approval creation lost without an existing approval",
           });
@@ -499,9 +545,7 @@ export class ApprovalManager {
       if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) continue;
       const claimAge = Date.now() - approval.decidedAt.getTime();
       if (claimAge < recoveryDelay) {
-        if ((this.config.expirationCheckInterval ?? 0) <= 0) {
-          this.scheduleDecisionClaimRecovery(recoveryDelay - claimAge);
-        }
+        this.scheduleDecisionClaimRecovery(recoveryDelay - claimAge);
         continue;
       }
 
@@ -838,12 +882,16 @@ export class ApprovalManager {
     }, this.config.expirationCheckInterval);
   }
 
+  private startDecisionClaimChecker(): void {
+    this.decisionClaimCheckTimer = setInterval(() => {
+      void this.checkApprovalDecisionClaims().catch((error) => {
+        logger.error("Approval decision claim recovery failed", error);
+      });
+    }, this.config.decisionClaimCheckInterval);
+    unrefTimer(this.decisionClaimCheckTimer);
+  }
+
   private async runMaintenance(): Promise<void> {
-    try {
-      await this.checkApprovalDecisionClaims();
-    } catch (error) {
-      logger.error("Approval decision claim recovery failed", error);
-    }
     try {
       await this.checkExpiredApprovals();
     } catch (error) {
@@ -859,6 +907,11 @@ export class ApprovalManager {
       clearTimeout(this.decisionClaimRecoveryTimer);
       this.decisionClaimRecoveryTimer = undefined;
       this.decisionClaimRecoveryAt = undefined;
+    }
+
+    if (this.decisionClaimCheckTimer !== undefined) {
+      clearInterval(this.decisionClaimCheckTimer);
+      this.decisionClaimCheckTimer = undefined;
     }
 
     if (!this.expirationTimer) {

@@ -30,6 +30,17 @@ const ENV_KEYS = [
 
 const savedEnv = new Map<string, string | undefined>();
 
+class ClaimScanCountingBackend extends MemoryBackend {
+  approvalClaimScans = 0;
+
+  override listApprovalDecisionClaims(
+    runId?: string,
+  ): ReturnType<MemoryBackend["listApprovalDecisionClaims"]> {
+    this.approvalClaimScans++;
+    return super.listApprovalDecisionClaims(runId);
+  }
+}
+
 function rememberEnv(): void {
   for (const key of ENV_KEYS) {
     if (!savedEnv.has(key)) {
@@ -320,6 +331,15 @@ describe("workflow worker shared helpers", () => {
     assertEquals(approvals.length, 1);
     assertEquals(approvals[0]?.nodeId, "review");
     assertEquals(approvals[0]?.message, "Review required");
+  });
+
+  it("does not globally scan approval claims for each isolated executor", async () => {
+    const backend = new ClaimScanCountingBackend();
+
+    createIsolatedWorkflowExecutor(backend);
+    await Promise.resolve();
+
+    assertEquals(backend.approvalClaimScans, 0);
   });
 
   it("does not fail cancelled, completed, or waiting runs after execution errors", async () => {

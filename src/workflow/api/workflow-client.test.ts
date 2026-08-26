@@ -2026,10 +2026,12 @@ class FailOneNodeDeliveryBackend extends MemoryBackend {
     eventName: string,
   ): Promise<RunEventEnvelope | null> {
     const pending = await super.getPendingEventWaits(runId);
-    this.deliveringFailingNode = pending.some(
+    const targetsFailingNode = pending.some(
       (wait) => wait.id === waitId && wait.nodeId === this.failingNodeId,
     );
-    return await super.claimRunEventForWait(runId, waitId, eventName);
+    const event = await super.claimRunEventForWait(runId, waitId, eventName);
+    this.deliveringFailingNode = targetsFailingNode && event !== null;
+    return event;
   }
 
   override restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
@@ -3547,6 +3549,63 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("discovers a timed claim abandoned after no-sweep startup", async () => {
+    const sharedBackend = new MemoryBackend();
+    const parked = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0, claimRecoveryCheckInterval: 0 },
+    });
+    const recovering = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: {
+        expirationCheckInterval: 0,
+        deliveryClaimRecoveryDelay: 0,
+        claimRecoveryCheckInterval: 10,
+      },
+    });
+    const definition = workflow({
+      id: "late-abandoned-delay-claim",
+      steps: [delayNode("pause", "1h")],
+    });
+    parked.register(definition);
+    recovering.register(definition);
+    try {
+      const handle = await parked.start(definition.id, {});
+      await handle.settled();
+      const [wait] = await parked.getPendingEventWaits(handle.runId);
+      assertExists(wait);
+      const pausedRun = await sharedBackend.getRun(handle.runId);
+      assertExists(pausedRun?.nodeStates.pause);
+
+      // The recovering manager's constructor scan has already completed. A
+      // different process now claims the delay and exits before reconciling it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        await sharedBackend.resolvePendingEventWait(handle.runId, wait.id, "delivered"),
+        true,
+      );
+      await sharedBackend.updateRun(handle.runId, {
+        nodeStates: {
+          pause: {
+            ...pausedRun.nodeStates.pause!,
+            status: "completed",
+            output: { delayed: true },
+            completedAt: new Date(),
+          },
+        },
+      });
+
+      await waitFor(
+        async () => (await recovering.getRun(handle.runId))?.status === "completed",
+        { message: "claim discovery did not find the post-startup abandoned delay" },
+      );
+      assertEquals(await sharedBackend.listTimedEventWaitClaims(handle.runId), []);
+    } finally {
+      await parked.destroy();
+      await recovering.destroy();
+    }
+  });
+
   it("finalizes an old delivery claim instead of restoring it into a newer wait", async () => {
     const sharedBackend = new MemoryBackend();
     const run: WorkflowRun = {
@@ -3847,7 +3906,7 @@ describe("WorkflowClient durable event waits", () => {
     const failing = new AlwaysFailDeliveryFinalizationBackend();
     const failingClient = createWorkflowClient({
       backend: failing,
-      eventWait: { expirationCheckInterval: 0 },
+      eventWait: { expirationCheckInterval: 0, claimRecoveryCheckInterval: 0 },
     });
     try {
       failingClient.register(workflow({
@@ -4138,7 +4197,7 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
-  it("keeps a run resumable by resume after a delivery failed", async () => {
+  it("drains a rolled-back delivery when the parked run is resumed", async () => {
     const flaky = new BlockableRunUpdateBackend();
     const flakyClient = createWorkflowClient({ backend: flaky });
     try {
@@ -4155,9 +4214,8 @@ describe("WorkflowClient durable event waits", () => {
       const run = await flakyClient.getRun(handle.runId);
       assertEquals(
         run?.status,
-        "waiting",
-        "a rolled-back delivery must leave the durable record that keeps resume from " +
-          "failing a run that is merely parked",
+        "completed",
+        "resume must drain the durable envelope restored by the failed delivery",
       );
       assertEquals(run?.error, undefined);
     } finally {
@@ -5111,6 +5169,29 @@ describe("WorkflowClient durable event waits", () => {
     await waitFor(
       async () => (await client.getRun(handle.runId))?.status === "completed",
       { message: "the reconstructed wait could not be woken by its event" },
+    );
+  });
+
+  it("drains mail buffered before a live stalled wait is resumed", async () => {
+    client.register(eventWorkflow);
+    const handle = await client.start("event-workflow", {});
+    await handle.settled();
+    assertEquals((await client.getPendingEventWaits(handle.runId)).length, 1);
+
+    // Simulate a publisher exiting after the durable append but before its
+    // process reached EventWaitManager.drain().
+    await backend.appendRunEvent(handle.runId, {
+      id: "evt-abandoned-before-drain",
+      eventName: "payment.confirmed",
+      payload: { amount: 5 },
+      publishedAt: new Date(),
+    });
+
+    await client.resume(handle.runId);
+
+    await waitFor(
+      async () => (await client.getRun(handle.runId))?.status === "completed",
+      { message: "resume did not drain mail for the existing durable wait" },
     );
   });
 

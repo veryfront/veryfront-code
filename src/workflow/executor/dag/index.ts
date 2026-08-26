@@ -740,6 +740,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
+              parentNodeIds: graphNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run) =>
                   this.executeChildGraph(nodes, run, scope, undefined, attemptSignal),

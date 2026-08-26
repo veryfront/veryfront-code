@@ -43,8 +43,8 @@ export function createIsolatedWorkflowExecutor(
     backend,
     debug,
     executor: stepExecutor ? { stepExecutor } : undefined,
-    approval: { expirationCheckInterval: 0 },
-    eventWait: { expirationCheckInterval: 0 },
+    approval: { expirationCheckInterval: 0, decisionClaimCheckInterval: 0 },
+    eventWait: { expirationCheckInterval: 0, claimRecoveryCheckInterval: 0 },
   });
   return client.getExecutor();
 }

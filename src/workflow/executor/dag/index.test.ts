@@ -990,6 +990,23 @@ describe("DAGExecutor", () => {
   });
 
   describe("loop node", () => {
+    it("rejects namespaced child ids that collide with declared parent nodes", async () => {
+      const nodes = [
+        loop("poll", {
+          while: () => true,
+          maxIterations: 1,
+          steps: [waitForApproval("review", { message: "Review loop iteration" })],
+        }),
+        waitForApproval("poll/review", { message: "Independent parent review" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "poll/review"');
+      assertEquals(result.nodeStates["poll/review"], undefined);
+    });
+
     it("should loop until condition is false", async () => {
       let iteration = 0;
       const nodes: WorkflowNode[] = [
