@@ -130,6 +130,26 @@ describe("csrfMutationHeadersFor", () => {
     );
   });
 
+  it("normalizes an explicit documented default for a plain HTTP origin", () => {
+    const origin = "http://app.test";
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${advertisedNames(origin, `${origin}:vf_csrf:x-project-csrf`)}; ` +
+          "vf_csrf=tok-http",
+        baseURI: `${origin}/page`,
+        origin,
+      },
+      { cookieName: DEFAULT_CSRF_COOKIE_NAME },
+    );
+
+    assertEquals(
+      headers.get("x-project-csrf"),
+      "tok-http",
+      "the browser helper must match the effective name used by issuance and validation",
+    );
+  });
+
   it("falls back to defaults when the advertisement is malformed", () => {
     const headers = csrfMutationHeadersFor(
       "/api/cases",
