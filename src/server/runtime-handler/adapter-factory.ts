@@ -472,12 +472,30 @@ export async function resolveAdapter(
               signal: opts.req.signal,
             });
 
-          if (previewConfigFreshness === "config-dependent") {
+          if (
+            previewConfigFreshness === "config-dependent" ||
+            previewConfigFreshness === "normal-prepared"
+          ) {
             let provisionalConfig: VeryfrontConfig | undefined;
             try {
               provisionalConfig = await readConfig();
             } catch (error: unknown) {
-              if (!hasNotFoundStatus(error)) throw error;
+              const configAbsent = hasNotFoundStatus(error);
+              if (!configAbsent) throw error;
+              // Without project config the default dist root remains effective,
+              // so a prepared default hit is still authoritative. Validate the
+              // generation that proved it before falling through to defaults.
+              if (previewConfigFreshness === "normal-prepared") {
+                if (configSourceSnapshot !== undefined) {
+                  previewDocumentSourceSnapshot = await validatePreviewConfigSourceSnapshot(
+                    effectiveAdapter,
+                    opts.projectSlug!,
+                    configSourceSnapshot,
+                  );
+                }
+                hostedConfigAbsent = true;
+                throw error;
+              }
             }
 
             if (
@@ -506,7 +524,8 @@ export async function resolveAdapter(
 
           if (
             previewConfigFreshness === "strict" ||
-            previewConfigFreshness === "config-dependent"
+            previewConfigFreshness === "config-dependent" ||
+            previewConfigFreshness === "normal-prepared"
           ) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(
               effectiveAdapter.fs,
