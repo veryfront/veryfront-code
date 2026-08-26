@@ -347,6 +347,20 @@ describe("ext-eval-report-mlflow", () => {
     assertExists(registry.get("mlflow"));
   });
 
+  it("rejects an empty configured tracking URI instead of skipping setup", () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://operator-mlflow.test");
+    const registry = createEvalReportExporterRegistry();
+    const extension = factory({ trackingUri: "" });
+
+    assertThrows(
+      () => extension.setup?.(createContext(registry)),
+      Error,
+      "MLflow trackingUri must be an HTTP(S) URI:",
+    );
+    assertEquals(registry.list(), []);
+  });
+
   it("registers from a configured tracking URI without a host activation URI", async () => {
     clearMlflowEnv();
     const registry = createEvalReportExporterRegistry();

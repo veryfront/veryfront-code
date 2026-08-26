@@ -625,7 +625,7 @@ function resolveExporterConfig(
 function hasTrackingUri(
   config: EvalReportMlflowExtensionConfig & { id: string },
 ): config is EvalReportMlflowExtensionConfig & { id: string; trackingUri: string } {
-  return Boolean(config.trackingUri);
+  return config.trackingUri !== undefined;
 }
 
 function stringValue(value: unknown): string | undefined {
