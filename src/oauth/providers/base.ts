@@ -1229,6 +1229,14 @@ export class OAuthService extends OAuthProvider {
             : {}),
           ...(tokens.scopeSource === undefined ? {} : { scopeSource: tokens.scopeSource }),
         };
+        if (
+          await this.isRejectedSupersededSnapshot(userId, {
+            tokens: refreshedTokens,
+            revision,
+          })
+        ) {
+          return null;
+        }
         const replaced = await compareAndSetTokens.call(
           tokenStore,
           this.serviceId,

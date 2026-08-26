@@ -1964,6 +1964,40 @@ it("OAuthService.getAccessToken does not return a superseded latest token after 
   }
 });
 
+it("OAuthService.getAccessToken classifies refreshed scopes before storing them", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "expired-unknown-scope",
+    refreshToken: "refresh-1",
+    expiresAt: Date.now() - 1,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({
+        access_token: "refreshed-broad-drive",
+        refresh_token: "refresh-2",
+        scope: "https://www.googleapis.com/auth/drive",
+        expires_in: 3_600,
+      }));
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(fetchCalls, 1);
+    assertEquals(await store.getTokens("drive", "alice"), null);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
 it("OAuthService.getAccessToken uses a non-refreshable token until its real expiry", async () => {
   const store = makeAuthedTokenStore();
   store.getTokens = () =>

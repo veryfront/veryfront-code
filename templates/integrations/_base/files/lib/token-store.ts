@@ -261,6 +261,10 @@ export async function getRefreshableAccessToken(
       ...(refreshed.scope === undefined && token.scope !== undefined ? { scope: token.scope } : {}),
       ...(token.scopeSource === undefined ? {} : { scopeSource: token.scopeSource }),
     };
+    if (isSupersededOAuthGrant(serviceId, refreshed)) {
+      await clearSupersededToken(store, serviceId, userId, current.revision);
+      return null;
+    }
 
     const replaced = await store.compareAndSetTokens(
       serviceId,
