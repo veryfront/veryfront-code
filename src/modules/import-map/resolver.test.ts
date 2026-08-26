@@ -46,6 +46,15 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should preserve repeated separators when selecting an esm.sh subpath", () => {
+      const map = { imports: { "pkg//sub": "/local.js" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1//sub", map),
+        "/local.js",
+        "the dev-server resolver must select the exact empty-segment subpath entry",
+      );
+    });
+
     it("should not append the esm.sh subpath to a local file mapping", () => {
       const map = { imports: { react: "/local/react.ts" } };
       assertEquals(
@@ -55,12 +64,52 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should not append the esm.sh subpath to a numeric-leading remote file mapping", () => {
+      const map = { imports: { "@scope/pkg": "https://cdn.example/archive.7z" } };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/archive.7z",
+      );
+    });
+
     it("should append the esm.sh subpath to an http mapping", () => {
       const map = { imports: { react: "https://esm.sh/react@19" } };
       assertEquals(
         resolveImport("https://esm.sh/react@18/jsx-runtime", map),
         "https://esm.sh/react@19/jsx-runtime",
         "an http mapping must carry the subpath through",
+      );
+    });
+
+    it("should normalize a URL-equivalent backslash before appending a subpath", () => {
+      const map = { imports: { pkg: "https://cdn.example/pkg\\" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+      );
+    });
+
+    it("should append through an encoded esm.sh GitHub source coordinate", () => {
+      const map = { imports: { pkg: "https://esm.sh/%67h/owner/repo" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://esm.sh/%67h/owner/repo/sub",
+      );
+    });
+
+    it("should append the esm.sh subpath to a wildcard-version mapping", () => {
+      const map = { imports: { pkg: "https://cdn.example/pkg@1.x" } };
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", map),
+        "https://cdn.example/pkg@1.x/sub",
+      );
+    });
+
+    it("should append the esm.sh subpath to a compound-version mapping", () => {
+      const mapping = "https://cdn.example/pkg@1.2.3%20-%202.0.0-alpha.beta";
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", { imports: { pkg: mapping } }),
+        `${mapping}/sub`,
       );
     });
 
@@ -77,6 +126,18 @@ describe("modules/import-map/resolver", () => {
     it("should handle .mjs extension stripping", () => {
       const map = { imports: { mylib: "/local/mylib.ts" } };
       assertEquals(resolveImport("mylib.mjs", map), "/local/mylib.ts");
+    });
+
+    // This resolver backs the dev server's esbuild plugin, so the scoped
+    // subpath defect reported in #4098 reached production through here too,
+    // not only through the unified rewriter.
+    it("keeps the subpath of a scoped esm.sh specifier", () => {
+      const map = { imports: { "@scope/pkg": "https://cdn.example/pkg" } };
+      assertEquals(
+        resolveImport("https://esm.sh/@scope/pkg@1/sub", map),
+        "https://cdn.example/pkg/sub",
+        "a scoped subpath must reach its own entry point here as well",
+      );
     });
   });
 });

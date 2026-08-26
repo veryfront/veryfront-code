@@ -87,7 +87,8 @@ export const driveOAuthProvider = {
   clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
   clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
   scopes: [
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
   ],
   callbackPath: "/api/auth/drive/callback",
 };

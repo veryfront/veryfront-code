@@ -3,8 +3,8 @@ import {
   resolveModel,
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
-  runWithVeryfrontCloudContextAsync,
 } from "../../provider/index.ts";
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";

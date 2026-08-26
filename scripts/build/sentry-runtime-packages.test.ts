@@ -25,7 +25,6 @@ describe("Sentry runtime package generation", () => {
         workspace: ["./extensions/ext-observability-sentry"],
         exports: {
           "./extensions": "./src/extensions/index.ts",
-          "./observability/sentry": "./src/observability/sentry.ts",
         },
       };
       const manifest = JSON.parse(

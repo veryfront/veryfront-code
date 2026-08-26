@@ -17,6 +17,7 @@ import {
   PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Input payload for hosted child requested tools. */
 export interface HostedChildRequestedToolsInput {
@@ -248,7 +249,7 @@ export function selectHostedChildForkRuntimeTools(input: {
       ok: false,
       errorMessage: `Requested fork tools not available in runtime: ${
         unavailableRequested.join(", ")
-      }. Available: ${[...availableNames].sort().join(", ")}.`,
+      }. Available: ${[...availableNames].sort(compareStrings).join(", ")}.`,
     };
   }
 

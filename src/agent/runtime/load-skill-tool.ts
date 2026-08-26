@@ -43,6 +43,7 @@ import {
   isOwnDataPropertyDescriptor,
   snapshotOwnDataPropertyArray,
 } from "./data-property-descriptor.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectDefineProperty = Object.defineProperty;
@@ -775,7 +776,7 @@ function snapshotRuntimeSkillPrivateRecordScope(
   } catch {
     return Object.freeze({ entries: null, identity: value, reusable: false });
   }
-  const keys = Object.keys(descriptors).sort();
+  const keys = Object.keys(descriptors).sort(compareStrings);
   if (keys.length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES) {
     return Object.freeze({ entries: null, identity: value, reusable: false });
   }
@@ -1335,7 +1336,7 @@ function getLoadedRuntimeSkillIds(
     ...new Set(
       markers.map((marker) => marker.skillId),
     ),
-  ].sort();
+  ].sort(compareStrings);
 }
 
 function getReferenceableLoadedRuntimeSkillIds(
@@ -1353,7 +1354,7 @@ function getReferenceableLoadedRuntimeSkillIds(
         )
         .map((marker) => marker.skillId),
     ),
-  ].sort();
+  ].sort(compareStrings);
 }
 
 function getRuntimeSkillIdInputValues(

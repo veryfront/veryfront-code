@@ -16,6 +16,7 @@ import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import { cloneRuntimeStateMutableData } from "../runtime/index.ts";
 import { canIdentifyProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Public API contract for hosted child fork runtime step system resolver. */
 export type HostedChildForkRuntimeStepSystemResolver = (input: {
@@ -173,7 +174,7 @@ export function prepareHostedChildForkRuntimeStepMessages(
         ...(input.pinnedToolNames ?? []),
         ...input.getActivatedToolNames(),
       ]),
-    ].sort()
+    ].sort(compareStrings)
     : undefined;
 
   return {

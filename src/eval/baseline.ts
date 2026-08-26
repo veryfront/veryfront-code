@@ -8,6 +8,7 @@ import type {
 } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { assertFiniteEvalNumber } from "./validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 function metricKey(metric: EvalMetricSummary): string {
   return `${metric.name}:${metric.family}:${metric.severity}`;
@@ -187,7 +188,7 @@ function failedExampleIds(report: EvalReport): Set<string> {
 }
 
 function sortedDifference(left: Set<string>, right: Set<string>): string[] {
-  return [...left].filter((value) => !right.has(value)).sort();
+  return [...left].filter((value) => !right.has(value)).sort(compareStrings);
 }
 
 /** Compare a current eval report against a saved baseline report. */

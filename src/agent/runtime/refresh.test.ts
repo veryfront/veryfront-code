@@ -4838,7 +4838,7 @@ describe("agent runtime refresh hooks", () => {
       },
     );
 
-    assertEquals(catalog.map((skill) => skill.id), ["foo_bar", "ReleaseNotes"]);
+    assertEquals(catalog.map((skill) => skill.id), ["ReleaseNotes", "foo_bar"]);
     assertEquals(generated.toolCalls[0]?.status, "completed");
     assertEquals(streamed.includes("Use ReleaseNotes."), true);
     assertEquals(loadedIds, ["foo_bar", "ReleaseNotes"]);

@@ -89,6 +89,7 @@ import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -168,7 +169,7 @@ function mergeAllowedRemoteTools(
   for (const toolName of requestedToolNames) {
     allowed.add(toolName);
   }
-  return [...allowed].sort();
+  return [...allowed].sort(compareStrings);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

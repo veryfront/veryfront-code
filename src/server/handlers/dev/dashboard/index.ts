@@ -26,7 +26,10 @@ import {
 } from "./access-policy.ts";
 import type { DevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { DASHBOARD_SESSION_PATH } from "#veryfront/extensions/dev-ui/protocol";
-import { cancelRejectedLocalControlRequestBody } from "#veryfront/security/http/local-control-request.ts";
+import {
+  cancelRejectedLocalControlRequestBody,
+  DEV_DASHBOARD_API_PREFIX,
+} from "#veryfront/security/http/local-control-request.ts";
 
 const HEADLESS_SESSION_HEADERS = Object.freeze({
   "Cache-Control": "no-store",
@@ -126,7 +129,7 @@ export class DevDashboardHandler extends BaseHandler {
       return this.respond(omitHeadResponseBody(req, createDevNotFoundResponse()));
     }
 
-    if (pathname.startsWith("/_dev/api/")) {
+    if (pathname.startsWith(DEV_DASHBOARD_API_PREFIX)) {
       // Gate every method that is not a plain read. Only POST routes exist
       // today, but keying the session check to "not GET/HEAD" (rather than
       // "is POST") makes the fail-closed property structural: a future

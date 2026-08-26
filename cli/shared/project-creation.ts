@@ -162,7 +162,9 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
   const integrationEntries = integrations
     .map((integration) => {
       const icon = INTEGRATION_ICONS[integration.config.name] ?? "default";
-      return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}" },`;
+      return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}", scopes: ${
+        JSON.stringify(integration.config.auth.scopes ?? [])
+      } },`;
     })
     .join("\n");
 
@@ -191,7 +193,7 @@ export async function GET(req: Request): Promise<Response> {
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
-      const connected = await tokenStore.isConnected(userId, integration.id);
+      const connected = await tokenStore.isConnected(userId, integration.id, integration.scopes);
       return {
         id: integration.id,
         name: integration.name,

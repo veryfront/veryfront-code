@@ -237,6 +237,7 @@ export function createOAuthInitHandler(
         serviceId: service.serviceId,
         redirectUri: state.redirectUri,
         scopes: state.scopes,
+        scopeSource: state.scopeSource,
         createdAt: state.createdAt,
         ...(state.codeVerifier === undefined ? {} : { codeVerifier: state.codeVerifier }),
         metadata: state.metadata,
@@ -299,13 +300,14 @@ export function createOAuthStatusHandler(
       const isConnected = !!tokens?.accessToken;
       const isExpired = tokens?.expiresAt !== undefined ? Date.now() >= tokens.expiresAt : false;
       const hasRefreshToken = !!tokens?.refreshToken;
+      const supersededGrant = tokens ? service.isSupersededGrant(tokens) : false;
       const refreshCapable = isRefreshCapableTokenStore(tokenStore);
       const configured = service.isConfigured();
 
       return createOAuthJsonResponse({
         service: service.serviceId,
         displayName: service.displayName,
-        connected: isConnected &&
+        connected: isConnected && !supersededGrant &&
           (!isExpired || (hasRefreshToken && refreshCapable && configured)),
         configured,
         expiresAt: tokens?.expiresAt,

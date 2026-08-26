@@ -5,6 +5,7 @@
 
 import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { parseAllImports } from "#veryfront/transforms/import-rewriter/parse-cache.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = baseLogger.component("dependency-graph");
 
@@ -263,7 +264,7 @@ export async function computeDepsHash(
       projectDir,
     ));
 
-  const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort();
+  const deps = [filePath, ...cache.graph.getTransitiveDependencies(filePath)].sort(compareStrings);
   const combinedHash = deps
     .map((dep) => cache.contentHashes.get(dep) ?? "")
     .filter(Boolean)

@@ -229,9 +229,13 @@ confirm the second response references the first message. With `curl`:
 THREAD=$(uuidgen)
 curl -s http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d "{\"threadId\":\"$THREAD\",\"messages\":[{\"id\":\"1\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"My name is Sam.\"}]}]}"
 curl -s http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d "{\"threadId\":\"$THREAD\",\"messages\":[{\"id\":\"2\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"What is my name?\"}]}]}"
 ```
 

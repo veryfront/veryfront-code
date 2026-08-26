@@ -333,10 +333,9 @@ export function useUpload(
         const xhr = new XMLHttpRequest();
         operation.xhr = xhr;
         xhr.open("POST", url);
-        // Production enables CSRF by default, so this POST has to echo the
-        // `__Host-vf_csrf` cookie or the server answers 403. Development issues
-        // the same cookie without enforcing it so this path is tested. The
-        // helper preserves caller headers and skips cross-origin endpoints.
+        // CSRF is enforced in every environment, so this POST has to echo the
+        // browser-readable token or the server answers 403. The helper discovers
+        // configured names, preserves caller headers, and skips cross-origin endpoints.
         for (
           const [key, value] of csrfMutationHeaders(url, {
             headers: [...headerEntries],

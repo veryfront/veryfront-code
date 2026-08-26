@@ -22,7 +22,7 @@ import {
 } from "#veryfront/observability";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { encodeBase64 } from "#veryfront/utils";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
@@ -76,6 +76,54 @@ let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const DIRECT_FLUSH_DELAY_MS = 1_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
+const apply = Reflect.apply;
+const hostBtoa = typeof globalThis.btoa === "function" ? globalThis.btoa : undefined;
+const mathMin = Math.min;
+const NativeTextEncoder = TextEncoder;
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const stringFromCharCode = String.fromCharCode;
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteLength",
+)?.get;
+const utf8Encoder = new NativeTextEncoder();
+// Capture the runtime transport before project code can replace the ambient fetch.
+// Host-authenticated telemetry must never cross a project-controlled function.
+const hostFetch = globalThis.fetch.bind(globalThis);
+const useAmbientFetchForTests = (() => {
+  const deno = getDenoRuntime();
+  if (!deno) return false;
+  try {
+    return deno.env.get("DENO_TESTING") === "1";
+  } catch {
+    return false;
+  }
+})();
+
+function encodeHostBase64(value: string): string {
+  if (!hostBtoa || !typedArrayByteLength) {
+    throw new Error("Base64 encoding is not supported in this runtime");
+  }
+  try {
+    return apply(hostBtoa, globalThis, [value]) as string;
+  } catch {
+    // Preserve the existing UTF-8 fallback without consulting mutable globals.
+    const bytes = apply(textEncoderEncode, utf8Encoder, [value]) as Uint8Array;
+    const byteLength = apply(typedArrayByteLength, bytes, []) as number;
+    const chunkSize = 24 * 1_024;
+    let encoded = "";
+    for (let offset = 0; offset < byteLength; offset += chunkSize) {
+      const end = apply(mathMin, undefined, [offset + chunkSize, byteLength]) as number;
+      let binary = "";
+      for (let index = offset; index < end; index++) {
+        binary += apply(stringFromCharCode, undefined, [bytes[index]]) as string;
+      }
+      encoded += apply(hostBtoa, globalThis, [binary]) as string;
+    }
+    return encoded;
+  }
+}
 
 function getMeter() {
   return getGlobalMetricsAPI()?.getMeter("veryfront.project.metrics");
@@ -198,7 +246,7 @@ function resolveInternalMetricsUrl(): string | null {
 
 function buildBasicAuth(username: string, password: string): string {
   const credentials = `${username}:${password}`;
-  return `Basic ${encodeBase64(credentials)}`;
+  return `Basic ${encodeHostBase64(credentials)}`;
 }
 
 function parseHeaders(headerInput: string | undefined): Record<string, string> {
@@ -390,14 +438,17 @@ async function flushDirectMetrics(): Promise<void> {
 
   const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
   try {
-    const response = await fetch(target.url, {
-      method: "POST",
-      headers: {
-        ...target.headers,
-        "Content-Type": "application/json",
+    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
+      target.url,
+      {
+        method: "POST",
+        headers: {
+          ...target.headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildDirectOtlpBody(batch)),
       },
-      body: JSON.stringify(buildDirectOtlpBody(batch)),
-    });
+    );
     if (!response.ok) {
       logDirectExportFailure(`HTTP ${response.status}`);
     }
