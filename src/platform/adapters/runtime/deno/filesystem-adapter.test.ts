@@ -33,33 +33,28 @@ if (isDeno) {
 
         assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
         assertExists(adapter.createFileBytesExclusive);
-        if (Deno.build.os === "windows") {
-          assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
-          assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
-        } else {
-          assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
-          assertExists(adapter.readFileSnapshotWithinLimit);
-          assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
-          assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
+        assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+        assertExists(adapter.readFileSnapshotWithinLimit);
+        assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
+        assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
+          RangeError,
+        );
+        for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
           await assertRejects(
-            () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
+            () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
             RangeError,
           );
-          for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
-            await assertRejects(
-              () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
-              RangeError,
-            );
-          }
-          await assertRejects(
-            () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
-            TypeError,
-          );
-          await assertRejects(
-            () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
-            TypeError,
-          );
         }
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
+          TypeError,
+        );
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
+          TypeError,
+        );
         await adapter.createFileBytesExclusive(created, new Uint8Array([0, 255]));
         assertEquals([...await Deno.readFile(created)], [0, 255]);
         await assertRejects(
