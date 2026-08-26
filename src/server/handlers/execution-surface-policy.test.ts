@@ -47,6 +47,8 @@ const CAPABILITY_GATED_SURFACES = [
 const NON_GATE_USES: Record<string, string> = {
   "response/cors.ts":
     "Chooses which CORS methods to advertise. Degrades to defaults on a shared runtime rather than denying, so the capability does not apply.",
+  "request/ssr/ssr.handler.ts":
+    "Fails closed when the operator explicitly requested SSR isolation: that request outranks the host-execution capability, so the gate checks topology directly instead of requiresIsolatedProjectRuntime(), which would honor the grant and downgrade the render into the host realm.",
 };
 
 async function readHandlerSources(): Promise<Map<string, string>> {
