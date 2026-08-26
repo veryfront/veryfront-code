@@ -34,9 +34,13 @@ import {
 import { ApiCacheBackend } from "#veryfront/cache/backends/api.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  getCachedWithBatching,
   getRequestCacheContext,
   runWithCacheBatching,
+  setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
+import { encodeCacheSourceIdentity } from "#veryfront/cache/keys/source-identity.ts";
+import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 
 const baseConfig = {
   veryfront: {
@@ -197,6 +201,117 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       globalThis.__vf_multi_project_adapter = originalBridge;
       restoreMockFetch();
     }
+  });
+
+  it("keeps request-cache batching independent of mutable Map methods", async () => {
+    const keys = ["delete", "get", "has", "set"] as const;
+    const descriptors = keys.map((key) =>
+      [
+        key,
+        Object.getOwnPropertyDescriptor(Map.prototype, key)!,
+      ] as const
+    );
+    let poisonedCalls = 0;
+    let result: string | null | undefined;
+    for (const key of keys) {
+      Object.defineProperty(Map.prototype, key, {
+        configurable: true,
+        value: () => {
+          poisonedCalls += 1;
+          throw new Error(`project Map.${key} hook must not run`);
+        },
+      });
+    }
+
+    try {
+      await runWithRequestContext(
+        { projectSlug: "trusted-project", token: "signed-user-token" },
+        async () => {
+          result = await runWithCacheBatching(async () => {
+            setInRequestCache("source-key", "source-value");
+            return await getCachedWithBatching(
+              {
+                type: "memory",
+                get: () => Promise.resolve("backend-value"),
+                set: () => Promise.resolve(),
+                del: () => Promise.resolve(),
+              },
+              "source-key",
+            );
+          });
+        },
+      );
+    } finally {
+      for (const [key, descriptor] of descriptors) {
+        Object.defineProperty(Map.prototype, key, descriptor);
+      }
+    }
+    assertEquals(result, "source-value");
+    assertEquals(poisonedCalls, 0);
+  });
+
+  it("keeps cache source encoding independent of mutable global hooks", () => {
+    const originalEncodeURIComponent = globalThis.encodeURIComponent;
+    const originalJoin = Object.getOwnPropertyDescriptor(Array.prototype, "join")!;
+    let poisonedCalls = 0;
+    globalThis.encodeURIComponent = () => {
+      poisonedCalls += 1;
+      throw new Error("project URI encoder must not run");
+    };
+    Object.defineProperty(Array.prototype, "join", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("project array join must not run");
+      },
+    });
+    let result: string | undefined;
+
+    try {
+      result = encodeCacheSourceIdentity({
+        type: "environment",
+        environmentName: "Production:EU",
+        releaseId: "release:1",
+      }).key;
+    } finally {
+      globalThis.encodeURIComponent = originalEncodeURIComponent;
+      Object.defineProperty(Array.prototype, "join", originalJoin);
+    }
+    assertEquals(result, "environment:Production%3AEU:release%3A1");
+    assertEquals(poisonedCalls, 0);
+  });
+
+  it("normalizes host API URLs without mutable string hooks", () => {
+    const envKey = "VERYFRONT_API_URL";
+    const originalEnv = Deno.env.get(envKey);
+    const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
+    const originalReplace = Object.getOwnPropertyDescriptor(String.prototype, "replace")!;
+    let poisonedCalls = 0;
+    let result: string | undefined;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project URL normalization hook must not run");
+    };
+    Deno.env.set(envKey, " https://api.staging.veryfront.org/graphql/ ");
+    Object.defineProperty(String.prototype, "trim", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(String.prototype, "replace", {
+      configurable: true,
+      value: poison,
+    });
+
+    try {
+      result = resolveVeryfrontApiBaseUrlFromHostEnv();
+    } finally {
+      Object.defineProperty(String.prototype, "trim", originalTrim);
+      Object.defineProperty(String.prototype, "replace", originalReplace);
+      if (originalEnv === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, originalEnv);
+    }
+    assertEquals(result, "https://api.staging.veryfront.org/api");
+    assertEquals(poisonedCalls, 0);
   });
 
   it("delegates fingerprints through the captured Reflect.apply intrinsic", async () => {

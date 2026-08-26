@@ -372,6 +372,57 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("preserves effective methods from injected manager subclasses", async () => {
+      const config = {
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      };
+      const selectedAdapter = new VeryfrontFSAdapter(config);
+      selectedAdapter.getSourceSnapshotFingerprint = () =>
+        Promise.resolve("subclass-manager-snapshot");
+      const calls = { getAdapter: 0, getStats: 0, dispose: 0 };
+      class SubclassManager extends ProxyFSAdapterManager {
+        override getAdapter(
+          ..._args: Parameters<ProxyFSAdapterManager["getAdapter"]>
+        ): ReturnType<ProxyFSAdapterManager["getAdapter"]> {
+          calls.getAdapter += 1;
+          return Promise.resolve(selectedAdapter);
+        }
+
+        override getStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {
+          calls.getStats += 1;
+          return { adapters: 0, stats: {} };
+        }
+
+        override dispose(): void {
+          calls.dispose += 1;
+          super.dispose();
+        }
+      }
+      const manager = new SubclassManager({ baseConfig: config });
+      const adapter = new MultiProjectFSAdapter(config, manager);
+
+      try {
+        const fingerprint = await adapter.runWithContext(
+          "project-a",
+          "test-token",
+          () => adapter.getSourceSnapshotFingerprint(),
+          "project-id-a",
+        );
+        assertEquals(fingerprint, "subclass-manager-snapshot");
+        assertEquals(adapter.getManagerStats(), { adapters: 0, stats: {} });
+        assertEquals(calls, { getAdapter: 1, getStats: 1, dispose: 0 });
+      } finally {
+        adapter.dispose();
+        selectedAdapter.dispose();
+      }
+      assertEquals(calls.dispose, 1);
+    });
+
     it("does not expose credential lookup through a replaced manager property", async () => {
       const adapter = new MultiProjectFSAdapter({
         veryfront: {

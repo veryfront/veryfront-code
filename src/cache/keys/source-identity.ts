@@ -1,5 +1,9 @@
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicEncodeURIComponent = encodeURIComponent;
+const ArrayPrototypeJoin = Array.prototype.join;
+
 export type CacheSourceIdentity =
   | { type: "branch"; branch: string }
   | { type: "release"; releaseId: string }
@@ -23,7 +27,7 @@ function encodeRequiredSegment(value: string | null | undefined, label: string):
       detail: "Missing " + label + " for cache source identity",
     });
   }
-  return encodeURIComponent(value);
+  return IntrinsicReflectApply(IntrinsicEncodeURIComponent, globalThis, [value]) as string;
 }
 
 /** Encode an exact content source without permitting delimiter collisions. */
@@ -46,7 +50,7 @@ export function encodeCacheSourceIdentity(
       break;
   }
 
-  const qualifier = segments.join(":");
+  const qualifier = IntrinsicReflectApply(ArrayPrototypeJoin, segments, [":"]) as string;
   return {
     type: identity.type,
     qualifier,

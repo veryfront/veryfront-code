@@ -55,6 +55,7 @@ const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
 const VeryfrontFSAdapterGetSourceSnapshotIdentity =
   VeryfrontFSAdapterPrototype.getSourceSnapshotIdentity;
 type CapturedAdapterMethod = (...args: never[]) => unknown;
+type CapturedManagerMethod = (...args: never[]) => unknown;
 
 function performanceNow(): number {
   return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
@@ -125,6 +126,46 @@ function isConcreteProxyFSAdapterManager(manager: unknown): boolean {
   ) as boolean;
 }
 
+function captureEffectiveManagerMethod(
+  manager: ProxyFSAdapterManager,
+  key: "getAdapter" | "dispose" | "getStats",
+  concreteMethod: CapturedManagerMethod,
+): CapturedManagerMethod {
+  const ownDescriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [manager, key],
+  ) as PropertyDescriptor | undefined;
+  if (ownDescriptor !== undefined) {
+    if (!("value" in ownDescriptor) || typeof ownDescriptor.value !== "function") {
+      throw new TypeError(`Proxy filesystem adapter manager ${key} must be a data-property method`);
+    }
+    return ownDescriptor.value as CapturedManagerMethod;
+  }
+
+  let owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [manager]) as
+    | object
+    | null;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === ProxyFSAdapterManagerPrototype) return concreteMethod;
+    const descriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [owner, key],
+    ) as PropertyDescriptor | undefined;
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        throw new TypeError(
+          `Proxy filesystem adapter manager ${key} must be a data-property method`,
+        );
+      }
+      return descriptor.value as CapturedManagerMethod;
+    }
+    owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [owner]) as object | null;
+  }
+  throw new TypeError(`Proxy filesystem adapter manager ${key} must inherit a function`);
+}
+
 export class MultiProjectFSAdapter implements FSAdapter {
   readonly sourceSnapshotFreshnessOptionsVersion = 1 as const;
   readonly symlinkSemantics = "none" as const;
@@ -145,9 +186,21 @@ export class MultiProjectFSAdapter implements FSAdapter {
         maxIdleMs: DEFAULT_MAX_IDLE_MS,
       });
     if (isConcreteProxyFSAdapterManager(this.#manager)) {
-      this.#managerGetAdapter = ProxyFSAdapterManagerGetAdapter;
-      this.#managerDispose = ProxyFSAdapterManagerDispose;
-      this.#managerGetStats = ProxyFSAdapterManagerGetStats;
+      this.#managerGetAdapter = captureEffectiveManagerMethod(
+        this.#manager,
+        "getAdapter",
+        ProxyFSAdapterManagerGetAdapter,
+      ) as ProxyFSAdapterManager["getAdapter"];
+      this.#managerDispose = captureEffectiveManagerMethod(
+        this.#manager,
+        "dispose",
+        ProxyFSAdapterManagerDispose,
+      ) as ProxyFSAdapterManager["dispose"];
+      this.#managerGetStats = captureEffectiveManagerMethod(
+        this.#manager,
+        "getStats",
+        ProxyFSAdapterManagerGetStats,
+      ) as ProxyFSAdapterManager["getStats"];
     } else {
       this.#managerGetAdapter = this.#manager.getAdapter;
       this.#managerDispose = this.#manager.dispose;

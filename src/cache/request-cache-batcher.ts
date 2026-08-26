@@ -25,8 +25,16 @@ const asyncLocalStorage = new AsyncLocalStorage<RequestCacheContext>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicMap = Map;
+const IntrinsicPromise = Promise;
 const IntrinsicClearTimeout = globalThis.clearTimeout;
 const IntrinsicSetTimeout = globalThis.setTimeout;
+const ArrayPrototypePush = Array.prototype.push;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeSet = Map.prototype.set;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+const PromiseAll = IntrinsicPromise.all;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
@@ -76,6 +84,30 @@ function scheduleBatchFlush(callback: () => void): ReturnType<typeof setTimeout>
   ]) as ReturnType<typeof setTimeout>;
 }
 
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function pushArray<T>(values: T[], value: T): void {
+  IntrinsicReflectApply(ArrayPrototypePush, values, [value]);
+}
+
+function formatRatio(value: number): string {
+  return IntrinsicReflectApply(NumberPrototypeToFixed, value, [2]) as string;
+}
+
 export function runWithCacheBatching<T>(fn: () => Promise<T>): Promise<T> {
   const context: RequestCacheContext = {
     cache: new IntrinsicMap(),
@@ -105,14 +137,14 @@ export async function getCachedWithBatching(
   const ctx = getRequestCacheContextStore();
   if (!ctx) return backend.get(key);
 
-  if (ctx.cache.has(key)) return ctx.cache.get(key) ?? null;
+  if (mapHas(ctx.cache, key)) return mapGet(ctx.cache, key) ?? null;
 
-  const existingPending = ctx.pending.get(key);
+  const existingPending = mapGet(ctx.pending, key);
   if (existingPending) return existingPending;
 
-  const mutationVersion = ctx.mutationVersions.get(key) ?? 0;
-  const backendPromise = new Promise<string | null>((resolve, reject) => {
-    ctx.batchQueue.push({ key, resolve, reject });
+  const mutationVersion = mapGet(ctx.mutationVersions, key) ?? 0;
+  const backendPromise = new IntrinsicPromise<string | null>((resolve, reject) => {
+    pushArray(ctx.batchQueue, { key, resolve, reject });
 
     if (ctx.batchQueue.length >= MAX_BATCH_SIZE) {
       void flushBatch(ctx, backend);
@@ -130,20 +162,21 @@ export async function getCachedWithBatching(
   // An explicit request-local set or delete supersedes a backend read that was
   // already in flight. Return that newer local view instead of letting the
   // pending result overwrite it when the backend eventually responds.
-  const promise = backendPromise.then((result) => {
-    if ((ctx.mutationVersions.get(key) ?? 0) !== mutationVersion) {
-      return ctx.cache.get(key) ?? null;
+  const promise = (async () => {
+    const result = await backendPromise;
+    if ((mapGet(ctx.mutationVersions, key) ?? 0) !== mutationVersion) {
+      return mapGet(ctx.cache, key) ?? null;
     }
-    ctx.cache.set(key, result);
+    mapSet(ctx.cache, key, result);
     return result;
-  });
+  })();
 
-  ctx.pending.set(key, promise);
+  mapSet(ctx.pending, key, promise);
 
   try {
     return await promise;
   } finally {
-    if (ctx.pending.get(key) === promise) ctx.pending.delete(key);
+    if (mapGet(ctx.pending, key) === promise) mapDelete(ctx.pending, key);
   }
 }
 
@@ -158,12 +191,19 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
     ctx.batchTimer = null;
   }
 
-  const uniqueKeys = [...new Set(requests.map((r) => r.key))];
+  const uniqueKeys: string[] = [];
+  const seenKeys = new IntrinsicMap<string, true>();
+  for (let index = 0; index < requests.length; index++) {
+    const key = requests[index]!.key;
+    if (mapHas(seenKeys, key)) continue;
+    mapSet(seenKeys, key, true);
+    pushArray(uniqueKeys, key);
+  }
 
   logger.debug("Flushing batch", {
     requested: requests.length,
     unique: uniqueKeys.length,
-    dedupeRatio: (requests.length / uniqueKeys.length).toFixed(2),
+    dedupeRatio: formatRatio(requests.length / uniqueKeys.length),
   });
 
   try {
@@ -171,13 +211,16 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
       ? await backend.getBatch(uniqueKeys)
       : await getIndividually(backend, uniqueKeys);
 
-    for (const request of requests) {
-      const value = results.get(request.key) ?? null;
+    for (let index = 0; index < requests.length; index++) {
+      const request = requests[index]!;
+      const value = mapGet(results, request.key) ?? null;
       request.resolve(value);
     }
   } catch (error) {
     const normalizedError = ensureError(error);
-    for (const request of requests) request.reject(normalizedError);
+    for (let index = 0; index < requests.length; index++) {
+      requests[index]!.reject(normalizedError);
+    }
   }
 }
 
@@ -185,18 +228,21 @@ async function getIndividually(
   backend: CacheBackend,
   keys: string[],
 ): Promise<Map<string, string | null>> {
-  const entries = new Map<string, string | null>();
-  await Promise.all(
-    keys.map(async (key) => entries.set(key, await backend.get(key))),
-  );
-  return buildBatchResults(keys, (key) => entries.get(key) ?? null);
+  const entries = new IntrinsicMap<string, string | null>();
+  const reads: Array<Promise<void>> = [];
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    pushArray(reads, (async () => mapSet(entries, key, await backend.get(key)))());
+  }
+  await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [reads]);
+  return buildBatchResults(keys, (key) => mapGet(entries, key) ?? null);
 }
 
 export function setInRequestCache(key: string, value: string | null): void {
   const ctx = getRequestCacheContextStore();
   if (!ctx) return;
-  ctx.mutationVersions.set(key, (ctx.mutationVersions.get(key) ?? 0) + 1);
-  ctx.cache.set(key, value);
+  mapSet(ctx.mutationVersions, key, (mapGet(ctx.mutationVersions, key) ?? 0) + 1);
+  mapSet(ctx.cache, key, value);
 }
 
 export function getRequestCacheStats(): { hits: number; stored: number } | null {
