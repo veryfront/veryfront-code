@@ -263,6 +263,7 @@ describe("workflow/executor tracing", () => {
             rootRunId: string;
             executionRunId: string;
             resumingWait: boolean;
+            ancestorNodeIds: ReadonlySet<string>;
             ownership?: unknown;
           },
           startFromNode?: string,
@@ -272,6 +273,7 @@ describe("workflow/executor tracing", () => {
         rootRunId: "durable-root-run",
         executionRunId: "durable-hook-run",
         resumingWait: false,
+        ancestorNodeIds: new Set(),
       });
       await tracing.provider.forceFlush();
 
