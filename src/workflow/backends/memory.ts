@@ -810,32 +810,21 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(taken);
   }
 
-  /**
-   * Claim the oldest matching event for one pending wait.
-   *
-   * Composed from this backend's own take/resolve/restore so that subclassed
-   * fakes keep observing the same primitives; every mutation is synchronous
-   * in-memory state, so the composition cannot be interrupted by a crash the
-   * way two separate network round-trips to a durable backend can. A durable
-   * backend must implement this as a single atomic operation instead.
-   */
-  async claimRunEventForWait(
+  /** Claim the oldest matching event and its pending wait as one synchronous mutation. */
+  claimRunEventForWait(
     runId: string,
     waitId: string,
     eventName: string,
   ): Promise<RunEventEnvelope | null> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
-    if (!wait || wait.status !== "pending") return null;
-    const taken = await this.takeRunEvent(runId, eventName);
-    if (!taken) return null;
-    const claimed = await this.resolvePendingEventWait(runId, waitId, "delivered");
-    if (!claimed) {
-      // The wait was resolved by another actor between the read and the claim.
-      // The event goes back where it was taken from, order preserved.
-      await this.restoreRunEvent(runId, taken);
-      return null;
-    }
-    return taken;
+    if (!wait || wait.status !== "pending") return Promise.resolve(null);
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(null);
+    const taken = takeRetainedRunEvent(mailbox, eventName);
+    if (!taken) return Promise.resolve(null);
+    wait.status = "delivered";
+    if (mailbox.length === 0) this.runEvents.delete(runId);
+    return Promise.resolve(taken);
   }
 
   restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {

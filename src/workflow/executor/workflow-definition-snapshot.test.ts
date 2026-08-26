@@ -181,45 +181,41 @@ describe("workflow definition snapshot", () => {
     );
   });
 
-  it("marks an unmarked wait on the reserved delay name as a delay", () => {
-    // `delay()` itself emits exactly this shape — the reserved event name and
-    // no marker (src/workflow/dsl/wait.ts) — and the uncaptured path already
-    // classifies it as a delay via the legacy name fallback. Capturing it as
-    // an explicit event would make a registered or discovered `delay()` time
-    // out and fail its run instead of completing the node.
-    const captured = captureWorkflowDefinition(workflowWith({
-      id: "captured-delay",
-      config: {
-        type: "wait",
-        waitType: "event",
-        eventName: "__delay__",
-        timeout: 5,
-        checkpoint: true,
-      },
-    }));
-    assert(Array.isArray(captured.steps));
-    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
-
-    assertEquals(config.eventName, "__delay__");
-    assertEquals(config._waitKind, "delay");
+  it("rejects an unmarked raw wait on the reserved delay name", () => {
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "unmarked-reserved-wait",
+          config: {
+            type: "wait",
+            waitType: "event",
+            eventName: "__delay__",
+            timeout: 5,
+            checkpoint: true,
+          },
+        })),
+      Error,
+      "reserved delay event name requires the delay marker",
+    );
   });
 
-  it("preserves an explicit event marker on the reserved delay name", () => {
-    const captured = captureWorkflowDefinition(workflowWith({
-      id: "explicit-event-on-reserved-name",
-      config: {
-        type: "wait",
-        waitType: "event",
-        eventName: "__delay__",
-        _waitKind: "event",
-        timeout: 5,
-        checkpoint: true,
-      } as unknown as WaitNodeConfig,
-    }));
-    assert(Array.isArray(captured.steps));
-    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
-
-    assertEquals(config._waitKind, "event");
+  it("rejects an explicit event marker on the reserved delay name", () => {
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "explicit-event-on-reserved-name",
+          config: {
+            type: "wait",
+            waitType: "event",
+            eventName: "__delay__",
+            _waitKind: "event",
+            timeout: 5,
+            checkpoint: true,
+          } as unknown as WaitNodeConfig,
+        })),
+      Error,
+      "reserved delay event name requires the delay marker",
+    );
   });
 
   it("refuses a forged delay marker on a wait that is not the reserved delay event", () => {

@@ -1927,16 +1927,16 @@ class FailOneNodeDeliveryBackend extends MemoryBackend {
     return super.getRun(runId);
   }
 
-  override async resolvePendingEventWait(
+  override async claimRunEventForWait(
     runId: string,
     waitId: string,
-    status: "delivered" | "expired",
-  ): Promise<boolean> {
+    eventName: string,
+  ): Promise<RunEventEnvelope | null> {
     const pending = await super.getPendingEventWaits(runId);
     this.deliveringFailingNode = pending.some(
       (wait) => wait.id === waitId && wait.nodeId === this.failingNodeId,
     );
-    return await super.resolvePendingEventWait(runId, waitId, status);
+    return await super.claimRunEventForWait(runId, waitId, eventName);
   }
 
   override restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
@@ -2034,17 +2034,17 @@ class ResolveBeforeClaimBackend extends MemoryBackend {
     return super.appendRunEvent(runId, event);
   }
 
-  override async takeRunEvent(
+  override async claimRunEventForWait(
     runId: string,
+    waitId: string,
     eventName: string,
   ): Promise<RunEventEnvelope | null> {
-    const taken = await super.takeRunEvent(runId, eventName);
-    if (taken && this.stealWaitId) {
+    if (this.stealWaitId) {
       const stolen = this.stealWaitId;
       this.stealWaitId = undefined;
       await super.resolvePendingEventWait(runId, stolen, "delivered");
     }
-    return taken;
+    return await super.claimRunEventForWait(runId, waitId, eventName);
   }
 }
 
@@ -2153,6 +2153,12 @@ class RollbackObservingBackend extends BlockableRunUpdateBackend {
     } finally {
       this.inCombinedRestore = false;
     }
+  }
+}
+
+class RefusingDeliveryRollbackBackend extends BlockableRunUpdateBackend {
+  override restoreRunEventDelivery(): Promise<boolean> {
+    return Promise.reject(new Error("delivery rollback refused"));
   }
 }
 
@@ -2755,6 +2761,25 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("rejects a publish when its failed delivery cannot be rolled back", async () => {
+    const refusing = new RefusingDeliveryRollbackBackend();
+    const refusingClient = createWorkflowClient({ backend: refusing });
+    try {
+      refusingClient.register(eventWorkflow);
+      const handle = await refusingClient.start("event-workflow", {});
+      await handle.settled();
+
+      refusing.blockRunUpdates = true;
+      await assertRejects(
+        () => refusingClient.publishEvent(handle.runId, "payment.confirmed", { amount: 7 }),
+        Error,
+        "delivery rollback refused",
+      );
+    } finally {
+      await refusingClient.destroy();
+    }
+  });
+
   it("arms a timed wait's deadline before its record becomes claimable", async () => {
     const racing = new ClaimDuringPersistBackend();
     const racingClient = createWorkflowClient({
@@ -2982,7 +3007,7 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
-  it("puts a taken event back when another actor resolves the wait first", async () => {
+  it("keeps an event buffered when another actor resolves the wait before its claim", async () => {
     const racing = new ResolveBeforeClaimBackend();
     const racingClient = createWorkflowClient({ backend: racing });
     try {
@@ -3014,7 +3039,7 @@ describe("WorkflowClient durable event waits", () => {
           payload: { amount: 3 },
           publishedAt: racing.lastPublishedAt!,
         },
-        "an event taken for a wait that was claimed by someone else must go back in the mailbox",
+        "an event whose wait was claimed by someone else must stay in the mailbox",
       );
     } finally {
       await racingClient.destroy();

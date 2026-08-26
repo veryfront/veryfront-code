@@ -491,20 +491,23 @@ function reconcileEventDelivery(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,
-    buildPatch: (run) =>
-      buildNodeOutcomePatch(
+    buildPatch: (run) => {
+      const currentNodeState = run.nodeStates[operation.nodeId];
+      return buildNodeOutcomePatch(
         backend,
         run,
         operation.nodeId,
         { ...outcome, receivedAt: deliveredAt.toISOString() },
         {
+          ...currentNodeState,
           nodeId: operation.nodeId,
           status: "completed",
           output: outcome,
-          attempt: 1,
+          attempt: currentNodeState?.attempt ?? 1,
           completedAt: deliveredAt,
         },
-      ),
+      );
+    },
   });
 }
 

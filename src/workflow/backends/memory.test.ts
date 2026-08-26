@@ -3,7 +3,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
-import type { PersistedPendingEventWait } from "./types.ts";
+import type { PersistedPendingEventWait, RunEventEnvelope } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -1083,6 +1083,58 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-after",
         "a refused claim must leave the event buffered",
+      );
+    });
+
+    it("does not yield between taking an event and claiming its wait", async () => {
+      let releaseFirstTake!: () => void;
+      const firstTakeBlocked = new Promise<void>((resolve) => {
+        releaseFirstTake = resolve;
+      });
+      class AsyncTakeBackend extends MemoryBackend {
+        private first = true;
+
+        override async takeRunEvent(
+          runId: string,
+          eventName: string,
+        ): Promise<RunEventEnvelope | null> {
+          const event = super.takeRunEvent(runId, eventName);
+          if (this.first) {
+            this.first = false;
+            await firstTakeBlocked;
+          }
+          return await event;
+        }
+      }
+
+      const racing = new AsyncTakeBackend();
+      await racing.savePendingEventWait("run-events", createEventWait("evw-1"));
+      for (const [id, seq] of [["evt-oldest", 1], ["evt-newer", 2]] as const) {
+        await racing.appendRunEvent("run-events", {
+          id,
+          eventName: "payment.confirmed",
+          payload: { seq },
+          publishedAt: new Date(),
+        });
+      }
+
+      const firstClaim = racing.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      const secondClaim = racing.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      releaseFirstTake();
+
+      assertEquals((await firstClaim)?.id, "evt-oldest");
+      assertEquals(await secondClaim, null);
+      assertEquals(
+        (await racing.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-newer",
       );
     });
 

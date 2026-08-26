@@ -1011,6 +1011,12 @@ function captureNodeConfig(
         fail(`${label} ${INTERNAL_WAIT_KIND_FIELD} is invalid`);
       }
       if (
+        waitType === "event" && eventName === INTERNAL_DELAY_EVENT_NAME &&
+        configuredWaitKind !== "delay"
+      ) {
+        fail(`${label} reserved delay event name requires the delay marker`);
+      }
+      if (
         configuredWaitKind === "delay" &&
         (waitType !== "event" || eventName !== INTERNAL_DELAY_EVENT_NAME)
       ) {
@@ -1045,15 +1051,7 @@ function captureNodeConfig(
         eventName,
         ...(waitType === "event"
           ? {
-            // A `delay()` node carries no explicit marker — it is recognized
-            // by the reserved event name. Defaulting an unmarked reserved-name
-            // wait to "event" here would persist a captured delay as an
-            // ordinary event wait, so its deadline would fail the run with a
-            // timeout instead of completing the node.
-            [INTERNAL_WAIT_KIND_FIELD]: configuredWaitKind === "delay" ||
-                (configuredWaitKind === undefined && eventName === INTERNAL_DELAY_EVENT_NAME)
-              ? "delay"
-              : "event",
+            [INTERNAL_WAIT_KIND_FIELD]: configuredWaitKind === "delay" ? "delay" : "event",
           }
           : {}),
       }) as WorkflowNodeConfig;

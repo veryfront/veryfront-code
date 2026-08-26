@@ -1271,13 +1271,21 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
   });
 
   it("sends complete maps for an event delivery on a replacement-semantics backend", async () => {
+    const startedAt = new Date("2026-01-01T00:00:00.000Z");
+    const waitInput = { eventName: "payment.confirmed", timeout: 60_000 };
     const { backend, read } = createReplacementSemanticsBackend({
       ...createRun("reconcile-replacement-event"),
       status: "waiting",
       context: { input: {}, earlier: { done: true } },
       nodeStates: {
         earlier: { nodeId: "earlier", status: "completed", attempt: 1 },
-        "await-payment": { nodeId: "await-payment", status: "running", attempt: 1 },
+        "await-payment": {
+          nodeId: "await-payment",
+          status: "running",
+          input: waitInput,
+          attempt: 3,
+          startedAt,
+        },
       },
     });
 
@@ -1296,6 +1304,9 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
 
     assertEquals(outcome.status, "reconciled");
     assertEquals(read().nodeStates["await-payment"]?.status, "completed");
+    assertEquals(read().nodeStates["await-payment"]?.input, waitInput);
+    assertEquals(read().nodeStates["await-payment"]?.attempt, 3);
+    assertEquals(read().nodeStates["await-payment"]?.startedAt, startedAt);
     assertEquals(
       read().nodeStates.earlier?.status,
       "completed",

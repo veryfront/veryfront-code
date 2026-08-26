@@ -431,6 +431,7 @@ export class EventWaitManager {
         { runId: wait.runId, waitId: wait.id },
         error,
       );
+      throw error;
     }
   }
 
