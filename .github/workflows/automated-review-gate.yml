@@ -456,13 +456,13 @@ jobs:
 
   review:
     name: publish automated review status
-    # Issues write lets this job post the fixed "@codex review" request after
-    # verifying the current head. This job loads gate code through the API
-    # from the trusted default branch and never executes pull request files.
+    # Issues and PR write let this job post the fixed "@codex review" request
+    # after verifying the current head. This job loads gate code through the
+    # API from the trusted default branch and never executes pull request files.
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
       statuses: write
     # issue_comment fires for issues too, so keep only pull request comments.
     # Fork pull_request_review events have read-only tokens. The unprivileged
