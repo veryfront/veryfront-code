@@ -348,22 +348,43 @@ export class SSRDependencyValidator {
    * filesystem the file or one of its parents can be replaced with a symlink
    * between that approval and this read. The captured snapshot capability
    * binds the two: it re-verifies no-follow containment beneath the project
-   * root atomically with the read, so a retargeted link is refused instead of
-   * followed. A filesystem whose own contract rules out symlink traversal
-   * cannot be retargeted, so its plain read is already bound; adapters
-   * providing neither authority keep the direct read they always had.
+   * root atomically with the read, so a link retargeted outside the project
+   * is refused instead of followed. A filesystem whose own contract rules out
+   * symlink traversal cannot be retargeted, so its plain read is already
+   * bound; adapters providing neither authority keep the direct read they
+   * always had.
    */
   private async readProjectImportSource(path: string): Promise<string> {
     if (this.symlinkFreeFs) return await this.adapter.fs.readFile(path);
     if (this.projectSnapshotReader) {
       const bytes = await this.projectSnapshotReader.read(
-        path,
+        await this.canonicalizeProjectImportPath(path),
         this.projectDir,
         MAX_LOCAL_IMPORT_SOURCE_BYTES,
       );
       return decodeDependencySource(bytes);
     }
     throw new Error("Contained project imports require a bound snapshot reader");
+  }
+
+  /**
+   * Resolve a stable in-project symlink to its canonical target before the
+   * no-follow snapshot read, which refuses any terminal symbolic link.
+   * Containment stays enforced by the snapshot read itself: it re-verifies
+   * the handed path beneath the project root, so a link whose target escapes
+   * the project is still refused rather than followed. Anything uncertain --
+   * an adapter without lstat or realPath authority, a vanished path, a broken
+   * link -- keeps the original path so the bound read stays the sole arbiter.
+   */
+  private async canonicalizeProjectImportPath(path: string): Promise<string> {
+    const { fs } = this.adapter;
+    if (typeof fs.lstat !== "function" || typeof fs.realPath !== "function") return path;
+    try {
+      if (!(await fs.lstat(path)).isSymlink) return path;
+      return await fs.realPath(path);
+    } catch {
+      return path;
+    }
   }
 
   /** Register CSS with a read that revalidates containment at consumption. */

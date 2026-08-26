@@ -1613,6 +1613,36 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
     });
 
+    it("preserves discovery order while deduplicating repeated imports", async () => {
+      const readPaths: string[] = [];
+      const merged = await mergeImportedCSS({
+        fs: {
+          readFile: async (path: string) => {
+            readPaths.push(path);
+            if (path === "/project/z.css") return ".z { color: red; }";
+            if (path === "/project/a.css") return ".a { color: blue; }";
+            return "";
+          },
+        },
+        logger: { debug: () => {} },
+        projectDir: "/project",
+        globalCSS: undefined,
+        cssImports: ["/project/z.css", "/project/a.css", "/project/z.css"],
+        stylesheetPath: "globals.css",
+      });
+
+      assertEquals(
+        readPaths,
+        ["/project/z.css", "/project/a.css"],
+        "each import is read once, in first-occurrence order",
+      );
+      assertEquals(
+        merged,
+        ".z { color: red; }\n.a { color: blue; }",
+        "concatenation must keep the authored cascade order, not a sorted order",
+      );
+    });
+
     it("reads canonical CSS bytes with the authored module key", async () => {
       const readPaths: string[] = [];
       const { result: merged } = await runWithCSSCollector(async () => {

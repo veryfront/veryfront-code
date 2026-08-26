@@ -56,11 +56,12 @@ export async function mergeImportedCSS({
     }
   }
 
-  const sortedImports = [...uniqueImports.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const regularCssSegments: string[] = [];
   const moduleCssSegments: string[] = [];
 
-  for (const [, { cssPath, normalizedCssPath, read }] of sortedImports) {
+  // First-occurrence discovery order is the authored cascade order; sorting
+  // by dedup key here would silently reorder concatenated stylesheets.
+  for (const { cssPath, normalizedCssPath, read } of uniqueImports.values()) {
     if (normalizedCssPath === configuredStylesheetAbsolute) {
       continue;
     }

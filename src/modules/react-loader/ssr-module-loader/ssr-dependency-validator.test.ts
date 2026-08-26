@@ -241,6 +241,82 @@ describe("SSRDependencyValidator", () => {
     }
   });
 
+  // Regression: a stable in-project relative symlink is a legitimate source
+  // layout, but the no-follow snapshot read refuses any terminal link, so a
+  // previously-valid dependency was reported missing. The link must be
+  // canonicalized to its in-project target before the bound read, while a
+  // link that escapes the project stays refused (see the test above).
+  it("reads a stable in-project symlinked dependency through its canonical target", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-symlink-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(join(projectDir, "real.ts"), 'export const child = "via-link";');
+      const linkPath = join(projectDir, "child.ts");
+      await Deno.symlink(join(projectDir, "real.ts"), linkPath);
+
+      const transformedSources: Array<string | undefined> = [];
+      const validator = new SSRDependencyValidator(
+        (_filePath, source) => {
+          transformedSources.push(source);
+          return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "child-hash" });
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await validator.processLocalImports(
+        [{ absolutePath: linkPath, specifier: "./child.ts" }],
+        join(projectDir, "page.ts"),
+        0,
+        createFileSystem(),
+        createDependencyHashCache(),
+      );
+
+      assertEquals(
+        validator.missingDependencies,
+        [],
+        "an in-project symlinked dependency must stay resolvable",
+      );
+      assertEquals(transformedSources, ['export const child = "via-link";']);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps CSS behind a stable in-project symlink readable at consumption", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-ssr-dependency-validator-css-symlink-" });
+    try {
+      const projectDir = join(tempDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(join(projectDir, "real.css"), ".linked { color: green; }");
+      const linkPath = join(projectDir, "theme.css");
+      await Deno.symlink(join(projectDir, "real.css"), linkPath);
+
+      const validator = new SSRDependencyValidator(
+        () => Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" }),
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+
+      await runWithCSSCollector(async () => {
+        validator.registerContainedCSSImport({
+          absolutePath: linkPath,
+          requestedPath: linkPath,
+          projectContained: true,
+          specifier: "./theme.css",
+        });
+        const reference = getCSSImportReferences()[0];
+        assertExists(reference?.read);
+        assertEquals(await reference.read(), ".linked { color: green; }");
+      });
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("fails closed without a bound reader for a contained project import", async () => {
     let directReads = 0;
     let transforms = 0;
