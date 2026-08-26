@@ -236,7 +236,7 @@ function startVeryfrontDev(
 async function waitForPageContent(
   port: number,
   expected: string,
-  timeoutMs = TEST_TIMEOUTS.SERVER_STARTUP,
+  timeoutMs: number = TEST_TIMEOUTS.SERVER_STARTUP,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
