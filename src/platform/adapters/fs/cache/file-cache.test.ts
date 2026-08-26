@@ -31,6 +31,19 @@ const BRANCH_KEY = "file:branch:proj-a:main:/app/page.tsx";
 /** Neither release- nor branch-scoped, so the process-local tier must refuse it. */
 const ENVIRONMENT_KEY = "file:env:proj-a:production:rel-1:/app/page.tsx";
 
+/** Advances the elapsed-time clock with FakeTime while restoring it afterward. */
+function followFakeTimeWithPerformanceNow(): Disposable {
+  const originalPerformanceNow = performance.now;
+  const elapsedOrigin = originalPerformanceNow.call(performance);
+  const wallClockOrigin = Date.now();
+  performance.now = () => elapsedOrigin + Date.now() - wallClockOrigin;
+  return {
+    [Symbol.dispose](): void {
+      performance.now = originalPerformanceNow;
+    },
+  };
+}
+
 /**
  * The FileCache surface these tests drive, spelled structurally. A
  * query-qualified copy of the module re-declares the class's private fields,
@@ -1087,6 +1100,7 @@ describe("Distributed cache functions", () => {
       await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
 
       using time = new FakeTime();
+      using _elapsedTime = followFakeTimeWithPerformanceNow();
       const warming = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
       await time.tickAsync(5);
       assertEquals(await warming, "page-source", "the warming read still returns the value");
@@ -1156,6 +1170,7 @@ describe("Distributed cache functions", () => {
       await writer.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
 
       using time = new FakeTime();
+      using _elapsedTime = followFakeTimeWithPerformanceNow();
       // Warm the tier through the default reader (60s ttl) half way into the
       // backend entry's one-second lifetime.
       await time.tickAsync(500);

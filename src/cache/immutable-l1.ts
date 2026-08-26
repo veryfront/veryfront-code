@@ -237,8 +237,8 @@ interface ImmutableL1Entry {
   cacheKey: string;
   value: string;
   valueBytes: number;
-  readStartedAtMs: number;
-  expiresAtMs: number;
+  readStartedAtElapsedMs: number;
+  expiresAtElapsedMs: number;
 }
 
 /**
@@ -247,16 +247,19 @@ interface ImmutableL1Entry {
  * unadmissible, so a read already in flight cannot reinstate what was just
  * invalidated.
  *
- * `startedAtMs` records when the backend read began. The TTL is a bound on how
- * stale a served value can be relative to a revocation or a publish, and both
- * can land while the read is still in flight, so the entry's lifetime is
- * measured from this moment rather than from when the response arrived. A read
- * slow enough to consume the whole TTL admits nothing.
+ * `startedAtElapsedMs` records when the backend read began on a monotonic
+ * elapsed-time clock. The TTL is a bound on how stale a served value can be
+ * relative to a revocation or a publish, and both can land while the read is
+ * still in flight, so the entry's lifetime is measured from this moment rather
+ * than from when the response arrived. A read slow enough to consume the whole
+ * TTL admits nothing. `startedAtWallClockMs` is retained separately only for
+ * comparing the reader's time with a backend entry's Unix timestamp.
  */
 export interface ImmutableL1ReadToken {
   readonly key: number;
   readonly sweep: number;
-  readonly startedAtMs: number;
+  readonly startedAtElapsedMs: number;
+  readonly startedAtWallClockMs: number;
 }
 
 export interface ImmutableFileCacheL1 {
@@ -385,6 +388,10 @@ export interface ImmutableFileCacheL1Options {
   maxEntries?: number;
   maxValueBytes?: number;
   maxTotalBytes?: number;
+  /** Monotonic elapsed-time source, injectable for deterministic tests. */
+  elapsedNow?: () => number;
+  /** Unix millisecond source used only for backend timestamp comparison. */
+  wallClockNow?: () => number;
 }
 
 /**
@@ -407,6 +414,8 @@ function sanitizeCeiling(value: number | undefined, fallback: number): number {
 export function createImmutableFileCacheL1(
   options: ImmutableFileCacheL1Options = {},
 ): ImmutableFileCacheL1 {
+  const elapsedNow = options.elapsedNow ?? (() => performance.now());
+  const wallClockNow = options.wallClockNow ?? (() => Date.now());
   const maxEntries = sanitizeCeiling(options.maxEntries, resolveImmutableL1MaxEntries());
   const maxTotalBytes = sanitizeCeiling(options.maxTotalBytes, resolveImmutableL1MaxTotalBytes());
   // A value bigger than the whole store could ever hold is refused up front
@@ -419,6 +428,10 @@ export function createImmutableFileCacheL1(
 
   // Insertion order is the LRU order: a hit re-inserts, eviction takes the head.
   const entries = new Map<string, ImmutableL1Entry>();
+  // One cache key can be held under several authority scopes. This reverse
+  // index keeps exact invalidation proportional to the matching scopes rather
+  // than to the whole bounded store.
+  const storeKeysByCacheKey = new Map<string, Set<string>>();
   let retainedBytes = 0;
   // Per-key mutation counters, plus one counter for whole-store invalidations.
   // The per-key map is bounded the same way the entries are, and overflowing it
@@ -429,22 +442,26 @@ export function createImmutableFileCacheL1(
   const scopedKey = (scope: string, cacheKey: string): string =>
     `${scope}${SCOPE_SEPARATOR}${cacheKey}`;
 
-  /** The single place an entry leaves the store, so the byte total cannot drift. */
+  /** The single place an entry leaves the store, so accounting cannot drift. */
   const removeEntry = (storeKey: string): void => {
     const entry = entries.get(storeKey);
     if (!entry) return;
     retainedBytes -= entry.valueBytes;
     entries.delete(storeKey);
+
+    const indexedStoreKeys = storeKeysByCacheKey.get(entry.cacheKey);
+    indexedStoreKeys?.delete(storeKey);
+    if (indexedStoreKeys?.size === 0) storeKeysByCacheKey.delete(entry.cacheKey);
   };
 
   /** Removes every entry past its expiry; returns how many were reclaimed. */
   const sweepExpired = (): number => {
     if (entries.size === 0) return 0;
 
-    const now = Date.now();
+    const now = elapsedNow();
     let reclaimed = 0;
     for (const [storeKey, entry] of entries) {
-      if (now < entry.expiresAtMs) continue;
+      if (now < entry.expiresAtElapsedMs) continue;
       removeEntry(storeKey);
       reclaimed += 1;
     }
@@ -470,15 +487,20 @@ export function createImmutableFileCacheL1(
       return retainedBytes;
     },
     beginRead(cacheKey: string): ImmutableL1ReadToken {
-      return { key: keyGenerations.get(cacheKey) ?? 0, sweep, startedAtMs: Date.now() };
+      return {
+        key: keyGenerations.get(cacheKey) ?? 0,
+        sweep,
+        startedAtElapsedMs: elapsedNow(),
+        startedAtWallClockMs: wallClockNow(),
+      };
     },
     lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null {
       const storeKey = scopedKey(scope, cacheKey);
       const entry = entries.get(storeKey);
       if (!entry) return null;
 
-      const now = Date.now();
-      if (now >= entry.expiresAtMs) {
+      const now = elapsedNow();
+      if (now >= entry.expiresAtElapsedMs) {
         removeEntry(storeKey);
         return null;
       }
@@ -491,7 +513,7 @@ export function createImmutableFileCacheL1(
       // measured from the backend read start, like the expiry above.
       if (
         maxAgeMs !== undefined && Number.isFinite(maxAgeMs) &&
-        now - entry.readStartedAtMs >= maxAgeMs
+        now - entry.readStartedAtElapsedMs >= maxAgeMs
       ) {
         return null;
       }
@@ -530,9 +552,9 @@ export function createImmutableFileCacheL1(
       // full timeout and then stamped with a fresh TTL would be servable for
       // timeout plus TTL after the revocation. A read that already consumed
       // the whole TTL admits nothing.
-      const readStartedAtMs = token.startedAtMs;
-      const expiresAtMs = readStartedAtMs + ttlMs;
-      if (Date.now() >= expiresAtMs) return;
+      const readStartedAtElapsedMs = token.startedAtElapsedMs;
+      const expiresAtElapsedMs = readStartedAtElapsedMs + ttlMs;
+      if (elapsedNow() >= expiresAtElapsedMs) return;
 
       // Expired entries are reclaimed on every admission, so dead weight is
       // never charged against the ceilings while a live entry gets evicted,
@@ -546,9 +568,15 @@ export function createImmutableFileCacheL1(
         cacheKey,
         value,
         valueBytes,
-        readStartedAtMs,
-        expiresAtMs,
+        readStartedAtElapsedMs,
+        expiresAtElapsedMs,
       });
+      let indexedStoreKeys = storeKeysByCacheKey.get(cacheKey);
+      if (!indexedStoreKeys) {
+        indexedStoreKeys = new Set<string>();
+        storeKeysByCacheKey.set(cacheKey, indexedStoreKeys);
+      }
+      indexedStoreKeys.add(storeKey);
       retainedBytes += valueBytes;
 
       while (entries.size > maxEntries || retainedBytes > maxTotalBytes) {
@@ -559,27 +587,28 @@ export function createImmutableFileCacheL1(
     },
     dropKey(cacheKey: string): void {
       bumpKeyGeneration(cacheKey);
-      if (entries.size === 0) return;
+      const indexedStoreKeys = storeKeysByCacheKey.get(cacheKey);
+      if (!indexedStoreKeys) return;
 
-      for (const [storeKey, entry] of entries) {
-        if (entry.cacheKey === cacheKey) removeEntry(storeKey);
-      }
+      for (const storeKey of indexedStoreKeys) removeEntry(storeKey);
     },
     evictExpired(): number {
       return sweepExpired();
     },
     dropPrefix(prefix: string): void {
       sweep += 1;
-      if (entries.size === 0) return;
+      if (storeKeysByCacheKey.size === 0) return;
 
-      for (const [storeKey, entry] of entries) {
-        if (entry.cacheKey.startsWith(prefix)) removeEntry(storeKey);
+      for (const [cacheKey, indexedStoreKeys] of storeKeysByCacheKey) {
+        if (!cacheKey.startsWith(prefix)) continue;
+        for (const storeKey of indexedStoreKeys) removeEntry(storeKey);
       }
     },
     clear(): void {
       sweep += 1;
       keyGenerations.clear();
       entries.clear();
+      storeKeysByCacheKey.clear();
       retainedBytes = 0;
     },
   };

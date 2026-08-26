@@ -316,6 +316,25 @@ describe("createImmutableFileCacheL1", () => {
     );
   });
 
+  it("expires an entry when the wall clock moves backward", () => {
+    let elapsedNow = 100;
+    let wallClockNow = 1_000;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      elapsedNow: () => elapsedNow,
+      wallClockNow: () => wallClockNow,
+    });
+    store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 1);
+
+    wallClockNow -= HOUR_MS;
+    elapsedNow += 2;
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "a backward wall-clock adjustment must not extend the authorization window",
+    );
+  });
+
   it("admits nothing when the TTL is zero", () => {
     const store = createImmutableFileCacheL1({ maxEntries: 8 });
     store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 0);
