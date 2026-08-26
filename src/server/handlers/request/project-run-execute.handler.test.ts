@@ -1103,7 +1103,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         withMockFetch(
           async (input, init) => {
             const url = new URL(String(input));
-            const method = init?.method ?? "GET";
+            const method = init && "method" in init ? init.method ?? "GET" : "GET";
             const requestBody = requestJsonBody(init);
             requests.push({ method, pathname: url.pathname, body: requestBody });
 
@@ -1217,7 +1217,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           withMockFetch(
             async (input, init) => {
               const url = new URL(String(input));
-              const method = init?.method ?? "GET";
+              const method = init && "method" in init ? init.method ?? "GET" : "GET";
               const requestBody = requestJsonBody(init);
               requests.push({ method, pathname: url.pathname, body: requestBody });
 

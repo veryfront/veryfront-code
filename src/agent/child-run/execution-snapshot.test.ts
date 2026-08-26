@@ -59,7 +59,7 @@ describe("agent/child-run-execution-snapshot", () => {
         buildChildRunSuccessResult(withoutUsage, { text: "Done!" }),
         buildChildRunFailureResult(withoutUsage, "failed"),
         buildChildRunSuccessSnapshot(withoutUsage, "Done!"),
-        buildChildRunFailureSnapshot(withoutUsage, "failed"),
+        buildChildRunFailureSnapshot(withoutUsage, "failed", null),
       ]
     ) {
       assertEquals(Object.hasOwn(value, "usage"), false);
