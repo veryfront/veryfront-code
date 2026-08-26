@@ -198,10 +198,10 @@ project root. During development `.cache/` is written there too, but a
 production runtime keeps it outside the project. See "Where the cache root
 lives" below.
 
-| Directory | Written by                         | Contents                                                                                                  |
-| --------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/` |
-| `dist/`   | `veryfront build`                  | The build output. `-o/--output` and `build.outDir` change the location                                    |
+| Directory | Written by                         | Contents                                                                                                               |
+| --------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `.cache/` | `veryfront dev`, `veryfront build` | Compiled page modules in `veryfront-mdx-esm/` and bundled remote dependencies in `veryfront-http-bundle/`              |
+| `dist/`   | `veryfront build`                  | The build output. Production `build.outDir` stays inside the project; `-o/--output` can select an external destination |
 
 ### Where the cache root lives
 

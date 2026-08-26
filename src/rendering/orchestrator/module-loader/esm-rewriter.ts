@@ -316,7 +316,9 @@ async function fetchEsmModuleWithin(
     try {
       return await materialization;
     } finally {
-      if (graph.inFlight.get(url) === materialization) graph.inFlight.delete(url);
+      // This frame is the entry's sole owner: another frame only sets `url`
+      // after observing it absent, which cannot happen before this delete.
+      graph.inFlight.delete(url);
     }
   } finally {
     releaseWait();

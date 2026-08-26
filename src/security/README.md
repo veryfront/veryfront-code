@@ -363,21 +363,15 @@ replaced with defaults.
 (`routing/api/handler.ts` and `routing/api/route-executor.ts`), which resolve it
 through the single `isHostRealmApiExecution` accessor. Data fetchers and SSR
 have their own flags. Agent streams are gated by `allowHostProjectCodeExecution`
-alone, so on a shared runtime granted host project execution, API routes execute
-in the same host realm as streams.
+alone.
 
 A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
 (`security/sandbox/isolation-capability.ts`), so `WORKER_ISOLATION_API=1` in a
-compiled deployment resolves one of two ways, both logged once at startup: where
-the operator has explicitly granted host project code execution through
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`, the flag is downgraded and execution
-uses the host realm the operator already opted into; where that grant is absent,
-the flag stands and API ownership returns the typed
-`project-execution-unavailable` 503 naming it. The downgrade cannot grant
-execution on its own. Every execution gate is a conjunction with
-`allowHostProjectCodeExecution`, so the downgrade only ever lands API routes in
-the realm that grant already licenses for every other surface.
+compiled deployment keeps the requested isolation posture and API ownership
+returns the typed `project-execution-unavailable` 503 naming it. The broad
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grant does not override the
+API-specific isolation flag.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
 it requires route evaluation, runtime OpenAPI generation is available only for

@@ -122,12 +122,43 @@ describe("commands/build/command", () => {
       );
     });
 
+    it("allows an in-project build.outDir beginning with two dots", () => {
+      assertEquals(
+        resolveBuildOutputDir("/workspace/project", undefined, {
+          build: { outDir: "..cache" },
+        }),
+        "/workspace/project/..cache",
+      );
+    });
+
     it("lets -o/--output override build.outDir", () => {
       assertEquals(
         resolveBuildOutputDir("/workspace/project", "flagout", {
           build: { outDir: "custom-out" },
         }),
         "flagout",
+      );
+    });
+
+    it("still rejects an external build.outDir when --output overrides it", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", "dist", {
+            build: { outDir: "../release" },
+          }),
+        Error,
+        "inside the project",
+      );
+    });
+
+    it("still rejects a project-root build.outDir when --output overrides it", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", "dist", {
+            build: { outDir: "." },
+          }),
+        Error,
+        "inside the project",
       );
     });
 
@@ -138,12 +169,14 @@ describe("commands/build/command", () => {
       );
     });
 
-    it("keeps an absolute build.outDir absolute", () => {
-      assertEquals(
-        resolveBuildOutputDir("/workspace/project", undefined, {
-          build: { outDir: "/var/www/site" },
-        }),
-        "/var/www/site",
+    it("rejects an absolute build.outDir outside the project", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", undefined, {
+            build: { outDir: "/var/www/site" },
+          }),
+        Error,
+        "inside the project",
       );
     });
 
@@ -161,7 +194,7 @@ describe("commands/build/command", () => {
       assertThrows(
         () => resolveBuildOutputDir("/workspace/project", undefined, { build: { outDir: ".." } }),
         Error,
-        "/workspace",
+        "inside the project",
       );
     });
 
@@ -173,12 +206,14 @@ describe("commands/build/command", () => {
       );
     });
 
-    it("allows an output directory beside the project", () => {
-      assertEquals(
-        resolveBuildOutputDir("/workspace/project", undefined, {
-          build: { outDir: "../shared-dist" },
-        }),
-        "/workspace/shared-dist",
+    it("rejects build.outDir beside the project", () => {
+      assertThrows(
+        () =>
+          resolveBuildOutputDir("/workspace/project", undefined, {
+            build: { outDir: "../shared-dist" },
+          }),
+        Error,
+        "inside the project",
       );
     });
   });
@@ -293,6 +328,18 @@ describe("cli/build resolveBuildOutputDir clearsOutputDir", () => {
         clearsOutputDir: false,
       }),
       "/tmp/proj/custom",
+    );
+  });
+
+  it("allows an external embedded build.outDir when the guard is opted out", () => {
+    assertEquals(
+      resolveBuildOutputDir(
+        "/tmp/proj",
+        undefined,
+        { build: { outDir: "../host/dist" } },
+        { clearsOutputDir: false },
+      ),
+      "/tmp/host/dist",
     );
   });
 });

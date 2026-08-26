@@ -132,7 +132,7 @@ describe("security/sandbox isolation posture reporting", () => {
     assertEquals(posture.inForce, true);
   });
 
-  it("reports API isolation as requested but not in force when it is downgraded under a grant", async () => {
+  it("keeps API isolation in force when preparation is unsupported under a grant", async () => {
     setEnv("WORKER_ISOLATION_ENABLED", "1");
     setEnv("WORKER_ISOLATION_API", "1");
     setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
@@ -142,10 +142,10 @@ describe("security/sandbox isolation posture reporting", () => {
     const posture = getIsolationPosture();
 
     assertEquals(posture.api.requested, true);
-    assertEquals(posture.api.effective, false);
+    assertEquals(posture.api.effective, true);
     assertEquals(posture.apiPreparationSupported, false);
     assertEquals(posture.hostExecutionGranted, true);
-    assertEquals(posture.inForce, false);
+    assertEquals(posture.inForce, true);
   });
 
   it("keeps the default posture off the default-verbosity dev log", async () => {

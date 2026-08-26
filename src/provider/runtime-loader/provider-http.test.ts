@@ -1139,6 +1139,73 @@ describe("provider-http", () => {
       );
     });
 
+    it("disposes the deadline when the stream wrapper throws at handoff", async () => {
+      // A throw from streamWithCleanup (getReader() on an unreadable body)
+      // used to skip deadline.dispose(): ownership had already transferred,
+      // but no stream existed to exercise it, so the abort listener registered
+      // on the caller's signal stayed attached for the signal's lifetime
+      // (veryfront-issue-inbox#750).
+      const caller = new AbortController();
+      const signal = caller.signal;
+      let abortListenersAdded = 0;
+      let abortListenersRemoved = 0;
+      const originalAdd = signal.addEventListener.bind(signal);
+      const originalRemove = signal.removeEventListener.bind(signal);
+      signal.addEventListener = ((
+        ...args: Parameters<typeof signal.addEventListener>
+      ) => {
+        const [type] = args;
+        if (type === "abort") abortListenersAdded++;
+        originalAdd(...args);
+      }) as typeof signal.addEventListener;
+      signal.removeEventListener = ((
+        ...args: Parameters<typeof signal.removeEventListener>
+      ) => {
+        const [type] = args;
+        if (type === "abort") abortListenersRemoved++;
+        originalRemove(...args);
+      }) as typeof signal.removeEventListener;
+
+      let requestInit: RequestInit | undefined;
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (_url, init) => {
+              requestInit = init;
+              return Promise.resolve({
+                ok: true,
+                status: 200,
+                body: {
+                  getReader() {
+                    throw new TypeError("body is locked");
+                  },
+                },
+              } as unknown as Response);
+            },
+            init: { method: "POST", signal },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        TypeError,
+        "body is locked",
+      );
+
+      assertEquals(abortListenersAdded >= 1, true, "the deadline must observe the caller signal");
+      assertEquals(
+        abortListenersRemoved,
+        abortListenersAdded,
+        "every abort listener the deadline added must be removed on the handoff failure",
+      );
+      // No stream was handed off, so nothing else releases the provider
+      // connection: the request itself must be aborted before the rethrow.
+      assertEquals(
+        requestInit?.signal?.aborted,
+        true,
+        "the provider request must be aborted when the handoff fails",
+      );
+    });
+
     it("does not retry once provider output has reached the caller", async () => {
       let attempts = 0;
       let pulls = 0;
