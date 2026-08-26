@@ -299,6 +299,7 @@ export class EventWaitManager {
     // would survive that clear and hold its closure until the original
     // deadline. Armed first, the claimer's clear always finds it.
     this.scheduleExpiry(wait);
+    let persisted = false;
     try {
       // Worker-owned waits are reserved atomically, so a delayed onWaiting
       // callback cannot append after a replacement worker claimed the run.
@@ -317,8 +318,10 @@ export class EventWaitManager {
             detail: "Workflow execution ownership changed before event wait persistence",
           });
         }
+        persisted = true;
       } else {
         await backend.savePendingEventWait(run.id, wait);
+        persisted = true;
         const pending = await backend.getPendingEventWaits(run.id);
         if (!pending.some((candidate) => candidate.id === wait.id)) {
           const existing = await this.findWaitExecutionRecord(run, wait, pending);
@@ -328,10 +331,23 @@ export class EventWaitManager {
             detail: "Event wait persistence completed without a pending record",
           });
         }
+        // An ownerless backend cannot atomically bind the append to the run's
+        // active status. If cancellation or completion finished before the
+        // append became visible, its earlier cleanup saw nothing; close that
+        // race by resolving the newly persisted wait after observing terminal
+        // state. A later terminal transition will see the wait itself.
+        const latestRun = await backend.getRun(run.id);
+        if (!latestRun || latestRun.status === "completed" || latestRun.status === "cancelled") {
+          await backend.resolvePendingEventWait(run.id, wait.id, "cancelled");
+          this.clearExpiry(wait.id);
+          return projectEventWait({ ...wait, status: "cancelled" });
+        }
       }
     } catch (error) {
-      // Nothing was persisted, so the early timer guards nothing: drop it.
-      this.clearExpiry(wait.id);
+      // Drop the early timer only when the append itself did not land. Once a
+      // record is durable, a later read failure must not also disable its only
+      // local deadline enforcement.
+      if (!persisted) this.clearExpiry(wait.id);
       throw error;
     }
 

@@ -61,6 +61,20 @@ class RejectingApprovalPersistenceBackend extends MemoryBackend {
   }
 }
 
+class BlockingOwnerlessEventWaitSaveBackend extends MemoryBackend {
+  readonly saveStarted = Promise.withResolvers<void>();
+  readonly continueSave = Promise.withResolvers<void>();
+
+  override async savePendingEventWait(
+    runId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<void> {
+    this.saveStarted.resolve();
+    await this.continueSave.promise;
+    await super.savePendingEventWait(runId, wait);
+  }
+}
+
 class CountingApprovalReadsBackend extends MemoryBackend {
   approvalReads = 0;
 
@@ -3008,6 +3022,51 @@ describe("WorkflowClient durable event waits", () => {
       "payment.confirmed",
       "the persisted wait must name the event that releases it",
     );
+  });
+
+  it("cleans up an ownerless wait appended after cancellation finishes", async () => {
+    const racing = new BlockingOwnerlessEventWaitSaveBackend();
+    const manager = new EventWaitManager({
+      backend: racing,
+      expirationCheckInterval: 0,
+      claimRecoveryCheckInterval: 0,
+    });
+    const run: WorkflowRun = {
+      id: "run-ownerless-wait-cancellation-race",
+      workflowId: "ownerless-wait-cancellation-race",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "running", attempt: 1 },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    };
+    await racing.createRun(run);
+
+    const creation = manager.createEventWait(run, "gate", {
+      type: "wait",
+      waitType: "event",
+      eventName: "gate.ready",
+    });
+    await racing.saveStarted.promise;
+    await racing.updateRun(run.id, { status: "cancelled", completedAt: new Date() });
+    racing.continueSave.resolve();
+
+    try {
+      await creation;
+      assertEquals(
+        await racing.getPendingEventWaits(run.id),
+        [],
+        "the post-save terminal check must close the cancellation cleanup race",
+      );
+    } finally {
+      manager.stop();
+    }
   });
 
   it("persists a whole waiting batch before draining buffered events", async () => {

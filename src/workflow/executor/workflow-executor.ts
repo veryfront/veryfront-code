@@ -27,6 +27,7 @@ import {
   hasEventWaitSupport,
   hasExecutionOwnershipSupport,
   hasRunPatchKeyMergeSupport,
+  isSameWaitNodeExecution,
   restoreRunStateIfStatus,
   updateRunIfStatus,
   type WorkflowBackend,
@@ -199,24 +200,23 @@ export class WorkflowExecutor {
         context,
         contextPatch,
         ownership,
-      }) =>
-        updateRunIfStatus(
+      }) => {
+        const keyMerge = hasRunPatchKeyMergeSupport(this.config.backend);
+        const { _tenant: _tenant, ...publicContextPatch } = contextPatch.set;
+        return updateRunIfStatus(
           this.config.backend,
           runId,
           ["running"],
           {
-            nodeStates: hasRunPatchKeyMergeSupport(this.config.backend)
-              ? nodeStatePatch.set
-              : nodeStates,
-            nodeStateDeletes: hasRunPatchKeyMergeSupport(this.config.backend)
-              ? nodeStatePatch.delete
-              : undefined,
+            nodeStates: keyMerge ? nodeStatePatch.set : nodeStates,
+            nodeStateDeletes: keyMerge ? nodeStatePatch.delete : undefined,
             currentNodes,
-            context: toPersistedWorkflowContext(context),
+            context: keyMerge ? publicContextPatch : toPersistedWorkflowContext(context),
             contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant"),
           },
           ownership?.workerId,
-        ),
+        );
+      },
     });
 
     const bs = this.config.blobStorage;
@@ -367,8 +367,18 @@ export class WorkflowExecutor {
 
     if (hasEventWaitSupport(this.config.backend)) {
       for (const wait of await this.config.backend.listTimedEventWaitClaims(runId)) {
+        const currentState = run.nodeStates[wait.nodeId];
+        if (
+          !isSameWaitNodeExecution(wait, {
+            nodeId: wait.nodeId,
+            waitInstanceId: currentState?._waitInstanceId,
+          })
+        ) {
+          await this.config.backend.finalizeTimedEventWaitClaim(runId, wait.id);
+          continue;
+        }
         const committedStatus = wait.waitKind === "delay" ? "completed" : "failed";
-        if (run.nodeStates[wait.nodeId]?.status !== committedStatus) {
+        if (currentState?.status !== committedStatus) {
           throw ORCHESTRATION_ERROR.create({
             status: 409,
             detail: `Cannot retry workflow run "${runId}": timed wait "${wait.id}" ` +

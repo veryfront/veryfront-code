@@ -138,6 +138,24 @@ class FailingOwnerHeartbeatBackend extends MemoryBackend {
   }
 }
 
+class BoundaryPatchRecordingBackend extends MemoryBackend {
+  readonly boundaryContextKeys: string[][] = [];
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (
+      patch.status === undefined && patch.nodeStates !== undefined && patch.context !== undefined
+    ) {
+      this.boundaryContextKeys.push(Object.keys(patch.context).sort());
+    }
+    return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
+  }
+}
+
 class RejectingNodeStateBoundaryBackend extends MemoryBackend {
   override updateRunIfStatusAndWorker(
     runId: string,
@@ -300,6 +318,23 @@ class RejectFirstCancelledWaitReadBackend extends MemoryBackend {
 }
 
 describe("workflow/executor/workflow-executor", () => {
+  it("sends only changed context keys to key-merge backends at DAG boundaries", async () => {
+    const backend = new BoundaryPatchRecordingBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "context-boundary-delta",
+        steps: [step("work", { tool: createTool("work", () => ({ done: true })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("context-boundary-delta", { retained: true });
+    await handle.settled();
+
+    assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("work")), true);
+    assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("input")), false);
+  });
+
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
@@ -1072,6 +1107,45 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(completed?.status, "completed");
     assertEquals((completed?.context.review as { approved?: boolean })?.approved, true);
     assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
+  });
+
+  it("finalizes a timed claim from a superseded wait instance before retry", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(workflow({ id: "retry-superseded-timed-claim", steps: [] }).definition);
+    const run = {
+      ...createRun("retry-superseded-timed-claim"),
+      status: "failed" as const,
+      nodeStates: {
+        pause: {
+          nodeId: "pause",
+          status: "running" as const,
+          attempt: 1,
+          _waitInstanceId: "wait-2",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-old-delay-iteration",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "__delay__",
+      waitKind: "delay",
+      requestedAt: new Date(),
+      status: "pending",
+      waitInstanceId: "wait-1",
+    });
+    assertEquals(
+      await backend.resolvePendingEventWait(run.id, "evw-old-delay-iteration", "delivered"),
+      true,
+    );
+
+    await executor.retry(run.id);
+
+    assertEquals(await backend.listTimedEventWaitClaims(run.id), []);
   });
 
   it("restores the failed snapshot when the post-reactivation read fails", async () => {
