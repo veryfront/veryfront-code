@@ -4,6 +4,7 @@ import {
   createAgentServiceSandboxTools,
 } from "#veryfront/sandbox";
 import type { HostToolSet } from "#veryfront/tool";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import type { DefaultHostedChatRuntimeTaskContext } from "./default-chat-runtime.ts";
 
 const HOSTED_ROOT_SANDBOX_TOOL_NAMES = new Set([
@@ -92,7 +93,7 @@ export function createHostedRootLocalToolRuntime(
         closeRuntime = sandboxSource.closeRuntime;
         return {
           ...baseTools,
-          ...sandboxSource.tools,
+          ...markTrustedHostToolSet(sandboxSource.tools),
         };
       })();
       return localToolsPromise;

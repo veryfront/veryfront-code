@@ -1,4 +1,5 @@
 import type { Agent } from "#veryfront/agent";
+import type { AgentMcpServerConfig } from "#veryfront/agent/types.ts";
 import {
   createRemoteMCPToolSource,
   type RemoteToolSource,
@@ -23,7 +24,11 @@ import {
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
-import { buildStudioMcpHeaders } from "#veryfront/agent/project/live-studio-mcp-tools.ts";
+import {
+  type AgentServiceVeryfrontStudioMcpServerConfig,
+  createAgentServiceRemoteMcpConfig,
+} from "#veryfront/agent/service/mcp-server-config.ts";
+import { createMcpToolPolicyGate } from "#veryfront/agent/mcp-tool-policy.ts";
 import {
   clientAllowsStudioMcp,
   resolveRuntimeClientProfile,
@@ -176,19 +181,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getForwardedAllowedRemoteToolNames(
-  forwardedProps: Record<string, unknown> | undefined,
-): string[] {
-  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
-    ? forwardedProps.runtimeOverrides
-    : null;
-  const allowedTools = runtimeOverrides?.allowedTools;
-  return Array.isArray(allowedTools) &&
-      allowedTools.every((toolName) => typeof toolName === "string")
-    ? allowedTools
-    : [];
-}
-
 function getForwardedIntegrationToolNames(
   runtimeOverrides: Record<string, unknown>,
 ): Set<string> {
@@ -216,23 +208,10 @@ function getForwardedIntegrationToolNames(
   return toolNames;
 }
 
-function getRequestedStudioToolNames(input: {
-  forwardedProps?: Record<string, unknown>;
-  availableToolNames?: string[];
-}): string[] {
-  const requestedToolNames = new Set([
-    ...getForwardedAllowedRemoteToolNames(input.forwardedProps),
-    ...(input.availableToolNames ?? []),
-  ]);
-  return [...requestedToolNames]
-    .filter((toolName) => STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
-    .sort(compareStrings);
-}
-
 function sanitizeForwardedRuntimeAllowedTools(input: {
   forwardedProps?: Record<string, unknown>;
   availableToolNames: string[];
-  allowStudioRuntimeTools: boolean;
+  allowedStudioRuntimeToolNames: ReadonlySet<string>;
 }): Record<string, unknown> | undefined {
   const forwardedProps = input.forwardedProps;
   if (!isRecord(forwardedProps)) {
@@ -256,13 +235,15 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   const availableToolNames = new Set(input.availableToolNames);
   const forwardedIntegrationToolNames = getForwardedIntegrationToolNames(runtimeOverrides);
   // Platform remote tools are gated separately by the child agent config in
-  // withVeryfrontPlatformRemoteTools. The Studio path is the one that consumes
-  // forwarded allowedTools, and Studio-only runtime tools are preserved only
-  // for trusted Studio clients that can already attach the Studio MCP surface.
+  // withVeryfrontPlatformRemoteTools. Studio-only runtime tool names are
+  // preserved only when the resolved agent config itself declares the tool for
+  // a Studio-capable client; self-asserted Studio client metadata alone never
+  // widens the forwarded allowlist.
   const sanitizedAllowedTools = allowedTools.filter((toolName) =>
     availableToolNames.has(toolName) ||
     forwardedIntegrationToolNames.has(toolName) ||
-    (input.allowStudioRuntimeTools && STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName))
+    (STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName) &&
+      input.allowedStudioRuntimeToolNames.has(toolName))
   );
   if (sanitizedAllowedTools.length === allowedTools.length) {
     return forwardedProps;
@@ -287,7 +268,20 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   return Object.keys(nextForwardedProps).length > 0 ? nextForwardedProps : undefined;
 }
 
-function sanitizeRuntimeRunAgentInput(input: RuntimeRunAgentInput): RuntimeRunAgentInput {
+function getAgentDeclaredToolNames(agent: Agent): Set<string> {
+  const tools = agent.config.tools;
+  if (!isRecord(tools)) {
+    return new Set();
+  }
+  return new Set(
+    Object.keys(tools).filter((toolName) => tools[toolName] !== false),
+  );
+}
+
+function sanitizeRuntimeRunAgentInput(
+  input: RuntimeRunAgentInput,
+  agent: Agent,
+): RuntimeRunAgentInput {
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
 
   return {
@@ -295,7 +289,9 @@ function sanitizeRuntimeRunAgentInput(input: RuntimeRunAgentInput): RuntimeRunAg
     forwardedProps: sanitizeForwardedRuntimeAllowedTools({
       forwardedProps: input.forwardedProps,
       availableToolNames: input.tools.map((tool) => tool.name),
-      allowStudioRuntimeTools: clientAllowsStudioMcp(clientProfile),
+      allowedStudioRuntimeToolNames: clientAllowsStudioMcp(clientProfile)
+        ? getAgentDeclaredToolNames(agent)
+        : new Set(),
     }),
   };
 }
@@ -332,13 +328,6 @@ function hasVeryfrontPlatformRemoteToolSource(
   remoteTools: RemoteToolSource[] | undefined,
 ): boolean {
   return remoteTools?.some((source) => source.id === VERYFRONT_API_MCP_SOURCE_ID) ??
-    false;
-}
-
-function hasVeryfrontStudioRemoteToolSource(
-  remoteTools: RemoteToolSource[] | undefined,
-): boolean {
-  return remoteTools?.some((source) => source.id === VERYFRONT_STUDIO_MCP_SOURCE_ID) ??
     false;
 }
 
@@ -533,57 +522,111 @@ async function withVeryfrontPlatformRemoteTools(input: {
   };
 }
 
-function withVeryfrontStudioRemoteTools(input: {
+function isExplicitStudioMcpServer(
+  server: AgentMcpServerConfig,
+): server is AgentMcpServerConfig & AgentServiceVeryfrontStudioMcpServerConfig {
+  return server.kind === "veryfront-studio";
+}
+
+async function withExplicitVeryfrontStudioRemoteTools(input: {
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
   forwardedProps?: Record<string, unknown>;
-  availableToolNames?: string[];
   conversationId?: string;
-}): Agent {
-  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
+  availableToolNames?: string[];
+}): Promise<Agent> {
+  const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
+  if (configuredServers.length === 0) return input.agent;
+
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
-  const requestedStudioToolNames = getRequestedStudioToolNames({
-    forwardedProps: input.forwardedProps,
-    availableToolNames: input.availableToolNames,
-  });
-  if (
-    input.agent.config.mcpServers !== undefined ||
-    !input.token ||
-    !studioMcpUrl ||
-    !clientAllowsStudioMcp(clientProfile) ||
-    requestedStudioToolNames.length === 0
-  ) {
-    return input.agent;
+  if (!clientAllowsStudioMcp(clientProfile)) {
+    throw PERMISSION_DENIED.create({
+      detail: "Studio MCP tools require an authorized Studio client profile.",
+    });
+  }
+  if (!input.token) {
+    throw AUTHENTICATION_REQUIRED.create({
+      detail: "Studio MCP tools require a request-scoped API token.",
+    });
   }
 
-  const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
-  const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
-  const studioRemoteToolSources = hasVeryfrontStudioRemoteToolSource(remoteTools) ? [] : [
-    createRemoteMCPToolSource({
-      id: VERYFRONT_STUDIO_MCP_SOURCE_ID,
-      endpoint: studioMcpUrl,
-      headers: () =>
-        buildStudioMcpHeaders(
-          input.token ?? "",
-          input.projectId ?? null,
-          input.conversationId,
-        ),
-    }),
-  ];
+  let requestedStudioToolNames = getRequestedUnresolvedBooleanToolNames({
+    tools: input.agent.config.tools,
+    agentId: input.agent.id,
+    availableToolNames: input.availableToolNames,
+  }).filter((toolName) =>
+    configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
+  );
 
-  const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {
-    ...input.agent.config,
-    __vfAllowedRemoteTools: mergeAllowedRemoteTools(
-      runtimeRemoteToolConfig.__vfAllowedRemoteTools,
-      requestedStudioToolNames,
-    ),
-    __vfRemoteToolSources: [...remoteTools, ...studioRemoteToolSources],
-  };
+  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
+  if (!studioMcpUrl) return input.agent;
+
+  const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
+  const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
+  const studioRemoteToolSources: RemoteToolSource[] = [];
+  const broadStudioToolNames = new Set<string>();
+  let hasResolvedStudioSource = false;
+  for (const server of configuredServers) {
+    const remoteConfig = createAgentServiceRemoteMcpConfig({
+      server,
+      authToken: input.token,
+      apiMcpUrl: "",
+      studioMcpUrl,
+      clientProfile,
+      getProjectId: () => input.projectId ?? null,
+      conversationId: input.conversationId,
+      defaultSourceId: VERYFRONT_STUDIO_MCP_SOURCE_ID,
+    });
+    if (!remoteConfig) continue;
+    hasResolvedStudioSource = true;
+    const studioSource = createRemoteMCPToolSource(remoteConfig);
+    if (input.agent.config.tools === true) {
+      const policy = createMcpToolPolicyGate(server.toolPolicy);
+      let definitions: ToolDefinition[] = [];
+      try {
+        definitions = await studioSource.listTools({
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+        });
+      } catch (error) {
+        logger.warn("Unable to discover Veryfront Studio MCP tools", {
+          projectId: input.projectId ?? undefined,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      for (const definition of definitions) {
+        if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
+      }
+    }
+    if (
+      !remoteTools.some((source) => source.id === remoteConfig.id) &&
+      !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
+    ) {
+      studioRemoteToolSources.push(studioSource);
+    }
+  }
+  if (!hasResolvedStudioSource) return input.agent;
+  if (input.agent.config.tools === true) {
+    requestedStudioToolNames = [...broadStudioToolNames].sort(compareStrings);
+  }
+
+  const shouldSetAllowedRemoteTools = requestedStudioToolNames.length > 0 ||
+    runtimeConfig.__vfAllowedRemoteTools !== undefined || input.agent.config.tools === true;
 
   return {
     ...input.agent,
-    config: runtimeConfig,
+    config: {
+      ...input.agent.config,
+      ...(shouldSetAllowedRemoteTools
+        ? {
+          __vfAllowedRemoteTools: mergeAllowedRemoteTools(
+            runtimeConfig.__vfAllowedRemoteTools,
+            requestedStudioToolNames,
+          ),
+        }
+        : {}),
+      __vfRemoteToolSources: [...remoteTools, ...studioRemoteToolSources],
+    } as Agent["config"],
   };
 }
 
@@ -960,17 +1003,18 @@ export class AgentStreamHandler extends BaseHandler {
                       : agent;
                     const runtimeInput = sanitizeRuntimeRunAgentInput(
                       toRuntimeRunAgentInput(payload),
+                      runtimeBaseAgent as Agent,
                     );
                     const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
                     const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
                       agent: runtimeBaseAgent as Agent,
-                      token: apiAuthToken || null,
+                      token: projectRuntimeToken || null,
                       projectId: projectScopedContext.projectId ?? null,
                       availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                     });
-                    const runtimeAgent = withVeryfrontStudioRemoteTools({
+                    const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
                       agent: platformRuntimeAgent,
-                      token: apiAuthToken || null,
+                      token: projectRuntimeToken || null,
                       projectId: projectScopedContext.projectId ?? null,
                       forwardedProps: runtimeInput.forwardedProps,
                       availableToolNames: runtimeInput.tools.map((tool) => tool.name),

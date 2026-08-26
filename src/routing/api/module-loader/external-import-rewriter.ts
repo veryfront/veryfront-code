@@ -462,7 +462,7 @@ export async function rewriteExternalImports(
     // Rewrite user-installed npm dependencies.
     // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).
     // In compiled binaries: use the createRequire-based `require` shim (already
-    // injected by the esbuild banner) to load CJS packages from node_modules,
+    // injected as a collision-safe bundler symbol) to load CJS packages from node_modules,
     // since npm: specifiers only work for packages embedded at compile time.
     if (isCompiledBinary()) {
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);

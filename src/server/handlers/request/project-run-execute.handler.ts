@@ -33,6 +33,7 @@ import {
   type AgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
+import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
@@ -679,6 +680,7 @@ function createApiUrl(apiBaseUrl: string, path: string): URL {
 }
 
 function createDurableEvalAgentForwardedProps(
+  input: DurableEvalAgentFetchInput,
   request: AgentServiceEvalRequestBody,
 ): Record<string, unknown> {
   // The durable hosted runtime reads `model` and `runtimeOverrides` from the
@@ -687,6 +689,9 @@ function createDurableEvalAgentForwardedProps(
   const veryfront = request.forwardedProps?.veryfront;
   return {
     ...request.forwardedProps,
+    // The adapter body never carries agent selection (public AG-UI must not
+    // honor it), so stamp the server-resolved agent here instead.
+    veryfront: { ...veryfront, agentId: input.agentId },
     ...(veryfront?.model !== undefined ? { model: veryfront.model } : {}),
     ...(veryfront?.runtimeOverrides !== undefined
       ? { runtimeOverrides: veryfront.runtimeOverrides }
@@ -719,7 +724,7 @@ function createDurableEvalAgentRunBody(
         messages: [],
         tools: request.tools,
         context: request.context,
-        forwarded_props: createDurableEvalAgentForwardedProps(request),
+        forwarded_props: createDurableEvalAgentForwardedProps(input, request),
         ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
         ...(targets.targetEnvironmentId
           ? { target_environment_id: targets.targetEnvironmentId }
@@ -1181,6 +1186,7 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
 
   return {
     endpoint,
@@ -1207,17 +1213,22 @@ function createEvalAdapterConfig(input: {
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
     fetch: managedEndpointContext && agentId
-      ? createDurableEvalAgentFetch({
-        apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
-        authToken,
-        projectId: input.request.projectId,
-        parentRunId: input.request.runId,
+      ? bindTrustedLocalEvalFetch(
+        createDurableEvalAgentFetch({
+          apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+          authToken,
+          projectId: input.request.projectId,
+          parentRunId: input.request.runId,
+          agentId,
+          runtimeTargetKind: input.request.runtimeTargetKind,
+          runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
+          runtimeTargetBranchId: input.request.runtimeTargetBranchId,
+        }),
         agentId,
-        runtimeTargetKind: input.request.runtimeTargetKind,
-        runtimeTargetEnvironmentId: input.request.runtimeTargetEnvironmentId,
-        runtimeTargetBranchId: input.request.runtimeTargetBranchId,
-      })
-      : createLocalEvalAgentFetch({ endpoint, agentId }),
+      )
+      : localFetch && agentId
+      ? bindTrustedLocalEvalFetch(localFetch, agentId)
+      : undefined,
   };
 }
 

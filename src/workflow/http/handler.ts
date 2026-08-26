@@ -94,7 +94,7 @@ function routeSegments(pathname: string, basePath: string): string[] | null {
 }
 
 function canonicalWorkflowPath(basePath: string, segments: readonly string[]): string {
-  const baseUrl = new URL("http://workflow.invalid");
+  const baseUrl = new URL("https://workflow.invalid");
   baseUrl.pathname = `/${basePath.split("/").filter(Boolean).join("/")}`;
   const normalizedBase = baseUrl.pathname;
   const encodedSuffix = segments.map((segment) => encodeURIComponent(segment)).join("/");

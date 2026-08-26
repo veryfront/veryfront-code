@@ -21,13 +21,7 @@ describe("API Allow-list", () => {
       await handler.initialize();
 
       const res = await handler.handle(new Request("http://local/api/bad"));
-      const status = res?.status;
-
-      assertEquals(
-        status === 502 || status === 500 || res === null,
-        true,
-        `Expected 500, 502, or null but got status ${status}`,
-      );
+      assertEquals(res?.status, 502);
     });
   });
 });
