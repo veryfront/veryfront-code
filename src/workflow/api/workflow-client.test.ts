@@ -4823,6 +4823,107 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("re-arms a live timed wait when a replacement process resumes it without a sweep", async () => {
+    const sharedBackend = new MemoryBackend();
+    const definition = workflow({
+      id: "resume-rearms-timed-wait",
+      steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: 250 })],
+    });
+    const parked = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    parked.register(definition);
+    const handle = await parked.start("resume-rearms-timed-wait", {});
+    await handle.settled();
+    parked.getEventWaitManager().stop();
+    parked.getApprovalManager().stop();
+
+    const recovering = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    recovering.register(definition);
+    try {
+      await recovering.resume(handle.runId);
+      await waitFor(
+        async () => (await recovering.getRun(handle.runId))?.status === "failed",
+        {
+          message: "resuming a persisted wait did not re-arm its local deadline timer",
+        },
+      );
+    } finally {
+      recovering.getEventWaitManager().stop();
+      recovering.getApprovalManager().stop();
+    }
+  });
+
+  it("retires an event wait excluded by an explicit checkpoint rollback", async () => {
+    const sharedBackend = new MemoryBackend();
+    const replaying = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    replaying.register(workflow({
+      id: "checkpoint-retires-event-wait",
+      steps: [
+        step("first", { tool: createMockTool("first-tool", { ok: true }) }),
+        waitForEvent("gate", { eventName: "gate.ready" }),
+      ],
+    }));
+    const runId = "run-checkpoint-retires-event-wait";
+    await sharedBackend.createRun({
+      id: runId,
+      workflowId: "checkpoint-retires-event-wait",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        first: { nodeId: "first", status: "completed", attempt: 1 },
+        gate: {
+          nodeId: "gate",
+          status: "running",
+          attempt: 1,
+          _waitInstanceId: "wait-after-checkpoint",
+        },
+      },
+      currentNodes: ["gate"],
+      context: { input: {}, first: { ok: true } },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await sharedBackend.saveCheckpoint(runId, {
+      id: "cp-first",
+      nodeId: "first",
+      timestamp: new Date(),
+      context: { input: {}, first: { ok: true } },
+      nodeStates: { first: { nodeId: "first", status: "completed", attempt: 1 } },
+    });
+    await sharedBackend.savePendingEventWait(runId, {
+      id: "evw-after-checkpoint",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      waitInstanceId: "wait-after-checkpoint",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    try {
+      await replaying.getExecutor().resume(runId, "cp-first");
+      const waits = await sharedBackend.getPendingEventWaits(runId);
+      assertEquals(waits.length, 1);
+      assertEquals(waits[0]?.nodeId, "gate");
+      assert(waits[0]?.id !== "evw-after-checkpoint");
+      assert(waits[0]?.waitInstanceId !== "wait-after-checkpoint");
+    } finally {
+      replaying.getEventWaitManager().stop();
+      replaying.getApprovalManager().stop();
+    }
+  });
+
   it("persists a durable record for every wait parked by one concurrent batch", async () => {
     client.register(workflow({
       id: "concurrent-waits-workflow",

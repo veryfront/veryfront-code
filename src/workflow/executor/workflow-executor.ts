@@ -14,6 +14,7 @@ import {
 } from "#veryfront/errors";
 import type {
   BlobResolver,
+  NodeState,
   StepBuilderContext,
   WaitNodeConfig,
   WorkflowContext,
@@ -104,6 +105,12 @@ export interface WorkflowExecutorConfig {
   onComplete?: (run: WorkflowRun) => void;
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
+  /** Callback when workflow is waiting */
+  onWaitingPersist?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
   /** Callback when workflow is waiting */
   onWaiting?: (
     run: WorkflowRun,
@@ -522,9 +529,47 @@ export class WorkflowExecutor {
           detail: "Cannot resume workflow run because execution ownership or status changed",
         });
       }
+      await this.retireEventWaitsExcludedBySnapshot(runId, resumeInfo.nodeStates);
     }
 
     await this.executeAsync(runId, resumeInfo?.startFromNode, expectedWorkerId);
+  }
+
+  /**
+   * Retire durable event waits created after an explicitly restored snapshot.
+   *
+   * Delivery and timeout claims are first returned to their durable pending
+   * form so the same cancellation path can close them. Restoring a delivery
+   * claim also puts its event back in the mailbox for the replayed wait rather
+   * than consuming it on an execution the checkpoint discarded.
+   */
+  private async retireEventWaitsExcludedBySnapshot(
+    runId: string,
+    nodeStates: Record<string, NodeState>,
+  ): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    const isExcluded = (wait: { nodeId: string; waitInstanceId?: string }): boolean => {
+      const state = nodeStates[wait.nodeId];
+      return state?.status !== "running" || !isSameWaitNodeExecution(wait, {
+        nodeId: wait.nodeId,
+        waitInstanceId: state._waitInstanceId,
+      });
+    };
+
+    for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
+      if (!isExcluded(claim.wait)) continue;
+      await backend.restoreRunEventDelivery(runId, claim.wait.id, claim.event);
+    }
+    for (const wait of await backend.listTimedEventWaitClaims(runId)) {
+      if (!isExcluded(wait)) continue;
+      await backend.restorePendingEventWait(runId, wait.id);
+    }
+    for (const wait of await backend.getPendingEventWaits(runId)) {
+      if (!isExcluded(wait)) continue;
+      const resolved = await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+      if (resolved) await this.config.onEventWaitResolved?.(runId, wait.id);
+    }
   }
 
   /**
@@ -635,6 +680,8 @@ export class WorkflowExecutor {
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },
+        onWaitingPersist: (waitingRun, nodeId, waitConfig) =>
+          this.config.onWaitingPersist?.(waitingRun, nodeId, waitConfig),
         onWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
         onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),

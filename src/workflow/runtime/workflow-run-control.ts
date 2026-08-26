@@ -85,6 +85,13 @@ export interface WorkflowRunControlExecuteInput {
     error: Error,
     context: WorkflowContext,
   ): void | Promise<void>;
+  /** Persist the durable wait record while the execution lock is still held. */
+  onWaitingPersist?(
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ): void | Promise<void>;
+  /** Notify observers after durable persistence and lock release. */
   onWaiting?(
     run: WorkflowRun,
     nodeId: string,
@@ -153,6 +160,8 @@ export interface WorkflowRunControlEventDeliveryOperation {
   nodeId: string;
   eventName: string;
   waitKind: DurableTimedWaitKind;
+  /** Execution identity of the wait record being reconciled. */
+  waitInstanceId?: string;
   payload?: unknown;
   deliveredAt?: Date;
   maxAttempts?: number;
@@ -186,6 +195,7 @@ export interface WorkflowRunControlReconcileOutcome {
   status:
     | "reconciled"
     | "unchanged"
+    | "stale-wait"
     | "skipped-terminal"
     | "stale-owner"
     | "ownership-changing";
@@ -362,6 +372,7 @@ async function reconcileNodeOutcome(
     runId: string;
     maxAttempts: number;
     buildPatch(run: WorkflowRun): WorkflowRunUpdate;
+    isApplicable?(run: WorkflowRun): boolean;
     shouldResume: boolean;
     resume?(runId: string, expectedWorkerId?: string): Promise<void>;
     ownershipChurnDetail: string;
@@ -377,6 +388,9 @@ async function reconcileNodeOutcome(
       }
       if (!ACTIVE_RECONCILE_STATUSES.includes(run.status)) {
         return { status: "skipped-terminal", run };
+      }
+      if (input.isApplicable && !input.isApplicable(run)) {
+        return { status: "stale-wait", run };
       }
 
       const expectedWorkerId = run.workerId;
@@ -563,6 +577,19 @@ function reconcileEventDelivery(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,
+    isApplicable: (run) => {
+      // Records written before wait-instance identities existed retain the
+      // legacy node-id-only reconciliation behavior.
+      if (operation.waitInstanceId === undefined) return true;
+      const state = run.nodeStates[operation.nodeId];
+      return state !== undefined && state.status !== "completed" && isSameWaitNodeExecution({
+        nodeId: operation.nodeId,
+        waitInstanceId: operation.waitInstanceId,
+      }, {
+        nodeId: operation.nodeId,
+        waitInstanceId: state._waitInstanceId,
+      });
+    },
     buildPatch: (run) => {
       const currentNodeState = run.nodeStates[operation.nodeId];
       return buildNodeOutcomePatch(
@@ -901,8 +928,6 @@ export async function executeWorkflowRunControl(
       if (!paused) return { status: "ownership-lost" };
       pausedForWaiting = true;
 
-      await releaseWaitingLock();
-
       const pausedRun = await backend.getRun(runId);
       if (
         !pausedRun || pausedRun.status !== "waiting" ||
@@ -915,6 +940,7 @@ export async function executeWorkflowRunControl(
           run: pausedRun ?? undefined,
         };
       }
+      const announcedWaits: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
       for (const waiting of waitingNodes) {
         // A composite can rediscover a sibling that remained parked while a
         // different wait in the same child graph was resolved. Its durable
@@ -928,10 +954,32 @@ export async function executeWorkflowRunControl(
             pausedRun.nodeStates[waiting.nodeId]?._waitInstanceId,
           )
         ) continue;
-        await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+        await input.onWaitingPersist?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+        announcedWaits.push(waiting);
       }
-      await input.onWaitingBatchComplete?.(pausedRun);
-      return { status: "waiting", run: pausedRun };
+      // Keep the execution lock until every wait in the settled batch has a
+      // durable record. A publisher may reconcile the first visible wait as
+      // soon as it is appended; releasing earlier lets that resume race the
+      // owner-fenced append of a later sibling. The batch-complete hook may
+      // drain mail and resume the run, so it deliberately runs after release.
+      await releaseWaitingLock();
+      const releasedRun = await backend.getRun(runId);
+      if (
+        !releasedRun || releasedRun.status !== "waiting" ||
+        executionController.signal.aborted ||
+        !input.isCurrentExecution(runId, executionController) ||
+        (expectedWorkerId !== undefined && releasedRun.workerId !== expectedWorkerId)
+      ) {
+        return {
+          status: releasedRun?.status === "cancelled" ? "cancelled" : "skipped",
+          run: releasedRun ?? undefined,
+        };
+      }
+      for (const waiting of announcedWaits) {
+        await input.onWaiting?.(releasedRun, waiting.nodeId, waiting.waitConfig);
+      }
+      await input.onWaitingBatchComplete?.(releasedRun);
+      return { status: "waiting", run: releasedRun };
     }
 
     // A graph that found nothing to schedule behind a parked wait is not
@@ -963,8 +1011,6 @@ export async function executeWorkflowRunControl(
       if (!paused) return { status: "ownership-lost" };
       pausedForWaiting = true;
 
-      await releaseWaitingLock();
-
       const pausedRun = await backend.getRun(runId);
       if (
         !pausedRun || pausedRun.status !== "waiting" ||
@@ -985,6 +1031,7 @@ export async function executeWorkflowRunControl(
       // is nothing to do; otherwise re-announce every missing wait from the
       // exact runtime config retained by the DAG. A live first sibling must
       // not hide a later sibling whose process died before persisting it.
+      const announcedWaits: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
       for (const waiting of stalledWaitNodes) {
         if (
           await hasLiveNodeWait(
@@ -995,12 +1042,29 @@ export async function executeWorkflowRunControl(
           )
         ) continue;
         if (pausedRun.nodeStates[waiting.nodeId]?.status !== "running") continue;
-        await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+        await input.onWaitingPersist?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+        announcedWaits.push(waiting);
+      }
+      await releaseWaitingLock();
+      const releasedRun = await backend.getRun(runId);
+      if (
+        !releasedRun || releasedRun.status !== "waiting" ||
+        executionController.signal.aborted ||
+        !input.isCurrentExecution(runId, executionController) ||
+        (expectedWorkerId !== undefined && releasedRun.workerId !== expectedWorkerId)
+      ) {
+        return {
+          status: releasedRun?.status === "cancelled" ? "cancelled" : "skipped",
+          run: releasedRun ?? undefined,
+        };
+      }
+      for (const waiting of announcedWaits) {
+        await input.onWaiting?.(releasedRun, waiting.nodeId, waiting.waitConfig);
       }
       // A live event wait may already have buffered mail whose publisher died
       // before draining it. Run the batch-complete hook even when no wait had
       // to be reconstructed so a resume can consume that durable envelope.
-      await input.onWaitingBatchComplete?.(pausedRun);
+      await input.onWaitingBatchComplete?.(releasedRun);
 
       const latestRun = await backend.getRun(runId);
       if (!latestRun) return { status: "skipped" };

@@ -633,7 +633,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted?.output, undefined);
   });
 
-  it("releases the waiting lock before callback reconciliation", async () => {
+  it("keeps the waiting lock through persistence and releases it before batch reconciliation", async () => {
     const backend = new WaitingReleaseBackend();
     const run = {
       ...createRun("waiting-release-before-callback"),
@@ -641,7 +641,9 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       workerId: "run-execution:owner",
     };
     await backend.createRun(run);
-    let lockedDuringCallback: boolean | undefined;
+    let lockedDuringPersistence: boolean | undefined;
+    let lockedDuringNotification: boolean | undefined;
+    let lockedDuringBatchComplete: boolean | undefined;
 
     await execute(
       backend,
@@ -649,15 +651,23 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       () => waitingResult(),
       {
         enableLocking: true,
-        onWaiting: async () => {
+        onWaitingPersist: async () => {
           backend.callbackStarted = true;
-          lockedDuringCallback = await backend.isLocked(run.id);
+          lockedDuringPersistence = await backend.isLocked(run.id);
+        },
+        onWaiting: async () => {
+          lockedDuringNotification = await backend.isLocked(run.id);
+        },
+        onWaitingBatchComplete: async () => {
+          lockedDuringBatchComplete = await backend.isLocked(run.id);
         },
       },
     );
 
-    assertEquals(backend.releaseBeforeCallback, true);
-    assertEquals(lockedDuringCallback, false);
+    assertEquals(backend.releaseBeforeCallback, false);
+    assertEquals(lockedDuringPersistence, true);
+    assertEquals(lockedDuringNotification, false);
+    assertEquals(lockedDuringBatchComplete, false);
     assertEquals((await backend.getRun(run.id))?.status, "waiting");
   });
 
@@ -884,7 +894,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     ];
     result.nodeStates = run.nodeStates;
     const outcome = await execute(backend, run, () => result, {
-      onWaiting: async (_run, nodeId, config) => {
+      onWaitingPersist: async (_run, nodeId, config) => {
         announced.push({ nodeId, config });
         await backend.savePendingEventWait(run.id, {
           id: `evw-${nodeId}-reconstructed`,
@@ -1024,7 +1034,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     let announced = 0;
 
     const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"), {
-      onWaiting: async () => {
+      onWaitingPersist: async () => {
         announced++;
         await backend.savePendingEventWait(run.id, {
           id: "evw-reconstructed",
@@ -1457,6 +1467,40 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     assertEquals(state?.status, "completed");
     assertEquals(state?.error, undefined);
     assertEquals(state?.attempt, 2);
+  });
+
+  it("does not apply an event delivery from a discarded wait execution", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-stale-event-wait"),
+      status: "waiting" as const,
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "running" as const,
+          attempt: 1,
+          _waitInstanceId: "wait-current",
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "event-delivery",
+        runId: run.id,
+        waitId: "wait-stale",
+        nodeId: "gate",
+        eventName: "gate.ready",
+        waitKind: "event",
+        waitInstanceId: "wait-stale",
+      },
+    });
+
+    assertEquals(outcome.status, "stale-wait");
+    assertEquals((await backend.getRun(run.id))?.nodeStates.gate?.status, "running");
+    assertEquals((await backend.getRun(run.id))?.context.gate, undefined);
   });
 
   it("sends complete maps to a backend without declared key-merge support", async () => {

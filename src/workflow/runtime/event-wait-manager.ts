@@ -709,6 +709,17 @@ export class EventWaitManager {
 
     try {
       for (const wait of await backend.getPendingEventWaits(runId)) {
+        // A replacement process can resume a run whose durable wait was
+        // parked by a process that no longer owns an in-memory deadline
+        // timer. Re-arm every live persisted deadline while inspecting the
+        // stalled batch; this also covers delays, which intentionally do not
+        // participate in mailbox matching below.
+        if (
+          wait.waitKind === "delay" ||
+          (wait.expiresAt !== undefined && wait.expiresAt.getTime() > Date.now())
+        ) {
+          this.scheduleExpiry(wait);
+        }
         await this.drainWait(wait, runId, outcome, expireOverdueWaits);
       }
     } finally {
@@ -838,6 +849,12 @@ export class EventWaitManager {
     outcome: DrainOutcome,
     reconciled: WorkflowRunControlReconcileOutcome,
   ): Promise<void> {
+    if (reconciled.status === "stale-wait") {
+      outcome.deliveredEventIds.delete(event.id);
+      outcome.failedEventIds.delete(event.id);
+      await this.retireStaleDelivery(wait, event);
+      return;
+    }
     if (reconciled.status === "skipped-terminal") {
       if (reconciled.run?.status === "failed") {
         outcome.deliveredEventIds.delete(event.id);
@@ -853,6 +870,18 @@ export class EventWaitManager {
     outcome.deliveredEventIds.add(event.id);
     this.recordDeliveredEventReceipt(wait.runId, event.id);
     await this.finalizeDelivery(wait, event, true);
+  }
+
+  /** Re-buffer an event claimed by a wait execution a checkpoint discarded. */
+  private async retireStaleDelivery(
+    wait: PersistedPendingEventWait,
+    event: RunEventEnvelope,
+  ): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    await backend.restoreRunEventDelivery(wait.runId, wait.id, event);
+    await backend.resolvePendingEventWait(wait.runId, wait.id, "cancelled");
+    this.clearExpiry(wait.id);
   }
 
   private async finalizeDelivery(
@@ -1352,6 +1381,7 @@ export class EventWaitManager {
         nodeId: wait.nodeId,
         eventName: wait.eventName,
         waitKind: wait.waitKind,
+        waitInstanceId: wait.waitInstanceId,
         payload,
         deliveredAt: new Date(),
         maxAttempts: MAX_DELIVERY_RECONCILIATION_ATTEMPTS,
@@ -1479,6 +1509,10 @@ export class EventWaitManager {
   private async completeClaimedDelay(wait: PersistedPendingEventWait): Promise<void> {
     try {
       const reconciled = await this.deliver(wait, undefined);
+      if (reconciled.status === "stale-wait") {
+        await this.retireStaleTimedWait(wait);
+        return;
+      }
       if (reconciled.status === "skipped-terminal" && reconciled.run?.status === "failed") {
         await this.restoreClaimedWait(wait);
       } else {
@@ -1501,6 +1535,18 @@ export class EventWaitManager {
       );
       await this.restoreClaimedWait(wait);
     }
+  }
+
+  private async retireStaleTimedWait(wait: PersistedPendingEventWait): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    const restored = await backend.restorePendingEventWait(wait.runId, wait.id);
+    if (restored) {
+      await backend.resolvePendingEventWait(wait.runId, wait.id, "cancelled");
+    } else {
+      await backend.finalizeTimedEventWaitClaim(wait.runId, wait.id);
+    }
+    this.clearExpiry(wait.id);
   }
 
   private async applyClaimedEventExpiry(wait: PersistedPendingEventWait): Promise<void> {
@@ -1541,6 +1587,13 @@ export class EventWaitManager {
     if (!ACTIVE_WAIT_STATUSES.includes(run.status)) return true;
 
     const existingNodeState = run.nodeStates[wait.nodeId];
+    if (
+      existingNodeState?.status !== "running" ||
+      !isSameWaitNodeExecution(wait, {
+        nodeId: wait.nodeId,
+        waitInstanceId: existingNodeState._waitInstanceId,
+      })
+    ) return true;
     const failedNodeState = {
       ...existingNodeState,
       nodeId: wait.nodeId,

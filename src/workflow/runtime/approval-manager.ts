@@ -296,7 +296,7 @@ export class ApprovalManager {
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
-    options: { responseSchemaId?: string } = {},
+    options: { responseSchemaId?: string; notify?: boolean } = {},
   ): Promise<ApprovalRequest> {
     const runId = run.id;
     const workerId = run.workerId;
@@ -397,6 +397,28 @@ export class ApprovalManager {
       throw error;
     }
 
+    if (options.notify !== false) await this.notifyApproval(run, approval);
+
+    return projectApprovalRequest(runId, approval);
+  }
+
+  /** Notify after the execution lock has released for an already-persisted approval. */
+  async notifyPendingApproval(run: WorkflowRun, nodeId: string): Promise<void> {
+    if (!this.config.notifier) return;
+    const state = run.nodeStates[nodeId];
+    const approval = (await this.config.backend.getPendingApprovals(run.id)).find((candidate) =>
+      isSameWaitNodeExecution(candidate, {
+        nodeId,
+        waitInstanceId: state?._waitInstanceId,
+      })
+    );
+    if (approval) await this.notifyApproval(run, approval);
+  }
+
+  private async notifyApproval(
+    run: WorkflowRun,
+    approval: PersistedPendingApproval,
+  ): Promise<void> {
     try {
       await this.config.notifier?.(
         structuredClone(projectPendingApproval(approval)),
@@ -407,7 +429,7 @@ export class ApprovalManager {
       approval.notificationError = message;
       logger.error(
         "Failed to notify approvers; approval created but approvers were NOT informed",
-        { approvalId: approval.id, runId, error: message },
+        { approvalId: approval.id, runId: run.id, error: message },
       );
     }
 
@@ -417,27 +439,25 @@ export class ApprovalManager {
         logger.warn(
           "Backend cannot persist approval notification state; the failed notification is " +
             "reported only to this caller",
-          { approvalId: approval.id, runId },
+          { approvalId: approval.id, runId: run.id },
         );
       } else {
         try {
           await updatePendingApproval.call(
             this.config.backend,
-            runId,
+            run.id,
             approval.id,
             { notificationError: approval.notificationError },
           );
         } catch (error) {
           logger.error(
             "Failed to persist approval notification state",
-            { approvalId: approval.id, runId },
+            { approvalId: approval.id, runId: run.id },
             error,
           );
         }
       }
     }
-
-    return projectApprovalRequest(runId, approval);
   }
 
   /** Get pending approval by ID */

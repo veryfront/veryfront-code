@@ -117,7 +117,7 @@ export class WorkflowClient {
       backend: this.backend,
       debug: this.debug,
       ...config.executor,
-      onWaiting: async (run, nodeId, activeWaitConfig) => {
+      onWaitingPersist: async (run, nodeId, activeWaitConfig) => {
         const input = run.nodeStates[nodeId]?.input as
           | {
             type?: string;
@@ -130,7 +130,6 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
@@ -160,12 +159,10 @@ export class WorkflowClient {
           } else {
             logger.warn("No event wait config found for node", { runId: run.id, nodeId });
           }
-          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
         if (input.type !== "approval") {
-          await userOnWaiting?.(run, nodeId, activeWaitConfig);
           return;
         }
 
@@ -197,14 +194,20 @@ export class WorkflowClient {
             nodeId,
             waitConfig,
             run.context,
-            responseSchemaId === undefined ? undefined : { responseSchemaId },
+            responseSchemaId === undefined
+              ? { notify: false }
+              : { responseSchemaId, notify: false },
           );
           logger.debug("Created approval for node", { nodeId });
         } catch (error) {
           logger.error("Failed to create approval", error);
           throw error;
         }
-
+      },
+      onWaiting: async (run, nodeId, activeWaitConfig) => {
+        if ((run.nodeStates[nodeId]?.input as { type?: string } | undefined)?.type === "approval") {
+          await this.approvalManager.notifyPendingApproval(run, nodeId);
+        }
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
       onWaitingBatchComplete: async (run) => {
