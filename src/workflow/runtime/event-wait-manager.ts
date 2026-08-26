@@ -145,6 +145,7 @@ export class EventWaitManager {
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Shared accumulator and completion barrier for same-backend, same-run drain passes. */
   private drainSessions: Map<string, DrainSession>;
+  private readonly deliveryRecoveryOwnerId = crypto.randomUUID();
   /** Best-effort prompt retries; durable claims remain the restart fallback. */
   private finalizationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private finalizationRetryAttempts = new Map<string, number>();
@@ -318,7 +319,6 @@ export class EventWaitManager {
             detail: "Workflow execution ownership changed before event wait persistence",
           });
         }
-        persisted = true;
       } else {
         await backend.savePendingEventWait(run.id, wait);
         persisted = true;
@@ -658,8 +658,8 @@ export class EventWaitManager {
         terminal: false,
       };
     }
-    if (!this.drainSessions.has(runId)) await this.recoverAbandonedDeliveries(runId);
     let session = this.drainSessions.get(runId);
+    const ownsRecoveryGuard = session === undefined;
     if (!session) {
       const idle = Promise.withResolvers<void>();
       session = {
@@ -678,6 +678,7 @@ export class EventWaitManager {
     session.activePasses++;
 
     try {
+      if (ownsRecoveryGuard) await this.recoverAbandonedDeliveries(runId, runId);
       for (const wait of await backend.getPendingEventWaits(runId)) {
         // A delay is released by its own deadline, never by a published event,
         // so it must not consume anything from the mailbox.
@@ -775,11 +776,17 @@ export class EventWaitManager {
     wait: PersistedPendingEventWait,
     event: RunEventEnvelope,
     delivered: boolean,
+    recoveryOwnerId?: string,
   ): Promise<void> {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) return;
     try {
-      await backend.finalizeRunEventDelivery(wait.runId, event.id, delivered);
+      await backend.finalizeRunEventDelivery(
+        wait.runId,
+        event.id,
+        delivered,
+        recoveryOwnerId,
+      );
       this.clearFinalizationRetry(event.id);
     } catch (error) {
       logger.error(
@@ -787,7 +794,7 @@ export class EventWaitManager {
         { runId: wait.runId, waitId: wait.id, eventId: event.id },
         error,
       );
-      this.scheduleFinalizationRetry(wait, event, delivered);
+      this.scheduleFinalizationRetry(wait, event, delivered, recoveryOwnerId);
     }
   }
 
@@ -795,6 +802,7 @@ export class EventWaitManager {
     wait: PersistedPendingEventWait,
     event: RunEventEnvelope,
     delivered: boolean,
+    recoveryOwnerId?: string,
   ): void {
     if (this.destroyed || this.finalizationRetryTimers.has(event.id)) return;
     const attempt = (this.finalizationRetryAttempts.get(event.id) ?? 0) + 1;
@@ -816,7 +824,7 @@ export class EventWaitManager {
     const timer = setTimeout(() => {
       this.finalizationRetryTimers.delete(event.id);
       if (this.destroyed) return;
-      void this.finalizeDelivery(wait, event, delivered);
+      void this.finalizeDelivery(wait, event, delivered, recoveryOwnerId);
     }, retryDelay);
     unrefTimer(timer);
     this.finalizationRetryTimers.set(event.id, timer);
@@ -844,6 +852,7 @@ export class EventWaitManager {
   private scheduleCommittedResumeRetry(
     wait: PersistedPendingEventWait,
     event?: RunEventEnvelope,
+    recoveryOwnerId?: string,
   ): void {
     const key = this.committedResumeRetryKey(wait, event);
     if (this.destroyed || this.committedResumeRetryTimers.has(key)) return;
@@ -860,13 +869,13 @@ export class EventWaitManager {
     const timer = setTimeout(() => {
       this.committedResumeRetryTimers.delete(key);
       if (this.destroyed) return;
-      void this.reconcileCommittedResume(wait, event).catch((error) => {
+      void this.reconcileCommittedResume(wait, event, recoveryOwnerId).catch((error) => {
         logger.error(
           "Failed to resume a run after its event-wait node committed",
           { runId: wait.runId, waitId: wait.id, nodeId: wait.nodeId },
           error,
         );
-        this.scheduleCommittedResumeRetry(wait, event);
+        this.scheduleCommittedResumeRetry(wait, event, recoveryOwnerId);
       });
     }, retryDelay);
     unrefTimer(timer);
@@ -887,10 +896,11 @@ export class EventWaitManager {
   private async reconcileCommittedResume(
     wait: PersistedPendingEventWait,
     event?: RunEventEnvelope,
+    recoveryOwnerId?: string,
   ): Promise<void> {
     const run = await this.config.backend.getRun(wait.runId);
     if (!run) {
-      if (event) await this.finalizeDelivery(wait, event, true);
+      if (event) await this.finalizeDelivery(wait, event, true, recoveryOwnerId);
       else await this.finalizeTimedWaitClaim(wait);
       this.clearCommittedResumeRetry(wait, event);
       return;
@@ -909,7 +919,7 @@ export class EventWaitManager {
       }
       await this.config.executor.resume(run.id, undefined, run.workerId);
     }
-    if (event) await this.finalizeDelivery(wait, event, true);
+    if (event) await this.finalizeDelivery(wait, event, true, recoveryOwnerId);
     else await this.finalizeTimedWaitClaim(wait);
     this.clearCommittedResumeRetry(wait, event);
   }
@@ -967,6 +977,7 @@ export class EventWaitManager {
   /** Recover durable claims left behind before delivery or finalization committed. */
   private async recoverAbandonedDeliveries(
     runId?: string,
+    recoveryGuardRunId?: string,
   ): Promise<Set<string>> {
     const backend = this.config.backend;
     const restoredRunIds = new Set<string>();
@@ -975,8 +986,28 @@ export class EventWaitManager {
       DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS;
 
     for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
-      if (this.drainSessions.has(claim.wait.runId)) continue;
+      if (
+        this.drainSessions.has(claim.wait.runId) &&
+        claim.wait.runId !== recoveryGuardRunId
+      ) continue;
       if (Date.now() - claim.claimedAt.getTime() < recoveryDelay) continue;
+      let reserved: boolean;
+      try {
+        reserved = await backend.claimRunEventDeliveryRecovery(
+          claim.wait.runId,
+          claim.event.id,
+          new Date(Date.now() - Math.max(recoveryDelay, MIN_EXPIRY_RETRY_DELAY_MS)),
+          this.deliveryRecoveryOwnerId,
+        );
+      } catch (error) {
+        logger.error(
+          "Failed to reserve an abandoned event delivery claim",
+          { runId: claim.wait.runId, waitId: claim.wait.id, eventId: claim.event.id },
+          error,
+        );
+        continue;
+      }
+      if (!reserved) continue;
       let run: WorkflowRun | null;
       try {
         run = await backend.getRun(claim.wait.runId);
@@ -993,7 +1024,12 @@ export class EventWaitManager {
       if (!run || run.status === "completed" || run.status === "cancelled") {
         const delivered = run?.status === "completed" &&
           run.nodeStates[claim.wait.nodeId]?.status === "completed";
-        await this.finalizeDelivery(claim.wait, claim.event, delivered);
+        await this.finalizeDelivery(
+          claim.wait,
+          claim.event,
+          delivered,
+          this.deliveryRecoveryOwnerId,
+        );
         continue;
       }
       const currentState = run.nodeStates[claim.wait.nodeId];
@@ -1006,12 +1042,21 @@ export class EventWaitManager {
         // A newer iteration of this wait proves the claimed event already
         // committed the old one. Finalize the old mailbox reservation; never
         // restore its envelope into the newer wait.
-        await this.finalizeDelivery(claim.wait, claim.event, true);
+        await this.finalizeDelivery(
+          claim.wait,
+          claim.event,
+          true,
+          this.deliveryRecoveryOwnerId,
+        );
         continue;
       }
       if (currentState?.status === "completed") {
         try {
-          await this.reconcileCommittedResume(claim.wait, claim.event);
+          await this.reconcileCommittedResume(
+            claim.wait,
+            claim.event,
+            this.deliveryRecoveryOwnerId,
+          );
         } catch (error) {
           logger.error(
             "Failed to reconcile an abandoned committed event delivery",
@@ -1022,7 +1067,11 @@ export class EventWaitManager {
             },
             error,
           );
-          this.scheduleCommittedResumeRetry(claim.wait, claim.event);
+          this.scheduleCommittedResumeRetry(
+            claim.wait,
+            claim.event,
+            this.deliveryRecoveryOwnerId,
+          );
         }
         continue;
       }
@@ -1031,6 +1080,7 @@ export class EventWaitManager {
           claim.wait.runId,
           claim.wait.id,
           claim.event,
+          this.deliveryRecoveryOwnerId,
         );
         if (restored) this.rearmRestoredWaitExpiry(claim.wait);
         restoredRunIds.add(claim.wait.runId);

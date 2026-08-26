@@ -525,6 +525,25 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
     });
 
+    it("preserves the historical append contract for unconditional approval saves", async () => {
+      const runId = "approval-unconditional-append";
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Review",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await backend.savePendingApproval(runId, approval("first"));
+      await backend.savePendingApproval(runId, approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ id }) => id),
+        ["first", "second"],
+      );
+    });
+
     it("allows a new wait instance while the previous decision is reconciling", async () => {
       const runId = "approval-repeated-wait-instance";
       const approval = (id: string, waitInstanceId: string): PersistedPendingApproval => ({

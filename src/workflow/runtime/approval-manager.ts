@@ -229,6 +229,7 @@ export class ApprovalManager {
   private destroyed = false;
   private responseSchemas = new Map<string, Schema<unknown>>();
   private activeDecisionClaims = new Set<string>();
+  private readonly decisionRecoveryOwnerId = crypto.randomUUID();
   private decisionClaimReconciliation?: Promise<void>;
   private decisionClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
   private decisionClaimRecoveryAt?: number;
@@ -561,11 +562,35 @@ export class ApprovalManager {
         continue;
       }
 
+      const claimRecovery = this.config.backend.claimApprovalDecisionRecovery;
+      if (!claimRecovery) continue;
+      try {
+        const reserved = await claimRecovery.call(
+          this.config.backend,
+          runId,
+          approval.id,
+          new Date(Date.now() - Math.max(recoveryDelay, 1_000)),
+          this.decisionRecoveryOwnerId,
+        );
+        if (!reserved) continue;
+      } catch (error) {
+        logger.error(
+          "Failed to reserve an approval decision claim for recovery",
+          { approvalId: approval.id, runId },
+          error,
+        );
+        continue;
+      }
+
       this.activeDecisionClaims.add(claimKey);
       try {
         const run = await this.config.backend.getRun(runId);
         if (!run) {
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+          await this.config.backend.finalizeApprovalDecision?.(
+            runId,
+            approval.id,
+            this.decisionRecoveryOwnerId,
+          );
           continue;
         }
         const currentState = run.nodeStates[approval.nodeId];
@@ -578,7 +603,11 @@ export class ApprovalManager {
           // The old decision already resumed the run far enough to create a
           // newer execution of this reusable wait. Reapplying it would approve
           // the new iteration without its own human decision.
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+          await this.config.backend.finalizeApprovalDecision?.(
+            runId,
+            approval.id,
+            this.decisionRecoveryOwnerId,
+          );
           continue;
         }
         if (currentState?.status === "completed") {
@@ -586,7 +615,11 @@ export class ApprovalManager {
             if (!this.config.executor) continue;
             await this.config.executor.resume(runId, undefined, run.workerId);
           }
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+          await this.config.backend.finalizeApprovalDecision?.(
+            runId,
+            approval.id,
+            this.decisionRecoveryOwnerId,
+          );
           continue;
         }
 
@@ -615,7 +648,11 @@ export class ApprovalManager {
         ) {
           continue;
         }
-        await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+        await this.config.backend.finalizeApprovalDecision?.(
+          runId,
+          approval.id,
+          this.decisionRecoveryOwnerId,
+        );
       } catch (error) {
         logger.error(
           "Failed to recover an approval decision claim",
@@ -862,7 +899,7 @@ export class ApprovalManager {
       );
       if (!failed) {
         const latest = await this.config.backend.getRun(runId);
-        if (latest?.status === "failed") continue;
+        if (latest && latest.status !== "completed" && latest.status !== "cancelled") continue;
       }
       try {
         await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);

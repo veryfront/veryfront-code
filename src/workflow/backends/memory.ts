@@ -534,7 +534,17 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
-    return this.savePendingApprovalIfAbsent(runId, approval).then(() => undefined);
+    logger.debug("Saving approval", { approvalId: approval.id, runId });
+    const approvals = this.approvals.get(runId) ?? [];
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.approvals.set(runId, approvals);
+    const run = this.runs.get(runId);
+    if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
+    return Promise.resolve();
   }
 
   savePendingApprovalIfAbsent(
@@ -683,9 +693,37 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(claims);
   }
 
-  finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+  claimApprovalDecisionRecovery(
+    runId: string,
+    approvalId: string,
+    claimedBefore: Date,
+    recoveryOwnerId: string,
+  ): Promise<boolean> {
     const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
-    if (approval) delete approval.reconciliationPending;
+    if (!approval || approval.reconciliationPending !== true) return Promise.resolve(false);
+    if (approval.recoveryOwnerId === recoveryOwnerId) return Promise.resolve(true);
+    if (
+      approval.recoveryClaimedAt !== undefined &&
+      approval.recoveryClaimedAt.getTime() > claimedBefore.getTime()
+    ) return Promise.resolve(false);
+    approval.recoveryClaimedAt = new Date();
+    approval.recoveryOwnerId = recoveryOwnerId;
+    return Promise.resolve(true);
+  }
+
+  finalizeApprovalDecision(
+    runId: string,
+    approvalId: string,
+    recoveryOwnerId?: string,
+  ): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (!approval) return Promise.resolve();
+    if (recoveryOwnerId !== undefined && approval.recoveryOwnerId !== recoveryOwnerId) {
+      return Promise.resolve();
+    }
+    delete approval.reconciliationPending;
+    delete approval.recoveryClaimedAt;
+    delete approval.recoveryOwnerId;
     return Promise.resolve();
   }
 
@@ -968,6 +1006,24 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(claims);
   }
 
+  claimRunEventDeliveryRecovery(
+    runId: string,
+    eventId: string,
+    claimedBefore: Date,
+    recoveryOwnerId: string,
+  ): Promise<boolean> {
+    const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (!claim) return Promise.resolve(false);
+    if (claim.recoveryOwnerId === recoveryOwnerId) return Promise.resolve(true);
+    if (
+      claim.recoveryClaimedAt !== undefined &&
+      claim.recoveryClaimedAt.getTime() > claimedBefore.getTime()
+    ) return Promise.resolve(false);
+    claim.recoveryClaimedAt = new Date();
+    claim.recoveryOwnerId = recoveryOwnerId;
+    return Promise.resolve(true);
+  }
+
   restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
     const mailbox = this.runEvents.get(runId) ?? [];
     restoreRetainedRunEvent(mailbox, event);
@@ -990,9 +1046,13 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     waitId: string,
     event: RunEventEnvelope,
+    recoveryOwnerId?: string,
   ): Promise<boolean> {
     const claim = this.runEventClaims.get(runId)?.get(event.id);
     if (!claim || claim.wait.id !== waitId) return Promise.resolve(false);
+    if (recoveryOwnerId !== undefined && claim.recoveryOwnerId !== recoveryOwnerId) {
+      return Promise.resolve(false);
+    }
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
     if (restored) {
@@ -1009,8 +1069,16 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(restored);
   }
 
-  finalizeRunEventDelivery(runId: string, eventId: string, delivered: boolean): Promise<void> {
+  finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+    recoveryOwnerId?: string,
+  ): Promise<void> {
     const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (recoveryOwnerId !== undefined && claim?.recoveryOwnerId !== recoveryOwnerId) {
+      return Promise.resolve();
+    }
     if (claim) {
       const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);
       if (wait) {

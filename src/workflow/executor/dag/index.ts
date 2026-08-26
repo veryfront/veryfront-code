@@ -96,6 +96,7 @@ export class DAGExecutor {
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
+      ancestorNodeIds: new Set(),
       ownership,
     };
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
@@ -119,7 +120,8 @@ export class DAGExecutor {
     let contextPatch = createSetContextPatch();
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
-    const graphNodeIds = new Set(nodeMap.keys());
+    const graphNodeIds = new Set([...scope.ancestorNodeIds, ...nodeMap.keys()]);
+    const childScope: ExecutionScope = { ...scope, ancestorNodeIds: graphNodeIds };
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -323,7 +325,7 @@ export class DAGExecutor {
             nodeMap.get(nodeId)!,
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
-            scope,
+            childScope,
             graphNodeIds,
             abortSignal,
           )

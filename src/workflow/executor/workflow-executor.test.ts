@@ -156,6 +156,27 @@ class BoundaryPatchRecordingBackend extends MemoryBackend {
   }
 }
 
+class ReplacementPatchRecordingBackend extends MemoryBackend {
+  readonly boundaryPatches: Array<Partial<WorkflowRun>> = [];
+
+  constructor() {
+    super();
+    Object.defineProperty(this, "supportsRunPatchKeyMerge", { value: false });
+  }
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === undefined && patch.nodeStates !== undefined) {
+      this.boundaryPatches.push(patch);
+    }
+    return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
+  }
+}
+
 class RejectingNodeStateBoundaryBackend extends MemoryBackend {
   override updateRunIfStatusAndWorker(
     runId: string,
@@ -333,6 +354,30 @@ describe("workflow/executor/workflow-executor", () => {
 
     assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("work")), true);
     assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("input")), false);
+  });
+
+  it("omits merge-only deletes from replacement backend patches", async () => {
+    const backend = new ReplacementPatchRecordingBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "replacement-boundary-shape",
+        steps: [step("work", { tool: createTool("work", () => ({ done: true })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("replacement-boundary-shape", { retained: true });
+    await handle.settled();
+
+    assertEquals(backend.boundaryPatches.length > 0, true);
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("contextDeletes" in patch)),
+      true,
+    );
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("nodeStateDeletes" in patch)),
+      true,
+    );
   });
 
   it("persists the exact source integration policy when a run starts", async () => {

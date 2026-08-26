@@ -320,6 +320,7 @@ class MockRedisAdapter implements RedisAdapter {
       }
       const approval = JSON.parse(args[0]!);
       if (
+        args[4] === "1" &&
         list.some((raw) => {
           const candidate = JSON.parse(raw);
           return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
@@ -429,14 +430,42 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(0);
     }
 
+    if (script.includes("claim-approval-decision-recovery")) {
+      const [approvalId, claimedBefore, recoveryOwnerId, claimedAt] = args;
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id !== approvalId) continue;
+          if (approval.reconciliationPending !== true) return Promise.resolve(0);
+          if (approval.recoveryOwnerId === recoveryOwnerId) return Promise.resolve(1);
+          if (
+            approval.recoveryClaimedAt !== undefined &&
+            approval.recoveryClaimedAt > claimedBefore!
+          ) return Promise.resolve(0);
+          approval.recoveryClaimedAt = claimedAt;
+          approval.recoveryOwnerId = recoveryOwnerId;
+          list[i] = JSON.stringify(approval);
+          return Promise.resolve(1);
+        }
+      }
+      return Promise.resolve(0);
+    }
+
     if (script.includes("finalize-approval-decision")) {
       const approvalId = args[0]!;
+      const recoveryOwnerId = args[1];
       const list = this.lists.get(key);
       if (list) {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
+            if (recoveryOwnerId && approval.recoveryOwnerId !== recoveryOwnerId) {
+              return Promise.resolve(0);
+            }
             delete approval.reconciliationPending;
+            delete approval.recoveryClaimedAt;
+            delete approval.recoveryOwnerId;
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -2695,6 +2724,22 @@ describe("RedisBackend", () => {
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
       assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
+    it("preserves the historical append contract for unconditional approval saves", async () => {
+      const runId = "run-ap-unconditional-append";
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      await backend.savePendingApproval(runId, approval("first"));
+      await backend.savePendingApproval(runId, approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ id }) => id),
+        ["first", "second"],
+      );
     });
 
     it("allows a new wait instance while the previous decision is reconciling", async () => {

@@ -41,6 +41,8 @@ export interface ExecutionScope {
    * record can tell them apart.
    */
   resumingWait: boolean;
+  /** Node ids declared by every graph enclosing the current child graph. */
+  ancestorNodeIds: ReadonlySet<string>;
   ownership?: CheckpointOwnership;
 }
 

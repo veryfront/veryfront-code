@@ -209,10 +209,12 @@ export class WorkflowExecutor {
           ["running"],
           {
             nodeStates: keyMerge ? nodeStatePatch.set : nodeStates,
-            nodeStateDeletes: keyMerge ? nodeStatePatch.delete : undefined,
+            ...(keyMerge ? { nodeStateDeletes: nodeStatePatch.delete } : {}),
             currentNodes,
             context: keyMerge ? publicContextPatch : toPersistedWorkflowContext(context),
-            contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant"),
+            ...(keyMerge
+              ? { contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant") }
+              : {}),
           },
           ownership?.workerId,
         );

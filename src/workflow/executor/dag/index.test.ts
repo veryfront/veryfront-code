@@ -35,7 +35,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
-import { loop, map, step, waitForApproval } from "../../dsl/index.ts";
+import { loop, map, parallel, step, waitForApproval } from "../../dsl/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1005,6 +1005,25 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, false);
       assertStringIncludes(result.error ?? "", 'generated child id "poll/review"');
       assertEquals(result.nodeStates["poll/review"], undefined);
+    });
+
+    it("rejects nested child ids that collide with ancestor graph nodes", async () => {
+      const nodes = [
+        parallel("container", [
+          loop("poll", {
+            while: () => true,
+            maxIterations: 1,
+            steps: [waitForApproval("review", { message: "Review nested iteration" })],
+          }),
+        ]),
+        waitForApproval("container/poll/review", { message: "Independent ancestor review" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "container/poll/review"');
+      assertEquals(result.nodeStates["container/poll/review"], undefined);
     });
 
     it("should loop until condition is false", async () => {
