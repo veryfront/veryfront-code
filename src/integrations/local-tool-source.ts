@@ -42,10 +42,13 @@ const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectValues = Object.values;
+const RegExpConstructor = RegExp;
+const regexpExec = RegExp.prototype.exec;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringCharCodeAt = String.prototype.charCodeAt;
+const stringEndsWith = String.prototype.endsWith;
 const stringIncludes = String.prototype.includes;
 const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
@@ -77,6 +80,7 @@ type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
 interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
+  readonly authEnvironmentHost?: EnvironmentHostBinding;
   readonly connector: LocalCatalogConnector;
   readonly endpoint: IntegrationEndpoint;
   readonly endpointOrigin?: string;
@@ -420,7 +424,7 @@ function isHostWithOptionalPort(value: string, allowPathPrefix: boolean): boolea
  */
 function environmentHostBinding(
   connector: LocalCatalogConnector,
-  endpoint: IntegrationEndpoint,
+  endpoint: Pick<IntegrationEndpoint, "url">,
   toolId: string,
 ): EnvironmentHostBinding | undefined {
   const url = endpoint.url;
@@ -652,7 +656,7 @@ function tenantHostArgument(
 function assertSupportedAuth(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
-): void {
+): EnvironmentHostBinding | undefined {
   const auth = connector.auth;
   if (connector.name === "salesforce") return;
 
@@ -669,27 +673,85 @@ function assertSupportedAuth(
     if (!auth.keyName) {
       configurationError(`Local integration "${connector.name}" is missing its API-key name`);
     }
-    return;
+    return undefined;
   }
 
   if (auth.type === "basic") {
     if (!auth.usernameKey || !auth.passwordKey) {
       configurationError(`Local integration "${connector.name}" is missing Basic credential names`);
     }
-    return;
+    return undefined;
   }
 
   if (auth.type === "oauth2" && auth.grantType === "client_credentials") {
     if (!auth.tokenUrl) {
       configurationError(`Local integration "${connector.name}" is missing its token URL`);
     }
+    const environmentHost = environmentHostBinding(
+      connector,
+      { url: auth.tokenUrl },
+      `${connector.name} token`,
+    );
+    if (environmentHost) {
+      return freeze({ ...environmentHost, allowsPathPrefix: false });
+    }
     assertHttpsCatalogUrl(auth.tokenUrl, `Local integration "${connector.name}" token URL`);
-    return;
+    return undefined;
   }
 
   configurationError(
     `Local integration "${connector.name}" uses unsupported authorization-code credentials`,
   );
+}
+
+function createResolvedAuthPlan(
+  connector: LocalCatalogConnector,
+  environmentHost: EnvironmentHostBinding | undefined,
+  host: string | undefined,
+): LocalCredentialAuthPlan {
+  if (!environmentHost) return createLocalCredentialAuthPlan(connector);
+  const auth = connector.auth;
+  if (auth.type !== "oauth2" || auth.grantType !== "client_credentials" || !auth.tokenUrl) {
+    configurationError(`Local integration "${connector.name}" has an invalid token host binding`);
+  }
+  const resolvedTokenUrl = apply(stringReplace, auth.tokenUrl, [
+    environmentHost.token,
+    host ?? ENVIRONMENT_HOST_PROBE,
+  ]) as string;
+  assertHttpsCatalogUrl(
+    resolvedTokenUrl,
+    `Local integration "${connector.name}" token URL`,
+  );
+  return createLocalCredentialAuthPlan({
+    ...connector,
+    auth: { ...auth, tokenUrl: resolvedTokenUrl },
+  });
+}
+
+async function resolveEnvironmentHostCached(
+  binding: EnvironmentHostBinding,
+  credentialProvider: LocalIntegrationCredentialProvider,
+  resolvedHosts: Map<string, string>,
+): Promise<string> {
+  const existing = mapValue(resolvedHosts, binding.variableName);
+  if (existing !== undefined) return existing;
+  const resolved = await resolveEnvironmentHost(binding, credentialProvider);
+  apply(mapSet, resolvedHosts, [binding.variableName, resolved]);
+  return resolved;
+}
+
+async function resolveAdmittedAuthPlan(
+  tool: AdmittedLocalIntegrationTool,
+  credentialProvider: LocalIntegrationCredentialProvider,
+  resolvedHosts: Map<string, string>,
+): Promise<LocalCredentialAuthPlan> {
+  if (!tool.authEnvironmentHost) return tool.authPlan;
+  const host = await resolveEnvironmentHostCached(
+    tool.authEnvironmentHost,
+    credentialProvider,
+    resolvedHosts,
+  );
+  return createResolvedAuthPlan(tool.connector, tool.authEnvironmentHost, host);
 }
 
 function assertSupportedEndpoint(
@@ -726,12 +788,45 @@ function assertSupportedEndpoint(
     // origin is pinned at execution time from the resolved variable or the
     // validated tenant argument.
     return undefined;
-  } else {
-    return assertHttpsCatalogUrl(
-      endpoint.url,
-      `Local integration tool "${toolId}" endpoint`,
-    );
   }
+
+  const authorityMatch = apply(
+    regexpExec,
+    new RegExpConstructor(
+      "^https://\\{([A-Za-z][A-Za-z0-9_]*)\\}(?=/|$)",
+    ),
+    [endpoint.url],
+  ) as RegExpExecArray | null;
+  if (authorityMatch) {
+    const parameterName = authorityMatch[1]!;
+    const field = endpoint.params?.[parameterName];
+    const patternDescriptor = field && getOwnPropertyDescriptor(field, "pattern");
+    const pattern = patternDescriptor && "value" in patternDescriptor
+      ? patternDescriptor.value
+      : undefined;
+    if (
+      !field || field.type !== "string" || field.in !== "path" ||
+      (field.required !== true && field.default === undefined) ||
+      typeof pattern !== "string" ||
+      !stringBoolean(stringStartsWith, pattern, "^") ||
+      !stringBoolean(stringEndsWith, pattern, "$")
+    ) {
+      configurationError(
+        `Local integration tool "${toolId}" authority must use a required patterned string parameter`,
+      );
+    }
+    try {
+      new RegExpConstructor(pattern);
+    } catch {
+      configurationError(`Local integration tool "${toolId}" authority pattern is invalid`);
+    }
+    return undefined;
+  }
+
+  return assertHttpsCatalogUrl(
+    endpoint.url,
+    `Local integration tool "${toolId}" endpoint`,
+  );
 }
 
 function inputPropertySchema(
@@ -740,6 +835,7 @@ function inputPropertySchema(
     description: string;
     default?: unknown;
     exposeDefault?: boolean;
+    pattern?: string;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -754,6 +850,13 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
+  const patternDescriptor = getOwnPropertyDescriptor(field, "pattern");
+  const pattern = patternDescriptor && "value" in patternDescriptor
+    ? patternDescriptor.value
+    : undefined;
+  if (field.type === "string" && typeof pattern === "string") {
+    schema.pattern = pattern;
+  }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
   }
@@ -837,10 +940,11 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     environmentHost,
     tenantHost,
   );
-  assertSupportedAuth(connector, tool.endpoint);
-  const authPlan = createLocalCredentialAuthPlan(connector);
+  const authEnvironmentHost = assertSupportedAuth(connector, tool.endpoint);
+  const authPlan = createResolvedAuthPlan(connector, authEnvironmentHost, undefined);
   return freeze({
     authPlan,
+    authEnvironmentHost,
     connector,
     endpoint: tool.endpoint,
     endpointOrigin,
@@ -876,6 +980,7 @@ function createLocalIntegrationToolSourceInternal(
     async listTools(): Promise<ToolDefinition[]> {
       const validatedConnectors = new SetConstructor<string>();
       const validatedHostVariables = new SetConstructor<string>();
+      const resolvedHosts = new MapConstructor<string, string>();
       for (let index = 0; index < snapshot.tools.length; index++) {
         const toolId = snapshot.tools[index]!;
         const tool = mapValue(admitted, toolId)!;
@@ -883,11 +988,18 @@ function createLocalIntegrationToolSourceInternal(
           tool.environmentHost &&
           !apply(setHas, validatedHostVariables, [tool.environmentHost.variableName])
         ) {
-          await resolveEnvironmentHost(tool.environmentHost, credentialProvider);
+          await resolveEnvironmentHostCached(
+            tool.environmentHost,
+            credentialProvider,
+            resolvedHosts,
+          );
           apply(setAdd, validatedHostVariables, [tool.environmentHost.variableName]);
         }
         if (apply(setHas, validatedConnectors, [tool.connector.name])) continue;
-        await resolveLocalCredentialAuth(tool.authPlan, credentialProvider);
+        await resolveLocalCredentialAuth(
+          await resolveAdmittedAuthPlan(tool, credentialProvider, resolvedHosts),
+          credentialProvider,
+        );
         apply(setAdd, validatedConnectors, [tool.connector.name]);
       }
       const definitions: ToolDefinition[] = [];
@@ -910,9 +1022,29 @@ function createLocalIntegrationToolSourceInternal(
           }" is not granted by this source`,
         );
       }
-      const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      const resolvedHosts = new MapConstructor<string, string>();
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;
+      if (tool.environmentHost) {
+        const host = await resolveEnvironmentHostCached(
+          tool.environmentHost,
+          credentialProvider,
+          resolvedHosts,
+        );
+        const resolvedUrl = apply(stringReplace, endpoint.url, [
+          tool.environmentHost.token,
+          host,
+        ]) as string;
+        // Re-checked with the resolved host so the admitted origin below is
+        // derived from the same URL the request will use.
+        allowedOrigin = assertHttpsCatalogUrl(
+          resolvedUrl,
+          `Local integration tool "${toolName}" endpoint`,
+        );
+        endpoint = freeze({ ...endpoint, url: resolvedUrl });
+      }
+      const validated = snapshotLocalIntegrationEndpointArguments(endpoint, args);
+      allowedOrigin ??= validated.endpointOrigin;
       if (tool.tenantHost) {
         // Validated and pinned before any credential is minted so a hostile
         // argument is rejected without a token request ever being sent.
@@ -929,26 +1061,17 @@ function createLocalIntegrationToolSourceInternal(
         );
         endpoint = freeze({ ...endpoint, url: resolvedUrl });
       }
+      const authPlan = await resolveAdmittedAuthPlan(
+        tool,
+        credentialProvider,
+        resolvedHosts,
+      );
       const auth = await mintLocalCredentialAuth(
-        await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
+        await resolveLocalCredentialAuth(authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      if (tool.environmentHost) {
-        const host = await resolveEnvironmentHost(tool.environmentHost, credentialProvider);
-        const resolvedUrl = apply(stringReplace, endpoint.url, [
-          tool.environmentHost.token,
-          host,
-        ]) as string;
-        // Re-checked with the resolved host so the admitted origin below is
-        // derived from the same URL the request will use.
-        allowedOrigin = assertHttpsCatalogUrl(
-          resolvedUrl,
-          `Local integration tool "${toolName}" endpoint`,
-        );
-        endpoint = freeze({ ...endpoint, url: resolvedUrl });
-      }
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");

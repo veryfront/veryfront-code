@@ -393,16 +393,13 @@ describe("integration endpoint specs", () => {
       ],
     );
 
-    const servicenowQuery = getTool("servicenow", "query_table");
-    assertEquals(servicenowQuery.requiresWrite, false);
-    assertEquals(
-      servicenowQuery.endpoint?.url,
-      "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
-    );
-    assertEquals(
-      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
-      "passthrough",
-    );
+    const servicenow = getConnector("servicenow");
+    const servicenowToolIds = getLocalToolIds("servicenow", servicenow.tools);
+    assertEquals(servicenowToolIds.includes("query_table"), false);
+    assertEquals(servicenowToolIds.includes("create_table_record"), false);
+    assertEquals(servicenowToolIds.includes("update_table_record"), false);
+    assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_incident").endpoint?.method, "PATCH");
   });
 
   it("declares the Salesforce baseline tools", () => {
@@ -779,7 +776,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 63],
+      ["outlook", 60],
       ["teams", 7],
     ]);
 
@@ -1434,6 +1431,8 @@ describe("integration endpoint specs", () => {
         ["adyen", "ADYEN_CHECKOUT_HOST"],
         ["langfuse", "LANGFUSE_HOST"],
         ["posthog", "POSTHOG_HOST"],
+        ["sap", "SAP_HOST"],
+        ["servicenow", "SERVICENOW_INSTANCE"],
       ] as const
     ) {
       const envVar = getConnector(connectorName).envVars?.find(
@@ -1456,7 +1455,12 @@ describe("integration endpoint specs", () => {
 
     for (const setupSurface of [setupMarkdown, setupHelpers]) {
       assertEquals(setupSurface.includes("QUICKBOOKS_API_HOST"), true);
-      assertEquals(setupSurface.includes("sandbox-quickbooks.api.intuit.com"), true);
+      const configuredHosts = new Set(
+        [...setupSurface.matchAll(/QUICKBOOKS_API_HOST=([A-Za-z0-9.-]+)/g)].map(
+          (match) => match[1],
+        ),
+      );
+      assertEquals(configuredHosts.has("sandbox-quickbooks.api.intuit.com"), true);
     }
   });
 
@@ -1976,8 +1980,6 @@ describe("integration endpoint specs", () => {
       "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
-      "Group.Read.All",
-      "Group-Conversation.Read.All",
       "offline_access",
     ]);
 
@@ -2023,9 +2025,6 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
-      "find_group_by_mail",
-      "list_group_threads",
-      "list_group_thread_posts",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -2106,16 +2105,10 @@ describe("integration endpoint specs", () => {
       "microsoft-graph-search",
     );
     assertEquals(
-      getTool("outlook", "find_group_by_mail").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_threads").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_thread_posts").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
+      connectors.find((connector) => connector.name === "outlook")?.tools.some(
+        (tool) => tool.id === "outlook__find_group_by_mail",
+      ),
+      false,
     );
     assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
       "@odata.type": {

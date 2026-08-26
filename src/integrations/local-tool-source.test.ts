@@ -560,6 +560,50 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(requests, ["https://unit-cluster.example.cloud:6333/collections"]);
   });
 
+  it("resolves Shopware's token and API endpoints to the same configured host", async () => {
+    const requests: string[] = [];
+    let hostReads = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["shopware__search_products"],
+        credentialProvider: (name) => {
+          if (name === "SHOPWARE_SHOP_DOMAIN") {
+            hostReads += 1;
+            return "shop.example.com";
+          }
+          if (name === "SHOPWARE_CLIENT_ID") return "shopware-client";
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        requests.push(request.url.href);
+        if (request.url.pathname === "/api/oauth/token") {
+          assertEquals(request.init.method, "POST");
+          return Promise.resolve(Response.json({
+            access_token: "shopware-access-token",
+            token_type: "Bearer",
+          }));
+        }
+        assertEquals(
+          headerValue(request.init, "authorization"),
+          "Bearer shopware-access-token",
+        );
+        return Promise.resolve(Response.json({ data: [] }));
+      },
+    );
+
+    assertEquals((await source.listTools()).map((definition) => definition.name), [
+      "shopware__search_products",
+    ]);
+    hostReads = 0;
+    assertEquals(await source.executeTool("shopware__search_products", { term: "desk" }), []);
+    assertEquals(hostReads, 1);
+    assertEquals(requests, [
+      "https://shop.example.com/api/oauth/token",
+      "https://shop.example.com/api/search/product",
+    ]);
+  });
+
   it("accepts the scaffolded HTTPS origin for PostHog", async () => {
     const requests: string[] = [];
     const source = _createLocalIntegrationToolSourceForTesting(

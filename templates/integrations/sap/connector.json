@@ -20,7 +20,8 @@
     {
       "name": "SAP_HOST",
       "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
-      "required": true
+      "required": true,
+      "sensitive": true
     },
     {
       "name": "SAP_ACCESS_TOKEN",

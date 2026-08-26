@@ -48,6 +48,7 @@ import {
   toPersistedWorkflowContext,
 } from "../runtime/workflow-run-control.ts";
 import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
+import { validateWorkflowPathSegment } from "../dsl/validation.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -212,6 +213,7 @@ export class WorkflowExecutor {
    * Register a workflow definition
    */
   register<TInput, TOutput>(workflow: WorkflowDefinition<TInput, TOutput>): void {
+    validateWorkflowPathSegment(workflow.id, "Workflow ID");
     this.workflows.set(workflow.id, workflow);
   }
 
@@ -231,6 +233,9 @@ export class WorkflowExecutor {
     input: TInput,
     options?: { runId?: string },
   ): Promise<WorkflowHandle<TOutput>> {
+    if (options?.runId !== undefined) {
+      validateWorkflowPathSegment(options.runId, "Workflow run ID");
+    }
     const workflow = this.workflows.get(workflowId);
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${workflowId}` });

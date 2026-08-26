@@ -15651,7 +15651,10 @@ export const connectors: IntegrationConfig[] = [
       "provider": "google",
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
-      "scopes": ["https://www.googleapis.com/auth/drive"],
+      "scopes": [
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+      ],
       "requiredApis": [{
         "name": "Google Drive API",
         "enableUrl": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
@@ -15955,7 +15958,7 @@ export const connectors: IntegrationConfig[] = [
       }, {
         "title": "Configure OAuth Consent Screen",
         "description":
-          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scope: drive (full access)",
+          "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
         "url": "https://console.cloud.google.com/apis/credentials/consent",
       }, {
         "title": "Create OAuth 2.0 Client ID",
@@ -15974,7 +15977,7 @@ export const connectors: IntegrationConfig[] = [
       "notes": [
         "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
         "In production, make sure to add your production callback URL to authorized redirect URIs",
-        "The drive scope grants full access to all files; tools like update_file and delete_file require it for files not created by this app",
+        "The drive.file scope limits file changes to files created or opened by this app",
         "You may need to verify your app if you plan to distribute it publicly",
       ],
     },
@@ -37523,8 +37526,6 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Read.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
-        "Group.Read.All",
-        "Group-Conversation.Read.All",
         "offline_access",
       ],
       "tokenAuthMethod": "body",
@@ -38773,142 +38774,6 @@ export const connectors: IntegrationConfig[] = [
             ],
             "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
             "omitted": "large email bodies and provider-specific message fields",
-          },
-        },
-      },
-    }, {
-      "id": "outlook__find_group_by_mail",
-      "name": "Find Group By Mail",
-      "description":
-        "Find a Microsoft 365 group by primary email address before reading its group inbox threads",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
-        "params": {
-          "mailAddress": {
-            "type": "string",
-            "in": "path",
-            "description": "Microsoft 365 group primary email address",
-            "required": true,
-          },
-          "$select": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated group fields to return",
-            "default": "id,displayName,mail,mailNickname,groupTypes,securityEnabled,mailEnabled",
-          },
-          "$top": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum groups to return",
-            "default": 5,
-          },
-        },
-        "response": { "transform": "value" },
-      },
-    }, {
-      "id": "outlook__list_group_threads",
-      "name": "List Group Threads",
-      "description": "List Microsoft 365 group inbox conversation threads",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
-        "params": {
-          "groupId": {
-            "type": "string",
-            "in": "path",
-            "description": "Microsoft 365 group ID",
-            "required": true,
-          },
-          "$top": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum threads to return",
-            "default": 25,
-          },
-          "$select": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated thread fields to return",
-            "default":
-              "id,topic,hasAttachments,lastDeliveredDateTime,uniqueSenders,preview,isLocked",
-          },
-        },
-        "response": {
-          "transform": "value",
-          "historicalSummary": {
-            "collectionKeys": ["value", "data", "threads"],
-            "collectionName": "threads",
-            "itemFields": [
-              { "name": "id" },
-              { "name": "topic" },
-              { "name": "hasAttachments" },
-              { "name": "lastDeliveredDateTime" },
-              { "name": "uniqueSenders", "kind": "string-array" },
-              { "name": "preview", "maxLength": 300 },
-              { "name": "isLocked" },
-            ],
-            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
-            "omitted": "large group thread payload fields",
-          },
-        },
-      },
-    }, {
-      "id": "outlook__list_group_thread_posts",
-      "name": "List Group Thread Posts",
-      "description": "List posts from a Microsoft 365 group inbox conversation thread",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
-        "params": {
-          "groupId": {
-            "type": "string",
-            "in": "path",
-            "description": "Microsoft 365 group ID",
-            "required": true,
-          },
-          "threadId": {
-            "type": "string",
-            "in": "path",
-            "description": "Conversation thread ID",
-            "required": true,
-          },
-          "$top": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum posts to return",
-            "default": 25,
-          },
-          "$select": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated post fields to return",
-            "default":
-              "id,conversationId,conversationThreadId,from,sender,newParticipants,receivedDateTime,hasAttachments,body,importance",
-          },
-        },
-        "response": {
-          "transform": "value",
-          "historicalSummary": {
-            "collectionKeys": ["value", "data", "posts"],
-            "collectionName": "posts",
-            "itemFields": [
-              { "name": "id" },
-              { "name": "conversationId" },
-              { "name": "conversationThreadId" },
-              { "name": "from", "kind": "contact" },
-              { "name": "sender", "kind": "contact" },
-              { "name": "newParticipants", "kind": "contact-array" },
-              { "name": "receivedDateTime" },
-              { "name": "hasAttachments" },
-              { "name": "body", "kind": "object" },
-              { "name": "importance" },
-            ],
-            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
-            "omitted": "large group post bodies and provider-specific post fields",
           },
         },
       },
@@ -47415,6 +47280,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SAP_HOST",
       "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
       "required": true,
+      "sensitive": true,
     }, {
       "name": "SAP_ACCESS_TOKEN",
       "description": "SAP S/4HANA API access token",
@@ -48711,6 +48577,7 @@ export const connectors: IntegrationConfig[] = [
       "name": "SERVICENOW_INSTANCE",
       "description": "ServiceNow instance host without scheme, e.g. your-instance.service-now.com",
       "required": true,
+      "sensitive": true,
     }, {
       "name": "SERVICENOW_ACCESS_TOKEN",
       "description": "ServiceNow OAuth access token for the Table API",
@@ -49168,105 +49035,6 @@ export const connectors: IntegrationConfig[] = [
             "default": "sys_id,user_name,name,email,active,department",
           },
         },
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__query_table",
-      "name": "Query Table",
-      "description":
-        "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-          "sysparm_query": {
-            "type": "string",
-            "in": "query",
-            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on",
-          },
-          "sysparm_fields": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated fields to return",
-          },
-          "sysparm_limit": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum records to return",
-            "default": 25,
-          },
-          "sysparm_offset": {
-            "type": "number",
-            "in": "query",
-            "description": "Record offset for pagination",
-          },
-        },
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__create_table_record",
-      "name": "Create Table Record",
-      "description": "Create a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
-            "description":
-              'Field map for the new record, e.g. {"short_description":"...","priority":"2"}',
-            "required": true,
-          },
-        },
-        "bodyMode": "passthrough",
-        "response": { "transform": "result" },
-      },
-    }, {
-      "id": "servicenow__update_table_record",
-      "name": "Update Table Record",
-      "description": "Update a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "PATCH",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}/{sysId}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true,
-          },
-          "sysId": {
-            "type": "string",
-            "in": "path",
-            "description": "sys_id of the record",
-            "required": true,
-          },
-        },
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map of fields to update",
-            "required": true,
-          },
-        },
-        "bodyMode": "passthrough",
         "response": { "transform": "result" },
       },
     }],

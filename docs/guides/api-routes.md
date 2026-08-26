@@ -245,6 +245,8 @@ running:
 curl -i http://localhost:3000/api/hello
 curl -i -X POST http://localhost:3000/api/echo \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"hello":"world"}'
 ```
 

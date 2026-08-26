@@ -593,112 +593,6 @@
           "transform": "result"
         }
       }
-    },
-    {
-      "id": "servicenow__query_table",
-      "name": "Query Table",
-      "description": "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          },
-          "sysparm_query": {
-            "type": "string",
-            "in": "query",
-            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on"
-          },
-          "sysparm_fields": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated fields to return"
-          },
-          "sysparm_limit": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum records to return",
-            "default": 25
-          },
-          "sysparm_offset": {
-            "type": "number",
-            "in": "query",
-            "description": "Record offset for pagination"
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
-    },
-    {
-      "id": "servicenow__create_table_record",
-      "name": "Create Table Record",
-      "description": "Create a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          }
-        },
-        "bodyMode": "passthrough",
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map for the new record, e.g. {\"short_description\":\"...\",\"priority\":\"2\"}",
-            "required": true
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
-    },
-    {
-      "id": "servicenow__update_table_record",
-      "name": "Update Table Record",
-      "description": "Update a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "PATCH",
-        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/{tableName}/{sysId}",
-        "params": {
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          },
-          "sysId": {
-            "type": "string",
-            "in": "path",
-            "description": "sys_id of the record",
-            "required": true
-          }
-        },
-        "bodyMode": "passthrough",
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map of fields to update",
-            "required": true
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
     }
   ],
   "prompts": [
@@ -725,7 +619,8 @@
     {
       "name": "SERVICENOW_INSTANCE",
       "description": "ServiceNow instance host without scheme, e.g. your-instance.service-now.com",
-      "required": true
+      "required": true,
+      "sensitive": true
     },
     {
       "name": "SERVICENOW_ACCESS_TOKEN",

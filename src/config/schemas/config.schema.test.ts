@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS } from "#veryfront/integrations/limits.ts";
+import { csrfNamesCookieName } from "#veryfront/security/csrf/names.ts";
 import {
   MAX_CORS_ORIGIN_COUNT,
   MAX_CORS_ORIGIN_LENGTH,
@@ -809,6 +810,8 @@ describe("configSchema", () => {
         { cookieName: "csrf cookie" },
         { cookieName: "csrf;SameSite=None" },
         { cookieName: "csrf\r\nInjected" },
+        { cookieName: "vf_csrf_names" },
+        { cookieName: csrfNamesCookieName("https://example.test") },
         { cookieName: "x".repeat(257) },
         { headerName: "" },
         { headerName: "x csrf" },
