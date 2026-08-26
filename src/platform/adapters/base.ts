@@ -321,7 +321,11 @@ export interface FileSystemAdapter {
    * derived state while this value is unchanged.
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
-  /** Stable content identity for the active source snapshot. */
+  /**
+   * Stable content identity for the active source snapshot. Multi-project
+   * adapters that verify source across credential scopes must publish this
+   * together with a freshness method.
+   */
   getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
 }
 

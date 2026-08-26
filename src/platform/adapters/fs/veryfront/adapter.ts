@@ -774,7 +774,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     if (!recoveryPromise) {
       const normalizedPath = this.normalizer.normalize(path);
-      recoveryPromise = this.refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
+      recoveryPromise = this.#refreshSourceSnapshot(`branch-miss:${normalizedPath}`);
       this.branchMissRecoveryPromise = recoveryPromise;
       recoveryGeneration = ++this.branchMissRecoveryGeneration;
       ownsRecovery = true;
@@ -1085,7 +1085,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private async performSourceSnapshotRefresh(reason: string): Promise<void> {
+  async #performSourceSnapshotRefresh(reason: string): Promise<void> {
     await this.#ensureInitialized();
 
     if (!this.contentContext) {
@@ -1148,7 +1148,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // to the refresh singleflight until this point.
         this.markSourceSnapshotChanged(files, refreshIdentity);
       } else {
-        this.sourceSnapshotFiles = files;
+        // Equal listings keep the published array identity. A fingerprint may
+        // still be hashing this exact snapshot, and replacing an equal array
+        // would make that valid digest resolve unavailable without advancing
+        // the version that keys its cache.
         this.sourceSnapshotIdentity = refreshIdentity;
         this.sourceSnapshotCheckedAt = Date.now();
         // The API just confirmed this listing is current, so the index built
@@ -1205,7 +1208,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     await this.#ensureInitialized();
 
     while (true) {
-      this.sourceSnapshotRefreshPromise ??= this.performSourceSnapshotRefresh(reason);
+      this.sourceSnapshotRefreshPromise ??= this.#performSourceSnapshotRefresh(reason);
       const refresh = this.sourceSnapshotRefreshPromise;
 
       try {

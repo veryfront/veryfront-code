@@ -679,13 +679,13 @@ async function requireAgentSourceSnapshotFingerprint(
   }
 
   await fs.ensureSourceSnapshotFresh(reason);
-  const fingerprint = await fs.getSourceSnapshotFingerprint();
-  if (!fingerprint) {
-    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-      detail: "The project filesystem did not provide a branch source snapshot identity",
-    });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const fingerprint = await fs.getSourceSnapshotFingerprint();
+    if (fingerprint) return fingerprint;
   }
-  return fingerprint;
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail: "The project filesystem did not provide a branch source snapshot identity",
+  });
 }
 
 function assertAgentSourceMatchesHostedTarget(

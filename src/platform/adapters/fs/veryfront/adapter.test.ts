@@ -4,6 +4,7 @@ import {
   assertExists,
   assertNotEquals,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -168,20 +169,24 @@ describe("VeryfrontFSAdapter", () => {
       const exactCalls: Array<[string, number]> = [];
       let refreshCalls = 0;
       const internals = adapter as unknown as {
+        initialized: boolean;
         readOps: {
           readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
         };
+        client: {
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
       };
+      internals.initialized = true;
       internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
         exactCalls.push([path, byteLimit]);
         return exactCalls.length === 1
           ? Promise.reject(new Error(`404 Not Found: ${path}`))
           : Promise.resolve(new Uint8Array([9, 8]));
       };
-      adapter.refreshSourceSnapshot = (reason) => {
+      internals.client.listAllFiles = () => {
         refreshCalls++;
-        assertEquals(reason, "branch-miss:manifest.json");
-        return Promise.resolve();
+        return Promise.resolve([]);
       };
 
       assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [9, 8]);
@@ -1599,6 +1604,9 @@ describe("VeryfrontFSAdapter", () => {
       await adapter.initialize();
 
       const initialSnapshotVersion = adapter.getSourceSnapshotVersion();
+      const initialSnapshotFiles = (adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; version_id?: string; content?: string }>;
+      }).sourceSnapshotFiles;
       assertEquals(initialSnapshotVersion > 0, true);
       assertEquals(listAllFilesCalls, 1);
 
@@ -1611,6 +1619,11 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(listAllFilesCalls, 2);
       assertEquals(adapter.getSourceSnapshotVersion(), initialSnapshotVersion);
+      assertStrictEquals(
+        (adapter as unknown as { sourceSnapshotFiles: unknown }).sourceSnapshotFiles,
+        initialSnapshotFiles,
+      );
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
       assertEquals(routerInvalidations, 0);
       assertEquals(ssrInvalidations, 0);
 

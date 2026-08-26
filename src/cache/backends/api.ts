@@ -181,16 +181,16 @@ export class ApiCacheBackend implements CacheBackend {
     }
     // The private verified-request context cannot be changed through the
     // globally exposed filesystem request context.
-    const token = this.explicitApiToken ?? verifiedRequestToken ?? hostToken ?? reqCtx?.token ??
+    const token = this.explicitApiToken ?? verifiedRequestToken ?? reqCtx?.token ?? hostToken ??
       envToken ?? null;
     const tokenSource = this.explicitApiToken
       ? "explicit-endpoint"
       : verifiedRequestToken
       ? "verified-control-plane"
-      : hostToken
-      ? "host-env"
       : reqCtx?.token
       ? "request"
+      : hostToken
+      ? "host-env"
       : envToken
       ? "env"
       : "none";

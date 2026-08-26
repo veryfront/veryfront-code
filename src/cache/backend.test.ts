@@ -878,6 +878,46 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
   }
 });
 
+Deno.test("ApiCacheBackend prefers the request runtime token over the host fallback", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let authorization = "";
+
+  Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "project-runtime-token",
+      projectId: "project-123",
+    }),
+  };
+  installMockFetch(
+    ((_input: RequestInfo | URL, init?: RequestInit) => {
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return Promise.resolve(Response.json({ deleted: 1 }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      circuitBreakerName: "api-cache-request-runtime-token-test",
+    });
+    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(authorization, "Bearer project-runtime-token");
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+    if (originalBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", originalBaseUrl);
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
 Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
 

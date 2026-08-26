@@ -9,7 +9,9 @@ import {
 import {
   getVerifiedCacheApiCredential,
   runWithVerifiedCacheApiCredential,
+  withoutVerifiedCacheApiCredential,
 } from "./verified-api-credential-context.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 async function createVerifiedClaims(token?: string) {
   const rawBody = JSON.stringify(
@@ -111,5 +113,29 @@ describe("verified cache API credential context", () => {
     await stream.getReader().read();
     assertEquals(observedToken, "stream-token");
     assertEquals(getVerifiedCacheApiCredential(), undefined);
+  });
+
+  it("clears the credential through captured async-context operations", async () => {
+    const verifiedClaims = await createVerifiedClaims("signed-body-token");
+    const originalRun = AsyncLocalStorage.prototype.run;
+    try {
+      AsyncLocalStorage.prototype.run = function <R>(
+        _store: unknown,
+        callback: (...args: unknown[]) => R,
+        ...args: unknown[]
+      ): R {
+        return callback(...args);
+      };
+
+      await runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+        assertEquals(getVerifiedCacheApiCredential()?.token, "signed-body-token");
+        const observed = await withoutVerifiedCacheApiCredential(async () =>
+          getVerifiedCacheApiCredential()?.token
+        )();
+        assertEquals(observed, undefined);
+      });
+    } finally {
+      AsyncLocalStorage.prototype.run = originalRun;
+    }
   });
 });

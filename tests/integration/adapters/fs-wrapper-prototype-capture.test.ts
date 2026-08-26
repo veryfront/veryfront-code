@@ -52,6 +52,33 @@ function withPollutedObjectPrototype<T>(
 }
 
 describe("FSAdapterWrapper optional-method capture under prototype pollution", () => {
+  it("delegates fingerprints through the captured Reflect.apply intrinsic", async () => {
+    const fingerprint = () => "trusted-snapshot";
+    const fsAdapter = {
+      ...createMockFSAdapter(),
+      getSourceSnapshotFingerprint: fingerprint,
+    };
+    const wrapper = new FSAdapterWrapper(fsAdapter);
+    const originalApply = Reflect.apply;
+    let result: string | undefined | Promise<string | undefined> | undefined;
+
+    Reflect.apply = ((
+      target: (...args: never[]) => unknown,
+      thisArgument: unknown,
+      argumentsList: ArrayLike<unknown>,
+    ) =>
+      target === fingerprint
+        ? "project-spoofed-snapshot"
+        : originalApply(target, thisArgument, argumentsList)) as typeof Reflect.apply;
+    try {
+      result = wrapper.getSourceSnapshotFingerprint?.();
+    } finally {
+      Reflect.apply = originalApply;
+    }
+
+    assertEquals(await result, "trusted-snapshot");
+  });
+
   it("ignores a refreshSourceSnapshot planted on Object.prototype", () => {
     let planted = false;
 

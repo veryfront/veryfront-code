@@ -799,7 +799,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           platformMcpFetchCalls += 1;
           assertEquals(
             new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-            "Bearer request-scoped-user-token",
+            "Bearer run-scoped-token",
           );
           return Promise.resolve(
             new Response(
@@ -892,6 +892,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
         requestId: "run_1",
       });
 
+      const ctx = createCtx(publicKeyPem);
+      ctx.proxyToken = "run-scoped-token";
       const result = await handler.handle(
         new Request("https://example.com/api/control-plane/runs/run_1/stream", {
           method: "POST",
@@ -901,7 +903,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
           body,
         }),
-        createCtx(publicKeyPem),
+        ctx,
       );
 
       assertExists(result.response);
@@ -1426,7 +1428,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       ((url, init) => {
         assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
         const headers = new Headers(observeFetchRequestInit(init).headers);
-        assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
+        assertEquals(headers.get("authorization"), "Bearer run-scoped-token");
         assertEquals(headers.get("x-project-id"), "proj-1");
         assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
         return Promise.resolve(
@@ -1509,7 +1511,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
           body,
         }),
-        createCtx(publicKeyPem),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
       );
 
       assertExists(result.response);
@@ -1594,7 +1596,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
           body,
         }),
-        createCtx(publicKeyPem),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
       );
 
       assertEquals(result.response?.status, 200);
@@ -1657,7 +1659,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           },
           body,
         }),
-        createCtx(publicKeyPem),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
       );
 
       assertEquals(result.response?.status, 200);
@@ -2096,7 +2098,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
         assertEquals(
           new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-          "Bearer request-scoped-user-token",
+          "Bearer run-scoped-token",
         );
         const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
           id: string;
@@ -2333,12 +2335,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
     installMockFetch(
       ((url, init) => {
         fetchUrls.push(String(url));
-        assertEquals(
-          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-          "Bearer request-scoped-user-token",
+        const authorization = new Headers(observeFetchRequestInit(init).headers).get(
+          "authorization",
         );
 
         if (String(url).endsWith("/projects/support-agent-fork/environments")) {
+          assertEquals(authorization, "Bearer request-scoped-user-token");
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -2358,6 +2360,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
 
         if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+          assertEquals(authorization, "Bearer request-scoped-user-token");
           assertEquals(
             String(url).includes(
               "environment_id=10000000-1000-4000-8000-100000000097",
@@ -2385,9 +2388,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
 
         if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+          assertEquals(authorization, "Bearer run-scoped-token");
           capturedMcpRequest = {
             url: String(url),
-            authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            authorization,
           };
           return Promise.resolve(
             new Response(
@@ -2454,7 +2458,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedProjectContextToken, "run-scoped-token");
     assertEquals(capturedMcpRequest, {
       url: `${TEST_PUBLIC_API_ORIGIN}/mcp`,
-      authorization: "Bearer request-scoped-user-token",
+      authorization: "Bearer run-scoped-token",
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
@@ -3148,6 +3152,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects a branch run when the credential handoff changes the source snapshot", async () => {
     let discoveryCalls = 0;
+    let requestFingerprintCalls = 0;
     const runWithContextCalls: Array<{
       token?: string;
       productionMode?: boolean;
@@ -3175,10 +3180,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const ctx = createCtx(publicKeyPem);
     ctx.proxyToken = "run-scoped-token";
     const fs = createNoopFsAdapter(runWithContextCalls);
-    fs.getSourceSnapshotFingerprint = () =>
-      getCurrentRequestContext()?.token === "request-scoped-user-token"
-        ? "request-snapshot"
-        : "runtime-snapshot";
+    fs.getSourceSnapshotFingerprint = () => {
+      if (getCurrentRequestContext()?.token !== "request-scoped-user-token") {
+        return "runtime-snapshot";
+      }
+      requestFingerprintCalls++;
+      return requestFingerprintCalls === 1 ? undefined : "request-snapshot";
+    };
     ctx.adapter = { ...ctx.adapter, fs };
 
     const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
@@ -3205,6 +3213,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 503);
     assertEquals(runWithContextCalls.length, 2);
+    assertEquals(requestFingerprintCalls, 3);
     assertEquals(discoveryCalls, 0);
   });
 

@@ -254,29 +254,6 @@ describe("FSAdapterWrapper", () => {
       assertEquals(await wrapper.getSourceSnapshotFingerprint?.(), "snapshot-11");
     });
 
-    it("delegates fingerprints through the captured Reflect.apply intrinsic", async () => {
-      const fingerprint = () => "trusted-snapshot";
-      const fsAdapter = {
-        ...createMockFSAdapter(),
-        getSourceSnapshotFingerprint: fingerprint,
-      };
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-      const originalApply = Reflect.apply;
-      let result: string | undefined | Promise<string | undefined> | undefined;
-
-      Reflect.apply = (target, thisArgument, argumentsList) =>
-        target === fingerprint
-          ? "project-spoofed-snapshot"
-          : originalApply(target, thisArgument, argumentsList);
-      try {
-        result = wrapper.getSourceSnapshotFingerprint?.();
-      } finally {
-        Reflect.apply = originalApply;
-      }
-
-      assertEquals(await result, "trusted-snapshot");
-    });
-
     it("should omit freshness methods when the adapter does not support them", () => {
       const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 

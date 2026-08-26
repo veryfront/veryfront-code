@@ -434,6 +434,10 @@ describe("MultiProjectFSAdapter", () => {
           VeryfrontFSAdapter.prototype,
           "ensureInitialized",
         );
+        const originalPerformRefresh = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "performSourceSnapshotRefresh",
+        );
         const concreteAdapter = new VeryfrontFSAdapter({
           veryfront: {
             apiBaseUrl: "https://api.example.com",
@@ -453,6 +457,7 @@ describe("MultiProjectFSAdapter", () => {
         let spoofedFreshnessCalls = 0;
         let spoofedRefreshCalls = 0;
         let spoofedInitializationCalls = 0;
+        let spoofedPerformRefreshCalls = 0;
 
         (adapter as any).manager = {
           getAdapter: () => Promise.resolve(concreteAdapter),
@@ -485,6 +490,13 @@ describe("MultiProjectFSAdapter", () => {
             return Promise.resolve();
           },
         });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "performSourceSnapshotRefresh", {
+          configurable: true,
+          value: () => {
+            spoofedPerformRefreshCalls++;
+            return Promise.resolve();
+          },
+        });
 
         try {
           const version = await adapter.runWithContext(
@@ -508,6 +520,7 @@ describe("MultiProjectFSAdapter", () => {
           assertEquals(spoofedFreshnessCalls, 0);
           assertEquals(spoofedRefreshCalls, 0);
           assertEquals(spoofedInitializationCalls, 0);
+          assertEquals(spoofedPerformRefreshCalls, 0);
         } finally {
           Object.defineProperty(
             VeryfrontFSAdapter.prototype,
@@ -531,9 +544,16 @@ describe("MultiProjectFSAdapter", () => {
               originalInitialization,
             );
           } else {
-            delete (VeryfrontFSAdapter.prototype as Record<PropertyKey, unknown>)[
-              "ensureInitialized"
-            ];
+            Reflect.deleteProperty(VeryfrontFSAdapter.prototype, "ensureInitialized");
+          }
+          if (originalPerformRefresh) {
+            Object.defineProperty(
+              VeryfrontFSAdapter.prototype,
+              "performSourceSnapshotRefresh",
+              originalPerformRefresh,
+            );
+          } else {
+            Reflect.deleteProperty(VeryfrontFSAdapter.prototype, "performSourceSnapshotRefresh");
           }
           (adapter as any).manager = originalManager;
           concreteAdapter.dispose();
