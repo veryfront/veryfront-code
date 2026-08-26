@@ -3,7 +3,8 @@
  * @module cli/utils/git
  */
 
-import { env, runCommand } from "veryfront/platform";
+import { env } from "#cli/process-env";
+import { runCommand } from "veryfront/platform";
 import { cliLogger as logger } from "#cli/utils";
 
 /**

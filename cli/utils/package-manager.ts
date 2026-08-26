@@ -6,7 +6,8 @@
 
 import { join } from "veryfront/platform/path";
 import { cliLogger as logger } from "#cli/utils";
-import { env as environment, getEnv, getOsType, runCommand } from "veryfront/platform";
+import { env as environment } from "#cli/process-env";
+import { getEnv, getOsType, runCommand } from "veryfront/platform";
 import { LOCKFILE_CLIENTS, type PackageClient } from "veryfront/utils/package-client";
 import { getFs } from "./fs.ts";
 

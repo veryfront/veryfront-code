@@ -122,6 +122,15 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("getHostTelemetryEnv" in observability, false);
   });
 
+  it("freezes the shared span kind and status registries", () => {
+    assertEquals(Object.isFrozen(observability.SpanKind), true);
+    assertEquals(Object.isFrozen(observability.SpanStatusCode), true);
+    assertEquals(Reflect.set(observability.SpanKind, "CLIENT", 99), false);
+    assertEquals(observability.SpanKind.CLIENT, 2);
+    assertEquals(Reflect.set(observability.SpanStatusCode, "ERROR", 0), false);
+    assertEquals(observability.SpanStatusCode.ERROR, 2);
+  });
+
   it("exposes a read-only tracing facade without global provider access", () => {
     assertStrictEquals(observability.trace, localObservability.trace);
     assertEquals("setGlobalTracerProvider" in observability.trace, false);

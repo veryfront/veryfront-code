@@ -13,7 +13,6 @@ export type { RuntimeAdapter } from "./adapters/base.ts";
 export {
   type CommandResult,
   cwd,
-  env,
   execPath,
   getArgs,
   getEnv,
@@ -23,7 +22,6 @@ export {
   getTerminalSize,
   isInteractive,
   isStdoutTTY,
-  onSignal,
   promptSync,
   readStdinByteSync,
   runCommand,

@@ -143,6 +143,7 @@ export const SpanKind = {
   PRODUCER: 3,
   CONSUMER: 4,
 } as const;
+Object.freeze(SpanKind);
 
 export type SpanKind = typeof SpanKind[keyof typeof SpanKind];
 
@@ -151,6 +152,7 @@ export const SpanStatusCode = {
   OK: 1,
   ERROR: 2,
 } as const;
+Object.freeze(SpanStatusCode);
 
 export type SpanStatusCode = typeof SpanStatusCode[keyof typeof SpanStatusCode];
 
