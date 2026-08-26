@@ -5,6 +5,7 @@ import {
   type RemoteToolSource,
   type ToolDefinition,
 } from "#veryfront/tool";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import { getDiscoveredHostTools } from "#veryfront/agent/hosted/veryfront-cloud-agent-service.ts";
@@ -179,6 +180,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeForwardedRuntimeAllowedTools(input: {
   forwardedProps?: Record<string, unknown>;
   availableToolNames: string[];
+  sourceAuthorizesAllTools: boolean;
+  sourceAuthorizedToolNames: ReadonlySet<string>;
   allowedStudioRuntimeToolNames: ReadonlySet<string>;
 }): Record<string, unknown> | undefined {
   const forwardedProps = input.forwardedProps;
@@ -205,12 +208,20 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   // withVeryfrontPlatformRemoteTools. Studio-only runtime tool names are
   // preserved only when the resolved agent config itself declares the tool for
   // a Studio-capable client; self-asserted Studio client metadata alone never
-  // widens the forwarded allowlist.
-  const sanitizedAllowedTools = allowedTools.filter((toolName) =>
-    availableToolNames.has(toolName) ||
-    (STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName) &&
-      input.allowedStudioRuntimeToolNames.has(toolName))
-  );
+  // widens the forwarded allowlist. Every other forwarded name must be covered
+  // by the source-resolved agent configuration: a `tools: true` selector
+  // authorizes the scoped catalog (still bounded downstream by the source
+  // integration policy), while explicit tool maps authorize their non-disabled
+  // entries under both local and canonical remote names.
+  const sanitizedAllowedTools = allowedTools.filter((toolName) => {
+    if (STUDIO_RUNTIME_REMOTE_TOOL_NAMES.has(toolName)) {
+      return availableToolNames.has(toolName) ||
+        input.allowedStudioRuntimeToolNames.has(toolName);
+    }
+    return availableToolNames.has(toolName) ||
+      input.sourceAuthorizesAllTools ||
+      input.sourceAuthorizedToolNames.has(toolName);
+  });
   if (sanitizedAllowedTools.length === allowedTools.length) {
     return forwardedProps;
   }
@@ -236,9 +247,23 @@ function getAgentDeclaredToolNames(agent: Agent): Set<string> {
   if (!isRecord(tools)) {
     return new Set();
   }
-  return new Set(
-    Object.keys(tools).filter((toolName) => tools[toolName] !== false),
-  );
+  const declaredToolNames = new Set<string>();
+  for (const [toolName, entry] of Object.entries(tools)) {
+    // `false` disables the tool explicitly; a disabled entry never authorizes
+    // a forwarded allowlist name.
+    if (entry === false) {
+      continue;
+    }
+    declaredToolNames.add(toolName);
+    // Aliased source tools are keyed by their local alias while forwarded
+    // allowlists and remote execution use the canonical remote name carried by
+    // trusted provenance; authorize both spellings of the same declared tool.
+    const canonicalRemoteToolName = getRemoteToolProvenance(entry);
+    if (canonicalRemoteToolName !== undefined) {
+      declaredToolNames.add(canonicalRemoteToolName);
+    }
+  }
+  return declaredToolNames;
 }
 
 function sanitizeRuntimeRunAgentInput(
@@ -246,17 +271,17 @@ function sanitizeRuntimeRunAgentInput(
   agent: Agent,
 ): RuntimeRunAgentInput {
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
+  const declaredToolNames = getAgentDeclaredToolNames(agent);
 
   return {
     ...input,
     forwardedProps: sanitizeForwardedRuntimeAllowedTools({
       forwardedProps: input.forwardedProps,
-      availableToolNames: [
-        ...input.tools.map((tool) => tool.name),
-        ...getAgentDeclaredToolNames(agent),
-      ],
+      availableToolNames: input.tools.map((tool) => tool.name),
+      sourceAuthorizesAllTools: agent.config.tools === true,
+      sourceAuthorizedToolNames: declaredToolNames,
       allowedStudioRuntimeToolNames: clientAllowsStudioMcp(clientProfile)
-        ? getAgentDeclaredToolNames(agent)
+        ? declaredToolNames
         : new Set(),
     }),
   };

@@ -16,6 +16,8 @@ import {
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import { dynamicTool } from "#veryfront/tool";
+import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -1094,6 +1096,250 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ],
       },
     });
+  });
+
+  it("does not authorize forwarded names from explicitly disabled tool entries", async () => {
+    let capturedForwardedProps: Record<string, unknown> | undefined;
+
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", {
+            tools: { gmail__list_emails: true, gmail__delete_email: false },
+          })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, context, callbacks) => {
+          capturedForwardedProps = context?.forwardedProps as
+            | Record<string, unknown>
+            | undefined;
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails", "gmail__delete_email"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List email",
+              inputSchema: { type: "object" },
+            },
+            {
+              name: "gmail__delete_email",
+              description: "Delete an email",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 200);
+    const runtimeOverrides = (capturedForwardedProps?.runtimeOverrides ?? {}) as Record<
+      string,
+      unknown
+    >;
+    assertEquals(
+      runtimeOverrides.allowedTools,
+      ["gmail__list_emails"],
+      "an explicitly disabled tool entry must not authorize its forwarded name",
+    );
+  });
+
+  it("preserves forwarded integration fallbacks for a tools: true agent", async () => {
+    let capturedAllowedTools: string[] | undefined;
+    let capturedForwardedProps: Record<string, unknown> | undefined;
+
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) =>
+        id === "assistant-1" ? createAgentWithConfig("assistant-1", { tools: true }) : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (agent) => {
+        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
+          .__vfAllowedRemoteTools;
+
+        return {
+          stream: async (_messages, context, callbacks) => {
+            capturedForwardedProps = context?.forwardedProps as
+              | Record<string, unknown>
+              | undefined;
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: undefined,
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails", "gmail__get_email"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List email",
+              inputSchema: { type: "object" },
+            },
+            {
+              name: "gmail__get_email",
+              description: "Get an email",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(
+      capturedAllowedTools,
+      ["gmail__list_emails", "gmail__get_email"],
+      "a tools: true selector must keep the API-fallback integration grant intact",
+    );
+    const runtimeOverrides = (capturedForwardedProps?.runtimeOverrides ?? {}) as Record<
+      string,
+      unknown
+    >;
+    assertEquals(runtimeOverrides.allowedTools, ["gmail__list_emails", "gmail__get_email"]);
+  });
+
+  it("authorizes aliased source tools by their canonical remote names", async () => {
+    let capturedForwardedProps: Record<string, unknown> | undefined;
+
+    const aliasedTool = markRemoteToolProvenance(
+      dynamicTool({
+        id: "email_search",
+        description: "Search email",
+        inputSchema: {},
+        execute: async () => ({}),
+      }),
+      "gmail__search_emails",
+    );
+
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", {
+            tools: { email_search: aliasedTool },
+          })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, context, callbacks) => {
+          capturedForwardedProps = context?.forwardedProps as
+            | Record<string, unknown>
+            | undefined;
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__search_emails", "gmail__get_email"],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 200);
+    const runtimeOverrides = (capturedForwardedProps?.runtimeOverrides ?? {}) as Record<
+      string,
+      unknown
+    >;
+    assertEquals(
+      runtimeOverrides.allowedTools,
+      ["gmail__search_emails"],
+      "the canonical remote name of an aliased source tool must stay authorized",
+    );
   });
 
   it("loads and applies integration restrictions from the exact requested source", async () => {
