@@ -56,6 +56,7 @@ const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 const ArrayPrototypeSort = Array.prototype.sort;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
@@ -117,7 +118,12 @@ function serializeSourceSnapshotFile(file: SourceSnapshotFile): string {
 function serializeSourceSnapshot(files: SourceSnapshotFile[]): string {
   const records: string[] = [];
   for (let index = 0; index < files.length; index++) {
-    records[records.length] = serializeSourceSnapshotFile(files[index]!);
+    IntrinsicObjectDefineProperty(records, records.length, {
+      configurable: true,
+      enumerable: true,
+      value: serializeSourceSnapshotFile(files[index]!),
+      writable: true,
+    });
   }
   IntrinsicReflectApply(ArrayPrototypeSort, records, []);
 

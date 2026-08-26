@@ -851,6 +851,40 @@ describe("VeryfrontFSAdapter", () => {
       assertNotEquals(changed, first);
     });
 
+    it("does not populate fingerprint records through inherited array setters", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+        sourceSnapshotVersion: number;
+      };
+      const previousIndex = Object.getOwnPropertyDescriptor(Array.prototype, "0");
+      let setterCalls = 0;
+
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        set: () => {
+          setterCalls += 1;
+        },
+      });
+      try {
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
+        const first = await adapter.getSourceSnapshotFingerprint();
+
+        internals.sourceSnapshotVersion += 1;
+        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
+        const changed = await adapter.getSourceSnapshotFingerprint();
+
+        assertNotEquals(changed, first);
+        assertEquals(setterCalls, 0);
+      } finally {
+        if (previousIndex) {
+          Object.defineProperty(Array.prototype, "0", previousIndex);
+        } else {
+          Reflect.deleteProperty(Array.prototype, "0");
+        }
+      }
+    });
+
     it("does not iterate through a mutable source-list hook", async () => {
       const adapter = createAdapter();
       const files = [{ path: "pages/index.tsx", content: "source" }];
