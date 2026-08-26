@@ -506,6 +506,54 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("keeps one pending approval per node until the first is decided", async () => {
+      const run = createTestRun("approval-node-uniqueness", {
+        status: "waiting",
+        workerId: "worker-a",
+      });
+      await backend.createRun(run);
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Review",
+        payload: {},
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "worker-a",
+          approval("first"),
+        ),
+        true,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "worker-a",
+          approval("duplicate"),
+        ),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(run.id)).map(({ id }) => id), ["first"]);
+
+      await backend.updateApproval(run.id, "first", { approved: true, approver: "reviewer" });
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          "worker-a",
+          approval("retry"),
+        ),
+        true,
+      );
+      assertEquals((await backend.getPendingApprovals(run.id)).map(({ id }) => id), ["retry"]);
+    });
+
     it("should hydrate pending approvals when retrieving a run", async () => {
       const run = createTestRun("run-with-approval", { status: "waiting" });
       const approval: PendingApproval = {
@@ -814,6 +862,25 @@ describe("MemoryBackend", () => {
       assertEquals(waits[0]?.eventName, "payment.confirmed", "the event name must round-trip");
     });
 
+    it("keeps one pending event wait per node until the first is resolved", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("first"));
+      await backend.savePendingEventWait("run-events", createEventWait("duplicate"));
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
+        ["first"],
+      );
+
+      assertEquals(
+        await backend.resolvePendingEventWait("run-events", "first", "delivered"),
+        true,
+      );
+      await backend.savePendingEventWait("run-events", createEventWait("retry"));
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
+        ["retry"],
+      );
+    });
+
     it("takes a buffered event only for the matching event name, oldest first", async () => {
       await backend.appendRunEvent("run-events", {
         id: "evt-1",
@@ -854,11 +921,18 @@ describe("MemoryBackend", () => {
 
     it("refuses a wait append that would drop a still-pending wait", async () => {
       for (let index = 0; index < MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES; index++) {
-        await backend.savePendingEventWait("run-events", createEventWait(`evw-${index}`));
+        await backend.savePendingEventWait(
+          "run-events",
+          createEventWait(`evw-${index}`, { nodeId: `await-payment-${index}` }),
+        );
       }
 
       await assertRejects(
-        () => backend.savePendingEventWait("run-events", createEventWait("evw-overflow")),
+        () =>
+          backend.savePendingEventWait(
+            "run-events",
+            createEventWait("evw-overflow", { nodeId: "await-payment-overflow" }),
+          ),
         Error,
         "Event wait list full",
       );
@@ -997,7 +1071,10 @@ describe("MemoryBackend", () => {
 
       await backend.savePendingEventWait(
         "run-events",
-        createEventWait("evw-finalized-mailbox", { eventName: "ready" }),
+        createEventWait("evw-finalized-mailbox", {
+          nodeId: "await-finalized-mailbox",
+          eventName: "ready",
+        }),
       );
       await backend.appendRunEvent("run-events", {
         id: "evt-finalized-mailbox",

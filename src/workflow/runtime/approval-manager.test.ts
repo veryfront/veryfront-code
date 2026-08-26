@@ -242,6 +242,42 @@ describe("ApprovalManager", () => {
   });
 
   describe("createApproval", () => {
+    it("coalesces concurrent approval creation for the same live node", async () => {
+      let notifications = 0;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const run = createTestRun("run-concurrent-approval", {
+        status: "waiting",
+        workerId: "run-execution:owner",
+      });
+      await backend.createRun(run);
+
+      const requests = await Promise.all([
+        manager.createApproval(
+          run,
+          "review-node",
+          { type: "wait", waitType: "approval", message: "Please approve" },
+          run.context,
+        ),
+        manager.createApproval(
+          run,
+          "review-node",
+          { type: "wait", waitType: "approval", message: "Please approve" },
+          run.context,
+        ),
+      ]);
+
+      assertEquals(requests[0]?.approvalId, requests[1]?.approvalId);
+      assertEquals((await backend.getPendingApprovals(run.id)).length, 1);
+      assertEquals(notifications, 1, "only the atomically persisted winner may notify");
+    });
+
     it("validates the timeout before resolving a dynamic payload", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
       const run = createTestRun("run-invalid-approval-timeout");

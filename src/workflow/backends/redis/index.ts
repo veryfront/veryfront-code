@@ -594,12 +594,21 @@ function parseRunObservationRecords(
  *
  * Returns 1 when the append was journaled, 0 when the run hash is absent (the
  * approval is still appended, preserving the unconditional-save contract),
- * and 2 when insufficient decided history can be evicted. Retention preflight,
+ * 2 when insufficient decided history can be evicted, and 3 when a pending
+ * approval already exists for the same node. Duplicate preflight, retention,
  * append, revision increment, and journal write all happen atomically.
  */
 const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
+local approval = cjson.decode(ARGV[1])
+local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
+for i = 1, #existingApprovals do
+  local candidate = cjson.decode(existingApprovals[i])
+  if candidate.status == 'pending' and candidate.nodeId == approval.nodeId then
+    return 3
+  end
+end
 if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
 redis.call('rpush', KEYS[2], ARGV[1])
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
@@ -654,7 +663,8 @@ return 1`;
  * ARGV[n+6] = observation stream max length
  *
  * Returns 1 when appended and journaled, 0 when the ownership fence fails,
- * and 2 when insufficient decided history can be evicted.
+ * 2 when insufficient decided history can be evicted, and 3 when a pending
+ * approval already exists for the same node.
  */
 const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-append
 ${RETAIN_APPROVALS_LUA}
@@ -671,6 +681,14 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
+local approval = cjson.decode(ARGV[expectedCount + 3])
+local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
+for i = 1, #existingApprovals do
+  local candidate = cjson.decode(existingApprovals[i])
+  if candidate.status == 'pending' and candidate.nodeId == approval.nodeId then
+    return 3
+  end
+end
 if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
   return 2
 end

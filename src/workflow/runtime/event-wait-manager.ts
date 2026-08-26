@@ -18,6 +18,7 @@ import {
 } from "./workflow-run-control.ts";
 import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { unrefTimer } from "#veryfront/compat/process.ts";
+import { MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES } from "../limits.ts";
 
 const logger = baseLogger.component("event-wait-manager");
 
@@ -37,6 +38,15 @@ const expiryTimersByBackend = new WeakMap<
   WorkflowBackend,
   Map<string, Map<EventWaitManager, ReturnType<typeof setTimeout>>>
 >();
+/** Coordinate drains across every manager sharing one backend instance. */
+const drainSessionsByBackend = new WeakMap<WorkflowBackend, Map<string, DrainSession>>();
+/** Bounded, backend-scoped attribution for a drain that finishes before its publisher rejoins. */
+const deliveredEventReceiptsByBackend = new WeakMap<
+  WorkflowBackend,
+  Map<string, Set<string>>
+>();
+/** Envelope ids whose publisher is still awaiting an exact delivery outcome. */
+const activeEventPublicationsByBackend = new WeakMap<WorkflowBackend, Set<string>>();
 
 export interface EventWaitManagerConfig {
   /** Backend for persistence */
@@ -115,14 +125,17 @@ export class EventWaitManager {
   private expirationTimer?: ReturnType<typeof setInterval>;
   /** In-process deadline timers, keyed by wait id, so a short delay fires promptly. */
   private expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Shared accumulator and completion barrier for same-run drain passes. */
-  private drainSessions = new Map<string, DrainSession>();
+  /** Shared accumulator and completion barrier for same-backend, same-run drain passes. */
+  private drainSessions: Map<string, DrainSession>;
   /** Best-effort prompt retries; durable claims remain the restart fallback. */
   private finalizationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private finalizationRetryAttempts = new Map<string, number>();
   /** Best-effort retries for mail drained after its publisher already returned. */
   private deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private deliveryRetryAttempts = new Map<string, number>();
+  /** Prompt retries for a committed node whose run resume did not complete. */
+  private committedResumeRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private committedResumeRetryAttempts = new Map<string, number>();
   /** Same-process timeout claims still reconciling their matching run transition. */
   private activeTimedWaitClaims = new Set<string>();
   private destroyed = false;
@@ -134,6 +147,12 @@ export class EventWaitManager {
       debug: false,
       ...config,
     };
+    let drainSessions = drainSessionsByBackend.get(config.backend);
+    if (!drainSessions) {
+      drainSessions = new Map();
+      drainSessionsByBackend.set(config.backend, drainSessions);
+    }
+    this.drainSessions = drainSessions;
     this.ensureExpirationChecker();
   }
 
@@ -229,12 +248,28 @@ export class EventWaitManager {
           ? await saveOwned.call(backend, run.id, ["waiting"], run.workerId, wait)
           : false;
         if (!saved) {
+          const existing = (await backend.getPendingEventWaits(run.id)).find(
+            (candidate) => candidate.nodeId === nodeId,
+          );
+          if (existing) {
+            this.clearExpiry(wait.id);
+            return projectEventWait(existing);
+          }
           throw ORCHESTRATION_ERROR.create({
             detail: "Workflow execution ownership changed before event wait persistence",
           });
         }
       } else {
         await backend.savePendingEventWait(run.id, wait);
+        const pending = await backend.getPendingEventWaits(run.id);
+        if (!pending.some((candidate) => candidate.id === wait.id)) {
+          const existing = pending.find((candidate) => candidate.nodeId === nodeId);
+          this.clearExpiry(wait.id);
+          if (existing) return projectEventWait(existing);
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Event wait persistence completed without a pending record",
+          });
+        }
       }
     } catch (error) {
       // Nothing was persisted, so the early timer guards nothing: drop it.
@@ -316,32 +351,40 @@ export class EventWaitManager {
       payload,
       publishedAt: new Date(),
     };
-    await backend.appendRunEvent(runId, envelope);
-    // Failed runs are retryable but cannot reconcile a delivery until retry()
-    // makes them active again. Preserve the event for the sibling wait instead
-    // of claiming and immediately rolling it back against the failed run.
-    if (run?.status === "failed") return "buffered";
-    const outcome = await this.drain(runId, true);
+    this.markEventPublicationActive(envelope.id);
+    try {
+      await backend.appendRunEvent(runId, envelope);
+      // Failed runs are retryable but cannot reconcile a delivery until retry()
+      // makes them active again. Preserve the event for the sibling wait instead
+      // of claiming and immediately rolling it back against the failed run.
+      if (run?.status === "failed") return "buffered";
+      const outcome = await this.drain(runId, true);
 
-    // The outcome reports what happened to THIS envelope. With concurrent
-    // publishes or previously buffered mail, the drain can deliver an older
-    // envelope with the same name while this one stays buffered, and a caller
-    // told "delivered" about an envelope that was not would retry and
-    // duplicate the event.
-    if (outcome.deliveredEventIds.has(envelope.id)) return "delivered";
+      // The outcome reports what happened to THIS envelope. With concurrent
+      // publishes or previously buffered mail, the drain can deliver an older
+      // envelope with the same name while this one stays buffered, and a caller
+      // told "delivered" about an envelope that was not would retry and
+      // duplicate the event.
+      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id);
+      if (outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain) {
+        return "delivered";
+      }
 
-    // Re-check for a terminal transition that landed between the status check
-    // above and the append. Failed remains mailbox-retaining because retry can
-    // still consume the restored envelope; completed and cancelled cannot.
-    const latest = await backend.getRun(runId);
-    if (latest?.status === "failed") return "buffered";
-    if (latest && !MAILBOX_RETAINING_RUN_STATUSES.includes(latest.status)) {
-      await backend.removeRunEvent(runId, envelope.id);
-      return "run-terminal";
+      // Re-check for a terminal transition that landed between the status check
+      // above and the append. Failed remains mailbox-retaining because retry can
+      // still consume the restored envelope; completed and cancelled cannot.
+      const latest = await backend.getRun(runId);
+      if (latest?.status === "failed") return "buffered";
+      if (latest && !MAILBOX_RETAINING_RUN_STATUSES.includes(latest.status)) {
+        await backend.removeRunEvent(runId, envelope.id);
+        return "run-terminal";
+      }
+      if (outcome.failedEventIds.has(envelope.id)) return "delivery-failed";
+      if (outcome.terminal) return "run-terminal";
+      return "buffered";
+    } finally {
+      this.clearEventPublicationActive(runId, envelope.id);
     }
-    if (outcome.failedEventIds.has(envelope.id)) return "delivery-failed";
-    if (outcome.terminal) return "run-terminal";
-    return "buffered";
   }
 
   /** Retry the oldest buffered envelope without publishing a duplicate. */
@@ -360,8 +403,59 @@ export class EventWaitManager {
 
     const envelope = await backend.peekRunEvent(runId, eventName);
     if (!envelope) return false;
-    const outcome = await this.drain(runId, true);
-    return outcome.deliveredEventIds.has(envelope.id);
+    this.markEventPublicationActive(envelope.id);
+    try {
+      const outcome = await this.drain(runId, true);
+      const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id);
+      return outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain;
+    } finally {
+      this.clearEventPublicationActive(runId, envelope.id);
+    }
+  }
+
+  private markEventPublicationActive(eventId: string): void {
+    let active = activeEventPublicationsByBackend.get(this.config.backend);
+    if (!active) {
+      active = new Set();
+      activeEventPublicationsByBackend.set(this.config.backend, active);
+    }
+    active.add(eventId);
+  }
+
+  private clearEventPublicationActive(runId: string, eventId: string): void {
+    const active = activeEventPublicationsByBackend.get(this.config.backend);
+    active?.delete(eventId);
+    if (active?.size === 0) activeEventPublicationsByBackend.delete(this.config.backend);
+    this.consumeDeliveredEventReceipt(runId, eventId);
+  }
+
+  private recordDeliveredEventReceipt(runId: string, eventId: string): void {
+    if (!activeEventPublicationsByBackend.get(this.config.backend)?.has(eventId)) return;
+    let receiptsByRun = deliveredEventReceiptsByBackend.get(this.config.backend);
+    if (!receiptsByRun) {
+      receiptsByRun = new Map();
+      deliveredEventReceiptsByBackend.set(this.config.backend, receiptsByRun);
+    }
+    let receipts = receiptsByRun.get(runId);
+    if (!receipts) {
+      receipts = new Set();
+      receiptsByRun.set(runId, receipts);
+    }
+    receipts.add(eventId);
+    while (receipts.size > MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES) {
+      receipts.delete(receipts.values().next().value!);
+    }
+  }
+
+  private consumeDeliveredEventReceipt(runId: string, eventId: string): boolean {
+    const receiptsByRun = deliveredEventReceiptsByBackend.get(this.config.backend);
+    const receipts = receiptsByRun?.get(runId);
+    if (!receipts?.delete(eventId)) return false;
+    if (receipts.size === 0) receiptsByRun!.delete(runId);
+    if (receiptsByRun!.size === 0) {
+      deliveredEventReceiptsByBackend.delete(this.config.backend);
+    }
+    return true;
   }
 
   /** Read the waits a run is currently parked on. */
@@ -456,7 +550,8 @@ export class EventWaitManager {
           if (await this.nodeOutcomeCommitted(wait)) {
             outcome.failedEventIds.delete(event.id);
             outcome.deliveredEventIds.add(event.id);
-            await this.finalizeDelivery(wait, event);
+            this.recordDeliveredEventReceipt(runId, event.id);
+            this.scheduleCommittedResumeRetry(wait, event);
             logger.error(
               "Event wait node committed but resuming the run failed",
               { runId, waitId: wait.id, nodeId: wait.nodeId },
@@ -493,6 +588,7 @@ export class EventWaitManager {
         }
         outcome.failedEventIds.delete(event.id);
         outcome.deliveredEventIds.add(event.id);
+        this.recordDeliveredEventReceipt(runId, event.id);
         await this.finalizeDelivery(wait, event);
       }
     } finally {
@@ -554,6 +650,91 @@ export class EventWaitManager {
     if (timer !== undefined) clearTimeout(timer);
     this.finalizationRetryTimers.delete(eventId);
     this.finalizationRetryAttempts.delete(eventId);
+  }
+
+  private committedResumeRetryKey(
+    wait: PersistedPendingEventWait,
+    event?: RunEventEnvelope,
+  ): string {
+    return `${wait.runId}\0${wait.id}\0${event?.id ?? "timed"}`;
+  }
+
+  /**
+   * Keep the durable claim as a reconciliation signal until a committed node
+   * has actually nudged its run. A process exit leaves that claim enumerable
+   * for the next manager; this timer only makes the same-process retry prompt.
+   */
+  private scheduleCommittedResumeRetry(
+    wait: PersistedPendingEventWait,
+    event?: RunEventEnvelope,
+  ): void {
+    const key = this.committedResumeRetryKey(wait, event);
+    if (this.destroyed || this.committedResumeRetryTimers.has(key)) return;
+    const attempt = (this.committedResumeRetryAttempts.get(key) ?? 0) + 1;
+    if (attempt > MAX_BACKGROUND_DELIVERY_RETRY_ATTEMPTS) {
+      this.committedResumeRetryAttempts.delete(key);
+      return;
+    }
+    this.committedResumeRetryAttempts.set(key, attempt);
+    const retryDelay = Math.min(
+      MIN_EXPIRY_RETRY_DELAY_MS * 2 ** (attempt - 1),
+      DEFAULT_DELIVERY_CLAIM_RECOVERY_DELAY_MS,
+    );
+    const timer = setTimeout(() => {
+      this.committedResumeRetryTimers.delete(key);
+      if (this.destroyed) return;
+      void this.reconcileCommittedResume(wait, event).catch((error) => {
+        logger.error(
+          "Failed to resume a run after its event-wait node committed",
+          { runId: wait.runId, waitId: wait.id, nodeId: wait.nodeId },
+          error,
+        );
+        this.scheduleCommittedResumeRetry(wait, event);
+      });
+    }, retryDelay);
+    unrefTimer(timer);
+    this.committedResumeRetryTimers.set(key, timer);
+  }
+
+  private clearCommittedResumeRetry(
+    wait: PersistedPendingEventWait,
+    event?: RunEventEnvelope,
+  ): void {
+    const key = this.committedResumeRetryKey(wait, event);
+    const timer = this.committedResumeRetryTimers.get(key);
+    if (timer !== undefined) clearTimeout(timer);
+    this.committedResumeRetryTimers.delete(key);
+    this.committedResumeRetryAttempts.delete(key);
+  }
+
+  private async reconcileCommittedResume(
+    wait: PersistedPendingEventWait,
+    event?: RunEventEnvelope,
+  ): Promise<void> {
+    const run = await this.config.backend.getRun(wait.runId);
+    if (!run) {
+      if (event) await this.finalizeDelivery(wait, event);
+      else await this.finalizeTimedWaitClaim(wait);
+      this.clearCommittedResumeRetry(wait, event);
+      return;
+    }
+    const committedNodeStatus = event || wait.waitKind === "delay" ? "completed" : "failed";
+    if (run.nodeStates[wait.nodeId]?.status !== committedNodeStatus) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Event-wait node "${wait.nodeId}" is no longer durably ${committedNodeStatus}`,
+      });
+    }
+    if (committedNodeStatus === "completed" && run.status === "waiting") {
+      if (!this.config.executor) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Cannot resume a committed event-wait node without a workflow executor",
+        });
+      }
+      await this.config.executor.resume(run.id, undefined, run.workerId);
+    }
+    if (event) await this.finalizeDelivery(wait, event);
+    else await this.finalizeTimedWaitClaim(wait);
+    this.clearCommittedResumeRetry(wait, event);
   }
 
   private scheduleDeliveryRetry(runId: string): void {
@@ -629,11 +810,25 @@ export class EventWaitManager {
         );
         continue;
       }
-      if (
-        !run || run.nodeStates[claim.wait.nodeId]?.status === "completed" ||
-        run.status === "completed" || run.status === "cancelled"
-      ) {
+      if (!run || run.status === "completed" || run.status === "cancelled") {
         await this.finalizeDelivery(claim.wait, claim.event);
+        continue;
+      }
+      if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
+        try {
+          await this.reconcileCommittedResume(claim.wait, claim.event);
+        } catch (error) {
+          logger.error(
+            "Failed to reconcile an abandoned committed event delivery",
+            {
+              runId: claim.wait.runId,
+              waitId: claim.wait.id,
+              eventId: claim.event.id,
+            },
+            error,
+          );
+          this.scheduleCommittedResumeRetry(claim.wait, claim.event);
+        }
         continue;
       }
       try {
@@ -673,8 +868,21 @@ export class EventWaitManager {
       const committed = wait.waitKind === "delay"
         ? nodeStatus === "completed"
         : nodeStatus === "failed";
-      if (!run || committed || run.status === "completed" || run.status === "cancelled") {
+      if (!run || run.status === "completed" || run.status === "cancelled") {
         await this.finalizeTimedWaitClaim(wait);
+        continue;
+      }
+      if (committed) {
+        try {
+          await this.reconcileCommittedResume(wait);
+        } catch (error) {
+          logger.error(
+            "Failed to reconcile an abandoned committed timed event wait",
+            { runId: wait.runId, waitId: wait.id },
+            error,
+          );
+          this.scheduleCommittedResumeRetry(wait);
+        }
         continue;
       }
       try {
@@ -911,7 +1119,7 @@ export class EventWaitManager {
           }
         } catch (error) {
           if (await this.nodeOutcomeCommitted(wait)) {
-            await this.finalizeTimedWaitClaim(wait);
+            this.scheduleCommittedResumeRetry(wait);
             logger.error(
               "Delay node committed but resuming the run failed",
               { runId: wait.runId, waitId: wait.id, nodeId: wait.nodeId },
@@ -1013,7 +1221,15 @@ export class EventWaitManager {
     if (this.destroyed || !hasEventWaitSupport(backend)) return;
 
     for (const runId of await this.recoverAbandonedDeliveries()) {
-      await this.drain(runId, false);
+      try {
+        await this.drain(runId, false);
+      } catch (error) {
+        logger.error(
+          "Failed to drain a recovered run during the event-wait sweep",
+          { runId },
+          error,
+        );
+      }
     }
 
     const runStatuses = new Map<string, WorkflowRun["status"] | null>();
@@ -1078,9 +1294,17 @@ export class EventWaitManager {
         continue;
       }
       if (!run || !ACTIVE_WAIT_STATUSES.includes(run.status)) continue;
-      const outcome = await this.drain(runId, false);
-      if (outcome.failedEventIds.size > 0) this.scheduleDeliveryRetry(runId);
-      else this.clearDeliveryRetry(runId);
+      try {
+        const outcome = await this.drain(runId, false);
+        if (outcome.failedEventIds.size > 0) this.scheduleDeliveryRetry(runId);
+        else this.clearDeliveryRetry(runId);
+      } catch (error) {
+        logger.error(
+          "Failed to drain an active run during the event-wait sweep",
+          { runId },
+          error,
+        );
+      }
     }
   }
 
@@ -1094,6 +1318,11 @@ export class EventWaitManager {
     this.finalizationRetryAttempts.clear();
     for (const runId of [...this.deliveryRetryTimers.keys()]) this.clearDeliveryRetry(runId);
     this.deliveryRetryAttempts.clear();
+    for (const key of this.committedResumeRetryTimers.keys()) {
+      clearTimeout(this.committedResumeRetryTimers.get(key)!);
+    }
+    this.committedResumeRetryTimers.clear();
+    this.committedResumeRetryAttempts.clear();
     this.activeTimedWaitClaims.clear();
     if (this.expirationTimer === undefined) return;
     clearInterval(this.expirationTimer);

@@ -398,6 +398,29 @@ class CompleteStalledWaitOnPauseBackend extends MemoryBackend {
   }
 }
 
+class CompleteSiblingBeforeNormalPauseBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "waiting") {
+      await super.updateRun(runId, {
+        nodeStates: {
+          sibling: {
+            nodeId: "sibling",
+            status: "completed",
+            output: { delivered: true },
+            attempt: 1,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class ReconcileOwnerChangesBackend extends MemoryBackend {
   readonly attemptedOwners: string[] = [];
   readonly replacementOwners: string[];
@@ -630,6 +653,32 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(backend.releaseBeforeCallback, true);
     assertEquals(lockedDuringCallback, false);
     assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("does not revert a sibling delivered before the normal waiting transition", async () => {
+    const backend = new CompleteSiblingBeforeNormalPauseBackend();
+    const staleNodeStates: Record<string, NodeState> = {
+      review: { nodeId: "review", status: "running", attempt: 1 },
+      sibling: { nodeId: "sibling", status: "running", attempt: 1 },
+    };
+    const run = {
+      ...createRun("normal-pause-preserves-sibling"),
+      status: "running" as const,
+      nodeStates: structuredClone(staleNodeStates),
+    };
+    await backend.createRun(run);
+
+    const outcome = await execute(
+      backend,
+      run,
+      () => waitingResult({ input: {} }, staleNodeStates),
+    );
+
+    assertEquals(outcome.status, "waiting");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.nodeStates.review?.status, "running");
+    assertEquals(persisted?.nodeStates.sibling?.status, "completed");
+    assertEquals(persisted?.nodeStates.sibling?.output, { delivered: true });
   });
 
   it("keeps cancellation terminal over completion and failure", async () => {

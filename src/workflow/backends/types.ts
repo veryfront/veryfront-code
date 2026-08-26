@@ -233,8 +233,16 @@ export interface WorkflowBackend {
   /** Delete one oldest append-ordered occurrence for each supplied checkpoint ID. */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
+  /**
+   * Append an approval unless this run already has a pending approval for the
+   * same node. The duplicate check and append must be one atomic operation.
+   */
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void>;
-  /** Append an approval only while the run status and worker owner match. */
+  /**
+   * Append an approval only while the run status and worker owner match and no
+   * pending approval already exists for the same node. Returns false after
+   * losing either precondition.
+   */
   savePendingApprovalIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
@@ -295,9 +303,16 @@ export interface WorkflowBackend {
    * below holds the event until a wait claims it. A backend that implements
    * none of them cannot, and `hasEventWaitSupport` reports that honestly rather
    * than letting a run park on nothing.
+   *
+   * Append an event wait unless this run already has a pending wait for the
+   * same node. The duplicate check and append must be one atomic operation.
    */
   savePendingEventWait?(runId: string, wait: PersistedPendingEventWait): Promise<void>;
-  /** Append an event wait only while the run status and worker owner match. */
+  /**
+   * Append an event wait only while the run status and worker owner match and
+   * no pending event wait already exists for the same node. Returns false
+   * after losing either precondition.
+   */
   savePendingEventWaitIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],

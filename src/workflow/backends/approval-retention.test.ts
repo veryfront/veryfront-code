@@ -10,7 +10,7 @@ import { MemoryBackend } from "./memory.ts";
 function approval(id: string, overrides: Partial<PendingApproval> = {}): PendingApproval {
   return {
     id,
-    nodeId: "wait-node",
+    nodeId: `wait-node-${id}`,
     status: "pending",
     message: "Approve this?",
     payload: {},

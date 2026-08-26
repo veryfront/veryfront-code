@@ -820,6 +820,10 @@ export async function executeWorkflowRunControl(
 
       const paused = await pauseRun(input, executionController, result, {
         currentNodes: waitingNodes.map((waiting) => waiting.nodeId),
+        // The DAG persisted this settled batch before returning. Restrict the
+        // final park to status/currentNodes so a sibling delivered between the
+        // DAG write and this transition cannot be reverted by this snapshot.
+        statusOnly: true,
       });
       if (!paused) return { status: "ownership-lost" };
       pausedForWaiting = true;

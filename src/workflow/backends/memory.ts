@@ -532,6 +532,13 @@ export class MemoryBackend implements WorkflowBackend {
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
     logger.debug("Saving approval", { approvalId: approval.id, runId });
     const approvals = this.approvals.get(runId) ?? [];
+    if (
+      approvals.some((candidate) =>
+        candidate.status === "pending" && candidate.nodeId === approval.nodeId
+      )
+    ) {
+      return Promise.resolve();
+    }
     try {
       appendRetainedPendingApproval(approvals, approval);
     } catch (error) {
@@ -560,6 +567,13 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const approvals = this.approvals.get(runId) ?? [];
+    if (
+      approvals.some((candidate) =>
+        candidate.status === "pending" && candidate.nodeId === approval.nodeId
+      )
+    ) {
+      return Promise.resolve(false);
+    }
     try {
       appendRetainedPendingApproval(approvals, approval);
     } catch (error) {
@@ -679,6 +693,11 @@ export class MemoryBackend implements WorkflowBackend {
   savePendingEventWait(runId: string, wait: PersistedPendingEventWait): Promise<void> {
     logger.debug("Saving event wait", { waitId: wait.id, runId });
     const waits = this.eventWaits.get(runId) ?? [];
+    if (
+      waits.some((candidate) => candidate.status === "pending" && candidate.nodeId === wait.nodeId)
+    ) {
+      return Promise.resolve();
+    }
     try {
       appendRetainedPendingEventWait(waits, wait);
     } catch (error) {
@@ -701,7 +720,19 @@ export class MemoryBackend implements WorkflowBackend {
     if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
       return Promise.resolve(false);
     }
-    return this.savePendingEventWait(runId, wait).then(() => true);
+    const waits = this.eventWaits.get(runId) ?? [];
+    if (
+      waits.some((candidate) => candidate.status === "pending" && candidate.nodeId === wait.nodeId)
+    ) {
+      return Promise.resolve(false);
+    }
+    try {
+      appendRetainedPendingEventWait(waits, wait);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.eventWaits.set(runId, waits);
+    return Promise.resolve(true);
   }
 
   getPendingEventWaits(runId: string): Promise<PersistedPendingEventWait[]> {

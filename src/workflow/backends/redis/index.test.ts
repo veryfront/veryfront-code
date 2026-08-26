@@ -311,6 +311,13 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(approvalsKey, list);
       }
+      const approval = JSON.parse(args[0]!);
+      if (
+        list.some((raw) => {
+          const candidate = JSON.parse(raw);
+          return candidate.status === "pending" && candidate.nodeId === approval.nodeId;
+        })
+      ) return Promise.resolve(3);
       if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(2);
       list.push(args[0]!);
       const hash = this.hashes.get(key);
@@ -350,6 +357,13 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(approvalsKey, list);
       }
+      const approval = JSON.parse(value);
+      if (
+        list.some((raw) => {
+          const candidate = JSON.parse(raw);
+          return candidate.status === "pending" && candidate.nodeId === approval.nodeId;
+        })
+      ) return Promise.resolve(3);
       if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
       list.push(value);
       const revision = this.appendRunObservation(
@@ -2577,7 +2591,7 @@ describe("RedisBackend", () => {
     function makeApproval(id: string): PendingApproval {
       return {
         id,
-        nodeId: "wait-node",
+        nodeId: `wait-node-${id}`,
         status: "pending",
         message: "Approve this?",
         payload: { reason: "test" },
@@ -2593,6 +2607,60 @@ describe("RedisBackend", () => {
       assertEquals(pending.length, 1);
       assertEquals(pending[0]!.id, "ap-1");
       assertEquals(pending[0]!.status, "pending");
+    });
+
+    it("atomically rejects an owned duplicate for the same pending node", async () => {
+      const runId = "run-ap-node-uniqueness";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-a",
+      }));
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("first"),
+        ),
+        true,
+      );
+      const runHash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
+      const revisionAfterFirst = runHash.get("__runObservationRevision");
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("duplicate"),
+        ),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+      assertEquals(
+        runHash.get("__runObservationRevision"),
+        revisionAfterFirst,
+        "a duplicate must not publish a phantom observation revision",
+      );
+
+      await backend.updateApproval(runId, "first", {
+        approved: true,
+        approver: "reviewer",
+      });
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("retry"),
+        ),
+        true,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["retry"]);
     });
 
     it("bounds approval appends by evicting decided records before live ones", async () => {

@@ -59,7 +59,7 @@ export interface ApprovalManagerConfig {
   backend: WorkflowBackend;
   /** Workflow executor for resuming after approval */
   executor?: WorkflowExecutor;
-  /** Notification callback. Owner-bound approvals are persisted before this callback runs. */
+  /** Notification callback. Approvals are persisted before this callback runs. */
   notifier?: ApprovalNotifier;
   /** Resolve a wait node response schema for persisted approvals. */
   responseSchemaResolver?: ApprovalResponseSchemaResolver;
@@ -90,6 +90,21 @@ export interface ApprovalRequest {
    * re-notify or alert an operator rather than assume delivery.
    */
   notificationError?: string;
+}
+
+function projectApprovalRequest(
+  runId: string,
+  approval: PersistedPendingApproval,
+): ApprovalRequest {
+  return {
+    approvalId: approval.id,
+    runId,
+    nodeId: approval.nodeId,
+    message: approval.message,
+    payload: approval.payload,
+    expiresAt: approval.expiresAt,
+    notificationError: approval.notificationError,
+  };
 }
 
 /** Manages pending approvals, processing decisions, and resuming workflows */
@@ -155,15 +170,14 @@ export class ApprovalManager {
       this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
     }
 
-    // Worker-owned approvals are reserved atomically before notification. This
-    // prevents a delayed onWaiting callback from notifying or appending after a
-    // replacement worker has claimed the run.
+    // Persist before notifying for both owner-bound and ownerless callers. The
+    // backend atomically rejects a second live approval for this node, so only
+    // the winner is allowed to notify approvers.
     const ownerBound = workerId !== undefined;
-    if (ownerBound) {
-      const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
-      let saved: boolean;
-      try {
-        saved = saveOwned
+    try {
+      if (ownerBound) {
+        const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
+        const saved = saveOwned
           ? await saveOwned.call(
             this.config.backend,
             runId,
@@ -172,20 +186,33 @@ export class ApprovalManager {
             approval,
           )
           : false;
-      } catch (error) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
+        if (!saved) {
+          const existing = (await this.config.backend.getPendingApprovals(runId)).find(
+            (candidate) => candidate.nodeId === nodeId,
+          );
+          if (existing) {
+            if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+            return projectApprovalRequest(runId, existing);
+          }
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Workflow execution ownership changed before approval persistence",
+          });
         }
-        throw error;
-      }
-      if (!saved) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
+      } else {
+        await this.config.backend.savePendingApproval(runId, approval);
+        const pending = await this.config.backend.getPendingApprovals(runId);
+        if (!pending.some((candidate) => candidate.id === approval.id)) {
+          const existing = pending.find((candidate) => candidate.nodeId === nodeId);
+          if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+          if (existing) return projectApprovalRequest(runId, existing);
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Approval persistence completed without a pending record",
+          });
         }
-        throw ORCHESTRATION_ERROR.create({
-          detail: "Workflow execution ownership changed before approval persistence",
-        });
       }
+    } catch (error) {
+      if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+      throw error;
     }
 
     try {
@@ -202,44 +229,23 @@ export class ApprovalManager {
       );
     }
 
-    if (ownerBound) {
-      if (approval.notificationError) {
-        try {
-          await this.config.backend.updatePendingApproval?.(
-            runId,
-            approval.id,
-            { notificationError: approval.notificationError },
-          );
-        } catch (error) {
-          logger.error(
-            "Failed to persist approval notification state",
-            { approvalId: approval.id, runId },
-            error,
-          );
-        }
-      }
-    } else {
-      // Preserve direct/ownerless behavior: resolve notification first so its
-      // delivery error is included in the initial append.
+    if (approval.notificationError) {
       try {
-        await this.config.backend.savePendingApproval(runId, approval);
+        await this.config.backend.updatePendingApproval?.(
+          runId,
+          approval.id,
+          { notificationError: approval.notificationError },
+        );
       } catch (error) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
-        }
-        throw error;
+        logger.error(
+          "Failed to persist approval notification state",
+          { approvalId: approval.id, runId },
+          error,
+        );
       }
     }
 
-    return {
-      approvalId: approval.id,
-      runId,
-      nodeId,
-      message: approval.message,
-      payload: approval.payload,
-      expiresAt: approval.expiresAt,
-      notificationError: approval.notificationError,
-    };
+    return projectApprovalRequest(runId, approval);
   }
 
   /** Get pending approval by ID */
