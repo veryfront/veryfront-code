@@ -398,6 +398,7 @@ function assertSupportedEndpoint(
   connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
   toolId: string,
+  enumeratedHost: EnumeratedHostBinding | undefined,
 ): string | undefined {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
@@ -422,6 +423,10 @@ function assertSupportedEndpoint(
     }
     return undefined;
   }
+
+  // Enum-constrained hosts already pinned every resolvable origin at binding
+  // time; only the origin admission differs from the checks above.
+  if (enumeratedHost) return undefined;
 
   const authorityMatch = apply(
     regexpExec,
@@ -572,9 +577,12 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
   }
 
   const enumeratedHost = enumeratedHostBinding(tool.endpoint, canonicalToolId);
-  const endpointOrigin = enumeratedHost
-    ? undefined
-    : assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
+  const endpointOrigin = assertSupportedEndpoint(
+    connector,
+    tool.endpoint,
+    canonicalToolId,
+    enumeratedHost,
+  );
   assertSupportedAuth(connector, tool.endpoint);
   const authPlan = createLocalCredentialAuthPlan(connector);
   return freeze({

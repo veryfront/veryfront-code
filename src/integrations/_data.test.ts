@@ -1397,6 +1397,36 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("keeps enum-constrained host endpoints locally executable", () => {
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const endpoint = tool.endpoint;
+        if (!endpoint) continue;
+        const hasConstrainedHost = Object.values(endpoint.params ?? {}).some((
+          param,
+        ) => param.in === "path" && param.enum !== undefined);
+        if (!hasConstrainedHost) continue;
+
+        const label = `${connector.name}:${tool.id ?? tool.name}`;
+        assertEquals(
+          endpoint.type === "graphql",
+          false,
+          `${label} must not use GraphQL execution`,
+        );
+        assertEquals(
+          endpoint.response?.enrich,
+          undefined,
+          `${label} must not use response enrichment`,
+        );
+        assertEquals(
+          endpoint.bodyMode === "form-data" || endpoint.bodyMode === "raw",
+          false,
+          `${label} must not use an unsupported body mode`,
+        );
+      }
+    }
+  });
+
   it("keeps QuickBooks OAuth requests on the official Intuit API origins", () => {
     const quickbooks = getConnector("quickbooks");
 
