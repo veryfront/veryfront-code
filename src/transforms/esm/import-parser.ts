@@ -1,6 +1,14 @@
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { getEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { dirname, fromFileUrl, join, normalize, relative, resolve } from "#veryfront/compat/path";
+import {
+  dirname,
+  fromFileUrl,
+  join,
+  normalize,
+  posix,
+  relative,
+  resolve,
+} from "#veryfront/compat/path";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -328,7 +336,9 @@ function isPathWithinProject(path: string, projectDir: string): boolean {
   // This predicate is the containment decision, so it runs on captured string
   // intrinsics: tenant code that replaced String.prototype.replaceAll or
   // startsWith must not be able to make an escaping path look contained.
-  const projectRelativePath = stringReplaceAll(relative(projectDir, path), "\\", "/");
+  const projectRelativePath = windowsHost
+    ? stringReplaceAll(relative(projectDir, path), "\\", "/")
+    : posix.relative(projectDir, path);
   const first = projectRelativePath[0];
   const driveQualified = projectRelativePath[1] === ":" && projectRelativePath[2] === "/" &&
     ((first !== undefined && first >= "A" && first <= "Z") ||

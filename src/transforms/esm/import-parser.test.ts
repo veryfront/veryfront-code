@@ -350,6 +350,14 @@ describe("transforms/esm/import-parser", () => {
     );
   });
 
+  it("treats POSIX backslashes as filename characters during containment", () => {
+    if (Deno.build.os === "windows") return;
+    assertEquals(
+      importParserInternals.isPathWithinProject("/project/..\\secret.tsx", "/project"),
+      true,
+    );
+  });
+
   it("rejects encoded separators in compiled file URLs", () => {
     assertEquals(importParserInternals.fileUrlToPath("file:///project/a%2Fb.tsx"), null);
   });
