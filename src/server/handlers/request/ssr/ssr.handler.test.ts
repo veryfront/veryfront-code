@@ -379,6 +379,87 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       }
     });
 
+    it("rejects a preview render when its source generation changes during a custom fallback", async () => {
+      let version = 1;
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+      adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+      adapter.fs.getSourceSnapshotVersion = () => version;
+      adapter.fs.stat = (path: string) => {
+        if (path.endsWith("/pages")) {
+          return Promise.resolve({
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        }
+        if (path.endsWith("/pages/500.tsx")) {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 1,
+            mtime: null,
+          });
+        }
+        return Promise.reject(new Error("not found"));
+      };
+      adapter.fs.readFile = () => {
+        version++;
+        return Promise.resolve("export default function ErrorPage() {}");
+      };
+      __setComponentSourceLoaderForTests(() => Promise.resolve(() => null));
+      __injectProjectReactForTests(React);
+      __injectReactDOMServerForTests({
+        renderToString: () => "",
+        renderToStaticMarkup: () => "",
+      });
+
+      try {
+        const handler = new SSRHandler(createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>old-generation overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              failure: {
+                kind: "server-error" as const,
+                exposure: "generic" as const,
+                error: new Error("Oops"),
+              },
+              slug: "fallback-generation",
+            }),
+        }));
+
+        const rejection = await assertRejects(() =>
+          handler.handle(
+            new Request("http://localhost/fallback-generation"),
+            makeCtx({
+              adapter,
+              isLocalProject: true,
+              projectId: "fallback-generation-snapshot",
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          )
+        );
+
+        assertInstanceOf(rejection, VeryfrontError);
+        assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+      } finally {
+        __setComponentSourceLoaderForTests(null);
+        resetReactCache();
+      }
+    });
+
     it("reclassifies an SSR result when its source generation changes during rendering", async () => {
       let version = 1;
       let renderCalls = 0;

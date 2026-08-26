@@ -327,14 +327,6 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         };
 
-        const postRenderReclassified = await this.reclassifyPreviewDocumentAfterRender(
-          ctx,
-          requestId,
-        );
-        if (postRenderReclassified) return postRenderReclassified;
-
-        endRequest(requestId);
-
         const failureResponse = await this.handleRenderedFailure(
           req,
           applicationRequest,
@@ -344,6 +336,19 @@ export class SSRHandler extends BaseHandler {
           dependencySnapshot,
           rendered,
         );
+
+        // Custom not-found and error fallbacks read and render project files
+        // too, so keep the pre-render generation marker until that work has
+        // finished. Releasing it before fallback handling could combine a
+        // newer fallback module with configuration from the older snapshot.
+        const postRenderReclassified = await this.reclassifyPreviewDocumentAfterRender(
+          ctx,
+          requestId,
+        );
+        if (postRenderReclassified) return postRenderReclassified;
+
+        endRequest(requestId);
+
         if (failureResponse) return failureResponse;
 
         return this.buildResponse(req, ctx, rendered, nonce);
