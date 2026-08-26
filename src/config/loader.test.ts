@@ -1345,6 +1345,16 @@ export default config as const;
         });
       }
 
+      it("classifies npm: packages whose names match Node built-ins as missing", async () => {
+        const error = await loadFailure(
+          "vf-config-npm-builtin-name-",
+          `throw new Error('Module not found "npm:fs".');\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "fs");
+      });
+
       it("classifies an npm-valid leading-hyphen package as missing", async () => {
         const error = await loadFailure(
           "vf-config-leading-hyphen-",
@@ -1429,6 +1439,11 @@ export default config as const;
           "an unscoped package name beginning with underscore",
           "vf-config-leading-underscore-",
           `throw new Error("Cannot find package '_foo' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "an invalid Node built-in subpath",
+          "vf-config-node-builtin-subpath-",
+          `throw new Error("Cannot find package 'fs' imported from /app/veryfront.config.mjs");\n`,
         ],
         [
           "the npm-reserved node_modules root",

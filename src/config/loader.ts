@@ -44,6 +44,7 @@ import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts"
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
 import {
@@ -66,6 +67,7 @@ import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 // crosses a tenant boundary later in the same process, so its cache identity,
 // singleflight state, and immutable result must not depend on ambient methods.
 const IntrinsicMap = Map;
+const IntrinsicSet = Set;
 const IntrinsicPromise = Promise;
 const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicErrorPrototype = Error.prototype;
@@ -102,6 +104,7 @@ const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
+const SetPrototypeHas = Set.prototype.has;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
 const SymbolToPrimitive = Symbol.toPrimitive;
@@ -135,6 +138,7 @@ const intrinsicMapSizeGetter = mapSizeGetter as () => number;
 const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions();
 const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
 const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
+const NODE_BUILTIN_PACKAGE_NAMES: ReadonlySet<string> = new IntrinsicSet(NODE_BUILTINS);
 
 type RuntimeReflectionRecord = Record<PropertyKey, unknown>;
 
@@ -1720,6 +1724,8 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
  *   one;
  * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
  *   already rejects: no package named `@/lib/config` exists to install.
+ * - Node built-in roots, where an invalid subpath cannot be fixed by installing
+ *   a package with the same name;
  * - npm-reserved roots, which package managers reject even though their lexical
  *   shape resembles a package name.
  *
@@ -1760,6 +1766,12 @@ function missingPackageName(specifier: string): string | undefined {
   // the real fault, is not installable at all. Falling through to the parse
   // error keeps the runtime's own message, which names the whole specifier.
   if (parsed.subpath !== null) return undefined;
+  if (
+    !hasRuntimePrefix &&
+    ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [parsed.packageName]) as boolean
+  ) {
+    return undefined;
+  }
   if (
     hasJsrPrefix
       ? !isValidServerExternalPackageName(parsed.packageName)
