@@ -1565,6 +1565,53 @@ export default config as const;
 
         assertEquals(comma.message.includes("registry.internal"), false);
         assertStringIncludes(comma.message, "Failed (see [url]), then retry");
+
+        // `!` and `?` are the cases a list of allowed trailing characters kept
+        // missing. The lookahead asks whether the rest of the token is only
+        // punctuation instead of enumerating which marks count, so a sentence
+        // ending keeps its bracket whatever the mark is.
+        const bang = await loadFailure(
+          "vf-config-paren-bang-",
+          `throw new Error("Failed (see https://registry.internal/x)! Retry");\n`,
+        );
+
+        assertEquals(bang.message.includes("registry.internal"), false);
+        assertStringIncludes(bang.message, "Failed (see [url])! Retry");
+
+        const question = await loadFailure(
+          "vf-config-paren-question-",
+          `throw new Error("Failed (see https://registry.internal/x)? Retry");\n`,
+        );
+
+        assertEquals(question.message.includes("registry.internal"), false);
+        assertStringIncludes(question.message, "Failed (see [url])? Retry");
+      });
+
+      it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
+        // The other half of the structural rule, and the reason it is not a list
+        // of characters prose may end with. Punctuation after a `)` does not make
+        // the rest of the token prose -- what matters is whether anything follows
+        // it. Here something does, so the tail is still URL and must be redacted.
+        const period = await loadFailure(
+          "vf-config-paren-tail-period-",
+          `throw new Error("https://registry.internal/a).SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(period.message.includes("SUPERSECRET"), false);
+        assertEquals(period.message.includes("registry.internal"), false);
+        assertStringIncludes(period.message, "[url]");
+
+        // `?` is why the exclusion-list spelling could not have worked. Excluding
+        // it to protect `(see .../x)? Retry` would have stranded this query
+        // string; including it would have mangled that sentence. The structural
+        // question answers both -- `t=SUPERSECRET` follows, so this is URL.
+        const query = await loadFailure(
+          "vf-config-paren-tail-query-",
+          `throw new Error("https://registry.internal/a)?t=SUPERSECRET");\n`,
+        );
+
+        assertEquals(query.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(query.message, "[url]");
       });
 
       it("reports a CSI-glued file URL as a path, not a remote URL", async () => {

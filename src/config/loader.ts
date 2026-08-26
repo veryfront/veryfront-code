@@ -1757,15 +1757,38 @@ const CSI_GLUED_URL =
 // already defanged it once -- and it emits `[url])` for a URL ending in `(b)`,
 // adding a cosmetic artefact to a change whose purpose is removing one.
 //
-// Both paren branches are ambiguous on `(`, so the cost was measured, not
-// assumed: on the guard's own `"ab://(".repeat(20_000)` input the probe moved
-// 22ms -> 53ms against an unchanged control, still 2x per doubling.
+// The balanced and lone-`(` branches are both ambiguous on `(`, so the cost was
+// measured rather than assumed. On the quadratic guard's own `"ab://(".repeat(n)`
+// input, for n of 10k/20k/40k, the tail costs 20/40/80ms against origin/main's
+// 21/45/83ms -- within noise, still linear at 2x per doubling, and far inside the
+// guard's 20x ratio. Shapes that exercise the `)` branch stay at 0-3ms on both.
+//
+// The closing-paren lookahead asks a structural question -- is the rest of this
+// token nothing but trailing punctuation? -- rather than listing the characters
+// prose is allowed to end with. Listing them does not converge: `.,;:)]` still
+// mangled `Failed (see https://host/x)! Retry` into `Failed (see [url] Retry`,
+// and adding `!` next would have left `?`, `}`, `>` and the rest of sentence
+// punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
+// opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
+// with its token in the caller-visible detail.
+//
+// Asking the structural question settles both at once. A `)` whose remaining
+// token is only punctuation before a boundary is prose, so it stays outside the
+// match; anything else is URL and is consumed. `https://host/a)?t=SECRET` is
+// redacted whole because `t=SECRET` follows the `?`, while `(see .../x)? Retry`
+// keeps its bracket because nothing but the space follows.
+//
+// The `{0,16}` bound is load-bearing, like every other bound in this file. An
+// unbounded run rescans from each `)` in a long chain of them, so a single token
+// carrying 2k/4k/8k closing parens cost 6/22/89ms -- 4x per doubling, quadratic,
+// and reachable from a project-authored error. Bounded, the same inputs are
+// 0/0/1ms. No real sentence ends in 16 punctuation marks.
 //
 // Keep this source shared by every URL shape. Apart from preventing the four
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?=[^\s"'.,;:)\]]))+`;
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![.,;:!?)\]}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "g",
