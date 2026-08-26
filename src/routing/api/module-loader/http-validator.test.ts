@@ -778,6 +778,19 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const source = Object.fromEntries([["__proto__", () => {}]]);` +
+              ` const holder = {}; Object.assign(holder, source);` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "Object.assign must distrust sources whose enumerable keys cannot be proven safe",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const holder = {}; const key = ["__", "proto__"].join("");` +
               ` holder[key] = () => {}; const make = holder.constructor;` +
               ` make('return import("https://blocked.example/mod.js")')();`,
@@ -1196,6 +1209,31 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "a destructured getBuiltinModule remains a runtime module loader",
       );
+      for (
+        const moduleName of [
+          "child_process",
+          "cluster",
+          "node:child_process",
+          "node:cluster",
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `process.getBuiltinModule("${moduleName}");`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${moduleName} must not be recovered through process.getBuiltinModule`,
+        );
+        await assertRejects(
+          async () => await validateHTTPImports(`require("${moduleName}");`, []),
+          Error,
+          "subprocess module loading",
+          `${moduleName} must not be hidden behind a literal CommonJS require`,
+        );
+      }
     });
 
     it("should reject subprocess loaders and exported capability aliases", async () => {
@@ -1223,6 +1261,18 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "a destructured subprocess constructor remains an unchecked module loader",
       );
+      for (const method of ["spawn", "spawnSync"]) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `Bun.${method}(["deno", "run", "https://blocked.example/mod.ts"]);`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `Bun.${method} can execute an unchecked module loader`,
+        );
+      }
       await assertRejects(
         async () => await validateHTTPImports(`export const RouteWorker = Worker;`, []),
         Error,
@@ -2077,7 +2127,7 @@ describe("routing/api/module-loader/http-validator", () => {
         {
           specifiers: ["https://esm.sh/data.json"],
           hasUnconstrainedDynamicImport: false,
-          requiresBundling: false,
+          requiresBundling: true,
           hasDynamicCodeGeneration: false,
         },
       );
@@ -2089,9 +2139,22 @@ describe("routing/api/module-loader/http-validator", () => {
         {
           specifiers: ["https://esm.sh/mod.js"],
           hasUnconstrainedDynamicImport: false,
-          requiresBundling: false,
+          requiresBundling: true,
           hasDynamicCodeGeneration: false,
         },
+      );
+    });
+
+    it("should bundle literal dynamic imports before they can execute later", () => {
+      assertEquals(
+        scanModuleSpecifiers(`export const load = () => import("./helper.ts?deferred");`),
+        {
+          specifiers: ["./helper.ts?deferred"],
+          hasUnconstrainedDynamicImport: false,
+          requiresBundling: true,
+          hasDynamicCodeGeneration: false,
+        },
+        "a deferred local dependency must be captured during validation",
       );
     });
 

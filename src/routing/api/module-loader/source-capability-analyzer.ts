@@ -1627,7 +1627,7 @@ function mayCopyEnumerableProtoProperty(
   }
   if (expression.type === "Identifier" && typeof expression.name === "string") {
     const binding = resolveBinding(scope, expression.name);
-    if (binding === null || seen.has(binding)) return false;
+    if (binding === null || seen.has(binding) || binding.initializers.length === 0) return true;
     if (binding.enumerableProtoPropertyDefined) return true;
     seen.add(binding);
     return binding.initializers.some((initializer) =>
@@ -1647,7 +1647,19 @@ function mayCopyEnumerableProtoProperty(
   }
   const branches = expressionBranches(expression);
   if (branches !== null) return eitherBranchCopiesProto(branches, scope, nodeScopes, seen);
-  return false;
+  return ![
+    "ArrayExpression",
+    "ArrowFunctionExpression",
+    "BigIntLiteral",
+    "BooleanLiteral",
+    "ClassExpression",
+    "FunctionExpression",
+    "NullLiteral",
+    "NumericLiteral",
+    "RegExpLiteral",
+    "StringLiteral",
+    "TemplateLiteral",
+  ].includes(expression.type);
 }
 
 function eitherBranchCopiesProto(
@@ -2221,13 +2233,20 @@ function applyDynamicRequireCapability(
   if (args === undefined) return;
   const directRequire = callee.type === "Identifier" && callee.name === "require" &&
     resolveBinding(scope, "require") === null;
-  if (args === null || !directRequire || staticString(args[0]) === null) {
+  const moduleSpecifier = args === null ? null : staticString(args[0]);
+  if (args === null || !directRequire || moduleSpecifier === null) {
     analysis.hasUnconstrainedDynamicImport = true;
+  } else {
+    analysis.moduleSpecifiers.push(moduleSpecifier);
   }
 }
 
 const RESTRICTED_BUILTIN_MODULES = new Set([
+  "child_process",
+  "cluster",
   "module",
+  "node:child_process",
+  "node:cluster",
   "node:module",
   "node:vm",
   "node:worker_threads",
@@ -2262,6 +2281,16 @@ function resolvesToDenoCommand(
   return resolvesToGlobalIntrinsicMember(node, "Deno", "Command", scope, nodeScopes);
 }
 
+function resolvesToBunSubprocess(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  return ["spawn", "spawnSync"].some((property) =>
+    resolvesToGlobalIntrinsicMember(node, "Bun", property, scope, nodeScopes)
+  );
+}
+
 function applyDenoRunCapability(
   node: ASTNode,
   scope: Scope,
@@ -2272,7 +2301,8 @@ function applyDenoRunCapability(
     node,
     (candidate) =>
       resolvesToGlobalIntrinsicMember(candidate, "Deno", "run", scope, nodeScopes) ||
-      resolvesToDenoCommand(candidate, scope, nodeScopes),
+      resolvesToDenoCommand(candidate, scope, nodeScopes) ||
+      resolvesToBunSubprocess(candidate, scope, nodeScopes),
     scope,
     nodeScopes,
   );
@@ -2381,8 +2411,9 @@ function isCrossModuleCapabilityAlias(
     resolvesToGlobalIntrinsicMember(node, "Reflect", "get", scope, nodeScopes) ||
     resolvesToMemberNamed(node, "getBuiltinModule", scope, nodeScopes) ||
     resolvesToDenoCommand(node, scope, nodeScopes) ||
+    resolvesToBunSubprocess(node, scope, nodeScopes) ||
     resolvesToUnboundIdentifier(node, "require", scope, nodeScopes) ||
-    ["Deno", "Object", "Reflect", "process"].some((name) =>
+    ["Bun", "Deno", "Object", "Reflect", "process"].some((name) =>
       resolvesToGlobalIntrinsic(node, name, scope, nodeScopes)
     );
 }

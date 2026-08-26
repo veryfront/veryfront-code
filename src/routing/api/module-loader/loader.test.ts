@@ -338,6 +338,29 @@ describe("readDenoImportMap", () => {
     );
   });
 
+  it("canonicalizes remote URL scope prefixes before matching", async () => {
+    const projectDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(projectDir, "deno.json"),
+      JSON.stringify({
+        scopes: {
+          "HTTPS://EXAMPLE.COM/pkg/../lib/": {
+            dep: "https://blocked.example/mod.js",
+          },
+        },
+      }),
+    );
+
+    const importMap = await readDenoImportMap(fs, projectDir);
+    assertNotEquals(importMap, null);
+    assertEquals(Object.keys(importMap!.scopes), ["https://example.com/lib/"]);
+    assertEquals(
+      lookupImportMapEntry(importMap!, "dep", "https://example.com/lib/route.ts"),
+      "https://blocked.example/mod.js",
+      "scope lookup must use the same canonical URL form as the runtime",
+    );
+  });
+
   it("preserves encoded delimiters while matching a scope to its filesystem referrer", async () => {
     const projectDir = await makeTempDir();
     await fs.writeTextFile(
@@ -723,6 +746,33 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(after),
       "two",
       "same-size edits with the same observable mtime must still reload",
+    );
+  });
+
+  denoIt("captures a deferred local import before the validated source can change", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "deferred-handler.ts");
+    const helperPath = join(tmpDir, "deferred-helper.ts");
+    await fs.writeTextFile(helperPath, `export const value = "validated";`);
+    await fs.writeTextFile(
+      modulePath,
+      `export const GET = async () => {` +
+        ` const helper = await import("./deferred-helper.ts?deferred");` +
+        ` return new Response(helper.value); };`,
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    await fs.writeTextFile(helperPath, `export const value = "changed-after-validation";`);
+
+    assertEquals(
+      await getText(route),
+      "validated",
+      "the deferred import must execute from the validated bundle, not the mutable file",
     );
   });
 
