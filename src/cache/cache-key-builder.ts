@@ -3,18 +3,10 @@ import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
-type MultiProjectRequestContextType = {
-  projectSlug: string;
-  projectId?: string;
-  token: string;
-  productionMode: boolean;
-  releaseId?: string | null;
-  branch?: string | null;
-  environmentName?: string | null;
-};
-
-let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
+type MultiProjectRequestContextType = NonNullable<ReturnType<typeof currentRequestContext>>;
+const trustedRequestContextAccessor = currentRequestContext;
 const registryScopeOwners = new WeakMap<object, object>();
 
 export type { CacheKeyContext };
@@ -84,6 +76,50 @@ export function buildVersionedRegistryScopeId(
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
+
+function getCacheKeyContextStore(): CacheKeyContext | null | undefined {
+  return IntrinsicReflectApply(AsyncLocalStorageGetStore, cacheKeyContextStorage, []) as
+    | CacheKeyContext
+    | null
+    | undefined;
+}
+
+function runWithCacheKeyContextStore<T>(
+  context: CacheKeyContext | null,
+  fn: () => T,
+): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, cacheKeyContextStorage, [
+    context,
+    fn,
+  ]) as T;
+}
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
   return CacheKeyContextSchema.parse(ctx);
@@ -99,7 +135,7 @@ export function getContentHashKey(
 }
 
 export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {
-  return cacheKeyContextStorage.run(validateCacheKeyContext(ctx), fn);
+  return runWithCacheKeyContextStore(validateCacheKeyContext(ctx), fn);
 }
 
 /**
@@ -110,37 +146,17 @@ export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T 
  * isolation.
  */
 export function runWithoutCacheKeyContext<T>(fn: () => T): T {
-  return cacheKeyContextStorage.run(null, fn);
+  return runWithCacheKeyContextStore(null, fn);
 }
 
 export function getCurrentCacheKeyContext(): CacheKeyContext {
-  const ctx = cacheKeyContextStorage.getStore();
+  const ctx = getCacheKeyContextStore();
   if (ctx) return ctx;
 
   throw CACHE_INVARIANT_VIOLATION.create({
     detail: "[CacheKeyBuilder] No cache context available. " +
       "Ensure runWithCacheKeyContext() was called at request entry.",
   });
-}
-
-function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
-  // permanently: the multi-project adapter can be installed on globalThis after
-  // the first call, and caching null here would disable distributed caching for
-  // the whole process lifetime even after the adapter is later wired.
-  if (_getCurrentRequestContext) return _getCurrentRequestContext;
-
-  try {
-    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
-      | undefined;
-    const fn = mod?.getCurrentRequestContext ?? null;
-    if (fn) _getCurrentRequestContext = fn;
-    return fn;
-  } catch (_) {
-    // expected: multi-project adapter may not be available yet — re-check next call
-    return null;
-  }
 }
 
 function extractCacheKeyContextFromMultiProjectContext(
@@ -169,10 +185,10 @@ function extractCacheKeyContextFromMultiProjectContext(
 }
 
 export function tryGetCacheKeyContext(): CacheKeyContext | null {
-  const explicitCtx = cacheKeyContextStorage.getStore();
+  const explicitCtx = getCacheKeyContextStore();
   if (explicitCtx) return explicitCtx;
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = trustedRequestContextAccessor();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
@@ -196,7 +212,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
 export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   // Explicit contexts are authoritative for workflows and other callers that
   // intentionally override ambient filesystem tenancy.
-  const cacheCtx = cacheKeyContextStorage.getStore();
+  const cacheCtx = getCacheKeyContextStore();
   if (cacheCtx) {
     return {
       scopeId: buildVersionedRegistryScopeId(
@@ -208,7 +224,7 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     };
   }
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = trustedRequestContextAccessor();
   if (reqCtx) {
     const projectId = reqCtx.projectId || reqCtx.projectSlug;
     if (!projectId) return null;
@@ -260,7 +276,7 @@ export function tryGetRegistryScopeId(): string | null {
  * while the request is still running.
  */
 export function tryGetRegistryScopeOwner(): object | null {
-  const requestContext = getRequestContextFn()?.();
+  const requestContext = trustedRequestContextAccessor();
   if (!requestContext) return null;
 
   const existing = registryScopeOwners.get(requestContext);

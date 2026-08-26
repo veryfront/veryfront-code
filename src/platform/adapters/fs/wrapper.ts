@@ -18,6 +18,22 @@ import {
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
+type CapturedTextFileReader = (path: string) => Promise<string>;
+type CapturedContextRunner = <T>(
+  projectSlug: string,
+  token: string,
+  fn: () => Promise<T>,
+  projectId?: string,
+  options?: {
+    productionMode?: boolean;
+    releaseId?: string | null;
+    branch?: string | null;
+    environmentName?: string | null;
+  },
+) => Promise<T>;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicTextDecoder = TextDecoder;
+const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 
 function captureOptionalMethod(value: FSAdapter, key: string): CapturedMethod | undefined {
   const seen = new Set<object>();
@@ -179,10 +195,31 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   ) => Promise<void>;
   readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
+  readonly getSourceSnapshotFingerprint?: () =>
+    | string
+    | undefined
+    | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
+  #textFileReader: CapturedTextFileReader;
+  #contextRunner: CapturedContextRunner | undefined;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
+    const readTextFile = captureOptionalMethod(fsAdapter, "readTextFile");
+    const readFile = captureOptionalMethod(fsAdapter, "readFile");
+    if (readFile === undefined) throw new TypeError("FSAdapter readFile must be a function");
+    this.#textFileReader = async (path: string): Promise<string> => {
+      if (readTextFile !== undefined) {
+        return await IntrinsicReflectApply(readTextFile, fsAdapter, [path]) as string;
+      }
+      const result = await IntrinsicReflectApply(readFile, fsAdapter, [path]) as
+        | string
+        | Uint8Array;
+      if (typeof result === "string") return result;
+      const decoder = new IntrinsicTextDecoder();
+      return IntrinsicReflectApply(TextDecoderPrototypeDecode, decoder, [result]) as string;
+    };
+    publishFrozen(this, "readFile", this.#textFileReader);
     const semantics = Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
     this.symlinkSemantics = semantics && "value" in semantics && semantics.value === "none"
       ? "none"
@@ -226,14 +263,17 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const refreshSourceSnapshot = captureOptionalMethod(fsAdapter, "refreshSourceSnapshot");
     if (refreshSourceSnapshot !== undefined) {
       this.refreshSourceSnapshot = (reason?: string) =>
-        Reflect.apply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
+        IntrinsicReflectApply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
     }
     const ensureSourceSnapshotFresh = captureOptionalMethod(fsAdapter, "ensureSourceSnapshotFresh");
     if (ensureSourceSnapshotFresh !== undefined) {
       this.ensureSourceSnapshotFresh = (
         reason?: string,
         options?: SourceSnapshotFreshnessOptions,
-      ) => Reflect.apply(ensureSourceSnapshotFresh, fsAdapter, [reason, options]) as Promise<void>;
+      ) =>
+        IntrinsicReflectApply(ensureSourceSnapshotFresh, fsAdapter, [reason, options]) as Promise<
+          void
+        >;
     }
     const freshnessOptionsVersion = captureOptionalOwnDataCapability(
       fsAdapter,
@@ -245,18 +285,54 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const generation = captureOptionalMethod(fsAdapter, "getSourceSnapshotVersion");
     if (generation !== undefined) {
       this.getSourceSnapshotVersion = () =>
-        Reflect.apply(generation, fsAdapter, []) as
+        IntrinsicReflectApply(generation, fsAdapter, []) as
           | number
           | undefined
           | Promise<number | undefined>;
     }
-    const snapshotIdentity = captureOptionalMethod(fsAdapter, "getSourceSnapshotIdentity");
-    if (snapshotIdentity !== undefined) {
-      this.getSourceSnapshotIdentity = () =>
-        Reflect.apply(snapshotIdentity, fsAdapter, []) as
+    const fingerprint = captureOptionalMethod(fsAdapter, "getSourceSnapshotFingerprint");
+    if (fingerprint !== undefined) {
+      this.getSourceSnapshotFingerprint = () =>
+        IntrinsicReflectApply(fingerprint, fsAdapter, []) as
           | string
           | undefined
           | Promise<string | undefined>;
+    }
+    const snapshotIdentity = captureOptionalMethod(fsAdapter, "getSourceSnapshotIdentity");
+    if (snapshotIdentity !== undefined) {
+      this.getSourceSnapshotIdentity = () =>
+        IntrinsicReflectApply(snapshotIdentity, fsAdapter, []) as
+          | string
+          | undefined
+          | Promise<string | undefined>;
+    }
+    const runWithContext = captureOptionalMethod(fsAdapter, "runWithContext");
+    if (runWithContext !== undefined) {
+      const contextRunner: CapturedContextRunner = <T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
+      ) =>
+        IntrinsicReflectApply(runWithContext, fsAdapter, [
+          projectSlug,
+          token,
+          fn,
+          projectId,
+          options,
+        ]) as Promise<T>;
+      this.#contextRunner = contextRunner;
+      publishFrozen(
+        this,
+        "runWithContext",
+        contextRunner,
+      );
     }
 
     for (
@@ -272,6 +348,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
         "ensureSourceSnapshotFresh",
         "sourceSnapshotFreshnessOptionsVersion",
         "getSourceSnapshotVersion",
+        "getSourceSnapshotFingerprint",
         "getSourceSnapshotIdentity",
       ] as const
     ) {
@@ -351,7 +428,11 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       environmentName?: string | null;
     },
   ): Promise<T> {
-    return this.requireContextualMethod("runWithContext", "runWithContext")(
+    const contextRunner = this.#contextRunner;
+    if (contextRunner === undefined) {
+      throw new NotSupportedError("runWithContext", this.adapterType);
+    }
+    return contextRunner(
       projectSlug,
       token,
       fn,
@@ -361,8 +442,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   isMultiProjectMode(): boolean {
-    return isContextualAdapter(this._fsAdapter) &&
-      typeof this._fsAdapter.runWithContext === "function";
+    return this.#contextRunner !== undefined;
   }
 
   isFixedProjectMode(): boolean {
@@ -374,10 +454,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    if (this._fsAdapter.readTextFile) return this._fsAdapter.readTextFile(path);
-
-    const result = await this._fsAdapter.readFile(path);
-    return typeof result === "string" ? result : new TextDecoder().decode(result);
+    return await this.#textFileReader(path);
   }
 
   async readOptionalTextFile(path: string): Promise<string> {

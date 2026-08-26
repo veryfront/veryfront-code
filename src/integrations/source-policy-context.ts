@@ -6,12 +6,43 @@ import {
 } from "./source-policy.ts";
 
 const sourceIntegrationPolicyStorage = new AsyncLocalStorage<SourceIntegrationPolicyManifest>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(sourceIntegrationPolicyStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(sourceIntegrationPolicyStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(sourceIntegrationPolicyStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(sourceIntegrationPolicyStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
 
 /** Return the restriction established for the exact project source executing this run. */
 export function getActiveSourceIntegrationPolicy():
   | SourceIntegrationPolicyManifest
   | undefined {
-  return sourceIntegrationPolicyStorage.getStore();
+  return IntrinsicReflectApply(
+    AsyncLocalStorageGetStore,
+    sourceIntegrationPolicyStorage,
+    [],
+  ) as SourceIntegrationPolicyManifest | undefined;
 }
 
 /** Require the exact-source policy before crossing an isolated execution boundary. */
@@ -33,7 +64,10 @@ export function runWithExactSourceIntegrationPolicy<T>(
   policy: SourceIntegrationPolicyManifest,
   fn: () => T,
 ): T {
-  return sourceIntegrationPolicyStorage.run(policy, fn);
+  return IntrinsicReflectApply(AsyncLocalStorageRun, sourceIntegrationPolicyStorage, [
+    policy,
+    fn,
+  ]) as T;
 }
 
 /** Resolve the one effective restriction consumed by an agent runtime. */

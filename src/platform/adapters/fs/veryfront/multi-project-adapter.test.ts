@@ -4,6 +4,7 @@ import {
   assertEquals,
   assertExists,
   assertInstanceOf,
+  assertNotEquals,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -18,16 +19,37 @@ import {
   setRequestScopedFile,
   wrapWithCurrentContext,
 } from "./multi-project-adapter.ts";
+import { VeryfrontFSAdapter } from "./adapter.ts";
+import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
-  return new MultiProjectFSAdapter({
+  const config = {
     veryfront: {
       apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
       projectSlug: "test-project",
       cache: { enabled: false },
     },
+  };
+  let manager: ProxyFSAdapterManager = new ProxyFSAdapterManager({ baseConfig: config });
+  const bridge = {
+    getAdapter: (...args: Parameters<ProxyFSAdapterManager["getAdapter"]>) =>
+      manager.getAdapter(...args),
+    getStats: () => manager.getStats(),
+    dispose: () => manager.dispose(),
+  };
+  const adapter = new MultiProjectFSAdapter(
+    config,
+    bridge as unknown as ProxyFSAdapterManager,
+  );
+  Object.defineProperty(adapter, "manager", {
+    configurable: true,
+    get: () => manager,
+    set: (replacement: ProxyFSAdapterManager) => {
+      manager = replacement;
+    },
   });
+  return adapter;
 }
 
 function assertMethod(
@@ -60,6 +82,26 @@ async function withAdapterAsync(
 }
 
 describe("MultiProjectFSAdapter", () => {
+  it("keeps the credential manager outside the public object graph", () => {
+    const adapter = new MultiProjectFSAdapter({
+      veryfront: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "test-token",
+        projectSlug: "test-project",
+        cache: { enabled: false },
+      },
+    });
+    try {
+      assertEquals(Object.getOwnPropertyNames(adapter).includes("manager"), false);
+      assertEquals(
+        Object.getOwnPropertyDescriptor(MultiProjectFSAdapter.prototype, "manager"),
+        undefined,
+      );
+    } finally {
+      adapter.dispose();
+    }
+  });
+
   describe("class", () => {
     it("should export MultiProjectFSAdapter class", () => {
       assertExists(MultiProjectFSAdapter);
@@ -84,6 +126,86 @@ describe("MultiProjectFSAdapter", () => {
 
     it("should have readTextFile method", () => {
       withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
+    });
+
+    it("preserves effective read and snapshot methods from adapter subclasses", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const calls: string[] = [];
+        class SubclassAdapter extends VeryfrontFSAdapter {
+          override readFile(path: string): Promise<string> {
+            calls.push(`readFile:${path}`);
+            return Promise.resolve("subclass-file");
+          }
+
+          override readTextFile(path: string): Promise<string> {
+            calls.push(`readTextFile:${path}`);
+            return Promise.resolve("subclass-text");
+          }
+
+          override refreshSourceSnapshot(reason?: string): Promise<void> {
+            calls.push(`refresh:${reason}`);
+            return Promise.resolve();
+          }
+
+          override ensureSourceSnapshotFresh(
+            reason?: string,
+            options?: { maxAgeMs?: number },
+            initializedByManager?: boolean,
+          ): Promise<void> {
+            calls.push(
+              `ensure:${reason}:${options?.maxAgeMs}:${initializedByManager ?? false}`,
+            );
+            return Promise.resolve();
+          }
+
+          override getSourceSnapshotVersion(): number {
+            calls.push("version");
+            return 41;
+          }
+
+          override getSourceSnapshotFingerprint(): Promise<string> {
+            calls.push("fingerprint");
+            return Promise.resolve("subclass-fingerprint");
+          }
+
+          override getSourceSnapshotIdentity(): string {
+            calls.push("identity");
+            return "subclass-identity";
+          }
+        }
+
+        const selectedAdapter = new SubclassAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            cache: { enabled: false },
+          },
+        });
+        adapter.setDefaultAdapter(selectedAdapter);
+
+        assertEquals(await adapter.readFile("pages/file.tsx"), "subclass-file");
+        assertEquals(await adapter.readTextFile("pages/text.tsx"), "subclass-text");
+        await adapter.refreshSourceSnapshot("manual");
+        await adapter.ensureSourceSnapshotFresh("routing", { maxAgeMs: 0 });
+        assertEquals(await adapter.getSourceSnapshotVersion(), 41);
+        assertEquals(await adapter.getSourceSnapshotFingerprint(), "subclass-fingerprint");
+        assertStringIncludes(
+          await adapter.getSourceSnapshotIdentity() ?? "",
+          "subclass-identity",
+        );
+        assertEquals(calls, [
+          "readFile:pages/file.tsx",
+          "readTextFile:pages/text.tsx",
+          "refresh:manual",
+          "version",
+          "ensure:routing:0:false",
+          "version",
+          "version",
+          "fingerprint",
+          "identity",
+        ]);
+      });
     });
 
     it("should have exact bounded byte read method", () => {
@@ -233,6 +355,7 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => {
         assertMethod(adapter, "ensureSourceSnapshotFresh");
         assertMethod(adapter, "getSourceSnapshotVersion");
+        assertMethod(adapter, "getSourceSnapshotFingerprint");
       });
     });
 
@@ -247,6 +370,100 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(stats.adapters, 0);
         assertExists(stats.stats);
       });
+    });
+
+    it("preserves effective methods from injected manager subclasses", async () => {
+      const config = {
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      };
+      const selectedAdapter = new VeryfrontFSAdapter(config);
+      selectedAdapter.getSourceSnapshotFingerprint = () =>
+        Promise.resolve("subclass-manager-snapshot");
+      const calls = { getAdapter: 0, getStats: 0, dispose: 0 };
+      class SubclassManager extends ProxyFSAdapterManager {
+        override getAdapter(
+          ..._args: Parameters<ProxyFSAdapterManager["getAdapter"]>
+        ): ReturnType<ProxyFSAdapterManager["getAdapter"]> {
+          calls.getAdapter += 1;
+          return Promise.resolve(selectedAdapter);
+        }
+
+        override getStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {
+          calls.getStats += 1;
+          return { adapters: 0, stats: {} };
+        }
+
+        override dispose(): void {
+          calls.dispose += 1;
+          super.dispose();
+        }
+      }
+      const manager = new SubclassManager({ baseConfig: config });
+      const adapter = new MultiProjectFSAdapter(config, manager);
+
+      try {
+        const fingerprint = await adapter.runWithContext(
+          "project-a",
+          "test-token",
+          () => adapter.getSourceSnapshotFingerprint(),
+          "project-id-a",
+        );
+        assertEquals(fingerprint, "subclass-manager-snapshot");
+        assertEquals(adapter.getManagerStats(), { adapters: 0, stats: {} });
+        assertEquals(calls, { getAdapter: 1, getStats: 1, dispose: 0 });
+      } finally {
+        adapter.dispose();
+        selectedAdapter.dispose();
+      }
+      assertEquals(calls.dispose, 1);
+    });
+
+    it("does not expose credential lookup through a replaced manager property", async () => {
+      const adapter = new MultiProjectFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as { manager: unknown };
+      const originalManager = internals.manager;
+      const observedTokens: string[] = [];
+      internals.manager = {
+        getAdapter(_slug: string, token: string) {
+          observedTokens.push(token);
+          return Promise.resolve({
+            getSourceSnapshotFingerprint: () => "attacker-snapshot",
+          });
+        },
+        getStats: () => ({ adapters: 0, stats: [] }),
+        dispose: () => {},
+      };
+
+      try {
+        await assertRejects(
+          () =>
+            adapter.runWithContext(
+              "project-a",
+              "signed-user-token",
+              () => adapter.getSourceSnapshotFingerprint(),
+              "",
+            ),
+          Error,
+          "canonical project ID",
+        );
+        assertEquals(observedTokens, []);
+      } finally {
+        internals.manager = originalManager;
+        adapter.dispose();
+      }
     });
 
     it("initialize should resolve immediately", async () => {
@@ -318,23 +535,27 @@ describe("MultiProjectFSAdapter", () => {
         const originalManager = (adapter as any).manager;
         let freshnessReason: string | undefined;
         let maxAgeMs: number | undefined;
-        let sourceSnapshotVersion = 6;
         let freshnessChecks = 0;
+        let sourceSnapshotVersion = 6;
+        const snapshotAdapter = {
+          ensureSourceSnapshotFresh(reason?: string, options?: { maxAgeMs?: number }) {
+            freshnessReason = reason;
+            maxAgeMs = options?.maxAgeMs;
+            freshnessChecks++;
+            if (freshnessChecks === 1) sourceSnapshotVersion++;
+            return Promise.resolve();
+          },
+          getSourceSnapshotVersion() {
+            return sourceSnapshotVersion;
+          },
+          getSourceSnapshotFingerprint() {
+            return Promise.resolve("current-source-fingerprint");
+          },
+        } as unknown as VeryfrontFSAdapter;
 
         (adapter as any).manager = {
           getAdapter() {
-            return Promise.resolve({
-              ensureSourceSnapshotFresh(reason?: string, options?: { maxAgeMs?: number }) {
-                freshnessReason = reason;
-                maxAgeMs = options?.maxAgeMs;
-                freshnessChecks++;
-                if (freshnessChecks === 1) sourceSnapshotVersion++;
-                return Promise.resolve();
-              },
-              getSourceSnapshotVersion() {
-                return sourceSnapshotVersion;
-              },
-            });
+            return Promise.resolve(snapshotAdapter);
           },
           getStats: () => ({ adapters: 0, stats: [] }),
           dispose: () => {},
@@ -349,6 +570,7 @@ describe("MultiProjectFSAdapter", () => {
               await adapter.ensureSourceSnapshotFresh("page-routing", { maxAgeMs: 0 });
               assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
               assertEquals(await adapter.getSourceSnapshotVersion(), 7);
+              assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
 
               setRequestScopedFile("file:pages/index.mdx", "current-content");
               await adapter.ensureSourceSnapshotFresh("page-routing", { maxAgeMs: 0 });
@@ -582,6 +804,289 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("uses the captured concrete fingerprint method after project prototype mutation", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalFingerprint = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "getSourceSnapshotFingerprint",
+        );
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "getSourceSnapshotFingerprint", {
+          configurable: true,
+          value: () => Promise.resolve("project-spoofed-fingerprint"),
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(typeof fingerprint, "string");
+          assertNotEquals(fingerprint, "project-spoofed-fingerprint");
+        } finally {
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "getSourceSnapshotFingerprint",
+            originalFingerprint!,
+          );
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("keeps fingerprint lookup independent of a prototype getAdapter replacement", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalLookup = Object.getOwnPropertyDescriptor(
+          MultiProjectFSAdapter.prototype,
+          "getAdapter",
+        );
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+        let spoofedLookupCalls = 0;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(MultiProjectFSAdapter.prototype, "getAdapter", {
+          configurable: true,
+          value: () => {
+            spoofedLookupCalls++;
+            return Promise.resolve({
+              getSourceSnapshotFingerprint: () => "project-spoofed-fingerprint",
+            });
+          },
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(typeof fingerprint, "string");
+          assertNotEquals(fingerprint, "project-spoofed-fingerprint");
+          assertEquals(spoofedLookupCalls, 0);
+        } finally {
+          if (originalLookup) {
+            Object.defineProperty(MultiProjectFSAdapter.prototype, "getAdapter", originalLookup);
+          } else {
+            Reflect.deleteProperty(MultiProjectFSAdapter.prototype, "getAdapter");
+          }
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("keeps adapter selection independent of a mutable public method name", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
+          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
+          sourceSnapshotVersion: 1,
+          sourceSnapshotFingerprint: undefined,
+        }) as VeryfrontFSAdapter;
+        const interceptedTokens: string[] = [];
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(adapter, "getAdapter", {
+          configurable: true,
+          value: () => {
+            const token = getCurrentRequestContext()?.token;
+            if (token) interceptedTokens.push(token);
+            return Promise.resolve(concreteAdapter);
+          },
+        });
+
+        try {
+          const fingerprint = await adapter.runWithContext(
+            "project-a",
+            "signed-user-token",
+            () => adapter.getSourceSnapshotFingerprint(),
+            "project-id-a",
+            { branch: "main" },
+          );
+
+          assertEquals(typeof fingerprint, "string");
+          assertEquals(interceptedTokens, []);
+        } finally {
+          Reflect.deleteProperty(adapter, "getAdapter");
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("keeps concrete freshness independent of mutable prototype helpers", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalFreshness = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "ensureSourceSnapshotFresh",
+        );
+        const originalVersion = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "getSourceSnapshotVersion",
+        );
+        const originalRefresh = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "refreshSourceSnapshot",
+        );
+        const originalInitialization = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "ensureInitialized",
+        );
+        const originalPerformRefresh = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "performSourceSnapshotRefresh",
+        );
+        const concreteAdapter = new VeryfrontFSAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "project-a",
+            cache: { enabled: false },
+          },
+        });
+        const internals = concreteAdapter as unknown as {
+          initialized: boolean;
+          contentContext: null;
+          sourceSnapshotVersion: number;
+        };
+        internals.initialized = true;
+        internals.contentContext = null;
+        internals.sourceSnapshotVersion = 7;
+        let spoofedFreshnessCalls = 0;
+        let spoofedRefreshCalls = 0;
+        let spoofedInitializationCalls = 0;
+        let spoofedPerformRefreshCalls = 0;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "ensureSourceSnapshotFresh", {
+          configurable: true,
+          value: () => {
+            spoofedFreshnessCalls++;
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "getSourceSnapshotVersion", {
+          configurable: true,
+          value: () => -1,
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "refreshSourceSnapshot", {
+          configurable: true,
+          value: () => {
+            spoofedRefreshCalls++;
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "ensureInitialized", {
+          configurable: true,
+          value: () => {
+            spoofedInitializationCalls++;
+            internals.sourceSnapshotVersion = -1;
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "performSourceSnapshotRefresh", {
+          configurable: true,
+          value: () => {
+            spoofedPerformRefreshCalls++;
+            return Promise.resolve();
+          },
+        });
+
+        try {
+          const version = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("config-load");
+              return await adapter.getSourceSnapshotVersion();
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+          await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.refreshSourceSnapshot("manual-check"),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(version, 7);
+          assertEquals(spoofedFreshnessCalls, 0);
+          assertEquals(spoofedRefreshCalls, 0);
+          assertEquals(spoofedInitializationCalls, 0);
+          assertEquals(spoofedPerformRefreshCalls, 0);
+        } finally {
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "ensureSourceSnapshotFresh",
+            originalFreshness!,
+          );
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "getSourceSnapshotVersion",
+            originalVersion!,
+          );
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "refreshSourceSnapshot",
+            originalRefresh!,
+          );
+          if (originalInitialization) {
+            Object.defineProperty(
+              VeryfrontFSAdapter.prototype,
+              "ensureInitialized",
+              originalInitialization,
+            );
+          } else {
+            Reflect.deleteProperty(VeryfrontFSAdapter.prototype, "ensureInitialized");
+          }
+          if (originalPerformRefresh) {
+            Object.defineProperty(
+              VeryfrontFSAdapter.prototype,
+              "performSourceSnapshotRefresh",
+              originalPerformRefresh,
+            );
+          } else {
+            Reflect.deleteProperty(VeryfrontFSAdapter.prototype, "performSourceSnapshotRefresh");
+          }
+          (adapter as any).manager = originalManager;
+          concreteAdapter.dispose();
+        }
+      });
+    });
+
     it("preserves optional snapshot capabilities for legacy project adapters", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
@@ -599,6 +1104,7 @@ describe("MultiProjectFSAdapter", () => {
             async () => {
               await adapter.ensureSourceSnapshotFresh("config-load");
               assertEquals(await adapter.getSourceSnapshotVersion(), undefined);
+              assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
             },
             "project-id-a",
             { branch: "main" },
