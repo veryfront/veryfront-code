@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { normalizeDataResponseMetadata } from "../response-metadata.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 function hasValidResponseMetadata(value: { headers?: unknown; cookies?: unknown }): boolean {
   try {
@@ -38,6 +39,8 @@ export const getDataContextSchema = defineSchema((v) =>
     query: v.instanceof(URLSearchParams),
     request: v.instanceof(Request),
     url: v.instanceof(URL),
+    identity: v.custom<ApplicationIdentity | null>(() => true).optional(),
+    applicationIdentity: v.custom<ApplicationIdentity | null>(() => true).optional(),
   })
 );
 

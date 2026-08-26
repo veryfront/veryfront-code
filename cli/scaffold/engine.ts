@@ -1,8 +1,19 @@
-import { dirname, join } from "veryfront/platform/path";
+import {
+  basename,
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
+import { type RuntimeKind, runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
 import { filenameToId } from "veryfront/discovery";
+import { getAuthTemplate } from "../../templates/loader.ts";
 
 export type ScaffoldRouter = "app-router" | "pages-router";
 export const SCAFFOLD_TYPES = [
@@ -19,6 +30,8 @@ export const SCAFFOLD_TYPES = [
   "skill",
 ] as const;
 export type ScaffoldType = typeof SCAFFOLD_TYPES[number];
+export const AUTH_PRESETS = ["authelia", "oidc", "microsoft-entra"] as const;
+export type AuthPreset = typeof AUTH_PRESETS[number];
 export type ScaffoldHttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
 export interface ScaffoldInput {
@@ -27,6 +40,7 @@ export interface ScaffoldInput {
   name: string;
   router?: ScaffoldRouter;
   methods?: ScaffoldHttpMethod[];
+  resultPathMode?: "absolute" | "relative";
 }
 
 export interface ScaffoldFilePlan {
@@ -35,7 +49,7 @@ export interface ScaffoldFilePlan {
 }
 
 export interface ScaffoldPlan {
-  type: ScaffoldType;
+  type: ScaffoldType | "auth";
   name: string;
   files: ScaffoldFilePlan[];
 }
@@ -44,6 +58,33 @@ export interface ScaffoldResult {
   success: boolean;
   files: Array<{ path: string; created: boolean }>;
   message: string;
+  failureKind?: ScaffoldFailureKind;
+}
+
+export type ScaffoldFailureKind =
+  | "conflict"
+  | "filesystem"
+  | "invalid"
+  | "limit"
+  | "unsafe-path";
+
+export interface AuthScaffoldInput {
+  projectDir: string;
+  preset: AuthPreset;
+  filesForTesting?: ScaffoldFilePlan[];
+  templateFilesForTesting?: ScaffoldFilePlan[];
+  beforeWriteForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  failWriteAfterBytesForTesting?: number;
+  beforeOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  afterOpenForTesting?: (file: ScaffoldFilePlan) => Promise<void>;
+  secureCreateForTesting?: (
+    file: ScaffoldFilePlan,
+    create: () => Promise<void>,
+  ) => Promise<void>;
+  identityForTesting?: (info: Deno.FileInfo) => FileIdentity;
+  nativeIdentityForTesting?: (path: string) => Promise<FileIdentity>;
+  removeForTesting?: (path: string) => Promise<void>;
+  realPathForTesting?: (path: string) => Promise<string>;
 }
 
 interface ScaffoldDefinition {
@@ -51,13 +92,18 @@ interface ScaffoldDefinition {
   getContent: (input: ResolvedScaffoldInput) => string;
 }
 
-interface ResolvedScaffoldInput extends Required<Omit<ScaffoldInput, "methods">> {
+interface ResolvedScaffoldInput
+  extends Required<Omit<ScaffoldInput, "methods" | "resultPathMode">> {
   slug: string;
   componentName: string;
   methods: ScaffoldHttpMethod[];
 }
 
 const DEFAULT_METHODS: ScaffoldHttpMethod[] = ["GET"];
+const MAX_AUTH_SCAFFOLD_FILES = 32;
+const MAX_SCAFFOLD_PATH_BYTES = 240;
+const MAX_SCAFFOLD_FILE_BYTES = 256 * 1024;
+const MAX_SCAFFOLD_TOTAL_BYTES = 384 * 1024;
 
 const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
   page: {
@@ -130,7 +176,11 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
 };
 
 export function isScaffoldType(type: string): type is ScaffoldType {
-  return SCAFFOLD_TYPES.includes(type as ScaffoldType);
+  return SCAFFOLD_TYPES.some((candidate) => candidate === type);
+}
+
+export function isAuthPreset(preset: string): preset is AuthPreset {
+  return AUTH_PRESETS.some((candidate) => candidate === preset);
 }
 
 export function planScaffold(input: ScaffoldInput): ScaffoldPlan {
@@ -160,6 +210,7 @@ export async function writeScaffoldPlan(plan: ScaffoldPlan): Promise<ScaffoldRes
       success: false,
       files: conflicts.map((path) => ({ path, created: false })),
       message: `${plan.type} already exists at ${conflicts.join(", ")}`,
+      failureKind: "conflict",
     };
   }
 
@@ -178,13 +229,722 @@ export async function writeScaffoldPlan(plan: ScaffoldPlan): Promise<ScaffoldRes
 }
 
 export async function scaffoldProjectFile(input: ScaffoldInput): Promise<ScaffoldResult> {
-  return writeScaffoldPlan(planScaffold(input));
+  return writeGuardedMultiFilePlan(
+    planScaffold(input),
+    input.projectDir,
+    {
+      allowNestedPaths: true,
+      resultPathMode: input.resultPathMode ?? "absolute",
+    },
+  );
+}
+
+export async function planAuthScaffold(input: AuthScaffoldInput): Promise<ScaffoldPlan> {
+  if (!isAuthPreset(input.preset)) {
+    return { type: "auth", name: input.preset, files: [] };
+  }
+
+  if (input.filesForTesting) {
+    return {
+      type: "auth",
+      name: input.preset,
+      files: input.filesForTesting,
+    };
+  }
+
+  const template = input.templateFilesForTesting ?? await getAuthTemplate(input.preset);
+  if (template?.some((file) => !isSafeAuthTemplatePath(file.path))) {
+    throw new UnsafeAuthTemplatePathError();
+  }
+  const projectDir = resolve(input.projectDir);
+  const files = (template ?? []).map((file) => ({
+    path: join(projectDir, file.path),
+    content: file.content,
+  }));
+
+  return {
+    type: "auth",
+    name: input.preset,
+    files,
+  };
+}
+
+export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<ScaffoldResult> {
+  if (!isAuthPreset(input.preset)) {
+    return {
+      success: false,
+      files: [],
+      message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+      failureKind: "invalid",
+    };
+  }
+
+  let plan: ScaffoldPlan;
+  try {
+    plan = await planAuthScaffold(input);
+  } catch (error) {
+    if (error instanceof UnsafeAuthTemplatePathError) {
+      return failure([], "Unsafe auth template path", "unsafe-path");
+    }
+    return failure([], "Failed to load auth template");
+  }
+  if (plan.files.length === 0) {
+    return {
+      success: false,
+      files: [],
+      message: `Unknown auth preset "${input.preset}". Valid presets: ${AUTH_PRESETS.join(", ")}`,
+      failureKind: "invalid",
+    };
+  }
+
+  return writeGuardedMultiFilePlan(
+    plan,
+    input.projectDir,
+    {
+      allowNestedPaths: input.filesForTesting !== undefined,
+      resultPathMode: "relative",
+      beforeWrite: input.beforeWriteForTesting,
+      failWriteAfterBytes: input.failWriteAfterBytesForTesting,
+      beforeOpen: input.beforeOpenForTesting,
+      afterOpen: input.afterOpenForTesting,
+      secureCreate: input.secureCreateForTesting,
+      identity: input.identityForTesting,
+      nativeIdentity: input.nativeIdentityForTesting,
+      remove: input.removeForTesting,
+      realPath: input.realPathForTesting,
+    },
+  );
+}
+
+async function writeGuardedMultiFilePlan(
+  plan: ScaffoldPlan,
+  projectDir: string,
+  options: {
+    allowNestedPaths: boolean;
+    resultPathMode: "absolute" | "relative";
+    beforeWrite?: (file: ScaffoldFilePlan) => Promise<void>;
+    failWriteAfterBytes?: number;
+    beforeOpen?: (file: ScaffoldFilePlan) => Promise<void>;
+    afterOpen?: (file: ScaffoldFilePlan) => Promise<void>;
+    secureCreate?: (
+      file: ScaffoldFilePlan,
+      create: () => Promise<void>,
+    ) => Promise<void>;
+    identity?: (info: Deno.FileInfo) => FileIdentity;
+    nativeIdentity?: (path: string) => Promise<FileIdentity>;
+    remove?: (path: string) => Promise<void>;
+    realPath?: (path: string) => Promise<string>;
+  },
+): Promise<ScaffoldResult> {
+  const root = resolve(projectDir);
+  const identity = options.identity;
+  const nativeIdentity = options.nativeIdentity ?? readNativeFileIdentity;
+  const realPath = options.realPath ?? Deno.realPath;
+  const normalizedFiles = validatePlanPaths(plan, root, {
+    allowNestedPaths: options.allowNestedPaths,
+  });
+  if ("error" in normalizedFiles) return normalizedFiles.error;
+
+  const conflicts: string[] = [];
+  let rootGuard: RootGuard;
+  let secureRootRealPath: string;
+  try {
+    const rootStat = await Deno.lstat(root);
+    if (!rootStat.isDirectory || rootStat.isSymlink) {
+      return failure([], "Unsafe scaffold project root", "unsafe-path");
+    }
+    rootGuard = {
+      identity: await nativeIdentity(root),
+      realPath: await realPath(root),
+    };
+    secureRootRealPath = await Deno.realPath(root);
+
+    for (const file of normalizedFiles.files) {
+      const unsafe = await findUnsafeExistingPrefix(root, file.path);
+      if (unsafe) {
+        return failure([], `Unsafe scaffold path: ${unsafe}`, "unsafe-path");
+      }
+      if (await pathExists(file.path)) {
+        conflicts.push(formatResultPath(file, options.resultPathMode));
+      }
+    }
+  } catch {
+    return failure([], "Scaffold filesystem preflight failed");
+  }
+
+  if (conflicts.length) {
+    return {
+      success: false,
+      files: conflicts.map((path) => ({ path, created: false })),
+      message: `${plan.type} already exists at ${conflicts.join(", ")}`,
+      failureKind: "conflict",
+    };
+  }
+
+  const secureRootGuard: SecureRootGuard = {
+    path: root,
+    identity: rootGuard.identity,
+    realPath: secureRootRealPath,
+  };
+  const createdFiles: OwnedPath[] = [];
+  const createdDirs: OwnedPath[] = [];
+  const defaultWriter = async (file: ScaffoldFilePlan) => {
+    await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
+    const relativeParent = relative(root, dirname(file.path));
+    const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
+    await options.beforeOpen?.(file);
+    let createdIdentity: FileIdentity = null;
+    let createCompleted = false;
+    const create = async () => {
+      createdIdentity = (await runSecureScaffoldWriter({
+        operation: "create",
+        rootGuard: secureRootGuard,
+        parentParts,
+        name: basename(file.path),
+        content: file.content,
+        failAfterBytes: options.failWriteAfterBytes,
+      })).identity;
+      createCompleted = true;
+    };
+    try {
+      if (options.secureCreate) await options.secureCreate(file, create);
+      else await create();
+      if (!createCompleted) throw new Error("Secure scaffold writer did not run");
+      await options.afterOpen?.(file);
+      const opened = await verifySecureCreatedTarget(
+        root,
+        rootGuard,
+        file.path,
+        createdIdentity,
+        identity,
+        nativeIdentity,
+        realPath,
+      );
+      createdFiles.push(opened);
+    } catch (error) {
+      if (createdIdentity !== null) {
+        await runSecureScaffoldWriter({
+          operation: "remove",
+          rootGuard: secureRootGuard,
+          parentParts,
+          name: basename(file.path),
+          expectedFileIdentity: createdIdentity,
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
+  };
+  const removeCreatedPath = options.remove ?? ((path: string) => Deno.remove(path));
+
+  try {
+    for (const file of normalizedFiles.files) {
+      await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
+      const relativeParent = relative(root, dirname(file.path));
+      const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
+      const ensured = await runSecureScaffoldWriter({
+        operation: "ensure-parents",
+        rootGuard: secureRootGuard,
+        parentParts,
+      });
+      for (const directory of ensured.directories) {
+        createdDirs.push({
+          path: join(root, ...directory.parts),
+          identity: directory.identity,
+        });
+      }
+      await options.beforeWrite?.(file);
+      const unsafe = await findUnsafeExistingPrefix(root, file.path);
+      if (unsafe) throw new Error(`Unsafe scaffold path: ${unsafe}`);
+      await defaultWriter(file);
+    }
+  } catch (error) {
+    const cleanupErrors: string[] = [];
+    for (const owned of createdFiles.toReversed()) {
+      try {
+        const removed = await removeOwnedPath(
+          root,
+          rootGuard,
+          owned,
+          removeCreatedPath,
+          identity,
+          nativeIdentity,
+          realPath,
+        );
+        if (!removed) cleanupErrors.push(relative(root, owned.path));
+      } catch {
+        cleanupErrors.push(relative(root, owned.path));
+      }
+    }
+    for (const owned of createdDirs.toReversed()) {
+      try {
+        const removed = await removeOwnedPath(
+          root,
+          rootGuard,
+          owned,
+          removeCreatedPath,
+          identity,
+          nativeIdentity,
+          realPath,
+        );
+        if (!removed) cleanupErrors.push(relative(root, owned.path));
+      } catch {
+        cleanupErrors.push(relative(root, owned.path));
+      }
+    }
+
+    const cleanup = cleanupErrors.length
+      ? ` Rollback could not remove: ${cleanupErrors.join(", ")}`
+      : "";
+    return failure(
+      [],
+      `Failed to create scaffold: ${sanitizeError(error)}.${cleanup}`,
+    );
+  }
+
+  return {
+    success: true,
+    files: normalizedFiles.files.map((file) => ({
+      path: formatResultPath(file, options.resultPathMode),
+      created: true,
+    })),
+    message: `Created ${plan.type} "${plan.name}" successfully`,
+  };
+}
+
+function formatResultPath(
+  file: NormalizedFilePlan,
+  mode: "absolute" | "relative",
+): string {
+  return mode === "relative" ? file.relativePath : file.path;
+}
+
+interface NormalizedFilePlan extends ScaffoldFilePlan {
+  relativePath: string;
+}
+
+function validatePlanPaths(
+  plan: ScaffoldPlan,
+  root: string,
+  options: { allowNestedPaths: boolean },
+): { files: NormalizedFilePlan[] } | { error: ScaffoldResult } {
+  if (plan.files.length === 0) {
+    return { error: failure([], "Scaffold plan must contain files", "invalid") };
+  }
+  if (plan.files.length > MAX_AUTH_SCAFFOLD_FILES) {
+    return { error: failure([], "Scaffold plan contains too many files", "limit") };
+  }
+
+  const seen = new Set<string>();
+  const normalized: NormalizedFilePlan[] = [];
+  let totalBytes = 0;
+  for (const file of plan.files) {
+    if (!isSafeAbsoluteTargetPath(file.path, root)) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
+    }
+
+    const absolute = normalize(file.path);
+    const rel = relative(root, absolute);
+    const relativeParts = pathParts(rel);
+    if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
+    }
+    if (!options.allowNestedPaths && relativeParts.length !== 1) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
+    }
+    if (relativeParts.some((part) => !isSafePathComponent(part))) {
+      return { error: failure([], "Unsafe scaffold path", "unsafe-path") };
+    }
+    const pathBytes = new TextEncoder().encode(rel).byteLength;
+    if (pathBytes > MAX_SCAFFOLD_PATH_BYTES) {
+      return { error: failure([], "Scaffold path is too long", "limit") };
+    }
+    const contentBytes = new TextEncoder().encode(file.content).byteLength;
+    if (contentBytes > MAX_SCAFFOLD_FILE_BYTES) {
+      return { error: failure([], "Scaffold file is too large", "limit") };
+    }
+    totalBytes += contentBytes;
+    if (totalBytes > MAX_SCAFFOLD_TOTAL_BYTES) {
+      return { error: failure([], "Scaffold plan is too large", "limit") };
+    }
+    if (seen.has(absolute)) {
+      return { error: failure([], "Duplicate scaffold path", "invalid") };
+    }
+    seen.add(absolute);
+    normalized.push({ path: absolute, relativePath: rel, content: file.content });
+  }
+
+  return {
+    files: normalized.sort((a, b) => a.relativePath.localeCompare(b.relativePath)),
+  };
+}
+
+function isSafeAuthTemplatePath(path: string): boolean {
+  if (!path || isAbsolute(path) || path.includes("\\")) return false;
+  const parts = path.split("/");
+  if (parts.length !== 1) return false;
+  return parts.every(isSafePathComponent);
+}
+
+function isSafeAbsoluteTargetPath(path: string, root: string): boolean {
+  if (!path || !isAbsolute(path)) return false;
+  const normalizedRoot = normalize(root);
+  const normalizedPath = normalize(path);
+  const lexicalRelativePath = lexicalRelativeChildPath(normalizedRoot, path);
+  if (lexicalRelativePath === null) return false;
+  if (!lexicalRelativePath.split(/[\\/]/).every(isSafePathComponent)) return false;
+  const relativePath = relative(normalizedRoot, normalizedPath);
+  if (!isContainedRelativePath(relativePath)) return false;
+  return pathParts(relativePath).every(isSafePathComponent);
+}
+
+function pathParts(path: string): string[] {
+  return path.split(/[\\/]+/).filter((part) => part.length > 0);
+}
+
+function lexicalRelativeChildPath(root: string, path: string): string | null {
+  const portableRoot = root.replaceAll("\\", "/");
+  const portablePath = path.replaceAll("\\", "/");
+  const prefix = portableRoot.endsWith("/") ? portableRoot : `${portableRoot}/`;
+  if (!portablePath.startsWith(prefix)) return null;
+  const relativePath = portablePath.slice(prefix.length);
+  return relativePath.length === 0 ? null : relativePath;
+}
+
+function isSafePathComponent(part: string): boolean {
+  if (!part || part === "." || part === ".." || part.includes(":")) return false;
+  if (/[. ]$/.test(part)) return false;
+  const base = part.split(".")[0] ?? part;
+  return !/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i.test(base);
+}
+
+class UnsafeAuthTemplatePathError extends Error {}
+
+export type FileIdentity = {
+  dev: number | string;
+  ino: number | string;
+  kind: "directory" | "file" | "symlink" | "other";
+  mode?: number | string | null;
+  size?: number | string;
+  mtimeMs?: number | string | null;
+  birthtimeMs?: number | string | null;
+  ctimeMs?: number | string | null;
+} | null;
+
+interface RootGuard {
+  identity: FileIdentity;
+  realPath: string;
+}
+
+interface SecureRootGuard extends RootGuard {
+  path: string;
+}
+
+type SecureWriterRequest =
+  | {
+    operation: "ensure-parents";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+  }
+  | {
+    operation: "create";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+    name: string;
+    content: string;
+    failAfterBytes?: number;
+  }
+  | {
+    operation: "remove";
+    rootGuard: SecureRootGuard;
+    parentParts: string[];
+    name: string;
+    expectedFileIdentity: FileIdentity;
+  };
+
+interface SecureWriterResponse {
+  ok: boolean;
+  code?: string;
+  identity?: FileIdentity;
+  directories?: SecureCreatedDirectory[];
+}
+
+interface SecureCreatedDirectory {
+  parts: string[];
+  identity: FileIdentity;
+}
+
+interface SecureWriterResult {
+  identity: FileIdentity;
+  directories: SecureCreatedDirectory[];
+}
+
+interface SecureWriterCommand {
+  command: string;
+  args: string[];
+}
+
+interface OwnedPath {
+  path: string;
+  identity: FileIdentity;
+}
+
+interface NativeFileInfo {
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  size: bigint;
+  mtimeMs: bigint;
+  birthtimeMs: bigint;
+  ctimeMs: bigint;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+function nativeFileIdentity(info: NativeFileInfo): FileIdentity {
+  if (info.dev <= 0n || info.ino <= 0n) return null;
+  const kind = info.isDirectory()
+    ? "directory"
+    : info.isFile()
+    ? "file"
+    : info.isSymbolicLink()
+    ? "symlink"
+    : "other";
+  const base = { dev: String(info.dev), ino: String(info.ino), kind } as const;
+  if (kind === "directory") return base;
+  return {
+    ...base,
+    mode: String(info.mode),
+    size: String(info.size),
+    mtimeMs: String(info.mtimeMs),
+    birthtimeMs: String(info.birthtimeMs),
+    ctimeMs: String(info.ctimeMs),
+  };
+}
+
+async function readNativeFileIdentity(path: string): Promise<FileIdentity> {
+  const fs = await import("node:fs/promises");
+  return nativeFileIdentity(await fs.lstat(path, { bigint: true }));
+}
+
+function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  if (a === null || b === null) return false;
+  return a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.kind === b.kind &&
+    a.mode === b.mode &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs &&
+    a.birthtimeMs === b.birthtimeMs &&
+    a.ctimeMs === b.ctimeMs;
+}
+
+async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<SecureWriterResult> {
+  const writerCommand = buildSecureScaffoldWriterCommand();
+  const child = new Deno.Command(writerCommand.command, {
+    args: writerCommand.args,
+    cwd: request.rootGuard.path,
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify({
+    ...request,
+    rootGuard: {
+      identity: request.rootGuard.identity,
+      realPath: request.rootGuard.realPath,
+    },
+  })));
+  await writer.close();
+  const output = await child.output();
+  if (!output.success) throw new Error("Secure scaffold writer failed");
+
+  let response: SecureWriterResponse;
+  try {
+    response = JSON.parse(new TextDecoder().decode(output.stdout)) as SecureWriterResponse;
+  } catch {
+    throw new Error("Secure scaffold writer failed");
+  }
+  if (!response.ok) {
+    if (response.code === "already-exists") {
+      throw new Deno.errors.AlreadyExists("Scaffold target already exists");
+    }
+    if (response.code === "unsafe-directory" && request.parentParts.length > 0) {
+      throw new Error(`Unsafe scaffold path: ${request.parentParts.join("/")}`);
+    }
+    throw new Error("Secure scaffold writer failed");
+  }
+  return {
+    identity: response.identity ?? null,
+    directories: response.directories ?? [],
+  };
+}
+
+function buildSecureScaffoldWriterCommand(options?: {
+  execPath?: string;
+  moduleUrl?: string;
+  runtimeKind?: RuntimeKind;
+  standalone?: boolean;
+}): SecureWriterCommand {
+  const executable = options?.execPath ?? Deno.execPath();
+  const currentRuntime = options?.runtimeKind ?? runtimeKind;
+  const standalone = options?.standalone ?? Deno.build.standalone;
+  const moduleUrl = options?.moduleUrl ?? import.meta.url;
+  if (standalone) {
+    return {
+      command: executable,
+      args: ["__veryfront_internal_scaffold_writer"],
+    };
+  }
+  if (currentRuntime === "node" || currentRuntime === "bun") {
+    return {
+      command: executable,
+      args: [
+        fromFileUrl(new URL("../main.js", moduleUrl)),
+        "__veryfront_internal_scaffold_writer",
+      ],
+    };
+  }
+  return {
+    command: executable,
+    args: [
+      "run",
+      "--quiet",
+      "--allow-read",
+      "--allow-write",
+      fromFileUrl(new URL("./secure-writer.ts", moduleUrl)),
+    ],
+  };
+}
+
+/** @internal Test seam for npm runtime command construction. */
+export function testBuildSecureScaffoldWriterCommand(
+  options: Parameters<typeof buildSecureScaffoldWriterCommand>[0],
+): SecureWriterCommand {
+  return buildSecureScaffoldWriterCommand(options);
+}
+
+async function assertRootIdentity(
+  root: string,
+  expected: RootGuard,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
+  realPath: (path: string) => Promise<string>,
+): Promise<void> {
+  const current = await Deno.lstat(root);
+  if (!current.isDirectory || current.isSymlink) {
+    throw new Error("Unsafe scaffold project root");
+  }
+  const currentIdentity = await nativeIdentity(root);
+  if (expected.identity !== null && !sameIdentity(currentIdentity, expected.identity)) {
+    throw new Error("Unsafe scaffold project root");
+  }
+  if (expected.identity === null && await realPath(root) !== expected.realPath) {
+    throw new Error("Unsafe scaffold project root");
+  }
+}
+
+async function verifySecureCreatedTarget(
+  root: string,
+  rootGuard: RootGuard,
+  path: string,
+  createdIdentity: FileIdentity,
+  identity: ((info: Deno.FileInfo) => FileIdentity) | undefined,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
+  realPath: (path: string) => Promise<string>,
+): Promise<OwnedPath> {
+  await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
+  const targetRealPath = await realPath(path);
+  if (!isRealPathInsideRoot(rootGuard.realPath, targetRealPath)) {
+    throw new Error("Unsafe scaffold path");
+  }
+  const pathInfo = await Deno.lstat(path);
+  const actualPathIdentity = await nativeIdentity(path);
+  if (
+    createdIdentity !== null && actualPathIdentity !== null &&
+    !sameIdentity(createdIdentity, actualPathIdentity)
+  ) {
+    throw new Error("Unsafe scaffold path");
+  }
+  return { path, identity: identity?.(pathInfo) ?? actualPathIdentity };
+}
+
+async function removeOwnedPath(
+  root: string,
+  rootGuard: RootGuard,
+  owned: OwnedPath,
+  remove: (path: string) => Promise<void>,
+  identity: ((info: Deno.FileInfo) => FileIdentity) | undefined,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
+  realPath: (path: string) => Promise<string>,
+): Promise<boolean> {
+  if (owned.identity === null) return false;
+  await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
+  const current = await Deno.lstat(owned.path);
+  const currentIdentity = identity?.(current) ?? await nativeIdentity(owned.path);
+  if (!sameIdentity(currentIdentity, owned.identity)) return false;
+  await remove(owned.path);
+  return true;
+}
+
+function isRealPathInsideRoot(root: string, target: string): boolean {
+  const relativePath = relative(root, target);
+  return isContainedRelativePath(relativePath);
+}
+
+function isContainedRelativePath(relativePath: string): boolean {
+  if (relativePath === "." || isAbsolute(relativePath)) return false;
+  const firstPart = pathParts(relativePath)[0];
+  return firstPart !== undefined && firstPart !== "..";
+}
+
+async function findUnsafeExistingPrefix(root: string, target: string): Promise<string | null> {
+  const relativeTarget = relative(root, target);
+  let current = root;
+  for (const part of pathParts(relativeTarget)) {
+    current = join(current, part);
+    try {
+      const stat = await Deno.lstat(current);
+      if (stat.isSymlink) return relative(root, current);
+      if (current !== target && !stat.isDirectory) return relative(root, current);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return null;
+      return relative(root, current);
+    }
+  }
+  return null;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
+function failure(
+  files: ScaffoldResult["files"],
+  message: string,
+  failureKind: ScaffoldFailureKind = "filesystem",
+): ScaffoldResult {
+  return { success: false, files, message, failureKind };
+}
+
+function sanitizeError(error: unknown): string {
+  if (error instanceof Deno.errors.AlreadyExists) return "target already exists";
+  if (error instanceof Error && error.message.startsWith("Unsafe scaffold path:")) {
+    return error.message;
+  }
+  return "filesystem write failed";
 }
 
 function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {
   const slug = toSlug(input.name);
   return {
-    projectDir: input.projectDir,
+    projectDir: resolve(input.projectDir),
     type: input.type,
     name: input.name,
     router: input.router ?? "app-router",

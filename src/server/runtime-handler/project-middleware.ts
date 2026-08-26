@@ -208,8 +208,12 @@ export class ProjectMiddlewareRuntime {
 
       const composed = pipeline.compose();
       const middlewareContext = new MiddlewareContext(
-        createApplicationRequest(request),
+        createApplicationRequest(request, {
+          denyHeaders: ctx.applicationIdentityHeaderNames,
+        }),
         getProjectEnvSnapshot() ?? {},
+        undefined,
+        ctx.applicationIdentity ?? null,
       );
       return await composed(middlewareContext, next);
     };

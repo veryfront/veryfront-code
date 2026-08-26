@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for standalone MCP server
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStandaloneMCPServer,
@@ -117,6 +117,25 @@ describe("mcp/standalone", () => {
       assertEquals(names.includes("vf_trigger_hmr"), true);
     });
 
+    it("tools/list includes vf_scaffold with auth enum parity", async () => {
+      const server = new StandaloneMCPServer();
+      const resp = await dispatch(server, "tools/list");
+      const result = resp.result as {
+        tools: {
+          name: string;
+          inputSchema: unknown;
+        }[];
+      };
+      const scaffold = result.tools.find((tool) => tool.name === "vf_scaffold");
+
+      assertExists(scaffold);
+      assertEquals(getAuthPresetEnum(scaffold.inputSchema), [
+        "authelia",
+        "oidc",
+        "microsoft-entra",
+      ]);
+    });
+
     it("resources/list returns schema, agents-md, and skills", async () => {
       const server = new StandaloneMCPServer();
       const resp = await dispatch(server, "resources/list");
@@ -138,8 +157,10 @@ describe("mcp/standalone", () => {
         contents: { uri: string; text: string }[];
       };
       assertEquals(result.contents.length, 1);
-      assertEquals(result.contents[0].uri, "veryfront://schema");
-      const schema = JSON.parse(result.contents[0].text);
+      const content = result.contents[0];
+      assertExists(content);
+      assertEquals(content.uri, "veryfront://schema");
+      const schema = JSON.parse(content.text);
       assertEquals(typeof schema.version, "string");
       assertEquals(Array.isArray(schema.commands), true);
       assertEquals(schema.commands.length > 0, true);
@@ -153,7 +174,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         contents: { uri: string; text: string }[];
       };
-      const skills = JSON.parse(result.contents[0].text);
+      const content = result.contents[0];
+      assertExists(content);
+      const skills = JSON.parse(content.text);
       assertEquals(Array.isArray(skills), true);
       assertEquals(skills.length > 0, true);
       const names = skills.map((s: { name: string }) => s.name);
@@ -193,7 +216,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(typeof schema.version, "string");
       assertEquals(Array.isArray(schema.commands), true);
     });
@@ -207,7 +232,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(schema.name, "deploy");
       assertEquals(schema.category, "deploy");
     });
@@ -221,7 +248,9 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const schema = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const schema = JSON.parse(content.text);
       assertEquals(Array.isArray(schema.commands), true);
       for (const cmd of schema.commands) {
         assertEquals(cmd.category, "auth");
@@ -237,8 +266,32 @@ describe("mcp/standalone", () => {
       const result = resp.result as {
         content: { text: string }[];
       };
-      const info = JSON.parse(result.content[0].text);
+      const content = result.content[0];
+      assertExists(content);
+      const info = JSON.parse(content.text);
       assertEquals(typeof info.version, "string");
+    });
+
+    it("tools/call vf_scaffold rejects arguments that do not match the advertised schema", async () => {
+      const server = new StandaloneMCPServer();
+      for (
+        const argumentsValue of [
+          { type: "auth", name: "oidc", projectPath: null },
+          { type: "auth", name: "oidc", projectPath: 123 },
+          { type: "auth", name: "secret-provider-token", projectPath: "/project" },
+          { type: "api", name: "users", methods: ["GET", "TRACE"], projectPath: "/project" },
+        ]
+      ) {
+        const response = await dispatch(server, "tools/call", {
+          name: "vf_scaffold",
+          arguments: argumentsValue,
+        });
+
+        const error = response.error as { code: number; message: string };
+        assertEquals(error.code, -32602);
+        assertStringIncludes(error.message, "Invalid vf_scaffold arguments");
+        assertEquals(error.message.includes("secret-provider-token"), false);
+      }
     });
 
     it("tools/list accepts cursor param without erroring", async () => {
@@ -278,3 +331,21 @@ describe("mcp/standalone", () => {
     });
   });
 });
+
+function getAuthPresetEnum(schema: unknown): unknown {
+  if (!isRecord(schema) || !Array.isArray(schema.anyOf)) return undefined;
+
+  for (const variant of schema.anyOf) {
+    if (!isRecord(variant) || !isRecord(variant.properties)) continue;
+    const type = variant.properties.type;
+    const name = variant.properties.name;
+    if (!isRecord(type) || !isRecord(name)) continue;
+    if (type.const === "auth") return name.enum;
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

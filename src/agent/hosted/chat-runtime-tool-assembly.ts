@@ -116,6 +116,10 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    */
   deniedToolNames?: readonly string[];
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
+  /**
+   * Include runtime-essential tools when `allowedToolNames` is an empty set.
+   * Non-empty selectors remain restrictive.
+   */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -339,11 +343,11 @@ function shouldIncludeHostedWebFetchFallback(input: {
   return input.sourceProviderToolNames.has("web_fetch");
 }
 
-/** Prepare hosted chat runtime tool assembly. */
-export async function prepareHostedChatRuntimeToolAssembly<
+async function prepareHostedChatRuntimeToolAssemblyInternal<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+  configDerivedSelector: boolean,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const authorizedLocalTools = withoutDeniedHostTools(
     applyHostedHostToolPolicy(input.localTools, input.hostToolPolicy),
@@ -361,7 +365,9 @@ export async function prepareHostedChatRuntimeToolAssembly<
     allowedToolNames: normalizedAllowedToolNames,
     localToolNames: Object.keys(authorizedLocalTools),
     availableSkillIds: input.taskContext.availableSkillIds,
-    includeRuntimeEssentialToolsWhenEmpty: input.includeRuntimeEssentialToolsWhenEmpty,
+    configDerivedSelector: configDerivedSelector ||
+      (input.includeRuntimeEssentialToolsWhenEmpty === true &&
+        normalizedAllowedToolNames?.size === 0),
   });
   const postFormInputLocalTools = filterPostFormInputLocalTools(
     authorizedLocalTools,
@@ -528,4 +534,25 @@ export async function prepareHostedChatRuntimeToolAssembly<
     systemInstructions,
     ...(systemMessages === undefined ? {} : { systemMessages }),
   };
+}
+
+/** Prepare hosted chat runtime tool assembly. */
+export function prepareHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(input, false);
+}
+
+/** @internal Prepare an assembly whose selector provenance was verified by the hosted runtime. */
+export function prepareConfigDerivedHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  return prepareHostedChatRuntimeToolAssemblyInternal(
+    input,
+    input.includeRuntimeEssentialToolsWhenEmpty === true,
+  );
 }

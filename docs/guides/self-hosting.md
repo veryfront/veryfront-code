@@ -7,6 +7,13 @@ order: 43
 Self-host Veryfront Code in your own cloud, private network, or on-premises
 environment. Self-hosting does not require a Veryfront account.
 
+Self-hosted projects can use OIDC application auth with the same declarative
+`security.auth.oidc` config used in Cloud. If a reverse proxy already
+authenticates users, use `security.auth.trustedProxy` only when the runtime
+origin is reachable solely from trusted peers and the proxy strips incoming
+identity headers before setting its own. See
+[Application authentication](./application-auth.md).
+
 ## Prerequisites
 
 - A project that passes the [Local quickstart](../getting-started/quickstart.md).

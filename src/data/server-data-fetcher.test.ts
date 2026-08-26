@@ -11,6 +11,7 @@ import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
 import { FakeTime } from "#std/testing/time";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 describe("ServerDataFetcher", () => {
   function createContext(overrides: Partial<DataContext> = {}): DataContext {
@@ -20,6 +21,18 @@ describe("ServerDataFetcher", () => {
       request: new Request("http://localhost/test"),
       url: new URL("http://localhost/test"),
       ...overrides,
+    };
+  }
+
+  function createIdentity(): ApplicationIdentity {
+    return {
+      issuer: "https://issuer.example.test",
+      subject: "user-123",
+      email: "user@example.test",
+      groups: ["engineering"],
+      roles: ["reader"],
+      groupsComplete: true,
+      claims: { sub: "user-123" },
     };
   }
 
@@ -893,6 +906,39 @@ describe("ServerDataFetcher", () => {
           projectId: null,
           token: null,
           veryfront: null,
+        });
+      });
+
+      it("passes normalized application identity to isolated server-data hooks", async () => {
+        const { modulePath, projectDir: dir } = await writeIsolatedPage(
+          `export function getServerData(context) {
+             return {
+               props: {
+                 identity: context.identity,
+                 applicationIdentity: context.applicationIdentity,
+                 sameIdentityAlias: context.identity === context.applicationIdentity,
+                 rawSubjectHeader: context.request.headers.get("x-auth-subject"),
+               },
+             };
+           }
+           export default function Page() { return null; }`,
+        );
+        const identity = createIdentity();
+
+        const result = await isolatedFetch(
+          modulePath,
+          dir,
+          createContext({
+            identity,
+            applicationIdentity: identity,
+          }),
+        );
+
+        assertEquals(result.props, {
+          identity,
+          applicationIdentity: identity,
+          sameIdentityAlias: true,
+          rawSubjectHeader: null,
         });
       });
     });

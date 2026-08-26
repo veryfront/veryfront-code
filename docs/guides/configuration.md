@@ -29,9 +29,17 @@ Use `veryfront.config.ts` for stable project choices:
 - Tune discovery paths for agents, tools, skills, prompts, resources,
   workflows, or tasks.
 - Set project-level provider or MCP defaults.
+- Protect application routes with declarative `security.auth`.
 
 Do not add config just to mirror defaults. Keep the file small and add options
 when the project has a concrete reason to deviate.
+
+For application login, keep `security.auth` declarative. Veryfront supports
+function-valued config for general project configuration, but hosted auth should
+resolve to a static Basic, Bearer, OIDC, or trusted-proxy shape. Do not put
+provider clients, token verification code, network calls, or request-specific
+auth logic in `veryfront.config.ts`. See
+[Application authentication](./application-auth.md).
 
 ## Config file
 

@@ -1,13 +1,15 @@
 # Security module reference
 
-`src/security` owns Veryfront's request-security primitives and the internal
-worker boundary used to run project code. Its server-facing package entrypoint
-is `veryfront/security`, mapped to [`index.ts`](./index.ts). Browser code imports
-the CSRF mutation helper from `veryfront/index.client`.
+`src/security` owns Veryfront's request-security primitives, application
+authentication, and the internal worker boundary used to run project code. Its
+server-facing package entrypoint is `veryfront/security`, mapped to
+[`index.ts`](./index.ts). Browser code imports the CSRF mutation helper from
+`veryfront/index.client`.
 
-This module does not provide password hashing, JWT verification, SQL escaping,
-or a public sandbox API. Authentication here is limited to the runtime's Basic
-and bearer-token request gate. Public rate limiting belongs to
+This module does not provide password hashing, SQL escaping, direct LDAP
+binding, or a public sandbox API. Application authentication supports the
+runtime's Basic and bearer-token request gate, OIDC login, and self-hosted
+trusted-proxy identity. Public rate limiting belongs to
 [`veryfront/middleware`](../middleware/README.md).
 
 ## Published surface
@@ -60,8 +62,16 @@ The synchronous helpers deliberately deny promise-returning validators.
 
 CSRF uses a double-submit cookie and header comparison. HTTPS and loopback
 origins use `__Host-vf_csrf`, which is host-only, path-scoped to `/`, and always
-secure. Plain-HTTP LAN development uses `vf_csrf`, because browsers discard
-`Secure` `__Host-` cookies there. The default header is `x-csrf-token`.
+secure. Plain-HTTP LAN development uses an origin-scoped
+`vf_csrf_http_<encoded-origin-and-config>` physical cookie, because browsers
+discard `Secure` `__Host-` cookies there and an HTTP sibling must not collide
+with an HTTPS token. Its companion `vf_csrf_names_<encoded-origin>` cookie lets
+`csrfMutationHeaders` discover that physical name; application code should not
+read or construct it directly. During migration, if an HTTP sibling still
+advertises a legacy shared token, HTTPS uses an origin-scoped
+`vf_csrf_https_<encoded-origin-and-config>` token instead of making that legacy
+cookie unreadable to the already-open HTTP app. The default header is
+`x-csrf-token`.
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion
@@ -88,9 +98,9 @@ if (!response.ok) {
 ```
 
 Custom names need no options either. When `security.csrf` sets `cookieName` or
-`headerName`, the server publishes both in a companion `vf_csrf_names` cookie
-and the helper discovers them, so the call above is unchanged and the names stay
-defined in one place.
+`headerName`, the server publishes both in an origin-specific
+`vf_csrf_names_<encoded-origin>` cookie and the helper discovers them, so the
+call above is unchanged and the names stay defined in one place.
 
 Pass them explicitly only to override that discovery:
 
@@ -134,10 +144,19 @@ the double-submit pair rather than a hole beside it.
 
 ### Authentication
 
-`AuthHandler` accepts either one Basic credential pair or one bearer token.
-Ambiguous environment configuration fails closed. Unauthorized responses are
-non-cacheable and receive the resolved CORS and security policy. Credential
-verification uses constant-time comparison.
+`AuthHandler` accepts one Basic credential pair, one bearer token, one OIDC
+application login config, or one trusted-proxy config. Ambiguous environment
+configuration fails closed. Unauthorized responses are non-cacheable and receive
+the resolved CORS and security policy. Credential verification uses
+constant-time comparison.
+
+OIDC application auth runs before project middleware, uses authorization code
+flow with PKCE, verifies ID tokens through bounded discovery and JWKS caches,
+and stores transaction and session state in encrypted cookies. These cookies
+make horizontally scaled runtimes correctness-independent as long as every
+instance receives the same session secret. Trusted-proxy auth is self-hosted
+only and trusts exact native peer provenance, not caller-controlled forwarding
+headers.
 
 ### Local development control surfaces
 
@@ -432,8 +451,8 @@ posture fixed and declared in a single place.
 
 This is a deliberate posture, not a bypass. With the override set, tenant
 project code is evaluated in the shared host process. Per-request separation is
-the `runWithContext` source scope and the project-scoped registry transaction —
-**not** a process, memory, or CPU boundary between tenants. Deno Workers do not
+the `runWithContext` source scope and the project-scoped registry transaction,
+not a process, memory, or CPU boundary between tenants. Deno Workers do not
 change that; they share the host process.
 
 Operators who need a genuine tenant boundary must leave the override unset and

@@ -31,6 +31,7 @@ export type HostedRuntimeRequestConfigAgent = Pick<
   | "deniedTools"
   | "providerTools"
   | "delegates"
+  | "skills"
 >;
 
 /** Input payload for resolve hosted runtime request config. */
@@ -146,6 +147,7 @@ export function resolveHostedRuntimeThinkingOverride(input: {
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
   configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
+  configuredSkills: RuntimeAgentMarkdownDefinition["skills"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
   if (input.configuredTools === true) {
@@ -160,7 +162,13 @@ export function resolveHostedRuntimeAllowedTools(input: {
     return [...configuredToolNames];
   }
 
-  return [...new Set(input.requestedTools)].filter((toolName) => configuredToolNames.has(toolName));
+  const hasImplicitLegacyDelegation = input.configuredSkills === undefined ||
+    input.configuredSkills === true ||
+    (Array.isArray(input.configuredSkills) && input.configuredSkills.length > 0);
+  return [...new Set(input.requestedTools)].filter((toolName) =>
+    configuredToolNames.has(toolName) ||
+    (toolName === "invoke_agent" && hasImplicitLegacyDelegation)
+  );
 }
 
 /** Resolve provider-native tool bindings without widening direct tool access. */
@@ -203,6 +211,7 @@ export function resolveHostedRuntimeRequestConfig(
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
       configuredDelegates: input.agentConfig.delegates,
+      configuredSkills: input.agentConfig.skills,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
     requestedAllowedProviderTools: resolveHostedRuntimeAllowedProviderTools({
