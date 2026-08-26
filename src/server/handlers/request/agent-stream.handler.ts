@@ -864,17 +864,28 @@ export class AgentStreamHandler extends BaseHandler {
               apiAuthToken,
               req.signal,
             );
+            const requestSourceFingerprint = payload.agentSource.type === "branch"
+              ? await requireAgentSourceSnapshotFingerprint(
+                requestScopedContext,
+                "agent-source-config-start",
+              )
+              : undefined;
             const sourceConfig = await resolveAgentSourceConfig(
               requestScopedContext,
               payload.agentSource,
               envVarsForAgent,
             );
-            const requestSourceFingerprint = payload.agentSource.type === "branch"
-              ? await requireAgentSourceSnapshotFingerprint(
+            if (requestSourceFingerprint !== undefined) {
+              const configSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
                 requestScopedContext,
                 "agent-source-config-identity",
-              )
-              : undefined;
+              );
+              if (configSourceFingerprint !== requestSourceFingerprint) {
+                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                  detail: "The branch source changed while its agent configuration was evaluated",
+                });
+              }
+            }
             const sourceScopedContext: HandlerContext = {
               ...requestScopedContext,
               config: sourceConfig,

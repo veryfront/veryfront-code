@@ -1107,7 +1107,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(fetchUrls, []);
     assertEquals(contextCalls, ["restrict-gmail", "restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
-    assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
+    assertEquals(sourceEvents.slice(0, 3), ["source-fresh", "source-fresh", "config-read"]);
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
@@ -2855,6 +2855,78 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(result.response.status, 503);
     assertEquals(runWithContextCalls.length, 2);
     assertEquals(discoveryCalls, 0);
+  });
+
+  it("rejects a branch run when config loading advances the source snapshot", async () => {
+    let sourceFingerprint = "config-start-snapshot";
+    let discoveryCalls = 0;
+    let agentLookups = 0;
+    let configReads = 0;
+    const runWithContextCalls: Array<{
+      token?: string;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => {
+        agentLookups += 1;
+        return undefined;
+      },
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created across source snapshots");
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter(runWithContextCalls);
+    const readFile = fs.readFile.bind(fs);
+    fs.readFile = (path) => {
+      configReads += 1;
+      sourceFingerprint = "config-read-snapshot";
+      return readFile(path);
+    };
+    fs.getSourceSnapshotFingerprint = () => sourceFingerprint;
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(configReads > 0, true);
+    assertEquals(discoveryCalls, 0);
+    assertEquals(agentLookups, 0);
   });
 
   it("rejects a branch run when discovery advances the source snapshot", async () => {
