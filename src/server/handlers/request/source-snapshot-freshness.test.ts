@@ -8,6 +8,7 @@ import {
   captureRequiredPreviewSourceSnapshotMarker,
   ensurePreviewDocumentSourceSnapshot,
   ensurePreviewSourceSnapshotFresh,
+  finishPreviewDocumentSourceSnapshot,
   preparePreviewDocumentSourceSnapshot,
   seedPreviewDocumentSourceSnapshot,
 } from "./source-snapshot-freshness.ts";
@@ -136,7 +137,7 @@ it("prefers a versioned zero-age ensure contract over unconditional refresh", as
   assertEquals(refreshes, 0, "the versioned ensure method owns immutable-source short-circuiting");
 });
 
-it("reuses a prepared document snapshot while its identity is unchanged", async () => {
+it("does not reuse an identity-only mutable document snapshot", async () => {
   let refreshes = 0;
   const adapter = createMockAdapter();
   adapter.fs.refreshSourceSnapshot = () => {
@@ -149,7 +150,14 @@ it("reuses a prepared document snapshot while its identity is unchanged", async 
   await preparePreviewDocumentSourceSnapshot(ctx);
   await ensurePreviewDocumentSourceSnapshot(ctx);
 
-  assertEquals(refreshes, 1, "an unchanged identity reuses the classifier's strict refresh");
+  assertEquals(
+    refreshes,
+    2,
+    "an identity names the source context but cannot prove that its contents are unchanged",
+  );
+  const rejection = await assertRejects(() => finishPreviewDocumentSourceSnapshot(ctx));
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
 });
 
 it("reuses a prepared document snapshot while its identity and generation are unchanged", async () => {

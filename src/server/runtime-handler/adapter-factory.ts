@@ -187,8 +187,11 @@ function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): bo
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return false;
+  const apiMayOwnFileExtensionPath = !pathname.startsWith("/_") &&
+    /\.[a-zA-Z0-9]+$/.test(pathname);
   return ssrOwnsDocumentPathname(pathname) ||
-    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
+    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname)) ||
+    apiMayOwnFileExtensionPath;
 }
 
 async function prepareProxyConfigLoad(

@@ -1476,6 +1476,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         },
         setProductionMode: (_p: boolean, _r?: string) => {},
         getSourceSnapshotIdentity: () => `branch:preview-project:${adapterBranch ?? "main"}`,
+        getSourceSnapshotVersion: () => 1,
         refreshSourceSnapshot: () => {
           refreshedIdentities.push(`branch:preview-project:${adapterBranch ?? "main"}`);
           return Promise.resolve();

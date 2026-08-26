@@ -773,7 +773,7 @@ describe("adapter-factory", () => {
       ]);
     });
 
-    it("refreshes mutable source before loading proxy config", async () => {
+    it("refreshes mutable source before config for file-extension API candidates", async () => {
       let sourceFresh = false;
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
@@ -841,7 +841,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
-        pathname: "/notes.md",
+        pathname: "/feed.xml",
         isProxyMode: true,
         prepareHostedConfigContext: async () => ({
           sourceContext: { productionMode: false, branch: "main" },
@@ -883,7 +883,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
-        pathname: "/notes.md",
+        pathname: "/feed.xml",
         isProxyMode: true,
         allowHostProjectCodeExecution: false,
         prepareHostedConfigContext: async () => ({

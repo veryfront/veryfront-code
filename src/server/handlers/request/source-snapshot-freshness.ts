@@ -122,7 +122,7 @@ async function preparedDocumentSnapshotMatches(
   const identityMatches = prepared.identity !== undefined
     ? identity === prepared.identity
     : prepared.fixedContext === true && prepared.version !== undefined;
-  const versionMatches = prepared.version === undefined || version === prepared.version;
+  const versionMatches = prepared.version !== undefined && version === prepared.version;
   return identityMatches && versionMatches;
 }
 
