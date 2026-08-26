@@ -137,7 +137,7 @@ import {
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
-import { runWithRetainedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
+import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -671,9 +671,9 @@ export function createVeryfrontHandler(
           await incrementRequestMetrics();
 
           if (!skipsApplicationAuth(request, url.pathname)) {
-            const authResult = await runInProjectFilesystemContext(
-              ctx,
-              isProxyMode,
+            const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+              runInProjectFilesystemContext(ctx, isProxyMode, operation);
+            const authResult = await runInFilesystemContext(
               () =>
                 runWithRetainedPreviewDocumentSourceSnapshot(
                   ctx,
@@ -694,7 +694,10 @@ export function createVeryfrontHandler(
                     }
                     return result;
                   },
-                  { retainAfterOperation: (result) => !(result instanceof Response) },
+                  {
+                    retainAfterOperation: (result) => !(result instanceof Response),
+                    runDeferredOperation: runInFilesystemContext,
+                  },
                 ),
             );
             if (authResult instanceof Response) return authResult;

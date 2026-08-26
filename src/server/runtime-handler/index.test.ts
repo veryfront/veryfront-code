@@ -1,3 +1,5 @@
+// Deno-only end-to-end runtime-handler coverage. Node and Bun planners
+// intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";

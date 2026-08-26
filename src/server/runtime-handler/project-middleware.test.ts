@@ -466,11 +466,30 @@ describe("ProjectMiddlewareRuntime", () => {
     );
   });
 
-  it("finalizes host-token snapshots inside the effective tenant context", async () => {
-    const storage = new AsyncLocalStorage<ActiveFsContext>();
-    const adapter = createAdapter(storage);
+  it("validates deferred host-token streams inside the effective tenant context", async () => {
+    const adapter = createAdapter();
+    let activeContextDepth = 0;
+    const contextualFs = adapter.fs as typeof adapter.fs & {
+      runWithContext<T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+      ): Promise<T>;
+    };
+    contextualFs.runWithContext = async <T>(
+      _projectSlug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      activeContextDepth++;
+      try {
+        return await fn();
+      } finally {
+        activeContextDepth--;
+      }
+    };
     const requireContext = () => {
-      if (!storage.getStore()) throw new Error("[test] No request context available");
+      if (activeContextDepth === 0) throw new Error("[test] No request context available");
     };
     adapter.fs.getSourceSnapshotIdentity = () => {
       requireContext();
@@ -495,15 +514,26 @@ describe("ProjectMiddlewareRuntime", () => {
       loadMiddleware: () => Promise.resolve([]),
     });
 
+    let chunk = 0;
     const response = await execute(runtime, context, undefined, () => {
       seedPreviewDocumentSourceSnapshot(context, {
         identity: "branch:trusted-project:main",
         version: 1,
       });
-      return Promise.resolve(new Response("route"));
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new TextEncoder().encode(chunk++ === 0 ? "route-" : "body"));
+              if (chunk === 2) controller.close();
+            },
+          }),
+        ),
+      );
     });
 
-    assertEquals(await response?.text(), "route");
+    assertEquals(await response?.text(), "route-body");
+    assertEquals(activeContextDepth, 0);
   });
 
   it("rejects a route response when snapshot finalization requests reclassification", async () => {

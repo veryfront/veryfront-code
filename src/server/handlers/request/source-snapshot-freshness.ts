@@ -106,6 +106,8 @@ export function seedPreviewDocumentSourceSnapshot(
 interface RetainedPreviewDocumentSourceSnapshotOptions<T> {
   /** Keep the validated marker available for a later request phase. */
   readonly retainAfterOperation?: (result: T) => boolean;
+  /** Re-enter request context before deferred response-body work. */
+  readonly runDeferredOperation?: <R>(operation: () => Promise<R>) => Promise<R>;
 }
 
 /**
@@ -170,7 +172,12 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
       result instanceof Response && result.body !== null &&
       (retained !== undefined || preparedDocumentSnapshots.has(ctx))
     ) {
-      const response = retainPreviewSnapshotThroughResponseBody(result, validate, finalize);
+      const response = retainPreviewSnapshotThroughResponseBody(
+        result,
+        validate,
+        finalize,
+        options.runDeferredOperation,
+      );
       finalizationTransferredToBody = true;
       return response as T;
     }
@@ -191,40 +198,45 @@ function retainPreviewSnapshotThroughResponseBody(
   response: Response,
   validate: () => Promise<void>,
   finalize: () => Promise<void>,
+  runDeferredOperation: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation(),
 ): Response {
   const reader = response.body!.getReader();
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
-      try {
-        await validate();
-        const chunk = await reader.read();
-        if (!chunk.done) {
+      await runDeferredOperation(async () => {
+        try {
           await validate();
-          controller.enqueue(chunk.value);
-          return;
+          const chunk = await reader.read();
+          if (!chunk.done) {
+            await validate();
+            controller.enqueue(chunk.value);
+            return;
+          }
+          await finalize();
+          controller.close();
+        } catch (error) {
+          await cancelReaderAfterPrimaryFailure(reader, error);
+          await finalizeAfterPrimaryFailure(finalize);
+          controller.error(error);
         }
-        await finalize();
-        controller.close();
-      } catch (error) {
-        await cancelReaderAfterPrimaryFailure(reader, error);
-        await finalizeAfterPrimaryFailure(finalize);
-        controller.error(error);
-      }
+      });
     },
     async cancel(reason) {
-      let cancellationError: unknown;
-      let cancellationFailed = false;
-      try {
-        await reader.cancel(reason);
-      } catch (error) {
-        cancellationFailed = true;
-        cancellationError = error;
-      }
-      if (cancellationFailed) {
-        await finalizeAfterPrimaryFailure(finalize);
-        throw cancellationError;
-      }
-      await finalize();
+      await runDeferredOperation(async () => {
+        let cancellationError: unknown;
+        let cancellationFailed = false;
+        try {
+          await reader.cancel(reason);
+        } catch (error) {
+          cancellationFailed = true;
+          cancellationError = error;
+        }
+        if (cancellationFailed) {
+          await finalizeAfterPrimaryFailure(finalize);
+          throw cancellationError;
+        }
+        await finalize();
+      });
     },
   });
   return new Response(body, {

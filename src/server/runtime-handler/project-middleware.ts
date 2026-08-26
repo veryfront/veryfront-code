@@ -247,14 +247,14 @@ export class ProjectMiddlewareRuntime {
       );
       return await composed(middlewareContext, next);
     };
+    const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+      runInProjectFilesystemContext(ctx, isSharedProxy, operation);
     const executeWithPreparedSnapshot = () =>
-      runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware);
+      runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware, {
+        runDeferredOperation: runInFilesystemContext,
+      });
 
-    return await runInProjectFilesystemContext(
-      ctx,
-      isSharedProxy,
-      executeWithPreparedSnapshot,
-    );
+    return await runInFilesystemContext(executeWithPreparedSnapshot);
   }
 
   async #getMiddleware(
