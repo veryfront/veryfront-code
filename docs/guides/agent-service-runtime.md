@@ -204,7 +204,11 @@ exact allowed endpoints once at startup. Use the host transport only for those
 immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import {
+  startAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
+} from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
 function requiredUrl(name: string): string {

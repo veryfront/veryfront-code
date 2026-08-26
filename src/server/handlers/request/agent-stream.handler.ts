@@ -571,11 +571,17 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     const studioSource = createRemoteMCPToolSource(remoteConfig);
     if (input.agent.config.tools === true) {
       const policy = createMcpToolPolicyGate(server.toolPolicy);
-      const definitions = await studioSource.listTools({
-        ...(input.projectId ? { projectId: input.projectId } : {}),
-      });
-      for (const definition of definitions) {
-        if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
+      try {
+        const definitions = await studioSource.listTools({
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+        });
+        for (const definition of definitions) {
+          if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
+        }
+      } catch (error) {
+        logger.warn("Unable to discover Veryfront Studio MCP tools", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
       }
     }
     if (

@@ -1588,6 +1588,69 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("continues with no Studio grants when broad discovery fails", async () => {
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    let capturedAllowedRemoteTools: string[] | undefined;
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch(() => Promise.reject(new Error("Studio discovery unavailable")));
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: true,
+              mcpServers: [{ kind: "veryfront-studio" }],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => ({
+          stream: async (_messages, _context, callbacks) => {
+            capturedAllowedRemoteTools = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfAllowedRemoteTools;
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+            });
+            return new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: { client: { id: "veryfront-studio", type: "web", platform: "browser" } },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(capturedAllowedRemoteTools, []);
+    } finally {
+      restoreMockFetch();
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
   it("rejects explicit Studio MCP for a non-Studio client", async () => {
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
