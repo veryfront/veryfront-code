@@ -206,6 +206,7 @@ function retainPreviewSnapshotThroughResponseBody(
         await finalize();
         controller.close();
       } catch (error) {
+        await cancelReaderAfterPrimaryFailure(reader, error);
         await finalizeAfterPrimaryFailure(finalize);
         controller.error(error);
       }
@@ -231,6 +232,17 @@ function retainPreviewSnapshotThroughResponseBody(
     statusText: response.statusText,
     headers: response.headers,
   });
+}
+
+async function cancelReaderAfterPrimaryFailure(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: unknown,
+): Promise<void> {
+  try {
+    await reader.cancel(reason);
+  } catch {
+    return;
+  }
 }
 
 async function finalizeAfterPrimaryFailure(finalize: () => Promise<void>): Promise<void> {

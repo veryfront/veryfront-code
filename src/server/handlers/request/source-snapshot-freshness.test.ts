@@ -239,6 +239,41 @@ it("preserves the operation failure when final snapshot validation also fails", 
   assertEquals(rejection, operationFailure);
 });
 
+it("cancels the response body when stream snapshot validation fails", async () => {
+  let version = 1;
+  let cancellationReason: unknown;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => version;
+  const ctx = makePreviewCtx(adapter);
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:preview-project:main",
+    version,
+  });
+  const cancellationFailure = new Error("body cleanup failed");
+  const upstream = new ReadableStream<Uint8Array>({
+    cancel(reason) {
+      cancellationReason = reason;
+      throw cancellationFailure;
+    },
+  });
+
+  const response = await runWithRetainedPreviewDocumentSourceSnapshot(
+    ctx,
+    () => Promise.resolve(new Response(upstream)),
+  );
+  version++;
+
+  const rejection = await assertRejects(() => response.text());
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(
+    cancellationReason,
+    rejection,
+    "stream cleanup must receive the primary validation failure",
+  );
+});
+
 it("retains a validated config marker for the next request phase", async () => {
   let version = 1;
   const adapter = createMockAdapter();
