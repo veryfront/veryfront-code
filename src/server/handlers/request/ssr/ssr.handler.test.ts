@@ -331,6 +331,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     });
 
     it("rejects a preview render when its source generation changes during rendering", async () => {
+      __resetPerfTimerForTests(true);
       let version = 1;
       const adapter = createMockAdapter();
       adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
@@ -349,24 +350,33 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         },
       }));
 
-      const rejection = await assertRejects(() =>
-        handler.handle(
-          new Request("http://localhost/preview"),
-          makeCtx({
-            adapter,
-            projectSlug: "preview-project",
-            requestContext: {
-              token: "",
-              slug: "preview-project",
-              branch: "main",
-              mode: "preview",
-            },
-          }),
-        )
-      );
+      try {
+        const rejection = await assertRejects(() =>
+          handler.handle(
+            new Request("http://localhost/preview"),
+            makeCtx({
+              adapter,
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          )
+        );
 
-      assertInstanceOf(rejection, VeryfrontError);
-      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+        assertInstanceOf(rejection, VeryfrontError);
+        assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+        assertEquals(
+          __trackedRequestIdsForTests(),
+          [],
+          "a rejected source-generation check must end its performance timing entry",
+        );
+      } finally {
+        __resetPerfTimerForTests(undefined);
+      }
     });
 
     it("reclassifies an SSR result when its source generation changes during rendering", async () => {

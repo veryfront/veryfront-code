@@ -23,7 +23,10 @@ import {
   SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
 import { markdownPreviewOwnsDocumentPathname } from "../request/ssr/document-ownership.ts";
-import { ensurePreviewDocumentSourceSnapshot } from "../request/source-snapshot-freshness.ts";
+import {
+  ensurePreviewDocumentSourceSnapshot,
+  finishPreviewDocumentSourceSnapshot,
+} from "../request/source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -101,12 +104,19 @@ export class MarkdownPreviewHandler extends BaseHandler {
       attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
       attempts++
     ) {
-      const reclassify = await ensurePreviewDocumentSourceSnapshot(ctx);
-      if (reclassify === undefined) return await this.renderMarkdown(req, ctx, filePath, url);
+      let reclassify = await ensurePreviewDocumentSourceSnapshot(ctx);
+      if (reclassify === undefined) {
+        const rendered = await this.renderMarkdown(req, ctx, filePath, url);
+        // Rendering can cross an edit after the pre-render freshness check.
+        // Validate the retained generation outside renderMarkdown's error-to-
+        // continue catch so a mixed-generation document fails closed.
+        reclassify = await finishPreviewDocumentSourceSnapshot(ctx);
+        if (reclassify === undefined) return rendered;
+      }
       if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
         throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
           detail:
-            `The source snapshot for "${ctx.projectSlug}" changed during Markdown document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely render it.`,
+            `The source snapshot for "${ctx.projectSlug}" changed during Markdown document ownership classification or rendering ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely render it.`,
         });
       }
       const reclassified = await reclassify();

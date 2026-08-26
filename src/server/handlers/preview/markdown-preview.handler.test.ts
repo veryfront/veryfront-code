@@ -227,6 +227,67 @@ Deno.test("MarkdownPreviewHandler rejects a generation newer than its bound conf
   assertEquals(sourceReads, 0, "Markdown must reject before reading the newer generation");
 });
 
+Deno.test("MarkdownPreviewHandler rejects a generation that changes during rendering", async () => {
+  let sourceVersion = 1;
+  let sourceReads = 0;
+  const ctx = {
+    projectDir: "/remote/project",
+    projectSlug: "project",
+    projectId: "project-1",
+    proxyToken: "token",
+    isLocalProject: false,
+    requestContext: { branch: "feature", mode: "preview" },
+    parsedDomain: { branch: null },
+    adapter: {
+      fs: {
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        symlinkSemantics: "none" as const,
+        isMultiProjectMode: () => true,
+        isContextualMode: () => true,
+        runWithContext: async (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+        ) => await fn(),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:project:feature",
+        getSourceSnapshotVersion: () => sourceVersion,
+        exists: () => Promise.resolve(true),
+        stat: () =>
+          Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 0,
+            mtime: new Date(),
+          }),
+        readFile: () => {
+          sourceReads++;
+          sourceVersion++;
+          return Promise.resolve("# newer generation");
+        },
+      },
+    },
+    securityConfig: null,
+    allowHostProjectCodeExecution: true,
+  } as unknown as HandlerContext;
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:project:feature",
+    version: sourceVersion,
+  });
+
+  const rejection = await assertRejects(() =>
+    new MarkdownPreviewHandler().handle(
+      new Request("https://tenant.example/notes.md"),
+      ctx,
+    )
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  assertEquals(sourceReads, 1, "the post-render check must observe the generation that was read");
+});
+
 Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {
   const originalFetch = globalThis.fetch;
   let contentReads = 0;

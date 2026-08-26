@@ -130,6 +130,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  private initializationPromise: Promise<void> | null = null;
   private exactReadInitializationPromise: Promise<void> | null = null;
   private exactReadInitializationGeneration = 0;
 
@@ -470,6 +471,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+
+    const initialization = this.performInitialization();
+    this.initializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async performInitialization(): Promise<void> {
     const initStartTime = performance.now();
     const projectSlug = this.client.getProjectSlug();
 
@@ -1312,6 +1330,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.initializationPromise = null;
     this.exactReadInitializationPromise = null;
     this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
