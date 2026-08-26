@@ -1,5 +1,8 @@
 import { isAbsolute, relative } from "../compat/path/index.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+
 /**
  * Test whether an absolute candidate is equal to or beneath an absolute root.
  *
@@ -10,5 +13,7 @@ import { isAbsolute, relative } from "../compat/path/index.ts";
 export function isPathContainedBy(candidate: string, root: string): boolean {
   const relation = relative(root, candidate);
   return relation === "." ||
-    (relation !== ".." && !relation.startsWith("../") && !isAbsolute(relation));
+    (relation !== ".." &&
+      !IntrinsicReflectApply(StringPrototypeStartsWith, relation, ["../"]) &&
+      !isAbsolute(relation));
 }

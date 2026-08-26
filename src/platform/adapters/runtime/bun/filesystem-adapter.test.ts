@@ -73,7 +73,7 @@ describe("BunFileSystemAdapter", () => {
     }
   });
 
-  it("requires O_NOFOLLOW on POSIX and omits unproven Windows snapshot authority", () => {
+  it("requires O_NOFOLLOW on POSIX and exposes verified Windows snapshot authority", () => {
     const fake = runtimeFor({
       size: 0,
       exists: () => Promise.resolve(true),
@@ -93,7 +93,7 @@ describe("BunFileSystemAdapter", () => {
       noFollow: 1,
       platform: "windows",
     });
-    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), false);
+    assertEquals(Object.hasOwn(windowsAdapter, "readFileSnapshotWithinLimit"), true);
   });
 
   it("marks only direct built-in instances as native", () => {

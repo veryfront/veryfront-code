@@ -9,6 +9,52 @@
 
 import { replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 
+const reflectApply = Reflect.apply;
+const arrayJoin = Array.prototype.join;
+const mapConstructor = Map;
+const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+const regexpTest = RegExp.prototype.test;
+const stringEndsWith = String.prototype.endsWith;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const stringReplace = String.prototype.replace;
+const stringRepeat = String.prototype.repeat;
+const stringSplit = String.prototype.split;
+const stringStartsWith = String.prototype.startsWith;
+const stringSubstring = String.prototype.substring;
+
+function startsWithString(value: string, prefix: string): boolean {
+  return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function substringString(value: string, start: number, end?: number): string {
+  return reflectApply(
+    stringSubstring,
+    value,
+    end === undefined ? [start] : [start, end],
+  ) as string;
+}
+
+function splitNonEmpty(value: string): string[] {
+  const parts = reflectApply(stringSplit, value, ["/"]) as string[];
+  const nonEmpty: string[] = [];
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index];
+    if (part) nonEmpty[nonEmpty.length] = part;
+  }
+  return nonEmpty;
+}
+
+function getMapValue(map: Map<string, string>, key: string): string | undefined {
+  return reflectApply(mapGet, map, [key]) as string | undefined;
+}
+
+function setMapValue(map: Map<string, string>, key: string, value: string): void {
+  reflectApply(mapSet, map, [key, value]);
+}
+
 /**
  * Rewrite a cross-project import specifier to use a local temp path.
  */
@@ -19,14 +65,13 @@ export async function rewriteCrossProjectImport(
 ): Promise<string> {
   const jsSpecifier = toJsExtension(specifier);
   const replacement = `file://${tempPath}`;
-  const replacements = new Map<string, string>([
-    [specifier, replacement],
-    [jsSpecifier, replacement],
-  ]);
+  const replacements = new mapConstructor<string, string>();
+  setMapValue(replacements, specifier, replacement);
+  setMapValue(replacements, jsSpecifier, replacement);
 
   return await replaceSpecifiers(
     transformed,
-    (importSpecifier) => replacements.get(importSpecifier) ?? null,
+    (importSpecifier) => getMapValue(replacements, importSpecifier) ?? null,
   );
 }
 
@@ -40,31 +85,35 @@ export async function rewriteLocalImports(
   fromFilePath: string,
   projectDir: string,
 ): Promise<string> {
-  if (localImportPaths.size === 0) return transformed;
-
-  const normalizedProjectDir = projectDir.replace(/\/$/, "");
-  const fromFileDir = fromFilePath.substring(0, fromFilePath.lastIndexOf("/"));
-  const fromRelativeDir = fromFileDir.startsWith(normalizedProjectDir)
-    ? fromFileDir.substring(normalizedProjectDir.length + 1)
+  const normalizedProjectDir = reflectApply(stringReplace, projectDir, [/\/$/, ""]) as string;
+  const lastSlash = reflectApply(stringLastIndexOf, fromFilePath, ["/"]) as number;
+  const fromFileDir = substringString(fromFilePath, 0, lastSlash);
+  const fromRelativeDir = startsWithString(fromFileDir, normalizedProjectDir)
+    ? substringString(fromFileDir, normalizedProjectDir.length + 1)
     : fromFileDir;
 
-  const replacements = new Map<string, string>();
+  const replacements = new mapConstructor<string, string>();
+  let replacementCount = 0;
 
-  for (const [specifierOrPath, tempPath] of localImportPaths) {
-    const patterns = buildImportPatterns(specifierOrPath, fromRelativeDir, normalizedProjectDir);
+  reflectApply(mapForEach, localImportPaths, [
+    (tempPath: string, specifierOrPath: string) => {
+      const patterns = buildImportPatterns(specifierOrPath, fromRelativeDir, normalizedProjectDir);
 
-    for (const pattern of patterns) {
-      if (!replacements.has(pattern)) {
-        replacements.set(pattern, `file://${tempPath}`);
+      for (let index = 0; index < patterns.length; index++) {
+        const pattern = patterns[index]!;
+        if (!(reflectApply(mapHas, replacements, [pattern]) as boolean)) {
+          setMapValue(replacements, pattern, `file://${tempPath}`);
+          replacementCount++;
+        }
       }
-    }
-  }
+    },
+  ]);
 
-  if (replacements.size === 0) return transformed;
+  if (replacementCount === 0) return transformed;
 
   return await replaceSpecifiers(
     transformed,
-    (importSpecifier) => replacements.get(importSpecifier) ?? null,
+    (importSpecifier) => getMapValue(replacements, importSpecifier) ?? null,
   );
 }
 
@@ -76,15 +125,19 @@ function buildImportPatterns(
   fromRelativeDir: string,
   projectDir: string,
 ): string[] {
-  if (specifierOrPath.startsWith("@/")) {
+  if (startsWithString(specifierOrPath, "file://")) {
+    return [specifierOrPath];
+  }
+
+  if (startsWithString(specifierOrPath, "@/")) {
     return buildAliasImportPatterns(specifierOrPath, fromRelativeDir);
   }
 
-  if (specifierOrPath.startsWith("/") || specifierOrPath.startsWith(projectDir)) {
+  if (startsWithString(specifierOrPath, "/") || startsWithString(specifierOrPath, projectDir)) {
     return buildAbsoluteImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
   }
 
-  if (specifierOrPath.startsWith("./") || specifierOrPath.startsWith("../")) {
+  if (startsWithString(specifierOrPath, "./") || startsWithString(specifierOrPath, "../")) {
     return buildRelativeImportPatterns(specifierOrPath);
   }
 
@@ -92,14 +145,14 @@ function buildImportPatterns(
 }
 
 function buildAliasImportPatterns(specifier: string, fromRelativeDir: string): string[] {
-  const aliasPath = specifier.substring(2); // Remove @/
-  const depth = fromRelativeDir.split("/").filter(Boolean).length;
-  const relativePrefix = depth === 0 ? "./" : "../".repeat(depth);
+  const aliasPath = substringString(specifier, 2); // Remove @/
+  const depth = splitNonEmpty(fromRelativeDir).length;
+  const relativePrefix = depth === 0 ? "./" : reflectApply(stringRepeat, "../", [depth]) as string;
 
   const patterns = [`${relativePrefix}${aliasPath}.js`];
 
-  if (/\.(tsx?|jsx|mdx)$/.test(aliasPath)) {
-    patterns.push(`${relativePrefix}${toJsExtension(aliasPath)}`);
+  if (reflectApply(regexpTest, /\.(tsx?|jsx|mdx)$/, [aliasPath]) as boolean) {
+    patterns[patterns.length] = `${relativePrefix}${toJsExtension(aliasPath)}`;
   }
 
   return patterns;
@@ -110,13 +163,13 @@ function buildAbsoluteImportPatterns(
   fromRelativeDir: string,
   projectDir: string,
 ): string[] {
-  const depRelativePath = absolutePath.startsWith(projectDir)
-    ? absolutePath.substring(projectDir.length + 1)
-    : absolutePath.substring(1);
+  const depRelativePath = startsWithString(absolutePath, projectDir)
+    ? substringString(absolutePath, projectDir.length + 1)
+    : substringString(absolutePath, 1);
 
-  const lastSlash = depRelativePath.lastIndexOf("/");
-  const depDir = depRelativePath.substring(0, lastSlash);
-  const depFile = depRelativePath.substring(lastSlash + 1);
+  const lastSlash = reflectApply(stringLastIndexOf, depRelativePath, ["/"]) as number;
+  const depDir = substringString(depRelativePath, 0, lastSlash);
+  const depFile = substringString(depRelativePath, lastSlash + 1);
 
   const relativePath = computeRelativePath(fromRelativeDir, depDir, depFile);
   return [toJsExtension(relativePath)];
@@ -126,8 +179,8 @@ function buildRelativeImportPatterns(specifier: string): string[] {
   const jsPath = toJsExtension(specifier);
   const patterns = [jsPath];
 
-  if (!jsPath.endsWith(".js")) {
-    patterns.push(`${jsPath}.js`);
+  if (!(reflectApply(stringEndsWith, jsPath, [".js"]) as boolean)) {
+    patterns[patterns.length] = `${jsPath}.js`;
   }
 
   return patterns;
@@ -137,8 +190,8 @@ function buildRelativeImportPatterns(specifier: string): string[] {
  * Compute relative path from source directory to target file.
  */
 function computeRelativePath(fromDir: string, toDir: string, fileName: string): string {
-  const fromParts = fromDir.split("/").filter(Boolean);
-  const toParts = toDir.split("/").filter(Boolean);
+  const fromParts = splitNonEmpty(fromDir);
+  const toParts = splitNonEmpty(toDir);
 
   let commonPrefixLen = 0;
   while (
@@ -150,19 +203,22 @@ function computeRelativePath(fromDir: string, toDir: string, fileName: string): 
   }
 
   const upCount = fromParts.length - commonPrefixLen;
-  const downParts = toParts.slice(commonPrefixLen);
+  const downParts: string[] = [];
+  for (let index = commonPrefixLen; index < toParts.length; index++) {
+    downParts[downParts.length] = toParts[index]!;
+  }
 
   if (upCount === 0 && downParts.length === 0) return `./${fileName}`;
-  if (upCount === 0) return `./${downParts.join("/")}/${fileName}`;
+  const downPath = reflectApply(arrayJoin, downParts, ["/"]) as string;
+  if (upCount === 0) return `./${downPath}/${fileName}`;
 
-  const upPath = "../".repeat(upCount);
-  const downPath = downParts.length > 0 ? `${downParts.join("/")}/` : "";
-  return `${upPath}${downPath}${fileName}`;
+  const upPath = reflectApply(stringRepeat, "../", [upCount]) as string;
+  return `${upPath}${downParts.length > 0 ? `${downPath}/` : ""}${fileName}`;
 }
 
 /**
  * Convert TypeScript/JSX extension to .js
  */
 function toJsExtension(path: string): string {
-  return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+  return reflectApply(stringReplace, path, [/\.(tsx?|jsx|mdx)$/, ".js"]) as string;
 }

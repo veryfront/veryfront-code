@@ -3,10 +3,12 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { parseLocalImports } from "./import-parser.ts";
+import { importParserInternals, parseLocalImports } from "./import-parser.ts";
 import { rewriteBodyImports } from "../mdx/compiler/import-rewriter.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /**
  * Stand in for the MDX extension, which is not loaded in unit tests. It turns
@@ -60,7 +62,7 @@ async function withProject<T>(
   files: Record<string, string>,
   test: (projectDir: string) => Promise<T>,
 ): Promise<T> {
-  const projectDir = await Deno.makeTempDir({ prefix: "vf-import-parser-" });
+  const projectDir = await makeTempDir({ prefix: "vf-import-parser-" });
   try {
     for (const [relativePath, content] of Object.entries(files)) {
       const absolutePath = join(projectDir, relativePath);
@@ -190,6 +192,572 @@ describe("transforms/esm/import-parser", () => {
       );
     } finally {
       stub.restore();
+    }
+  });
+
+  it("rejects an .mdx import that escapes the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-boundary-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "components/snippet.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
+      const code = `import Secret from "../../secret.tsx";\n\n<Secret />\n`;
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(
+        code,
+        filePath,
+        projectDir,
+        await getLocalAdapter(),
+      );
+
+      assertEquals(result.imports.length, 0, "an out-of-project file must not be imported");
+      assertEquals(result.missing.length, 1, "an out-of-project import must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects an .mdx import through a symlink outside the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-symlink-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "../linked/secret.tsx";\n\n<Secret />\n`;
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(
+        code,
+        filePath,
+        projectDir,
+        await getLocalAdapter(),
+      );
+
+      assertEquals(result.imports.length, 0, "a symlink escape must not be imported");
+      assertEquals(result.missing.length, 1, "a symlink escape must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects compiled MDX aliases that escape the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-alias-boundary-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "secret.tsx"), `export default "private";`);
+      const code = `import Secret from "@/../secret.tsx";\n\n<Secret />\n`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.imports.length, 0, "an alias traversal must not be imported");
+      assertEquals(result.missing.length, 1, "an alias traversal must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects compiled MDX aliases through symlinks outside the project directory", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-alias-symlink-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "@/linked/secret.tsx";\n\n<Secret />\n`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.imports.length, 0, "an alias symlink escape must not be imported");
+      assertEquals(result.missing.length, 1, "an alias symlink escape must be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: containment validated the symlink's realPath target but then
+  // returned the lexical path, so a link retargeted between the check and the
+  // eventual readFile escaped the project (TOCTOU). The approved canonical path
+  // is what must be recorded and read.
+  it("returns the canonical path for an in-project symlinked import", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-canonical-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "index.mdx");
+      await Deno.mkdir(join(projectDir, "real"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "real/Child.tsx"), `export default () => null;`);
+      await Deno.symlink(join(projectDir, "real"), join(projectDir, "linked"));
+      const code = [
+        `import Child from "./linked/Child.tsx";`,
+        `import AliasChild from "@/linked/Child.tsx";`,
+        ``,
+        `<Child />`,
+      ].join("\n");
+      await Deno.writeTextFile(filePath, code);
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      const canonicalChild = await Deno.realPath(join(projectDir, "real/Child.tsx"));
+      assertEquals(result.missing.length, 0, "an in-project symlink must resolve");
+      assertEquals(result.imports.length, 2);
+      for (const imp of result.imports) {
+        assertEquals(
+          imp.absolutePath,
+          canonicalChild,
+          "the recorded path must be the approved canonical path, not the symlinked one",
+        );
+        assertEquals(
+          imp.requestedPath,
+          join(projectDir, "linked/Child.tsx"),
+          "the authored path must remain available for metadata",
+        );
+        assertEquals(imp.projectContained, true);
+      }
+      assertEquals(
+        result.imports.some((imp) => imp.rewriteSpecifier?.startsWith("file://")),
+        true,
+        "the compiled file URL must remain available for the final import rewrite",
+      );
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects a canonical target on another Windows drive", async () => {
+    assertEquals(
+      importParserInternals.isPathWithinProject("D:/external/secret.tsx", "C:/project"),
+      false,
+    );
+  });
+
+  it("treats POSIX backslashes as filename characters during containment", () => {
+    if (Deno.build.os === "windows") return;
+    assertEquals(
+      importParserInternals.isPathWithinProject("/project/..\\secret.tsx", "/project"),
+      true,
+    );
+  });
+
+  it("allows drive-shaped directory names on POSIX during containment", () => {
+    if (Deno.build.os === "windows") return;
+    assertEquals(
+      importParserInternals.isPathWithinProject("/project/C:/Child.tsx", "/project"),
+      true,
+    );
+  });
+
+  it("preserves POSIX backslashes while normalizing the project root", async () => {
+    if (Deno.build.os === "windows") return;
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-backslash-root-" });
+    const projectDir = `${rootDir}/proj\\name`;
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/Child.tsx`,
+        "export default function Child() { return null; }",
+      );
+
+      const result = await parseLocalImports(
+        'import Child from "@/Child.tsx"; export default Child;',
+        `${projectDir}/page.tsx`,
+        projectDir,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(result.imports[0]?.absolutePath, await Deno.realPath(`${projectDir}/Child.tsx`));
+    } finally {
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("rejects encoded separators in compiled file URLs", () => {
+    assertEquals(importParserInternals.fileUrlToPath("file:///project/a%2Fb.tsx"), null);
+  });
+
+  it("dispatches file URLs through the captured string intrinsic", () => {
+    const shadowed = new String("file:///project/Child.tsx") as unknown as string;
+    Object.defineProperty(shadowed, "startsWith", {
+      value: () => false,
+    });
+
+    assertEquals(importParserInternals.isFileUrlSpecifier(shadowed), true);
+  });
+
+  it("preserves backslashes in POSIX file URL paths", () => {
+    if (Deno.build.os === "windows") return;
+    assertEquals(
+      importParserInternals.fileUrlToPath("file:///project/a%5Cb.tsx"),
+      "/project/a\\b.tsx",
+    );
+  });
+
+  it("preserves a Windows drive root for recursive relative imports", () => {
+    assertEquals(
+      importParserInternals.resolveRelative(
+        "C:/project/components",
+        "./Grandchild.tsx",
+      ),
+      "C:/project/components/Grandchild.tsx",
+    );
+    assertEquals(
+      importParserInternals.resolveRelative(
+        "C:/project/components",
+        "../Grandchild.tsx",
+      ),
+      "C:/project/Grandchild.tsx",
+    );
+  });
+
+  it("preserves POSIX backslashes when resolving recursive relative imports", async () => {
+    if (Deno.build.os === "windows") return;
+    const projectDir = await makeTempDir({ prefix: "vf-import-parser-relative-backslash-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/a\\b.tsx`,
+        "export default function Child() { return null; }",
+      );
+
+      const result = await parseLocalImports(
+        'import Child from "./a\\\\b.tsx"; export default Child;',
+        `${projectDir}/page.tsx`,
+        projectDir,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(result.imports[0]?.absolutePath, `${projectDir}/a\\b.tsx`);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: symlinkSemantics was read as an inherited property, so a
+  // marker inherited through the prototype chain (for example Object.prototype
+  // pollution with "none") switched realPath() off and an in-project symlink
+  // targeting a file outside the project was accepted. Only an own data
+  // property is authority, as FSAdapterWrapper captures it.
+  it("ignores an inherited symlink-free claim when validating containment", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-inherited-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.mdx");
+      const externalDir = join(rootDir, "external");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.mkdir(externalDir, { recursive: true });
+      await Deno.writeTextFile(join(externalDir, "secret.tsx"), `export default "private";`);
+      await Deno.symlink(externalDir, join(projectDir, "linked"));
+      const code = `import Secret from "@/linked/secret.tsx";\n\n<Secret />\n`;
+
+      const localFs = (await getLocalAdapter()).fs;
+      const pollutedFs = Object.create(
+        { symlinkSemantics: "none" },
+      ) as RuntimeAdapter["fs"];
+      pollutedFs.stat = (path: string) => localFs.stat(path);
+      pollutedFs.realPath = (path: string) => localFs.realPath!(path);
+      const adapter = { fs: pollutedFs } as RuntimeAdapter;
+
+      const result = await parseLocalImports(code, filePath, projectDir, adapter);
+
+      assertEquals(result.imports.length, 0, "an inherited marker must not skip realPath");
+      assertEquals(result.missing.length, 1, "the symlink escape must still be rejected");
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: an accepted import was classified from its canonical path, so
+  // a stylesheet reached through an in-project symlink whose target carries no
+  // .css suffix was processed as JavaScript instead of being registered for
+  // HTML inclusion. The requested path names the type; the canonical path is
+  // only what gets read.
+  it("classifies a symlinked stylesheet from the requested path", async () => {
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-css-classify-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      await Deno.mkdir(projectDir, { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "theme-generated"), `.theme { color: red; }`);
+      await Deno.symlink(
+        join(projectDir, "theme-generated"),
+        join(projectDir, "theme.module.css"),
+      );
+      const filePath = join(projectDir, "pages/index.tsx");
+      const code = `import "@/theme.module.css";\nexport default () => null;`;
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.missing.length, 0);
+      assertEquals(result.imports.length, 0, "a stylesheet must not be treated as JavaScript");
+      assertEquals(result.cssImports.length, 1, "the symlinked stylesheet must stay CSS");
+      assertEquals(
+        result.cssImports[0]?.absolutePath,
+        await Deno.realPath(join(projectDir, "theme.module.css")),
+        "the recorded path must still be the approved canonical target",
+      );
+      assertEquals(result.cssImports[0]?.requestedPath, join(projectDir, "theme.module.css"));
+    } finally {
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  // Regression: stripping trailing separators must preserve a portable Windows
+  // drive root too: "C:/" must not become the drive-relative "C:", which
+  // resolves against the current directory and breaks every @/ import of a
+  // project mounted at a drive root.
+  it("resolves compiled aliases when the project directory is a drive root", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(
+            path === "components/Button.tsx" ? "C:/components/Button.tsx" : null,
+          ),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default () => Button;`;
+
+    const result = await parseLocalImports(code, "C:/pages/index.tsx", "C:/", adapter);
+
+    assertEquals(result.missing.length, 0, "a drive-root @/ import must resolve");
+    assertEquals(result.imports.length, 1);
+    assertEquals(result.imports[0]?.absolutePath, "C:/components/Button.tsx");
+  });
+
+  it("preserves project-relative paths returned by symlink-free hosted adapters", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("components/Button.tsx") ? "components/Button.tsx" : null),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default Button;`;
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(result.imports[0]?.absolutePath, "components/Button.tsx");
+    assertEquals(result.imports[0]?.projectContained, true);
+  });
+
+  it("preserves hosted CSS module identity separately from its adapter read path", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(path === "theme.module.css" ? "theme.module.css" : null),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import styles from "@/theme.module.css";\nexport default styles.root;`;
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(result.cssImports[0]?.absolutePath, "theme.module.css");
+    assertEquals(result.cssImports[0]?.requestedPath, "/workspace/project/theme.module.css");
+    assertEquals(result.cssImports[0]?.projectContained, true);
+  });
+
+  it("preserves the lexical identity of hosted relative CSS imported from MDX", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          resolveFile: (path: string) =>
+            Promise.resolve(
+              path.endsWith("components/theme.module.css") ? "components/theme.module.css" : null,
+            ),
+        },
+      } as unknown as RuntimeAdapter;
+
+      const result = await parseLocalImports(
+        `import styles from "./theme.module.css";\n\n<div className={styles.root} />`,
+        "/workspace/project/components/Post.mdx",
+        "/workspace/project",
+        adapter,
+      );
+
+      assertEquals(result.missing.length, 0);
+      assertEquals(result.cssImports[0]?.absolutePath, "components/theme.module.css");
+      assertEquals(
+        result.cssImports[0]?.requestedPath,
+        "/workspace/project/components/theme.module.css",
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("retains resolved filenames for compiled extensionless MDX imports", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      const adapter = {
+        fs: {
+          symlinkSemantics: "none" as const,
+          resolveFile: (path: string) =>
+            Promise.resolve(
+              path.endsWith("components/Post")
+                ? "components/Post.mdx"
+                : path.endsWith("components/Card")
+                ? "components/Card/index.tsx"
+                : null,
+            ),
+        },
+      } as unknown as RuntimeAdapter;
+
+      const result = await parseLocalImports(
+        [
+          `import Post from "./Post";`,
+          `import Card from "./Card";`,
+          `export default [Post, Card];`,
+        ].join("\n"),
+        "/workspace/project/components/Page.mdx",
+        "/workspace/project",
+        adapter,
+      );
+
+      assertEquals(result.missing, []);
+      assertEquals(
+        result.imports.map(({ absolutePath, requestedPath, resolvedPath }) => ({
+          absolutePath,
+          requestedPath,
+          resolvedPath,
+        })),
+        [
+          {
+            absolutePath: "components/Post.mdx",
+            requestedPath: "/workspace/project/components/Post",
+            resolvedPath: "/workspace/project/components/Post.mdx",
+          },
+          {
+            absolutePath: "components/Card/index.tsx",
+            requestedPath: "/workspace/project/components/Card",
+            resolvedPath: "/workspace/project/components/Card/index.tsx",
+          },
+        ],
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("uses hosted alias resolution to retain extension and directory-index identity", async () => {
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none" as const,
+        resolveFile: (path: string) =>
+          Promise.resolve(
+            path === "content/Post"
+              ? "content/Post.mdx"
+              : path === "content/Card"
+              ? "content/Card/index.mdx"
+              : null,
+          ),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = [
+      `import Post from "@/content/Post";`,
+      `import Card from "@/content/Card";`,
+      `export default [Post, Card];`,
+    ].join("\n");
+
+    const result = await parseLocalImports(
+      code,
+      "/workspace/project/app/page.tsx",
+      "/workspace/project",
+      adapter,
+    );
+
+    assertEquals(result.missing.length, 0);
+    assertEquals(
+      result.imports.map(({ absolutePath, requestedPath }) => ({ absolutePath, requestedPath })),
+      [
+        {
+          absolutePath: "content/Post.mdx",
+          requestedPath: "/workspace/project/content/Post.mdx",
+        },
+        {
+          absolutePath: "content/Card/index.mdx",
+          requestedPath: "/workspace/project/content/Card/index.mdx",
+        },
+      ],
+    );
+  });
+
+  it("reports a canonicalization race as a missing import", async () => {
+    const projectDir = "/workspace/project";
+    const missing = Object.assign(new Error("removed during canonicalization"), { code: "ENOENT" });
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native" as const,
+        resolveFile: () => Promise.resolve(`${projectDir}/components/Button.tsx`),
+        realPath: (path: string) =>
+          path === projectDir ? Promise.resolve(projectDir) : Promise.reject(missing),
+      },
+    } as unknown as RuntimeAdapter;
+    const code = `import { Button } from "@/components/Button.tsx";\nexport default Button;`;
+
+    const result = await parseLocalImports(code, `${projectDir}/app/page.tsx`, projectDir, adapter);
+
+    assertEquals(result.imports.length, 0);
+    assertEquals(result.missing.length, 1);
+  });
+
+  // Regression: stripping trailing separators turned a projectDir of "/" into
+  // "", so the canonical check called realPath("") and every @/ import of a
+  // root-mounted project failed, including files that exist inside it.
+  it("resolves compiled MDX aliases when the project directory is the filesystem root", async () => {
+    const stub = withStubContentProcessor();
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-root-alias-" });
+    try {
+      const filePath = join(rootDir, "pages/index.mdx");
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await Deno.writeTextFile(join(rootDir, "Badge.tsx"), `export const Badge = () => null;`);
+      const aliasPath = join(rootDir, "Badge.tsx").replace(/^\/+/, "");
+      const code = `import { Badge } from "@/${aliasPath}";\n\n<Badge />\n`;
+
+      const result = await parseLocalImports(code, filePath, "/", await getLocalAdapter());
+
+      assertEquals(result.missing.length, 0, "a root-mounted @/ import must resolve");
+      assertEquals(result.imports.length, 1);
+      assertEquals(
+        result.imports[0]?.absolutePath,
+        await Deno.realPath(join(rootDir, "Badge.tsx")),
+      );
+    } finally {
+      stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
     }
   });
 

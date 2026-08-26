@@ -7,14 +7,23 @@
  * @module module-system/react-loader/ssr-module-loader/ssr-dependency-validator
  */
 
-import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
+import type {
+  CrossProjectImport,
+  LocalImport,
+  MissingImport,
+} from "#veryfront/transforms/esm/import-parser.ts";
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  type CapturedSnapshotReader,
+  captureSnapshotReadCapability,
+} from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import type { ModuleCacheEntry } from "./types.ts";
 import {
@@ -23,6 +32,150 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+/** Ceiling for one dependency source admitted through the bound snapshot read. */
+const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
+
+const reflectApply = Reflect.apply;
+const promiseConstructor = Promise;
+const promiseAllSettled = Promise.allSettled;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
+const universalObjectPrototype = Object.prototype;
+const arrayJoin = Array.prototype.join;
+const arrayPush = Array.prototype.push;
+const mapConstructor = Map;
+const mapForEach = Map.prototype.forEach;
+const mapSet = Map.prototype.set;
+const setConstructor = Set;
+const setAdd = Set.prototype.add;
+const setForEach = Set.prototype.forEach;
+const setHas = Set.prototype.has;
+const stringSlice = String.prototype.slice;
+const stringStartsWith = String.prototype.startsWith;
+// Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
+// turning an otherwise present dependency into a missing import.
+const utf8Decoder = new TextDecoder("utf-8");
+const decodeUtf8 = TextDecoder.prototype.decode;
+
+function decodeDependencySource(bytes: Uint8Array): string {
+  return reflectApply(decodeUtf8, utf8Decoder, [bytes]) as string;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return reflectApply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
+}
+
+function startsWithString(value: string, prefix: string): boolean {
+  return reflectApply(stringStartsWith, value, [prefix]) as boolean;
+}
+
+function createStringMap(): Map<string, string> {
+  return new mapConstructor<string, string>();
+}
+
+function setMapValue(map: Map<string, string>, key: string, value: string): void {
+  reflectApply(mapSet, map, [key, value]);
+}
+
+function pushArrayValue<T>(values: T[], value: T): void {
+  reflectApply(arrayPush, values, [value]);
+}
+
+function joinStringArray(values: readonly string[], separator: string): string {
+  return reflectApply(arrayJoin, values, [separator]) as string;
+}
+
+function mapBatch<T, U>(
+  values: readonly T[],
+  start: number,
+  end: number,
+  callback: (value: T, index: number) => U,
+): U[] {
+  const mapped: U[] = [];
+  let limit = end;
+  if (limit > values.length) limit = values.length;
+  for (let index = start; index < limit; index++) {
+    mapped[index - start] = callback(values[index]!, index);
+  }
+  return mapped;
+}
+
+function indexedIterable<T>(values: readonly T[]): Iterable<T> {
+  return {
+    [symbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<T> {
+          if (index >= values.length) return { done: true, value: undefined };
+          const value = values[index]!;
+          index++;
+          return { done: false, value };
+        },
+      };
+    },
+  };
+}
+
+function allSettled<T>(
+  values: readonly (T | PromiseLike<T>)[],
+): Promise<PromiseSettledResult<Awaited<T>>[]> {
+  return reflectApply(promiseAllSettled, promiseConstructor, [indexedIterable(values)]) as Promise<
+    PromiseSettledResult<Awaited<T>>[]
+  >;
+}
+
+function ownDataValue(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) return undefined;
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ownStringValue(value: unknown, key: PropertyKey): string | undefined {
+  const ownValue = ownDataValue(value, key);
+  return typeof ownValue === "string" ? ownValue : undefined;
+}
+
+type AdapterLstat = NonNullable<RuntimeAdapter["fs"]["lstat"]>;
+type AdapterRealPath = NonNullable<RuntimeAdapter["fs"]["realPath"]>;
+
+/** Capture an optional filesystem method without trusting accessors or global pollution. */
+function captureAdapterFsMethod<T extends AdapterLstat | AdapterRealPath>(
+  fs: RuntimeAdapter["fs"],
+  key: "lstat" | "realPath",
+): T | undefined {
+  let owner: object | null = fs;
+  const visited: object[] = [];
+
+  try {
+    for (let depth = 0; owner !== null && depth < 64; depth++) {
+      if (owner === universalObjectPrototype) return undefined;
+      for (let index = 0; index < visited.length; index++) {
+        if (visited[index] === owner) return undefined;
+      }
+      visited[visited.length] = owner;
+      const descriptor = objectGetOwnPropertyDescriptor(owner, key);
+      if (descriptor !== undefined) {
+        return "value" in descriptor && typeof descriptor.value === "function"
+          ? descriptor.value as T
+          : undefined;
+      }
+      owner = objectGetPrototypeOf(owner);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
 
 export interface ResolvedCachedDependencies {
   localImportPaths: Map<string, string>;
@@ -48,16 +201,32 @@ export async function cachedCodeUsesResolvedDependencies(
   code: string,
   dependencies: ResolvedCachedDependencies,
 ): Promise<boolean> {
-  const expectedPaths = new Set([
-    ...dependencies.localImportPaths.values(),
-    ...dependencies.crossProjectPaths.values(),
-  ]);
-  if (expectedPaths.size === 0) return true;
+  const expectedPaths = new setConstructor<string>();
+  let expectedPathCount = 0;
+  const recordExpectedPath = (path: string): void => {
+    if (reflectApply(setHas, expectedPaths, [path]) as boolean) return;
+    reflectApply(setAdd, expectedPaths, [path]);
+    expectedPathCount++;
+  };
+  reflectApply(mapForEach, dependencies.localImportPaths, [recordExpectedPath]);
+  reflectApply(mapForEach, dependencies.crossProjectPaths, [recordExpectedPath]);
+  if (expectedPathCount === 0) return true;
 
-  const cachedSpecifiers = new Set(
-    (await parseImports(code)).map((entry) => entry.n).filter((entry): entry is string => !!entry),
-  );
-  return [...expectedPaths].every((path) => cachedSpecifiers.has(`file://${path}`));
+  const cachedSpecifiers = new setConstructor<string>();
+  const parsedImports = await parseImports(code);
+  for (let index = 0; index < parsedImports.length; index++) {
+    const specifier = ownStringValue(parsedImports[index]!, "n");
+    if (specifier) reflectApply(setAdd, cachedSpecifiers, [specifier]);
+  }
+  let complete = true;
+  reflectApply(setForEach, expectedPaths, [
+    (path: string) => {
+      if (!(reflectApply(setHas, cachedSpecifiers, [`file://${path}`]) as boolean)) {
+        complete = false;
+      }
+    },
+  ]);
+  return complete;
 }
 
 function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
@@ -79,11 +248,16 @@ function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontErr
 function selectPropagatedFailure(
   results: PromiseSettledResult<unknown>[],
 ): PromiseRejectedResult | undefined {
-  const rejections = results.filter((result): result is PromiseRejectedResult =>
-    result.status === "rejected"
-  );
-  return rejections.find((rejection) => isTerminalHttpModuleFetchFailure(rejection.reason)) ??
-    rejections[0];
+  let firstRejection: PromiseRejectedResult | undefined;
+  let index = 0;
+  while (index < results.length) {
+    const result = results[index]!;
+    index++;
+    if (result.status !== "rejected") continue;
+    firstRejection ??= result;
+    if (isTerminalHttpModuleFetchFailure(result.reason)) return result;
+  }
+  return firstRejection;
 }
 
 /**
@@ -95,6 +269,14 @@ function selectPropagatedFailure(
 export class SSRDependencyValidator {
   /** Accumulated missing dependencies across the transform tree. */
   missingDependencies: MissingImport[] = [];
+
+  /** Bound, no-follow snapshot read capability captured from the adapter. */
+  private readonly projectSnapshotReader?: CapturedSnapshotReader;
+  /** The adapter's own contract that its paths cannot traverse symlinks. */
+  private readonly symlinkFreeFs: boolean;
+  /** Authenticated optional methods used to canonicalize stable in-project links. */
+  private readonly projectLstat?: AdapterLstat;
+  private readonly projectRealPath?: AdapterRealPath;
 
   constructor(
     private transformWithDependencies: (
@@ -111,7 +293,23 @@ export class SSRDependencyValidator {
     ) => Promise<string>,
     private adapter: RuntimeAdapter,
     private projectDir: string,
-  ) {}
+  ) {
+    // Symlink-free semantics are authority, so only an own data property
+    // counts, exactly as FSAdapterWrapper captures it: an inherited value
+    // must not bypass the bound snapshot read below.
+    const semantics = objectGetOwnPropertyDescriptor(adapter.fs, "symlinkSemantics");
+    this.symlinkFreeFs = semantics !== undefined && "value" in semantics &&
+      semantics.value === "none";
+    this.projectSnapshotReader = captureSnapshotReadCapability(
+      adapter.fs,
+      "SSR dependency filesystem",
+      // FSAdapterWrapper publishes absent optional capabilities as frozen
+      // `undefined` own properties; treat that as unsupported, not malformed.
+      true,
+    );
+    this.projectLstat = captureAdapterFsMethod<AdapterLstat>(adapter.fs, "lstat");
+    this.projectRealPath = captureAdapterFsMethod<AdapterRealPath>(adapter.fs, "realPath");
+  }
 
   /** Reset missing dependencies for a new load cycle. */
   reset(): void {
@@ -122,12 +320,18 @@ export class SSRDependencyValidator {
    * Throw a structured error with all accumulated missing dependencies.
    */
   throwMissingDependencies(filePath: string): never {
-    const missingList = this.missingDependencies
-      .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
-      .join("\n");
+    const missingLines: string[] = [];
+    for (let index = 0; index < this.missingDependencies.length; index++) {
+      const missing = this.missingDependencies[index]!;
+      pushArrayValue(
+        missingLines,
+        `  - ${missing.specifier} (from ${sliceString(missing.fromFile, -40)}): ${missing.reason}`,
+      );
+    }
+    const missingList = joinStringArray(missingLines, "\n");
 
     logger.error("Missing dependencies detected", {
-      file: filePath.slice(-60),
+      file: sliceString(filePath, -60),
       missing: this.missingDependencies.length,
       details: this.missingDependencies,
     });
@@ -157,7 +361,7 @@ export class SSRDependencyValidator {
   ): Promise<ResolvedCachedDependencies> {
     throwIfAborted(signal);
     if (depth > MAX_TRANSFORM_DEPTH) {
-      return { localImportPaths: new Map(), crossProjectPaths: new Map() };
+      return { localImportPaths: createStringMap(), crossProjectPaths: createStringMap() };
     }
 
     const parseResult = await parseLocalImports(
@@ -168,12 +372,14 @@ export class SSRDependencyValidator {
     );
 
     // Register CSS imports from cached modules for HTML inclusion
-    for (const cssImport of parseResult.cssImports) {
-      registerCSSImport(cssImport.absolutePath);
+    for (let index = 0; index < parseResult.cssImports.length; index++) {
+      this.registerContainedCSSImport(parseResult.cssImports[index]!);
     }
 
     if (parseResult.missing.length > 0) {
-      this.missingDependencies.push(...parseResult.missing);
+      for (let index = 0; index < parseResult.missing.length; index++) {
+        pushArrayValue(this.missingDependencies, parseResult.missing[index]!);
+      }
     }
 
     const localFs = createFileSystem();
@@ -211,19 +417,18 @@ export class SSRDependencyValidator {
     signal?: AbortSignal,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
-    const crossProjectPaths = new Map<string, string>();
+    const crossProjectPaths = createStringMap();
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (crossImport) => {
+      const results = await allSettled(
+        mapBatch(crossProjectImports, i, i + TRANSFORM_BATCH_SIZE, async (crossImport) => {
           try {
             const tempPath = await this.transformCrossProjectImport(crossImport, signal);
-            crossProjectPaths.set(crossImport.specifier, tempPath);
+            setMapValue(crossProjectPaths, crossImport.specifier, tempPath);
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
-            this.missingDependencies.push({
+            pushArrayValue(this.missingDependencies, {
               specifier: crossImport.specifier,
               fromFile: filePath,
               reason: `Failed to fetch cross-project import: ${
@@ -246,7 +451,7 @@ export class SSRDependencyValidator {
    * and building a map of specifier -> temp file path.
    */
   async processLocalImports(
-    imports: Array<{ absolutePath: string; specifier: string }>,
+    imports: LocalImport[],
     fromFilePath: string,
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
@@ -255,17 +460,18 @@ export class SSRDependencyValidator {
     options?: DependencyTransformCacheOptions,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
-    const importPathMap = new Map<string, string>();
+    const importPathMap = createStringMap();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (imp) => {
+      const results = await allSettled(
+        mapBatch(imports, i, i + TRANSFORM_BATCH_SIZE, async (imp) => {
           try {
-            const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
+            const depSource = await this.readLocalImportSource(imp, localFs);
+            const resolvedPath = ownStringValue(imp, "resolvedPath");
+            const requestedPath = ownStringValue(imp, "requestedPath");
 
             const depEntry = await this.transformWithDependencies(
-              imp.absolutePath,
+              resolvedPath ?? requestedPath ?? imp.absolutePath,
               depSource,
               depth + 1,
               dependencyHashCache,
@@ -273,12 +479,17 @@ export class SSRDependencyValidator {
               options,
             );
 
-            importPathMap.set(imp.specifier, depEntry.tempPath);
-            importPathMap.set(imp.absolutePath, depEntry.tempPath);
+            setMapValue(
+              importPathMap,
+              ownStringValue(imp, "rewriteSpecifier") ?? imp.specifier,
+              depEntry.tempPath,
+            );
+            setMapValue(importPathMap, imp.specifier, depEntry.tempPath);
+            setMapValue(importPathMap, imp.absolutePath, depEntry.tempPath);
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
-            this.missingDependencies.push({
+            pushArrayValue(this.missingDependencies, {
               specifier: imp.specifier,
               fromFile: fromFilePath,
               reason: `Failed to load dependency: ${
@@ -297,22 +508,85 @@ export class SSRDependencyValidator {
   }
 
   private isProjectAbsolutePath(path: string): boolean {
-    const projectDir = this.projectDir.replace(/\/+$/, "");
+    let projectDirEnd = this.projectDir.length;
+    while (projectDirEnd > 0 && this.projectDir[projectDirEnd - 1] === "/") projectDirEnd--;
+    const projectDir = sliceString(this.projectDir, 0, projectDirEnd);
     if (!projectDir || projectDir === "/") return false;
-    return path === projectDir || path.startsWith(`${projectDir}/`);
+    return path === projectDir || startsWithString(path, `${projectDir}/`);
+  }
+
+  /**
+   * Read an approved in-project dependency without trusting the path twice.
+   *
+   * Import containment approves a canonical pathname, but on a native
+   * filesystem the file or one of its parents can be replaced with a symlink
+   * between that approval and this read. The captured snapshot capability
+   * binds the two: it re-verifies no-follow containment beneath the project
+   * root atomically with the read, so a link retargeted outside the project
+   * is refused instead of followed. A filesystem whose own contract rules out
+   * symlink traversal cannot be retargeted, so its plain read is already
+   * bound; adapters providing neither authority keep the direct read they
+   * always had.
+   */
+  private async readProjectImportSource(path: string): Promise<string> {
+    if (this.symlinkFreeFs) return await this.adapter.fs.readFile(path);
+    if (this.projectSnapshotReader) {
+      const bytes = await this.projectSnapshotReader.read(
+        await this.canonicalizeProjectImportPath(path),
+        this.projectDir,
+        MAX_LOCAL_IMPORT_SOURCE_BYTES,
+      );
+      return decodeDependencySource(bytes);
+    }
+    return await this.adapter.fs.readFile(path);
+  }
+
+  /**
+   * Resolve a stable in-project symlink to its canonical target before the
+   * no-follow snapshot read, which refuses any terminal symbolic link.
+   * Containment stays enforced by the snapshot read itself: it re-verifies
+   * the handed path beneath the project root, so a link whose target escapes
+   * the project is still refused rather than followed. Anything uncertain --
+   * an adapter without lstat or realPath authority, a vanished path, a broken
+   * link -- keeps the original path so the bound read stays the sole arbiter.
+   */
+  private async canonicalizeProjectImportPath(path: string): Promise<string> {
+    if (!this.projectLstat || !this.projectRealPath) return path;
+    try {
+      const info = await (reflectApply(this.projectLstat, this.adapter.fs, [path]) as ReturnType<
+        AdapterLstat
+      >);
+      if (!info.isSymlink) return path;
+      return await (reflectApply(this.projectRealPath, this.adapter.fs, [path]) as ReturnType<
+        AdapterRealPath
+      >);
+    } catch {
+      return path;
+    }
+  }
+
+  /** Register CSS with a read that revalidates containment at consumption. */
+  registerContainedCSSImport(cssImport: LocalImport): void {
+    const localFs = createFileSystem();
+    registerCSSImport(
+      cssImport.absolutePath,
+      ownStringValue(cssImport, "requestedPath"),
+      () => this.readLocalImportSource(cssImport, localFs),
+    );
   }
 
   private readLocalImportSource(
-    path: string,
+    imported: LocalImport,
     localFs: ReturnType<typeof createFileSystem>,
   ): Promise<string> {
-    if (!path.startsWith("/")) {
-      return this.adapter.fs.readFile(path);
+    const path = imported.absolutePath;
+    if (ownDataValue(imported, "projectContained") === true) {
+      return this.readProjectImportSource(path);
     }
-
     if (this.isProjectAbsolutePath(path)) {
-      return this.adapter.fs.readFile(path);
+      return this.readProjectImportSource(path);
     }
+    if (!isAbsolute(path)) return this.adapter.fs.readFile(path);
 
     return localFs.readTextFile(path);
   }

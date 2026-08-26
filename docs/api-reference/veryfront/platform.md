@@ -154,7 +154,7 @@ import { basename, dirname, extname } from "veryfront/platform/path";
 | ---------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | `NodePathModule` |                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/types.ts#L24) |
 | `PathObject`     |                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/types.ts#L1)  |
-| `PosixPath`      | Dependency-free POSIX path operations for every supported runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/posix.ts#L3)  |
+| `PosixPath`      | Dependency-free POSIX path operations for every supported runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/posix.ts#L35) |
 
 #### Constants
 
@@ -164,5 +164,5 @@ import { basename, dirname, extname } from "veryfront/platform/path";
 | `hasNodePath` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/runtime.ts#L27) |
 | `isDeno`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/runtime.ts#L6)  |
 | `nodePath`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/runtime.ts#L8)  |
-| `posix`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/posix.ts#L224)  |
+| `posix`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/posix.ts#L273)  |
 | `sep`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/runtime.ts#L25) |
