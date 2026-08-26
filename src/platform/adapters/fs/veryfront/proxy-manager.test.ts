@@ -16,7 +16,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
   refreshLoggerConfig,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 

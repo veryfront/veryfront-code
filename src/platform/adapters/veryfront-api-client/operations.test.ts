@@ -13,7 +13,7 @@ import {
   __registerLogRecordEmitter,
   __resetLogRecordEmitterForTests,
   type LogEntry,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { JsonNonValueBytesTooLargeError } from "#veryfront/utils/response-body.ts";
 import {

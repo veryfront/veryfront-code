@@ -1,6 +1,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { metrics, snapshotRequestProfiles } from "#veryfront/observability";
+import { metrics } from "#veryfront/observability";
+import { snapshotRequestProfiles } from "#veryfront/observability/request-profiler.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,

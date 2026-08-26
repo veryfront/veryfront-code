@@ -28,7 +28,7 @@
     "veryfront/extensions/distributed/rate-limit-support": "../../src/extensions/distributed/rate-limit-support.ts",
     "veryfront/extensions/distributed/routing-invalidation-support": "../../src/extensions/distributed/routing-invalidation-support.ts",
     "veryfront/extensions/types": "../../src/extensions/types.ts",
-    "veryfront/platform/env": "../../src/platform/compat/process/env.ts",
+    "veryfront/platform/env": "../../src/platform/compat/process/public-env.ts",
     "veryfront/observability": "../../src/observability/index.ts",
     "veryfront/observability/otlp-setup": "../../src/observability/tracing/otlp-setup.ts",
     "veryfront/utils/logger": "../../src/utils/logger/index.ts",
