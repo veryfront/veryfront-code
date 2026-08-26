@@ -89,6 +89,14 @@ describe("modules/import-map/resolver", () => {
       );
     });
 
+    it("should append the esm.sh subpath to a compound-version mapping", () => {
+      const mapping = "https://cdn.example/pkg@1.2.3%20-%202.0.0-alpha.beta";
+      assertEquals(
+        resolveImport("https://esm.sh/pkg@1/sub", { imports: { pkg: mapping } }),
+        `${mapping}/sub`,
+      );
+    });
+
     it("should resolve prefix mappings with trailing slash", () => {
       const map = { imports: { "@lib/": "/src/lib/" } };
       assertEquals(resolveImport("@lib/utils.ts", map), "/src/lib/utils.ts");

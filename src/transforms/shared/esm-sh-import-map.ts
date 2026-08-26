@@ -239,39 +239,61 @@ const FILE_EXTENSION = /\.[0-9]*[A-Za-z][A-Za-z0-9]*$/;
 const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9]\d*)`;
 const SEMVER_PRERELEASE_IDENTIFIER =
   `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
+const SEMVER_RANGE_PREFIX = `(?:[~^=]|[<>]=?)?`;
 const SEMVER_VERSION_OR_RANGE = new RegExp(
-  `^(?:[~^]|[<>]=?)?v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
+  `^${SEMVER_RANGE_PREFIX}v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `\\.${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*)?` +
     `(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
 );
 const WILDCARD_SEMVER_RANGE = new RegExp(
-  `^(?:[~^]|[<>]=?)?v?${SEMVER_NUMERIC_IDENTIFIER}` +
+  `^${SEMVER_RANGE_PREFIX}v?${SEMVER_NUMERIC_IDENTIFIER}` +
     `(?:\\.[xX*](?:\\.[xX*])?|\\.${SEMVER_NUMERIC_IDENTIFIER}\\.[xX*])$`,
+);
+const PARTIAL_SEMVER_RANGE = new RegExp(
+  `^${SEMVER_RANGE_PREFIX}v?(?:[xX*]|${SEMVER_NUMERIC_IDENTIFIER}` +
+    `(?:\\.[xX*](?:\\.[xX*])?|\\.${SEMVER_NUMERIC_IDENTIFIER})?)$`,
 );
 const NPM_DIST_TAG = /^[A-Za-z][0-9A-Za-z._-]*$/;
 
-function isSingleSemverSelector(value: string): boolean {
-  return SEMVER_VERSION_OR_RANGE.test(value) || WILDCARD_SEMVER_RANGE.test(value);
+function isSimpleSemverSelector(value: string): boolean {
+  return SEMVER_VERSION_OR_RANGE.test(value) || WILDCARD_SEMVER_RANGE.test(value) ||
+    PARTIAL_SEMVER_RANGE.test(value);
 }
 
+/**
+ * Recognises comparator sets, hyphen ranges, and logical-OR SemVer ranges.
+ *
+ * Whitespace alone is not enough to make a selector valid: every comparator
+ * or endpoint must independently be a supported SemVer selector. Requiring
+ * that structure keeps a filename such as `archive - release.beta` on the
+ * file path while admitting `1.2.3 - 2.0.0-alpha.beta` as a package range.
+ */
 function isCompoundSemverRange(value: string): boolean {
-  const hyphenRange = /^(\S+)\s+-\s+(\S+)$/.exec(value);
-  if (
-    hyphenRange && isSingleSemverSelector(hyphenRange[1]!) &&
-    isSingleSemverSelector(hyphenRange[2]!)
-  ) {
-    return true;
-  }
+  const alternatives = value.split(/\s*\|\|\s*/);
+  if (alternatives.some((alternative) => alternative === "")) return false;
 
-  const sets = value.split(/\s*\|\|\s*/);
-  let isCompound = sets.length > 1;
-  for (const set of sets) {
-    const selectors = set.trim().split(/\s+/);
-    if (selectors.length > 1) isCompound = true;
-    if (selectors.some((selector) => !isSingleSemverSelector(selector))) return false;
-  }
-  return isCompound;
+  const hasAlternatives = alternatives.length > 1;
+  return alternatives.every((alternative) => {
+    const hyphenRange = /^(\S+)\s+-\s+(\S+)$/.exec(alternative);
+    if (hyphenRange) {
+      const [, lower = "", upper = ""] = hyphenRange;
+      return !/^(?:[~^=]|[<>])/.test(lower) && !/^(?:[~^=]|[<>])/.test(upper) &&
+        isSimpleSemverSelector(lower) && isSimpleSemverSelector(upper);
+    }
+
+    const normalized = alternative.replace(
+      /(^|\s)([~^=]|[<>]=?)\s+(?=v?(?:\d|[xX*]))/g,
+      "$1$2",
+    );
+    const comparators = normalized.trim().split(/\s+/);
+    return (hasAlternatives || comparators.length > 1) &&
+      comparators.every(isSimpleSemverSelector);
+  });
+}
+
+function isSemverSelector(value: string): boolean {
+  return isSimpleSemverSelector(value) || isCompoundSemverRange(value);
 }
 
 /**
@@ -381,8 +403,7 @@ function addressesRemoteFile(mapping: string): boolean {
   const version = versionSeparator > 0 ? decodedLastSegment.slice(versionSeparator + 1) : undefined;
   if (
     version &&
-    (SEMVER_VERSION_OR_RANGE.test(version) || WILDCARD_SEMVER_RANGE.test(version) ||
-      isCompoundSemverRange(version) || NPM_DIST_TAG.test(version))
+    (isSemverSelector(version) || NPM_DIST_TAG.test(version))
   ) {
     return false;
   }

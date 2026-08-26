@@ -599,6 +599,15 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       );
     });
 
+    it("appends a subpath to a compound-version package-root mapping", () => {
+      const mapping = "https://cdn.example/pkg@1.2.3%20-%202.0.0-alpha.beta";
+      const map: ImportMapConfig = { imports: { pkg: mapping } };
+      assertEquals(
+        resolveImportWithMap("https://esm.sh/pkg@1/sub", map),
+        `${mapping}/sub`,
+      );
+    });
+
     it("resolves a channel-named package written with a trailing slash and query", () => {
       const map: ImportMapConfig = { imports: { stable: "/local/s.js" } };
       assertEquals(
