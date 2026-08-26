@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -14,6 +14,7 @@ import {
   ProjectMiddlewareRuntime,
   type ProjectMiddlewareRuntimeContext,
 } from "./project-middleware.ts";
+import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 interface ActiveFsContext {
   projectSlug: string;
@@ -224,6 +225,45 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(runtime.invalidateProject("project-a"), 0);
     await execute(runtime, previewContext("feature-b"));
     assertEquals(loadCount, 4);
+  });
+
+  it("rejects a preview middleware response from a newer source generation", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          () => {
+            sourceVersion++;
+            return new Response("new-generation middleware");
+          },
+        ]),
+    });
+
+    const rejection = await assertRejects(() => execute(runtime, context));
+
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
   });
 
   it("evicts cached production middleware for the invalidated project", async () => {

@@ -24,6 +24,10 @@ import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  finishPreviewDocumentSourceSnapshot,
+  reclassifyPreviewDocumentSourceSnapshotIfChanged,
+} from "../handlers/request/source-snapshot-freshness.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -57,6 +61,18 @@ function resolvedEnvironment(ctx: HandlerContext): "production" | "preview" {
 
 function resolvedBranch(ctx: HandlerContext): string | null {
   return ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
+}
+
+async function withPreparedPreviewDocumentSnapshot<T>(
+  ctx: HandlerContext,
+  operation: () => Promise<T>,
+): Promise<T> {
+  await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
+  try {
+    return await operation();
+  } finally {
+    await finishPreviewDocumentSourceSnapshot(ctx);
+  }
 }
 
 /** Request-scoped root middleware loader for every project runtime. */
@@ -213,19 +229,21 @@ export class ProjectMiddlewareRuntime {
       );
       return await composed(middlewareContext, next);
     };
+    const executeWithPreparedSnapshot = () =>
+      withPreparedPreviewDocumentSnapshot(ctx, executeMiddleware);
 
     const fs = ctx.adapter.fs;
     if (
       !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !ctx.proxyToken ||
       !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
     ) {
-      return await executeMiddleware();
+      return await executeWithPreparedSnapshot();
     }
 
     return fs.runWithContext(
       ctx.projectSlug,
       ctx.proxyToken,
-      executeMiddleware,
+      executeWithPreparedSnapshot,
       ctx.projectId,
       {
         productionMode: environment === "production",
