@@ -263,6 +263,36 @@ export default {
     );
   });
 
+  it("does not classify an undefined trusted-proxy mode as configured", async () => {
+    const error = await assertRejects(
+      () =>
+        evaluateDeclarativeConfig({
+          source: `
+import { getEnv } from "veryfront";
+
+export default {
+  security: {
+    auth: {
+      oidc: {
+        issuerEnvVar: "OIDC_ISSUER",
+        clientIdEnvVar: "OIDC_CLIENT_ID",
+        clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+        sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+      },
+      trustedProxy: getEnv("TRUSTED_PROXY"),
+    },
+  },
+};
+`,
+          ...DEFAULT_OPTIONS,
+        }),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+
+    assertEquals(error.code, "invalid-result");
+    assertEquals(error.reason, "result-not-snapshot-safe");
+  });
+
   it("loads the parser-only evaluator graph in a permissionless Deno Worker", async () => {
     const evaluatorUrl = new URL(
       "./declarative-evaluator.ts",

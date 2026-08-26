@@ -807,11 +807,34 @@ describe("scaffold engine", () => {
           return Promise.resolve();
         },
         identityForTesting: () => null,
+        nativeIdentityForTesting: () => Promise.resolve(null),
       });
 
       assertEquals(result.success, false);
       assertStringIncludes(result.message, "Rollback could not remove: first.txt");
       assertEquals(await Deno.readTextFile(firstPath), "first");
+    });
+  });
+
+  it("falls back to native identity when Deno file identities are unavailable", async () => {
+    await withTempProject(async (projectDir) => {
+      const firstPath = join(projectDir, "first.txt");
+      const result = await scaffoldAuthFiles({
+        projectDir,
+        preset: "oidc",
+        filesForTesting: [
+          { path: firstPath, content: "first" },
+          { path: join(projectDir, "second.txt"), content: "second" },
+        ],
+        beforeWriteForTesting: (file) => {
+          if (file.path.endsWith("second.txt")) throw new Error("simulated write failure");
+          return Promise.resolve();
+        },
+        identityForTesting: () => null,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(await exists(firstPath), false);
     });
   });
 

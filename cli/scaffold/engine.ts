@@ -82,6 +82,7 @@ export interface AuthScaffoldInput {
     create: () => Promise<void>,
   ) => Promise<void>;
   identityForTesting?: (info: Deno.FileInfo) => FileIdentity;
+  nativeIdentityForTesting?: (path: string) => Promise<FileIdentity>;
   removeForTesting?: (path: string) => Promise<void>;
   realPathForTesting?: (path: string) => Promise<string>;
 }
@@ -307,7 +308,8 @@ export async function scaffoldAuthFiles(input: AuthScaffoldInput): Promise<Scaff
       beforeOpen: input.beforeOpenForTesting,
       afterOpen: input.afterOpenForTesting,
       secureCreate: input.secureCreateForTesting,
-      identity: input.identityForTesting ?? fileIdentity,
+      identity: input.identityForTesting,
+      nativeIdentity: input.nativeIdentityForTesting,
       remove: input.removeForTesting,
       realPath: input.realPathForTesting,
     },
@@ -329,12 +331,14 @@ async function writeGuardedMultiFilePlan(
       create: () => Promise<void>,
     ) => Promise<void>;
     identity?: (info: Deno.FileInfo) => FileIdentity;
+    nativeIdentity?: (path: string) => Promise<FileIdentity>;
     remove?: (path: string) => Promise<void>;
     realPath?: (path: string) => Promise<string>;
   },
 ): Promise<ScaffoldResult> {
   const root = resolve(projectDir);
-  const identity = options.identity ?? fileIdentity;
+  const identity = options.identity;
+  const nativeIdentity = options.nativeIdentity ?? readNativeFileIdentity;
   const realPath = options.realPath ?? Deno.realPath;
   const normalizedFiles = validatePlanPaths(plan, root, {
     allowNestedPaths: options.allowNestedPaths,
@@ -349,7 +353,7 @@ async function writeGuardedMultiFilePlan(
       return failure([], "Unsafe scaffold project root", "unsafe-path");
     }
     rootGuard = {
-      identity: fileIdentity(rootStat),
+      identity: await nativeIdentity(root),
       realPath: await realPath(root),
     };
 
@@ -379,7 +383,7 @@ async function writeGuardedMultiFilePlan(
   const createdFiles: OwnedPath[] = [];
   const createdDirs: OwnedPath[] = [];
   const defaultWriter = async (file: ScaffoldFilePlan) => {
-    await assertRootIdentity(root, rootGuard, realPath);
+    await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
     const relativeParent = relative(root, dirname(file.path));
     const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
     await options.beforeOpen?.(file);
@@ -407,6 +411,7 @@ async function writeGuardedMultiFilePlan(
         file.path,
         createdIdentity,
         identity,
+        nativeIdentity,
         realPath,
       );
       createdFiles.push(opened);
@@ -427,7 +432,7 @@ async function writeGuardedMultiFilePlan(
 
   try {
     for (const file of normalizedFiles.files) {
-      await assertRootIdentity(root, rootGuard, realPath);
+      await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
       const relativeParent = relative(root, dirname(file.path));
       const parentParts = relativeParent === "." ? [] : pathParts(relativeParent);
       const ensured = await runSecureScaffoldWriter({
@@ -456,6 +461,7 @@ async function writeGuardedMultiFilePlan(
           owned,
           removeCreatedPath,
           identity,
+          nativeIdentity,
           realPath,
         );
         if (!removed) cleanupErrors.push(relative(root, owned.path));
@@ -471,6 +477,7 @@ async function writeGuardedMultiFilePlan(
           owned,
           removeCreatedPath,
           identity,
+          nativeIdentity,
           realPath,
         );
         if (!removed) cleanupErrors.push(relative(root, owned.path));
@@ -607,14 +614,14 @@ function isSafePathComponent(part: string): boolean {
 class UnsafeAuthTemplatePathError extends Error {}
 
 export type FileIdentity = {
-  dev: number;
-  ino: number;
+  dev: number | string;
+  ino: number | string;
   kind: "directory" | "file" | "symlink" | "other";
-  mode?: number | null;
-  size?: number;
-  mtimeMs?: number | null;
-  birthtimeMs?: number | null;
-  ctimeMs?: number | null;
+  mode?: number | string | null;
+  size?: number | string;
+  mtimeMs?: number | string | null;
+  birthtimeMs?: number | string | null;
+  ctimeMs?: number | string | null;
 } | null;
 
 interface RootGuard {
@@ -675,22 +682,43 @@ interface OwnedPath {
   identity: FileIdentity;
 }
 
-function fileIdentity(info: Deno.FileInfo): FileIdentity {
-  if (typeof info.dev === "number" && typeof info.ino === "number") {
-    const kind = fileIdentityKind(info);
-    if (kind === "directory") return { dev: info.dev, ino: info.ino, kind };
-    return {
-      dev: info.dev,
-      ino: info.ino,
-      kind,
-      mode: typeof info.mode === "number" ? info.mode : null,
-      size: info.size,
-      mtimeMs: timeMs(info.mtime),
-      birthtimeMs: timeMs(info.birthtime),
-      ctimeMs: timeMs(info.ctime),
-    };
-  }
-  return null;
+interface NativeFileInfo {
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  size: bigint;
+  mtimeMs: bigint;
+  birthtimeMs: bigint;
+  ctimeMs: bigint;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+function nativeFileIdentity(info: NativeFileInfo): FileIdentity {
+  if (info.dev <= 0n || info.ino <= 0n) return null;
+  const kind = info.isDirectory()
+    ? "directory"
+    : info.isFile()
+    ? "file"
+    : info.isSymbolicLink()
+    ? "symlink"
+    : "other";
+  const base = { dev: String(info.dev), ino: String(info.ino), kind } as const;
+  if (kind === "directory") return base;
+  return {
+    ...base,
+    mode: String(info.mode),
+    size: String(info.size),
+    mtimeMs: String(info.mtimeMs),
+    birthtimeMs: String(info.birthtimeMs),
+    ctimeMs: String(info.ctimeMs),
+  };
+}
+
+async function readNativeFileIdentity(path: string): Promise<FileIdentity> {
+  const fs = await import("node:fs/promises");
+  return nativeFileIdentity(await fs.lstat(path, { bigint: true }));
 }
 
 function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
@@ -703,17 +731,6 @@ function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
     a.mtimeMs === b.mtimeMs &&
     a.birthtimeMs === b.birthtimeMs &&
     a.ctimeMs === b.ctimeMs;
-}
-
-function fileIdentityKind(info: Deno.FileInfo): NonNullable<FileIdentity>["kind"] {
-  if (info.isDirectory) return "directory";
-  if (info.isFile) return "file";
-  if (info.isSymlink) return "symlink";
-  return "other";
-}
-
-function timeMs(value: Date | null | undefined): number | null {
-  return value instanceof Date ? value.getTime() : null;
 }
 
 async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<SecureWriterResult> {
@@ -805,13 +822,14 @@ export function testBuildSecureScaffoldWriterCommand(
 async function assertRootIdentity(
   root: string,
   expected: RootGuard,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
   realPath: (path: string) => Promise<string>,
 ): Promise<void> {
   const current = await Deno.lstat(root);
   if (!current.isDirectory || current.isSymlink) {
     throw new Error("Unsafe scaffold project root");
   }
-  const currentIdentity = fileIdentity(current);
+  const currentIdentity = await nativeIdentity(root);
   if (expected.identity !== null && !sameIdentity(currentIdentity, expected.identity)) {
     throw new Error("Unsafe scaffold project root");
   }
@@ -825,23 +843,24 @@ async function verifySecureCreatedTarget(
   rootGuard: RootGuard,
   path: string,
   createdIdentity: FileIdentity,
-  identity: (info: Deno.FileInfo) => FileIdentity,
+  identity: ((info: Deno.FileInfo) => FileIdentity) | undefined,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
   realPath: (path: string) => Promise<string>,
 ): Promise<OwnedPath> {
-  await assertRootIdentity(root, rootGuard, realPath);
+  await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
   const targetRealPath = await realPath(path);
   if (!isRealPathInsideRoot(rootGuard.realPath, targetRealPath)) {
     throw new Error("Unsafe scaffold path");
   }
   const pathInfo = await Deno.lstat(path);
-  const actualPathIdentity = fileIdentity(pathInfo);
+  const actualPathIdentity = await nativeIdentity(path);
   if (
     createdIdentity !== null && actualPathIdentity !== null &&
     !sameIdentity(createdIdentity, actualPathIdentity)
   ) {
     throw new Error("Unsafe scaffold path");
   }
-  return { path, identity: identity(pathInfo) };
+  return { path, identity: identity?.(pathInfo) ?? actualPathIdentity };
 }
 
 async function removeOwnedPath(
@@ -849,13 +868,15 @@ async function removeOwnedPath(
   rootGuard: RootGuard,
   owned: OwnedPath,
   remove: (path: string) => Promise<void>,
-  identity: (info: Deno.FileInfo) => FileIdentity,
+  identity: ((info: Deno.FileInfo) => FileIdentity) | undefined,
+  nativeIdentity: (path: string) => Promise<FileIdentity>,
   realPath: (path: string) => Promise<string>,
 ): Promise<boolean> {
   if (owned.identity === null) return false;
-  await assertRootIdentity(root, rootGuard, realPath);
+  await assertRootIdentity(root, rootGuard, nativeIdentity, realPath);
   const current = await Deno.lstat(owned.path);
-  if (!sameIdentity(identity(current), owned.identity)) return false;
+  const currentIdentity = identity?.(current) ?? await nativeIdentity(owned.path);
+  if (!sameIdentity(currentIdentity, owned.identity)) return false;
   await remove(owned.path);
   return true;
 }

@@ -7,15 +7,17 @@
  * or symlink replacement of the parent path cannot redirect the file operation.
  */
 
+import { lstat, open, stat } from "node:fs/promises";
+
 type FileIdentity = {
-  dev: number;
-  ino: number;
+  dev: number | string;
+  ino: number | string;
   kind: "directory" | "file" | "symlink" | "other";
-  mode?: number | null;
-  size?: number;
-  mtimeMs?: number | null;
-  birthtimeMs?: number | null;
-  ctimeMs?: number | null;
+  mode?: number | string | null;
+  size?: number | string;
+  mtimeMs?: number | string | null;
+  birthtimeMs?: number | string | null;
+  ctimeMs?: number | string | null;
 } | null;
 
 interface RootGuard {
@@ -52,27 +54,43 @@ interface CreatedDirectory {
   identity: FileIdentity;
 }
 
-function identity(info: Deno.FileInfo): FileIdentity {
-  if (typeof info.dev !== "number" || typeof info.ino !== "number") return null;
-  const kind = info.isDirectory
+interface NativeFileInfo {
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  size: bigint;
+  mtimeMs: bigint;
+  birthtimeMs: bigint;
+  ctimeMs: bigint;
+  isDirectory(): boolean;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+function identity(info: NativeFileInfo): FileIdentity {
+  if (info.dev <= 0n || info.ino <= 0n) return null;
+  const kind = info.isDirectory()
     ? "directory"
-    : info.isFile
+    : info.isFile()
     ? "file"
-    : info.isSymlink
+    : info.isSymbolicLink()
     ? "symlink"
     : "other";
-  if (kind === "directory") return { dev: info.dev, ino: info.ino, kind };
-  const time = (value: Date | null | undefined) => value?.getTime() ?? null;
+  const base = { dev: String(info.dev), ino: String(info.ino), kind } as const;
+  if (kind === "directory") return base;
   return {
-    dev: info.dev,
-    ino: info.ino,
-    kind,
-    mode: typeof info.mode === "number" ? info.mode : null,
-    size: info.size,
-    mtimeMs: time(info.mtime),
-    birthtimeMs: time(info.birthtime),
-    ctimeMs: time(info.ctime),
+    ...base,
+    mode: String(info.mode),
+    size: String(info.size),
+    mtimeMs: String(info.mtimeMs),
+    birthtimeMs: String(info.birthtimeMs),
+    ctimeMs: String(info.ctimeMs),
   };
+}
+
+function hasErrorCode(error: unknown, expected: string): boolean {
+  return error instanceof Error && "code" in error &&
+    (error as Error & { code?: unknown }).code === expected;
 }
 
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
@@ -107,8 +125,8 @@ async function validatePinnedDirectory(guard: RootGuard): Promise<void> {
   if (!guard || typeof guard !== "object" || typeof guard.realPath !== "string") {
     throw new TypeError("unsafe-directory");
   }
-  const current = await Deno.stat(".");
-  if (!current.isDirectory || current.isSymlink) throw new TypeError("unsafe-directory");
+  const current = await stat(".", { bigint: true });
+  if (!current.isDirectory()) throw new TypeError("unsafe-directory");
   const currentIdentity = identity(current);
   if (guard.identity !== null) {
     if (!sameIdentity(currentIdentity, guard.identity)) throw new TypeError("unsafe-directory");
@@ -126,22 +144,24 @@ async function enterPinnedParent(
   const traversed: string[] = [];
   for (const part of parts) {
     validateName(part);
-    let before: Deno.FileInfo;
+    let before: NativeFileInfo;
     let createdCurrent = false;
     try {
-      before = await Deno.lstat(part);
+      before = await lstat(part, { bigint: true });
     } catch (error) {
-      if (!createMissing || !(error instanceof Deno.errors.NotFound)) throw error;
+      if (!createMissing || !hasErrorCode(error, "ENOENT")) throw error;
       await Deno.mkdir(part);
-      before = await Deno.lstat(part);
+      before = await lstat(part, { bigint: true });
       createdCurrent = true;
     }
-    if (!before.isDirectory || before.isSymlink) throw new TypeError("unsafe-directory");
+    if (!before.isDirectory() || before.isSymbolicLink()) {
+      throw new TypeError("unsafe-directory");
+    }
     const beforeIdentity = identity(before);
     const beforeRealPath = beforeIdentity === null ? await Deno.realPath(part) : null;
     Deno.chdir(part);
-    const after = await Deno.stat(".");
-    if (!after.isDirectory || after.isSymlink) throw new TypeError("unsafe-directory");
+    const after = await stat(".", { bigint: true });
+    if (!after.isDirectory()) throw new TypeError("unsafe-directory");
     if (beforeIdentity !== null) {
       if (!sameIdentity(identity(after), beforeIdentity)) throw new TypeError("unsafe-directory");
     } else if (await Deno.realPath(".") !== beforeRealPath) {
@@ -156,7 +176,7 @@ async function enterPinnedParent(
 async function removeOwnedFile(name: string, expected: FileIdentity): Promise<void> {
   if (expected === null) return;
   try {
-    const current = identity(await Deno.lstat(name));
+    const current = identity(await lstat(name, { bigint: true }));
     if (sameIdentity(current, expected)) await Deno.remove(name);
   } catch {
     // The caller reports the original failure. Cleanup is best effort and
@@ -174,8 +194,14 @@ async function createFile(request: Extract<WriterRequest, { operation: "create" 
     throw new TypeError("invalid-failure-boundary");
   }
 
-  const handle = await Deno.open(request.name, { write: true, createNew: true });
-  let openedIdentity = identity(await handle.stat());
+  const handle = await open(request.name, "wx");
+  let openedIdentity = identity(await handle.stat({ bigint: true }));
+  let closed = false;
+  const closeHandle = async () => {
+    if (closed) return;
+    closed = true;
+    await handle.close();
+  };
   try {
     const content = new TextEncoder().encode(request.content);
     let offset = 0;
@@ -185,26 +211,26 @@ async function createFile(request: Extract<WriterRequest, { operation: "create" 
         : failAfterBytes - offset;
       if (remaining <= 0) throw new Error("simulated-partial-write-failure");
       const chunk = content.subarray(offset, Math.min(content.byteLength, offset + remaining));
-      const written = await handle.write(chunk);
-      if (written === 0) throw new Error("write-made-no-progress");
-      offset += written;
-      openedIdentity = identity(await handle.stat());
+      const { bytesWritten } = await handle.write(chunk);
+      if (bytesWritten === 0) throw new Error("write-made-no-progress");
+      offset += bytesWritten;
+      openedIdentity = identity(await handle.stat({ bigint: true }));
       if (failAfterBytes !== undefined && offset >= failAfterBytes) {
         throw new Error("simulated-partial-write-failure");
       }
     }
   } catch (error) {
-    handle.close();
+    await closeHandle();
     await removeOwnedFile(request.name, openedIdentity);
     throw error;
   } finally {
     try {
-      handle.close();
+      await closeHandle();
     } catch {
       // The failure path already closed the handle.
     }
   }
-  return identity(await Deno.lstat(request.name));
+  return identity(await lstat(request.name, { bigint: true }));
 }
 
 export async function runSecureScaffoldWriterProcess(): Promise<number> {
@@ -232,7 +258,7 @@ export async function runSecureScaffoldWriterProcess(): Promise<number> {
     }
     throw new TypeError("invalid-operation");
   } catch (error) {
-    const code = error instanceof Deno.errors.AlreadyExists
+    const code = error instanceof Deno.errors.AlreadyExists || hasErrorCode(error, "EEXIST")
       ? "already-exists"
       : error instanceof TypeError && error.message === "unsafe-directory"
       ? "unsafe-directory"

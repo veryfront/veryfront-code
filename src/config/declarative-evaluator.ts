@@ -2652,7 +2652,10 @@ function enforceHostedResultPolicy(
   if (!isRuntimeRecord(security)) return;
   if (hasOwn(security, "auth")) {
     const auth = runtimeRecordValue(security, "auth");
-    if (isRuntimeRecord(auth) && hasOwn(auth, "trustedProxy")) {
+    if (
+      isRuntimeRecord(auth) && hasOwn(auth, "trustedProxy") &&
+      runtimeRecordValue(auth, "trustedProxy") !== undefined
+    ) {
       return throwEvaluationError(
         "unsupported-hosted-feature",
         "result",
