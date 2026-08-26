@@ -128,6 +128,49 @@ describe("VeryfrontFSAdapter", () => {
     }
   });
 
+  describe("credential-bearing read dispatch", () => {
+    it("does not expose the adapter to a project-mutated recovery hook", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        initialized: boolean;
+        readOps: { readTextFile(path: string): Promise<string> };
+      };
+      internals.initialized = true;
+      internals.readOps.readTextFile = () => Promise.resolve("safe content");
+
+      const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
+      const previousRecovery = Object.getOwnPropertyDescriptor(
+        prototype,
+        "withBranchSnapshotRecovery",
+      );
+      let observedToken: string | undefined;
+      Object.defineProperty(prototype, "withBranchSnapshotRecovery", {
+        configurable: true,
+        writable: true,
+        value: async function (
+          this: { activeRequestToken?: string },
+          _path: string,
+          operation: () => Promise<string>,
+        ): Promise<string> {
+          observedToken = this.activeRequestToken;
+          return await operation();
+        },
+      });
+
+      try {
+        assertEquals(await adapter.readTextFile("veryfront.config.ts"), "safe content");
+      } finally {
+        if (previousRecovery) {
+          Object.defineProperty(prototype, "withBranchSnapshotRecovery", previousRecovery);
+        } else {
+          Reflect.deleteProperty(prototype, "withBranchSnapshotRecovery");
+        }
+      }
+
+      assertEquals(observedToken, undefined);
+    });
+  });
+
   describe("bounded byte reads", () => {
     it("delegates to the exact reader after bounded context initialization", async () => {
       const adapter = new VeryfrontFSAdapter({
@@ -715,12 +758,12 @@ describe("VeryfrontFSAdapter", () => {
       const readStarted = Promise.withResolvers<void>();
       const releaseRead = Promise.withResolvers<void>();
       const internals = adapter as unknown as {
-        ensureExactReadInitialized(): Promise<void>;
+        client: { isInitialized(): boolean };
         readOps: {
           readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
         };
       };
-      internals.ensureExactReadInitialized = () => Promise.resolve();
+      internals.client.isInitialized = () => true;
       internals.readOps.readFileBytesWithinLimit = async () => {
         readStarted.resolve();
         await releaseRead.promise;

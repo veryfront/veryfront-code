@@ -636,9 +636,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         );
         return Array.isArray(cached?.files);
       },
-      isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
+      isPersistentCacheInvalidated: (prefix: string) => this.#isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
-        this.isPersistentCacheInvalidated(
+        this.#isPersistentCacheInvalidated(
           buildFileCacheKeyPrefix({
             sourceType: "release",
             projectSlug: this.projectSlug,
@@ -905,7 +905,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private isPersistentCacheInvalidated(prefix: string): boolean {
+  #isPersistentCacheInvalidated(prefix: string): boolean {
     return isPrefixBeingInvalidated(prefix);
   }
 
@@ -916,13 +916,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return shouldBackgroundPregenerateStyles(this.contentContext);
   }
 
-  private getBranchMissRecoveryKey(path: string): string {
+  #getBranchMissRecoveryKey(path: string): string {
     const normalizedPath = this.normalizer.normalize(path);
     const branch = this.requestBranch ?? this.contentContext?.branch ?? "main";
     return `${this.projectSlug}:${branch}:${normalizedPath}`;
   }
 
-  private hasRecentBranchMissRecoveryFailure(key: string): boolean {
+  #hasRecentBranchMissRecoveryFailure(key: string): boolean {
     const failedAt = this.branchMissRecoveryFailures.get(key);
     if (!failedAt) return false;
 
@@ -932,7 +932,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return false;
   }
 
-  private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
+  #shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
     // The index was built from a listing already fetched for this snapshot, and
@@ -947,11 +947,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // that window before recovery turns back on by itself.
     if (this.statOps.isIndexAuthoritative()) return false;
 
-    const recoveryKey = this.getBranchMissRecoveryKey(path);
-    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+    const recoveryKey = this.#getBranchMissRecoveryKey(path);
+    return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  private shouldRecoverBranchMissResult<T>(
+  #shouldRecoverBranchMissResult<T>(
     path: string,
     result: T,
     options?: BranchSnapshotRecoveryOptions<T>,
@@ -960,16 +960,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!options?.isRecoverableMissResult?.(result)) return false;
     if (
       options.requirePendingSourceInvalidation &&
-      !this.isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
+      !this.#isPersistentCacheInvalidated(buildFileCacheKeyPrefix(this.contentContext))
     ) {
       return false;
     }
 
-    const recoveryKey = this.getBranchMissRecoveryKey(path);
-    return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
+    const recoveryKey = this.#getBranchMissRecoveryKey(path);
+    return !this.#hasRecentBranchMissRecoveryFailure(recoveryKey);
   }
 
-  private async refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
+  async #refreshBranchSnapshotAfterMiss(path: string): Promise<void> {
     let recoveryPromise = this.branchMissRecoveryPromise;
     let ownsRecovery = false;
     let recoveryGeneration = this.branchMissRecoveryGeneration;
@@ -991,18 +991,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
-  private async withBranchSnapshotRecovery<T>(
+  async #withBranchSnapshotRecovery<T>(
     path: string,
     operation: () => Promise<T>,
     options?: BranchSnapshotRecoveryOptions<T>,
   ): Promise<T> {
     try {
       const result = await operation();
-      if (!this.shouldRecoverBranchMissResult(path, result, options)) return result;
+      if (!this.#shouldRecoverBranchMissResult(path, result, options)) return result;
 
-      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
         this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
         logger.warn("Branch snapshot recovery failed after result miss", {
@@ -1020,11 +1020,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
       return retryResult;
     } catch (error) {
-      if (!this.shouldRecoverBranchMiss(path, error)) throw error;
+      if (!this.#shouldRecoverBranchMiss(path, error)) throw error;
 
-      const recoveryKey = this.getBranchMissRecoveryKey(path);
+      const recoveryKey = this.#getBranchMissRecoveryKey(path);
       try {
-        await this.refreshBranchSnapshotAfterMiss(path);
+        await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
         this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
         logger.warn("Branch snapshot recovery failed after not-found miss", {
@@ -1518,18 +1518,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async readFile(path: string): Promise<string> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
     const admittedLimit = requireBoundedFileReadLimit(byteLimit);
-    await this.ensureExactReadInitialized();
-    return this.withBranchSnapshotRecovery(
+    await this.#ensureExactReadInitialized();
+    return this.#withBranchSnapshotRecovery(
       path,
       () => this.readOps.readFileBytesWithinLimit(path, admittedLimit),
     );
@@ -1537,17 +1537,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async readTextFile(path: string): Promise<string> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
+    return this.#withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(
+    return this.#withBranchSnapshotRecovery(
       path,
       () => this.dirOps.readdir(path),
       {
@@ -1559,13 +1559,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async stat(path: string): Promise<FileInfo> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
+    return this.#withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
   }
 
   async exists(path: string): Promise<boolean> {
     await this.#ensureInitialized();
     try {
-      await this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
+      await this.#withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
       return true;
     } catch (_) {
       return false;
@@ -1577,7 +1577,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     options?: ResolveFileOptions,
   ): Promise<string | null> {
     await this.#ensureInitialized();
-    return this.withBranchSnapshotRecovery(
+    return this.#withBranchSnapshotRecovery(
       basePath,
       () => this.statOps.resolveFile(basePath, options),
       {
@@ -1866,7 +1866,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return true;
   }
 
-  private async ensureExactReadInitialized(): Promise<void> {
+  async #ensureExactReadInitialized(): Promise<void> {
     if (this.client.isInitialized() && this.contentContext) return;
     if (this.exactReadInitializationPromise) {
       await this.exactReadInitializationPromise;
