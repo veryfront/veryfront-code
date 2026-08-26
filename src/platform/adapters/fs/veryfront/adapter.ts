@@ -1086,7 +1086,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private async performSourceSnapshotRefresh(reason: string): Promise<void> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
 
     if (!this.contentContext) {
       logger.debug("Skipping source snapshot refresh without content context", {
@@ -1202,7 +1202,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async #refreshSourceSnapshot(reason: string): Promise<void> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
 
     while (true) {
       this.sourceSnapshotRefreshPromise ??= this.performSourceSnapshotRefresh(reason);
@@ -1229,7 +1229,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
 
     if (
@@ -1276,12 +1276,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
@@ -1295,17 +1295,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async readTextFile(path: string): Promise<string> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readOptionalTextFile(path));
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(
       path,
       () => this.dirOps.readdir(path),
@@ -1317,12 +1317,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
   }
 
   async exists(path: string): Promise<boolean> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     try {
       await this.withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
       return true;
@@ -1335,7 +1335,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     basePath: string,
     options?: ResolveFileOptions,
   ): Promise<string | null> {
-    await this.ensureInitialized();
+    await this.#ensureInitialized();
     return this.withBranchSnapshotRecovery(
       basePath,
       () => this.statOps.resolveFile(basePath, options),
@@ -1612,7 +1612,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.client;
   }
 
-  private async ensureInitialized(): Promise<void> {
+  async #ensureInitialized(): Promise<void> {
     if (this.initialized) return;
     await this.initialize();
   }

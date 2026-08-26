@@ -415,7 +415,7 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
-    it("uses captured concrete freshness and version methods after prototype mutation", async () => {
+    it("keeps concrete freshness independent of mutable prototype helpers", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
         const originalFreshness = Object.getOwnPropertyDescriptor(
@@ -429,6 +429,10 @@ describe("MultiProjectFSAdapter", () => {
         const originalRefresh = Object.getOwnPropertyDescriptor(
           VeryfrontFSAdapter.prototype,
           "refreshSourceSnapshot",
+        );
+        const originalInitialization = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "ensureInitialized",
         );
         const concreteAdapter = new VeryfrontFSAdapter({
           veryfront: {
@@ -448,6 +452,7 @@ describe("MultiProjectFSAdapter", () => {
         internals.sourceSnapshotVersion = 7;
         let spoofedFreshnessCalls = 0;
         let spoofedRefreshCalls = 0;
+        let spoofedInitializationCalls = 0;
 
         (adapter as any).manager = {
           getAdapter: () => Promise.resolve(concreteAdapter),
@@ -469,6 +474,14 @@ describe("MultiProjectFSAdapter", () => {
           configurable: true,
           value: () => {
             spoofedRefreshCalls++;
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "ensureInitialized", {
+          configurable: true,
+          value: () => {
+            spoofedInitializationCalls++;
+            internals.sourceSnapshotVersion = -1;
             return Promise.resolve();
           },
         });
@@ -494,6 +507,7 @@ describe("MultiProjectFSAdapter", () => {
           assertEquals(version, 7);
           assertEquals(spoofedFreshnessCalls, 0);
           assertEquals(spoofedRefreshCalls, 0);
+          assertEquals(spoofedInitializationCalls, 0);
         } finally {
           Object.defineProperty(
             VeryfrontFSAdapter.prototype,
@@ -510,6 +524,17 @@ describe("MultiProjectFSAdapter", () => {
             "refreshSourceSnapshot",
             originalRefresh!,
           );
+          if (originalInitialization) {
+            Object.defineProperty(
+              VeryfrontFSAdapter.prototype,
+              "ensureInitialized",
+              originalInitialization,
+            );
+          } else {
+            delete (VeryfrontFSAdapter.prototype as Record<PropertyKey, unknown>)[
+              "ensureInitialized"
+            ];
+          }
           (adapter as any).manager = originalManager;
           concreteAdapter.dispose();
         }
