@@ -401,6 +401,77 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should reject guarded descriptor reads through local aliases", async () => {
+      for (
+        const invocation of [
+          `get(Object.getPrototypeOf(() => {}), "constructor")`,
+          `get?.(Object.getPrototypeOf(() => {}), "constructor")`,
+          `get.call(Object, Object.getPrototypeOf(() => {}), "constructor")`,
+          `get.apply(Object, [Object.getPrototypeOf(() => {}), "constructor"])`,
+          `get.bind(Object)(Object.getPrototypeOf(() => {}), "constructor")`,
+          `get.bind?.(Object)(Object.getPrototypeOf(() => {}), "constructor")`,
+          `Reflect.apply(get, Object, [Object.getPrototypeOf(() => {}), "constructor"])`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const get = Object.getOwnPropertyDescriptor;` +
+                ` const make = ${invocation}.value;` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${invocation} must retain descriptor capability checks`,
+        );
+      }
+      for (
+        const bindingSource of [
+          `const get = Object.getOwnPropertyDescriptor.bind(Object);`,
+          `const raw = Object.getOwnPropertyDescriptor; const get = raw.bind(Object);`,
+          `const get = Reflect.getOwnPropertyDescriptor.bind(Reflect);`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `${bindingSource}` +
+                ` const make = get(Object.getPrototypeOf(() => {}), "constructor").value;` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${bindingSource} must retain descriptor capability checks`,
+        );
+      }
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const { getOwnPropertyDescriptor: get } = Reflect;` +
+              ` const make = get(Object.getPrototypeOf(() => {}), "constructor").value;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "destructuring Reflect.getOwnPropertyDescriptor must retain the guarded intrinsic",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let get; ({ getOwnPropertyDescriptor: get } = Object);` +
+              ` const make = get(Object.getPrototypeOf(() => {}), "constructor").value;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an assigned Object.getOwnPropertyDescriptor alias must retain the guarded intrinsic",
+      );
+    });
+
     it("should reject a generator name hidden in a single escaped string literal", async () => {
       await assertRejects(
         async () =>
@@ -945,6 +1016,12 @@ describe("routing/api/module-loader/http-validator", () => {
       );
       await validateHTTPImports(
         `const c = Reflect.get(globalThis, "crypto"); export const GET = () => c;`,
+        [],
+      );
+      await validateHTTPImports(
+        `const get = Object.getOwnPropertyDescriptor;` +
+          ` const value = get({ value: 1 }, "value")?.value;` +
+          ` export const GET = () => value;`,
         [],
       );
     });
