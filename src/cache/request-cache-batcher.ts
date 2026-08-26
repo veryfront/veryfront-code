@@ -28,8 +28,14 @@ const IntrinsicMap = Map;
 const IntrinsicClearTimeout = globalThis.clearTimeout;
 const IntrinsicSetTimeout = globalThis.setTimeout;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
 const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(asyncLocalStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
 IntrinsicObjectDefineProperty(asyncLocalStorage, "getStore", {
   configurable: false,
   value: AsyncLocalStorageGetStore,
