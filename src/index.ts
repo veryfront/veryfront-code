@@ -77,4 +77,12 @@ export {
   parseQueryParams,
   sanitizeData,
 } from "#veryfront/security";
-export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";
+export type {
+  ApplicationIdentity,
+  AuthClaimPrimitive,
+  AuthClaimValue,
+  SerializedApplicationIdentity,
+  SerializedAuthClaims,
+  ValidatedHandlerConfig,
+  ValidatedHandlerFunction,
+} from "#veryfront/security";

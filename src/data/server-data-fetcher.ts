@@ -24,6 +24,7 @@ import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
 
 /**
  * Options for isolated data fetching through Worker pool.
@@ -240,6 +241,7 @@ export class ServerDataFetcher {
     const applicationHeaders = context.request
       ? createApplicationRequestHeaders(context.request.headers)
       : undefined;
+    const applicationIdentity = context.applicationIdentity ?? context.identity ?? null;
 
     const admission = await resolveDataWorkerAdmission(options);
 
@@ -261,6 +263,9 @@ export class ServerDataFetcher {
               body,
             },
             url: context.url?.toString() ?? "http://localhost",
+            applicationIdentity: applicationIdentity === null
+              ? null
+              : snapshotApplicationIdentity(applicationIdentity),
           },
           sourceIntegrationPolicy: admission.sourceIntegrationPolicy,
           projectEnv: admission.projectEnv,

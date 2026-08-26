@@ -147,6 +147,7 @@ const ERROR_REASON_TABLE = ObjectFreeze(
     "hosted-extensions": true,
     "hosted-render-cache-backend": true,
     "hosted-render-cache-capacity": true,
+    "hosted-trusted-proxy-auth": true,
     "import-form": true,
     "intermediate-string": true,
     "missing-default-export": true,
@@ -489,6 +490,7 @@ function isLegalErrorTuple(
             "hosted-extensions",
             "hosted-render-cache-backend",
             "hosted-render-cache-capacity",
+            "hosted-trusted-proxy-auth",
           ]));
     case "unsupported-syntax":
       return (phase === "evaluate" && reason === "unsupported-expression") ||

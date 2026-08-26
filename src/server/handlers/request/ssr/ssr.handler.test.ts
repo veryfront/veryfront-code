@@ -434,16 +434,23 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             cookie: "session=application-cookie",
             "proxy-authorization": "Basic infrastructure-proxy-token",
             "x-forwarded-host": "internal-proxy.example",
+            "X-Auth-Email": "forged-email@example.test",
+            "x-auth-subject": "forged-user",
             "x-project-id": "infrastructure-project",
             "x-token": "platform-service-token",
             "x-veryfront-control-plane-jws": "signed-control-plane-request",
           },
         }),
-        makeCtx({ isLocalProject: true }),
+        makeCtx({
+          isLocalProject: true,
+          applicationIdentityHeaderNames: ["x-auth-subject", "X-Auth-Email"],
+        }),
       );
 
       assertEquals(renderedRequest?.headers.get("authorization"), "Bearer application-token");
       assertEquals(renderedRequest?.headers.get("cookie"), "session=application-cookie");
+      assertEquals(renderedRequest?.headers.get("x-auth-email"), null);
+      assertEquals(renderedRequest?.headers.get("x-auth-subject"), null);
       assertEquals(renderedRequest?.headers.get("proxy-authorization"), null);
       assertEquals(renderedRequest?.headers.get("x-forwarded-host"), null);
       assertEquals(renderedRequest?.headers.get("x-project-id"), null);

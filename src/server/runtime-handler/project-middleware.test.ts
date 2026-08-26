@@ -4,6 +4,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { HandlerContext } from "#veryfront/types";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env";
 import {
   getActiveSourceIntegrationPolicy,
@@ -113,6 +114,22 @@ function createContext(
     isLocalProject: false,
     ...overrides,
   };
+}
+
+function createIdentity(): ApplicationIdentity {
+  return Object.freeze({
+    issuer: "veryfront:trusted-proxy",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: Object.freeze(["admin"]),
+    roles: Object.freeze([]),
+    groupsComplete: true,
+    claims: Object.freeze({
+      sub: "user-123",
+      email: "user@example.test",
+      groups: Object.freeze(["admin"]),
+    }),
+  });
 }
 
 function execute(
@@ -412,6 +429,94 @@ describe("ProjectMiddlewareRuntime", () => {
       projectId: null,
       platformToken: null,
       dispatchSignature: null,
+    });
+  });
+
+  it("exposes admitted application identity on the typed middleware context", async () => {
+    const adapter = createAdapter();
+    const identity = createIdentity();
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          (c) => {
+            assertEquals(c.identity, identity);
+            assertEquals(Object.isFrozen(c.identity), true);
+            assertEquals(Object.isFrozen(c.identity?.claims), true);
+            c.set("identity", null);
+            return Response.json({
+              middlewareIdentity: c.identity,
+              userWritableVar: c.get("identity"),
+            });
+          },
+        ]),
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, {
+        applicationIdentity: identity,
+        applicationIdentityHeaderNames: ["x-auth-subject"],
+      }),
+    );
+
+    assertEquals(await response?.json(), {
+      middlewareIdentity: identity,
+      userWritableVar: null,
+    });
+  });
+
+  it("exposes null middleware identity when no application auth admission ran", async () => {
+    const adapter = createAdapter();
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          (c) =>
+            Response.json({
+              identity: c.identity,
+            }),
+        ]),
+    });
+
+    const response = await execute(runtime, createContext(adapter));
+
+    assertEquals(await response?.json(), { identity: null });
+  });
+
+  it("strips configured application identity headers before middleware executes", async () => {
+    const adapter = createAdapter();
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          (c) =>
+            Response.json({
+              subjectLower: c.req.headers.get("x-auth-subject"),
+              subjectMixed: c.req.headers.get("X-Auth-Subject"),
+              email: c.req.headers.get("x-auth-email"),
+              authorization: c.req.headers.get("authorization"),
+            }),
+        ]),
+    });
+
+    const response = await execute(
+      runtime,
+      createContext(adapter, {
+        applicationIdentity: createIdentity(),
+        applicationIdentityHeaderNames: ["x-auth-subject", "x-auth-email"],
+      }),
+      new Request("https://example.com/resource", {
+        headers: {
+          "X-Auth-Subject": "forged-user",
+          "x-auth-email": "forged@example.test",
+          authorization: "Bearer application-token",
+        },
+      }),
+    );
+
+    assertEquals(await response?.json(), {
+      subjectLower: null,
+      subjectMixed: null,
+      email: null,
+      authorization: "Bearer application-token",
     });
   });
 

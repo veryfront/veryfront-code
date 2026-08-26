@@ -17,6 +17,7 @@ import type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName } from ".
 export type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName };
 
 export { mergeFiles } from "./loader.ts";
+export { getAuthTemplate, listAuthTemplates } from "./loader.ts";
 
 /**
  * Markdown renderer dependencies for the chat starters.
