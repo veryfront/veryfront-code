@@ -321,24 +321,25 @@ describe("MultiProjectFSAdapter", () => {
         const originalManager = (adapter as any).manager;
         let freshnessReason: string | undefined;
         let freshnessChecks = 0;
-        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
-          sourceSnapshotFiles: [{ path: "pages/index.mdx", content: "current source" }],
-          sourceSnapshotVersion: 6,
-          sourceSnapshotFingerprint: undefined,
+        let sourceSnapshotVersion = 6;
+        const snapshotAdapter = {
           ensureSourceSnapshotFresh(reason?: string) {
             freshnessReason = reason;
             freshnessChecks++;
-            if (freshnessChecks === 1) this.sourceSnapshotVersion++;
+            if (freshnessChecks === 1) sourceSnapshotVersion++;
             return Promise.resolve();
           },
           getSourceSnapshotVersion() {
-            return this.sourceSnapshotVersion;
+            return sourceSnapshotVersion;
           },
-        }) as VeryfrontFSAdapter;
+          getSourceSnapshotFingerprint() {
+            return Promise.resolve("current-source-fingerprint");
+          },
+        } as unknown as VeryfrontFSAdapter;
 
         (adapter as any).manager = {
           getAdapter() {
-            return Promise.resolve(concreteAdapter);
+            return Promise.resolve(snapshotAdapter);
           },
           getStats: () => ({ adapters: 0, stats: [] }),
           dispose: () => {},
@@ -410,6 +411,107 @@ describe("MultiProjectFSAdapter", () => {
             originalFingerprint!,
           );
           (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("uses captured concrete freshness and version methods after prototype mutation", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const originalFreshness = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "ensureSourceSnapshotFresh",
+        );
+        const originalVersion = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "getSourceSnapshotVersion",
+        );
+        const originalRefresh = Object.getOwnPropertyDescriptor(
+          VeryfrontFSAdapter.prototype,
+          "refreshSourceSnapshot",
+        );
+        const concreteAdapter = new VeryfrontFSAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "project-a",
+            cache: { enabled: false },
+          },
+        });
+        const internals = concreteAdapter as unknown as {
+          initialized: boolean;
+          contentContext: null;
+          sourceSnapshotVersion: number;
+        };
+        internals.initialized = true;
+        internals.contentContext = null;
+        internals.sourceSnapshotVersion = 7;
+        let spoofedFreshnessCalls = 0;
+        let spoofedRefreshCalls = 0;
+
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve(concreteAdapter),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "ensureSourceSnapshotFresh", {
+          configurable: true,
+          value: () => {
+            spoofedFreshnessCalls++;
+            return Promise.resolve();
+          },
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "getSourceSnapshotVersion", {
+          configurable: true,
+          value: () => -1,
+        });
+        Object.defineProperty(VeryfrontFSAdapter.prototype, "refreshSourceSnapshot", {
+          configurable: true,
+          value: () => {
+            spoofedRefreshCalls++;
+            return Promise.resolve();
+          },
+        });
+
+        try {
+          const version = await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("config-load");
+              return await adapter.getSourceSnapshotVersion();
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+          await adapter.runWithContext(
+            "project-a",
+            "runtime-token",
+            () => adapter.refreshSourceSnapshot("manual-check"),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(version, 7);
+          assertEquals(spoofedFreshnessCalls, 0);
+          assertEquals(spoofedRefreshCalls, 0);
+        } finally {
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "ensureSourceSnapshotFresh",
+            originalFreshness!,
+          );
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "getSourceSnapshotVersion",
+            originalVersion!,
+          );
+          Object.defineProperty(
+            VeryfrontFSAdapter.prototype,
+            "refreshSourceSnapshot",
+            originalRefresh!,
+          );
+          (adapter as any).manager = originalManager;
+          concreteAdapter.dispose();
         }
       });
     });

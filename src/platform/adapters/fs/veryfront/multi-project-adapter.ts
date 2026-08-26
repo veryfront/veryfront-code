@@ -28,8 +28,23 @@ const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
+const VeryfrontFSAdapterRefreshSourceSnapshot = VeryfrontFSAdapterPrototype.refreshSourceSnapshot;
+const VeryfrontFSAdapterEnsureSourceSnapshotFresh =
+  VeryfrontFSAdapterPrototype.ensureSourceSnapshotFresh;
+const VeryfrontFSAdapterGetSourceSnapshotVersion =
+  VeryfrontFSAdapterPrototype.getSourceSnapshotVersion;
 const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
-  VeryfrontFSAdapter.prototype.getSourceSnapshotFingerprint;
+  VeryfrontFSAdapterPrototype.getSourceSnapshotFingerprint;
+
+function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
+  return IntrinsicReflectApply(
+    ObjectPrototypeIsPrototypeOf,
+    VeryfrontFSAdapterPrototype,
+    [adapter],
+  ) as boolean;
+}
 
 export class MultiProjectFSAdapter implements FSAdapter {
   readonly symlinkSemantics = "none" as const;
@@ -248,7 +263,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async refreshSourceSnapshot(reason?: string): Promise<void> {
     const adapter = await this.getAdapter();
-    await adapter.refreshSourceSnapshot(reason);
+    if (isConcreteVeryfrontFSAdapter(adapter)) {
+      await IntrinsicReflectApply(VeryfrontFSAdapterRefreshSourceSnapshot, adapter, [reason]);
+    } else {
+      await adapter.refreshSourceSnapshot(reason);
+    }
     const cleared = clearRequestScopedFileCache();
     if (cleared > 0) {
       logger.debug("Cleared request-scoped file cache after source snapshot refresh", {
@@ -260,11 +279,26 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async ensureSourceSnapshotFresh(reason?: string): Promise<void> {
     const adapter = await this.getAdapter();
-    if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
-
-    const previousVersion = await adapter.getSourceSnapshotVersion?.();
-    await adapter.ensureSourceSnapshotFresh(reason);
-    const currentVersion = await adapter.getSourceSnapshotVersion?.();
+    let previousVersion: number | undefined;
+    let currentVersion: number | undefined;
+    if (isConcreteVeryfrontFSAdapter(adapter)) {
+      previousVersion = IntrinsicReflectApply(
+        VeryfrontFSAdapterGetSourceSnapshotVersion,
+        adapter,
+        [],
+      ) as number;
+      await IntrinsicReflectApply(VeryfrontFSAdapterEnsureSourceSnapshotFresh, adapter, [reason]);
+      currentVersion = IntrinsicReflectApply(
+        VeryfrontFSAdapterGetSourceSnapshotVersion,
+        adapter,
+        [],
+      ) as number;
+    } else {
+      if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
+      previousVersion = await adapter.getSourceSnapshotVersion?.();
+      await adapter.ensureSourceSnapshotFresh(reason);
+      currentVersion = await adapter.getSourceSnapshotVersion?.();
+    }
     const sourceMayHaveChanged = previousVersion === undefined ||
       currentVersion === undefined ||
       previousVersion !== currentVersion;
@@ -283,6 +317,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getSourceSnapshotVersion(): Promise<number | undefined> {
     const adapter = await this.getAdapter();
+    if (isConcreteVeryfrontFSAdapter(adapter)) {
+      return IntrinsicReflectApply(
+        VeryfrontFSAdapterGetSourceSnapshotVersion,
+        adapter,
+        [],
+      ) as number;
+    }
     return typeof adapter.getSourceSnapshotVersion === "function"
       ? await adapter.getSourceSnapshotVersion()
       : undefined;
@@ -290,6 +331,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async getSourceSnapshotFingerprint(): Promise<string | undefined> {
     const adapter = await this.getAdapter();
+    if (!isConcreteVeryfrontFSAdapter(adapter)) {
+      return typeof adapter.getSourceSnapshotFingerprint === "function"
+        ? await adapter.getSourceSnapshotFingerprint()
+        : undefined;
+    }
     return await IntrinsicReflectApply(
       VeryfrontFSAdapterGetSourceSnapshotFingerprint,
       adapter,

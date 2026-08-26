@@ -17,6 +17,7 @@ import {
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
+const IntrinsicReflectApply = Reflect.apply;
 
 function captureOptionalMethod(value: FSAdapter, key: string): CapturedMethod | undefined {
   const seen = new Set<object>();
@@ -198,17 +199,17 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const refreshSourceSnapshot = captureOptionalMethod(fsAdapter, "refreshSourceSnapshot");
     if (refreshSourceSnapshot !== undefined) {
       this.refreshSourceSnapshot = (reason?: string) =>
-        Reflect.apply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
+        IntrinsicReflectApply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
     }
     const ensureSourceSnapshotFresh = captureOptionalMethod(fsAdapter, "ensureSourceSnapshotFresh");
     if (ensureSourceSnapshotFresh !== undefined) {
       this.ensureSourceSnapshotFresh = (reason?: string) =>
-        Reflect.apply(ensureSourceSnapshotFresh, fsAdapter, [reason]) as Promise<void>;
+        IntrinsicReflectApply(ensureSourceSnapshotFresh, fsAdapter, [reason]) as Promise<void>;
     }
     const generation = captureOptionalMethod(fsAdapter, "getSourceSnapshotVersion");
     if (generation !== undefined) {
       this.getSourceSnapshotVersion = () =>
-        Reflect.apply(generation, fsAdapter, []) as
+        IntrinsicReflectApply(generation, fsAdapter, []) as
           | number
           | undefined
           | Promise<number | undefined>;
@@ -216,7 +217,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     const fingerprint = captureOptionalMethod(fsAdapter, "getSourceSnapshotFingerprint");
     if (fingerprint !== undefined) {
       this.getSourceSnapshotFingerprint = () =>
-        Reflect.apply(fingerprint, fsAdapter, []) as
+        IntrinsicReflectApply(fingerprint, fsAdapter, []) as
           | string
           | undefined
           | Promise<string | undefined>;

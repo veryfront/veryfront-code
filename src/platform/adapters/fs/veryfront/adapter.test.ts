@@ -266,20 +266,13 @@ describe("VeryfrontFSAdapter", () => {
       internals.sourceSnapshotRefreshPromise = new Promise(() => {});
       assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
 
-      let refreshCalls = 0;
-      adapter.refreshSourceSnapshot = () => {
-        refreshCalls++;
-        return Promise.resolve();
-      };
       const before = adapter.getSourceSnapshotVersion();
 
       adapter.setRequestToken("tenant-token");
       assertEquals(internals.getCachedFileListSync(), undefined);
       assertEquals(internals.sourceSnapshotRefreshPromise, null);
-      await adapter.ensureSourceSnapshotFresh("new-authority");
       adapter.setRequestToken("static-token");
 
-      assertEquals(refreshCalls, 1);
       assertEquals(adapter.getSourceSnapshotVersion() > before, true);
     });
   });
@@ -932,6 +925,28 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(internals.sourceSnapshotIdentity, undefined);
       assertEquals(internals.sourceSnapshotCheckedAt, 0);
       assertEquals(internals.sourceSnapshotFingerprint, undefined);
+    });
+
+    it("withholds an in-flight fingerprint invalidated by a POKE", async () => {
+      const adapter = createAdapter();
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        wsManager: { deps: { clearMemoryCaches: () => void } };
+      };
+      internals.sourceSnapshotFiles = [{
+        path: "pages/index.tsx",
+        content: "source being hashed",
+      }];
+
+      const pendingFingerprint = adapter.getSourceSnapshotFingerprint();
+      internals.wsManager.deps.clearMemoryCaches();
+
+      assertEquals(await pendingFingerprint, undefined);
     });
   });
 

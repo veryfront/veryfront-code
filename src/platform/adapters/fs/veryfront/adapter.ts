@@ -219,7 +219,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
   private sourceSnapshotFingerprint:
-    | { version: number; value: Promise<string> }
+    | { version: number; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
   private sourceSnapshotMutationTail: Promise<void> = Promise.resolve();
@@ -1201,7 +1201,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+  async #refreshSourceSnapshot(reason: string): Promise<void> {
     await this.ensureInitialized();
 
     while (true) {
@@ -1224,6 +1224,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
   }
 
+  async refreshSourceSnapshot(reason = "manual-refresh"): Promise<void> {
+    await this.#refreshSourceSnapshot(reason);
+  }
+
   async ensureSourceSnapshotFresh(reason = "freshness-check"): Promise<void> {
     await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
@@ -1235,7 +1239,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    await this.refreshSourceSnapshot(reason);
+    await this.#refreshSourceSnapshot(reason);
   }
 
   getSourceSnapshotVersion(): number {
@@ -1251,7 +1255,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return this.sourceSnapshotFingerprint.value;
     }
 
-    const value = computeHash(serializeSourceSnapshot(files));
+    const serialized = serializeSourceSnapshot(files);
+    const value = (async () => {
+      const fingerprint = await computeHash(serialized);
+      return this.sourceSnapshotVersion === version && this.sourceSnapshotFiles === files
+        ? fingerprint
+        : undefined;
+    })();
     this.sourceSnapshotFingerprint = { version, value };
     return value;
   }
