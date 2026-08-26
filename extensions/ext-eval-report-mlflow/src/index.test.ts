@@ -336,6 +336,17 @@ describe("ext-eval-report-mlflow", () => {
     assertExists(registry.get("mlflow"));
   });
 
+  it("reads the activation URI when setup runs", async () => {
+    clearMlflowEnv();
+    const registry = createEvalReportExporterRegistry();
+    const extension = factory();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");
+
+    await extension.setup?.(createContext(registry));
+
+    assertExists(registry.get("mlflow"));
+  });
+
   it("registers from a configured tracking URI without a host activation URI", async () => {
     clearMlflowEnv();
     const registry = createEvalReportExporterRegistry();

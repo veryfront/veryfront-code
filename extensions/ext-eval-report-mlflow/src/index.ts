@@ -551,12 +551,16 @@ async function createOAuthTrackingAuthHeaders(
   return { authorization: `Bearer ${payload.access_token}` };
 }
 
-function resolveExporterConfig(
-  config: EvalReportMlflowExtensionConfig,
-): EvalReportMlflowExtensionConfig & { id: string } {
+function validateConfiguredTransport(config: EvalReportMlflowExtensionConfig): void {
   if (config.fetch !== undefined && config.trackingUri === undefined) {
     throw new Error("MLflow fetch requires trackingUri in the same extension config.");
   }
+}
+
+function resolveExporterConfig(
+  config: EvalReportMlflowExtensionConfig,
+): EvalReportMlflowExtensionConfig & { id: string } {
+  validateConfiguredTransport(config);
 
   const configuredOAuthTokenUrl = config.oauthTokenUrl || undefined;
   const hasConfiguredOAuthCredentials = hasOAuthClientCredentials(config);
@@ -1837,12 +1841,12 @@ export function createEvalReportMlflowExporter(
 
 const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
   const normalizedFactoryConfig = normalizeConfig(config);
+  validateConfiguredTransport(normalizedFactoryConfig);
   const oauthCredentialSource: OAuthCredentialSource = hasOAuthClientCredentials(
       normalizedFactoryConfig,
     )
     ? "config"
     : "environment";
-  const factoryConfig = resolveExporterConfig(normalizedFactoryConfig);
   let registry: EvalReportExporterRegistry | undefined;
   let registeredId: string | undefined;
 
@@ -1881,24 +1885,25 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,
       );
-      if (!hasTrackingUri(factoryConfig)) {
+      const setupConfig = resolveExporterConfig(normalizedFactoryConfig);
+      if (!hasTrackingUri(setupConfig)) {
         ctx.logger.debug(
-          `[ext-eval-report-mlflow] Skipping EvalReportExporter "${factoryConfig.id}": no MLFLOW_TRACKING_URI configured`,
+          `[ext-eval-report-mlflow] Skipping EvalReportExporter "${setupConfig.id}": no MLFLOW_TRACKING_URI configured`,
         );
         return;
       }
 
-      validateOAuthClientCredentials(factoryConfig, oauthCredentialSource);
+      validateOAuthClientCredentials(setupConfig, oauthCredentialSource);
 
       registry.register(
         new EvalReportMlflowExporter(
-          factoryConfig,
-          factoryConfig.fetch,
+          setupConfig,
+          setupConfig.fetch,
         ),
       );
-      registeredId = factoryConfig.id;
+      registeredId = setupConfig.id;
       ctx.logger.debug(
-        `[ext-eval-report-mlflow] EvalReportExporter "${factoryConfig.id}" registered`,
+        `[ext-eval-report-mlflow] EvalReportExporter "${setupConfig.id}" registered`,
       );
     },
     teardown() {
