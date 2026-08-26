@@ -984,6 +984,143 @@ describe("adapter-factory", () => {
       );
     });
 
+    it("keeps extensionless build-output files on the normal freshness lease", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/dist/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 1,
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/robots",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
+    });
+
+    it("retains the generation used to classify public static ownership", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/public/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 7,
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/robots",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 7,
+      });
+    });
+
     it("classifies public ownership after renewing the normal source lease", async () => {
       let publicFileExists = true;
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];

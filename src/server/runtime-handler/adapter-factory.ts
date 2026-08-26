@@ -33,6 +33,7 @@ import {
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
 import {
+  capturePreviewSourceSnapshotMarker,
   captureRequiredPreviewSourceSnapshotMarker,
   ensurePreviewDocumentConfigSourceSnapshotFresh,
   type PreviewSourceSnapshotMarker,
@@ -186,27 +187,31 @@ function mayServePublicPath(pathname: string): boolean {
   );
 }
 
-async function hasPublishedPublicFile(
+async function hasPublishedStaticFile(
   projectDir: string,
   adapter: RuntimeAdapter,
   pathname: string,
 ): Promise<boolean> {
   if (!mayServePublicPath(pathname)) return false;
 
-  const publicRoot = joinPath(projectDir, "public");
+  // StaticFileService checks preview build output before public. Keep this
+  // ownership probe in the same order for extensionless document candidates.
+  const roots = [joinPath(projectDir, "dist"), joinPath(projectDir, "public")];
   const relativePath = pathname.replace(/^\/+/, "");
   const candidates = relativePath.length === 0
     ? ["index.html"]
     : [relativePath, `${relativePath.replace(/\/$/, "")}/index.html`];
 
-  for (const candidate of candidates) {
-    const path = joinPath(publicRoot, candidate);
-    if (!isWithinDirectory(publicRoot, path)) continue;
-    try {
-      if ((await adapter.fs.stat(path)).isFile) return true;
-    } catch {
-      // A miss leaves ownership with the document handlers. StaticHandler
-      // remains responsible for reading and serving any matching bytes.
+  for (const root of roots) {
+    for (const candidate of candidates) {
+      const path = joinPath(root, candidate);
+      if (!isWithinDirectory(root, path)) continue;
+      try {
+        if ((await adapter.fs.stat(path)).isFile) return true;
+      } catch {
+        // A miss leaves ownership with the document handlers. StaticHandler
+        // remains responsible for reading and serving any matching bytes.
+      }
     }
   }
   return false;
@@ -214,18 +219,32 @@ async function hasPublishedPublicFile(
 
 type PreviewConfigFreshness = "normal" | "normal-prepared" | "strict";
 
+interface PreviewConfigFreshnessResolution {
+  freshness: PreviewConfigFreshness;
+  /** Generation that proved static ownership, retained through dispatch. */
+  sourceSnapshot?: PreviewSourceSnapshotMarker;
+}
+
+function isCompleteSourceSnapshotMarker(
+  marker: PreviewSourceSnapshotMarker | undefined,
+): marker is Required<PreviewSourceSnapshotMarker> {
+  return marker?.identity !== undefined && marker.version !== undefined;
+}
+
 async function resolvePreviewConfigFreshness(
   opts: AdapterResolutionOptions,
   projectDir: string,
   adapter: RuntimeAdapter,
-): Promise<PreviewConfigFreshness> {
-  if (!opts.isProxyMode || opts.proxyEnv === "production") return "normal";
+): Promise<PreviewConfigFreshnessResolution> {
+  if (!opts.isProxyMode || opts.proxyEnv === "production") return { freshness: "normal" };
   // The shared-runtime denial runs after request context construction. Avoid a
   // zero-age whole-source refresh for a document that no handler may execute.
-  if (opts.allowHostProjectCodeExecution === false) return "normal";
-  if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return "normal";
+  if (opts.allowHostProjectCodeExecution === false) return { freshness: "normal" };
+  if (opts.req.method !== "GET" && opts.req.method !== "HEAD") {
+    return { freshness: "normal" };
+  }
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
-  if (pathname === "/api" || pathname.startsWith("/api/")) return "normal";
+  if (pathname === "/api" || pathname.startsWith("/api/")) return { freshness: "normal" };
   // StaticHandler precedes API discovery and document rendering. Ordinary
   // extension paths are already excluded by the document predicates; probe
   // the public candidates for extensionless and Markdown paths that would
@@ -233,13 +252,30 @@ async function resolvePreviewConfigFreshness(
   // files compatible with adapters that do not expose strict snapshot markers.
   const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
     (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
-  if (!documentCandidate) return "normal";
+  if (!documentCandidate) return { freshness: "normal" };
 
   // Renew the normal lease before classifying static ownership. Refreshing the
   // adapter after this probe could remove a public file and let the request
   // fall through to document rendering without strict snapshot binding.
   await adapter.fs.ensureSourceSnapshotFresh?.("config-load");
-  return await hasPublishedPublicFile(projectDir, adapter, pathname) ? "normal-prepared" : "strict";
+  const beforeProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
+  const staticOwned = await hasPublishedStaticFile(projectDir, adapter, pathname);
+  const afterProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
+  if (!staticOwned) return { freshness: "strict" };
+
+  // A capability-free adapter reads a live local source and keeps the legacy
+  // static path. Versioned mutable adapters must prove the ownership probe was
+  // made from one generation so configuration and dispatch can retain it.
+  if (
+    isCompleteSourceSnapshotMarker(beforeProbe) &&
+    isCompleteSourceSnapshotMarker(afterProbe)
+  ) {
+    if (!previewSourceSnapshotMarkersEqual(beforeProbe, afterProbe)) {
+      return { freshness: "strict" };
+    }
+    return { freshness: "normal-prepared", sourceSnapshot: afterProbe };
+  }
+  return { freshness: "normal-prepared" };
 }
 
 async function prepareProxyConfigLoad(
@@ -386,13 +422,14 @@ export async function resolveAdapter(
         const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
-          const previewConfigFreshness = await resolvePreviewConfigFreshness(
+          const previewConfigResolution = await resolvePreviewConfigFreshness(
             opts,
             effectiveProjectDir,
             effectiveAdapter,
           );
+          const previewConfigFreshness = previewConfigResolution.freshness;
           const strictDocumentConfig = previewConfigFreshness === "strict";
-          let configSourceSnapshot: PreviewSourceSnapshotMarker | undefined;
+          let configSourceSnapshot = previewConfigResolution.sourceSnapshot;
           if (strictDocumentConfig) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(
               effectiveAdapter.fs,
@@ -411,7 +448,7 @@ export async function resolveAdapter(
               ...hosted,
               signal: opts.req.signal,
             });
-            if (strictDocumentConfig) {
+            if (configSourceSnapshot !== undefined) {
               const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
                 effectiveAdapter.fs,
                 opts.projectSlug!,
@@ -427,7 +464,7 @@ export async function resolveAdapter(
             return config;
           } catch (error: unknown) {
             const configAbsent = hasNotFoundStatus(error);
-            if (strictDocumentConfig && configAbsent) {
+            if (configSourceSnapshot !== undefined && configAbsent) {
               const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
                 effectiveAdapter.fs,
                 opts.projectSlug!,

@@ -114,22 +114,44 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const retained = preparedDocumentSnapshots.get(ctx);
-  if (retained?.configBound !== true) return await operation();
-  if (!(await preparedDocumentSnapshotMatches(ctx, retained))) {
-    throwConfigSnapshotChanged(ctx);
+  if (retained?.configBound === true) {
+    if (!(await preparedDocumentSnapshotMatches(ctx, retained))) {
+      throwConfigSnapshotChanged(ctx);
+    }
+  } else {
+    const beforeOperation = await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
+    if (beforeOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
   }
 
-  const result = await operation();
-  if (!(await preparedDocumentSnapshotMatches(ctx, retained))) {
-    throwConfigSnapshotChanged(ctx);
+  let operationCompleted = false;
+  try {
+    const result = await operation();
+    operationCompleted = true;
+    if (
+      retained?.configBound === true &&
+      !(await preparedDocumentSnapshotMatches(ctx, retained))
+    ) {
+      throwConfigSnapshotChanged(ctx);
+    }
+    const afterOperation = await finishPreviewDocumentSourceSnapshot(ctx);
+    if (afterOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
+    return result;
+  } finally {
+    if (!operationCompleted) await finishPreviewDocumentSourceSnapshot(ctx);
   }
-  return result;
 }
 
 function throwConfigSnapshotChanged(ctx: HandlerContext): never {
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
       `The mutable source snapshot serving "${ctx.projectSlug}" changed after request configuration was derived, so this document request must be retried against one generation.`,
+  });
+}
+
+function throwSnapshotReclassificationRequired(ctx: HandlerContext): never {
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail:
+      `The mutable source snapshot serving "${ctx.projectSlug}" changed during handler dispatch, so this request must be retried against one generation.`,
   });
 }
 

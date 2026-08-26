@@ -16,6 +16,7 @@ import {
 } from "./project-middleware.ts";
 import {
   finishPreviewDocumentSourceSnapshot,
+  preparePreviewDocumentSourceSnapshot,
   seedPreviewDocumentSourceSnapshot,
 } from "../handlers/request/source-snapshot-freshness.ts";
 
@@ -340,6 +341,81 @@ describe("ProjectMiddlewareRuntime", () => {
       Error,
       "changed after request configuration was derived",
     );
+  });
+
+  it("finalizes host-token snapshots inside the effective tenant context", async () => {
+    const storage = new AsyncLocalStorage<ActiveFsContext>();
+    const adapter = createAdapter(storage);
+    const requireContext = () => {
+      if (!storage.getStore()) throw new Error("[test] No request context available");
+    };
+    adapter.fs.getSourceSnapshotIdentity = () => {
+      requireContext();
+      return "branch:trusted-project:main";
+    };
+    adapter.fs.getSourceSnapshotVersion = () => {
+      requireContext();
+      return 1;
+    };
+    const context = createContext(adapter, {
+      proxyToken: undefined,
+      releaseId: undefined,
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "host-authorized-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const response = await execute(runtime, context, undefined, () => {
+      seedPreviewDocumentSourceSnapshot(context, {
+        identity: "branch:trusted-project:main",
+        version: 1,
+      });
+      return Promise.resolve(new Response("route"));
+    });
+
+    assertEquals(await response?.text(), "route");
+  });
+
+  it("rejects a route response when snapshot finalization requests reclassification", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const rejection = await assertRejects(() =>
+      execute(runtime, context, undefined, async () => {
+        await preparePreviewDocumentSourceSnapshot(
+          context,
+          () => Promise.resolve({ response: new Response("reclassified") }),
+        );
+        sourceVersion++;
+        return new Response("stale");
+      })
+    );
+
+    assertInstanceOf(rejection, Error);
+    assertEquals(rejection.message.includes("changed during handler dispatch"), true);
   });
 
   it("evicts cached production middleware for the invalidated project", async () => {

@@ -218,8 +218,9 @@ export class ProjectMiddlewareRuntime {
       runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware);
 
     const fs = ctx.adapter.fs;
+    const effectiveProxyToken = ctx.proxyToken ?? ctx.requestContext?.token;
     if (
-      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !ctx.proxyToken ||
+      !isSharedProxy || ctx.isLocalProject || !ctx.projectSlug || !effectiveProxyToken ||
       !isExtendedFSAdapter(fs) || !fs.isMultiProjectMode()
     ) {
       return await executeWithPreparedSnapshot();
@@ -227,7 +228,7 @@ export class ProjectMiddlewareRuntime {
 
     return fs.runWithContext(
       ctx.projectSlug,
-      ctx.proxyToken,
+      effectiveProxyToken,
       executeWithPreparedSnapshot,
       ctx.projectId,
       {
