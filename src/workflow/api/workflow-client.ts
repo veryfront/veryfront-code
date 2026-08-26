@@ -136,8 +136,9 @@ export class WorkflowClient {
               eventName: input.eventName,
               ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
             };
-          const eventConfig = activeWaitConfig ?? registeredEventConfig ?? persistedEventConfig;
-          if (eventConfig?.waitType === "event") {
+          const eventConfig = [activeWaitConfig, registeredEventConfig, persistedEventConfig]
+            .find((candidate) => candidate?.waitType === "event");
+          if (eventConfig) {
             try {
               await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
               logger.debug("Created event wait for node", { nodeId });

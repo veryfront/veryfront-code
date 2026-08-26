@@ -3732,6 +3732,96 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("leases abandoned delivery recovery across backend instances", async () => {
+    using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
+    const sharedBackend = new MemoryBackend();
+    const runId = "run-cross-backend-delivery-recovery";
+    await sharedBackend.createRun({
+      id: runId,
+      workflowId: "cross-backend-delivery-recovery",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: { nodeId: "gate", status: "running", attempt: 1 },
+        sibling: { nodeId: "sibling", status: "running", attempt: 1 },
+      },
+      currentNodes: ["gate", "sibling"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    });
+    await sharedBackend.savePendingEventWait(runId, {
+      id: "evw-cross-backend-delivery-recovery",
+      runId,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await sharedBackend.appendRunEvent(runId, {
+      id: "evt-cross-backend-delivery-recovery",
+      eventName: "gate.ready",
+      payload: { ready: true },
+      publishedAt: new Date(),
+    });
+    assertExists(
+      await sharedBackend.claimRunEventForWait(
+        runId,
+        "evw-cross-backend-delivery-recovery",
+        "gate.ready",
+      ),
+    );
+    await sharedBackend.updateRun(runId, {
+      nodeStates: {
+        gate: { nodeId: "gate", status: "completed", attempt: 1 },
+      },
+    });
+    await time.tickAsync(30_000);
+
+    const resumeStarted = Promise.withResolvers<void>();
+    const releaseResume = Promise.withResolvers<void>();
+    let resumeCalls = 0;
+    const executor = {
+      resume: async () => {
+        resumeCalls++;
+        resumeStarted.resolve();
+        await releaseResume.promise;
+      },
+    } as unknown as WorkflowExecutor;
+    const firstManager = new EventWaitManager({
+      backend: sharedBackendView(sharedBackend),
+      executor,
+      expirationCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 30_000,
+      claimRecoveryCheckInterval: 0,
+    });
+    const secondManager = new EventWaitManager({
+      backend: sharedBackendView(sharedBackend),
+      executor,
+      expirationCheckInterval: 0,
+      deliveryClaimRecoveryDelay: 30_000,
+      claimRecoveryCheckInterval: 0,
+    });
+
+    try {
+      const firstRecovery = firstManager.drainPendingEvents(runId);
+      await resumeStarted.promise;
+      await secondManager.drainPendingEvents(runId);
+
+      assertEquals(resumeCalls, 1);
+      releaseResume.resolve();
+      await firstRecovery;
+      assertEquals(await sharedBackend.listRunEventDeliveryClaims(runId), []);
+    } finally {
+      releaseResume.resolve();
+      firstManager.stop();
+      secondManager.stop();
+    }
+  });
+
   it("recovers an event timeout claimed before the run failure committed", async () => {
     const sharedBackend = new MemoryBackend();
     const parked = createWorkflowClient({
@@ -5304,6 +5394,36 @@ describe("WorkflowClient durable event waits", () => {
     assertExists(restored);
     assertEquals(restored.eventName, "dynamic.ready");
     assertExists(restored.expiresAt, "the persisted timeout must survive dynamic recovery");
+  });
+
+  it("uses persisted event identity past a non-event registered fallback", async () => {
+    const workflowId = "event-wait-past-registered-approval";
+    client.register(workflow({
+      id: workflowId,
+      steps: [waitForApproval("dynamic-wait", { message: "Stale registered approval" })],
+    }));
+    client.getExecutor().register(
+      workflow({
+        id: workflowId,
+        steps: () => [
+          waitForEvent("dynamic-wait", {
+            eventName: "dynamic.ready",
+            timeout: "1h",
+          }),
+        ],
+      }).definition,
+    );
+    const handle = await client.start(workflowId, {});
+    await handle.settled();
+    const [wait] = await client.getPendingEventWaits(handle.runId);
+    assertExists(wait);
+    await backend.resolvePendingEventWait(handle.runId, wait.id, "delivered");
+
+    await client.resume(handle.runId);
+
+    const [restored] = await client.getPendingEventWaits(handle.runId);
+    assertExists(restored);
+    assertEquals(restored.eventName, "dynamic.ready");
   });
 
   it("preserves dynamic approval policy when reconstructing a missing wait", async () => {

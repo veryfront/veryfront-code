@@ -38,6 +38,7 @@ describe("hasEventWaitSupport", () => {
         "resolvePendingEventWait",
         "restorePendingEventWait",
         "listTimedEventWaitClaims",
+        "reserveTimedEventWaitClaim",
         "finalizeTimedEventWaitClaim",
         "appendRunEvent",
         "removeRunEvent",
@@ -45,10 +46,12 @@ describe("hasEventWaitSupport", () => {
         "takeRunEvent",
         "claimRunEventForWait",
         "listRunEventDeliveryClaims",
+        "reserveRunEventDeliveryClaim",
         "restoreRunEvent",
         "restoreRunEventDelivery",
         "finalizeRunEventDelivery",
         "hasRunEventDeliveryReceipt",
+        "updateRunIfStatus",
       ] as const
     ) {
       const partial = new MemoryBackend() as unknown as Record<string, unknown>;

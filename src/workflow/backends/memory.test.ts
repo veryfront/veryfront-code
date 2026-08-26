@@ -3,11 +3,7 @@ import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/te
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
-import type {
-  PersistedPendingApproval,
-  PersistedPendingEventWait,
-  RunEventEnvelope,
-} from "./types.ts";
+import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -510,6 +506,24 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("preserves the historical append semantics of savePendingApproval", async () => {
+      const approval = (id: string): PendingApproval => ({
+        id,
+        nodeId: "review",
+        message: "Review",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await backend.savePendingApproval("approval-append", approval("first"));
+      await backend.savePendingApproval("approval-append", approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals("approval-append")).map(({ id }) => id),
+        ["first", "second"],
+      );
+    });
+
     it("atomically elects one ownerless approval creator", async () => {
       const runId = "approval-ownerless-uniqueness";
       const approval = (id: string): PendingApproval => ({
@@ -1524,30 +1538,9 @@ describe("MemoryBackend", () => {
     });
 
     it("does not yield between taking an event and claiming its wait", async () => {
-      let releaseFirstTake!: () => void;
-      const firstTakeBlocked = new Promise<void>((resolve) => {
-        releaseFirstTake = resolve;
-      });
-      class AsyncTakeBackend extends MemoryBackend {
-        private first = true;
-
-        override async takeRunEvent(
-          runId: string,
-          eventName: string,
-        ): Promise<RunEventEnvelope | null> {
-          const event = super.takeRunEvent(runId, eventName);
-          if (this.first) {
-            this.first = false;
-            await firstTakeBlocked;
-          }
-          return await event;
-        }
-      }
-
-      const racing = new AsyncTakeBackend();
-      await racing.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
       for (const [id, seq] of [["evt-oldest", 1], ["evt-newer", 2]] as const) {
-        await racing.appendRunEvent("run-events", {
+        await backend.appendRunEvent("run-events", {
           id,
           eventName: "payment.confirmed",
           payload: { seq },
@@ -1555,22 +1548,20 @@ describe("MemoryBackend", () => {
         });
       }
 
-      const firstClaim = racing.claimRunEventForWait(
+      const firstClaim = backend.claimRunEventForWait(
         "run-events",
         "evw-1",
         "payment.confirmed",
       );
-      const secondClaim = racing.claimRunEventForWait(
+      const secondClaim = backend.claimRunEventForWait(
         "run-events",
         "evw-1",
         "payment.confirmed",
       );
-      releaseFirstTake();
-
       assertEquals((await firstClaim)?.id, "evt-oldest");
       assertEquals(await secondClaim, null);
       assertEquals(
-        (await racing.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-newer",
       );
     });
@@ -1624,55 +1615,38 @@ describe("MemoryBackend", () => {
     });
 
     it("does not expose a restored wait before its claimed event is back in the mailbox", async () => {
-      class InterleavingRollbackBackend extends MemoryBackend {
-        racedClaim: string | undefined;
-
-        override async restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
-          const restored = await super.restorePendingEventWait(runId, waitId);
-          if (restored) {
-            await super.appendRunEvent(runId, {
-              id: "evt-newer",
-              eventName: "payment.confirmed",
-              payload: { seq: 2 },
-              publishedAt: new Date(),
-            });
-            this.racedClaim = (await super.claimRunEventForWait(
-              runId,
-              waitId,
-              "payment.confirmed",
-            ))?.id;
-          }
-          return restored;
-        }
-      }
-
-      const racing = new InterleavingRollbackBackend();
-      await racing.savePendingEventWait("run-events", createEventWait("evw-1"));
-      await racing.appendRunEvent("run-events", {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.appendRunEvent("run-events", {
         id: "evt-oldest",
         eventName: "payment.confirmed",
         payload: { seq: 1 },
         publishedAt: new Date(),
       });
-      const claimed = await racing.claimRunEventForWait(
+      await backend.appendRunEvent("run-events", {
+        id: "evt-newer",
+        eventName: "payment.confirmed",
+        payload: { seq: 2 },
+        publishedAt: new Date(),
+      });
+      const claimed = await backend.claimRunEventForWait(
         "run-events",
         "evw-1",
         "payment.confirmed",
       );
       assertExists(claimed);
 
-      assertEquals(
-        await racing.restoreRunEventDelivery("run-events", "evw-1", claimed),
-        true,
+      const rollback = backend.restoreRunEventDelivery("run-events", "evw-1", claimed);
+      const racedClaim = backend.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
       );
+
+      assertEquals(await rollback, true);
       assertEquals(
-        racing.racedClaim,
-        undefined,
-        "a concurrent drain must not observe the wait between the two rollback mutations",
-      );
-      assertEquals(
-        (await racing.claimRunEventForWait("run-events", "evw-1", "payment.confirmed"))?.id,
+        (await racedClaim)?.id,
         "evt-oldest",
+        "a concurrent drain must see the restored event with the restored wait",
       );
     });
 

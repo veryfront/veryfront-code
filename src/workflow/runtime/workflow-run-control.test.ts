@@ -1425,6 +1425,40 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     assertEquals((persisted?.context.second as { payload?: unknown })?.payload, { value: 2 });
   });
 
+  it("clears a stale node error when event delivery completes it", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-event-clears-error"),
+      status: "waiting" as const,
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "failed" as const,
+          error: "earlier attempt failed",
+          attempt: 2,
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "event-delivery",
+        runId: run.id,
+        waitId: "wait-gate",
+        nodeId: "gate",
+        eventName: "gate.ready",
+        waitKind: "event",
+      },
+    });
+
+    const state = (await backend.getRun(run.id))?.nodeStates.gate;
+    assertEquals(state?.status, "completed");
+    assertEquals(state?.error, undefined);
+    assertEquals(state?.attempt, 2);
+  });
+
   it("sends complete maps to a backend without declared key-merge support", async () => {
     // The historical third-party contract: updateRun overwrites context and
     // nodeStates wholesale, and nothing declares supportsRunPatchKeyMerge.

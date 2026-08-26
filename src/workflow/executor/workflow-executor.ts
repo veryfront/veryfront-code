@@ -203,16 +203,24 @@ export class WorkflowExecutor {
       }) => {
         const keyMerge = hasRunPatchKeyMergeSupport(this.config.backend);
         const { _tenant: _tenant, ...publicContextPatch } = contextPatch.set;
+        const publicContextDeletes = contextPatch.delete.filter((key) => key !== "_tenant");
         return updateRunIfStatus(
           this.config.backend,
           runId,
           ["running"],
           {
-            nodeStates: keyMerge ? nodeStatePatch.set : nodeStates,
-            nodeStateDeletes: keyMerge ? nodeStatePatch.delete : undefined,
             currentNodes,
-            context: keyMerge ? publicContextPatch : toPersistedWorkflowContext(context),
-            contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant"),
+            ...(keyMerge
+              ? {
+                nodeStates: nodeStatePatch.set,
+                nodeStateDeletes: nodeStatePatch.delete,
+                context: publicContextPatch,
+                contextDeletes: publicContextDeletes,
+              }
+              : {
+                nodeStates,
+                context: toPersistedWorkflowContext(context),
+              }),
           },
           ownership?.workerId,
         );

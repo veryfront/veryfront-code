@@ -723,6 +723,7 @@ function parseRunObservationRecords(
  * ARGV[2] = max approval entries
  * ARGV[3] = observation stream key
  * ARGV[4] = observation stream max length
+ * ARGV[5] = whether to reject a duplicate live node execution
  *
  * Returns 1 when the append was journaled, 0 when the run hash is absent (the
  * approval is still appended, preserving the unconditional-save contract),
@@ -734,14 +735,16 @@ const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
 local approval = cjson.decode(ARGV[1])
-local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
-for i = 1, #existingApprovals do
-  local candidate = cjson.decode(existingApprovals[i])
-  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-      candidate.nodeId == approval.nodeId and
-      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
-        candidate.waitInstanceId == approval.waitInstanceId) then
-    return 3
+if ARGV[5] == '1' then
+  local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
+  for i = 1, #existingApprovals do
+    local candidate = cjson.decode(existingApprovals[i])
+    if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
+        candidate.nodeId == approval.nodeId and
+        (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
+          candidate.waitInstanceId == approval.waitInstanceId) then
+      return 3
+    end
   end
 end
 if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
@@ -932,17 +935,72 @@ for i = 0, len - 1 do
 end
 return 0`;
 
-/** Release one approval decision reservation after its node outcome commits. */
-const FINALIZE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
--- finalize-approval-decision
+/** Lease one approval decision claim to one recovery process. */
+const RESERVE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- reserve-approval-decision
 local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local staleBefore = ARGV[3]
+local patch = ARGV[4]
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      redis.call('lset', KEYS[1], i, deleteJsonObjectFields(raw, '["reconciliationPending"]'))
+      if approval.reconciliationPending ~= true then return 0 end
+      if approval.recoveryClaimId ~= nil and
+          (approval.recoveryClaimedAt == nil or approval.recoveryClaimedAt > staleBefore) then
+        return 2
+      end
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Release one recovery lease without consuming the decision claim. */
+const RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- release-approval-decision-claim
+local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if approval.recoveryClaimId ~= recoveryClaimId then return 2 end
+      redis.call('lset', KEYS[1], i,
+        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]'))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Release one approval decision reservation after its node outcome commits. */
+const FINALIZE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- finalize-approval-decision
+local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if recoveryClaimId == '' then
+        if approval.recoveryClaimId ~= nil then return 2 end
+      elseif approval.recoveryClaimId ~= recoveryClaimId then
+        return 2
+      end
+      redis.call('lset', KEYS[1], i,
+        deleteJsonObjectFields(
+          raw,
+          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]'
+        ))
       return 1
     end
   end
@@ -1133,6 +1191,7 @@ export class RedisBackend implements WorkflowBackend {
       requestedAt: approval.requestedAt.toISOString(),
       expiresAt: approval.expiresAt?.toISOString(),
       decidedAt: approval.decidedAt?.toISOString(),
+      recoveryClaimedAt: approval.recoveryClaimedAt?.toISOString(),
     });
   }
 
@@ -1590,12 +1649,20 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
-    await this.savePendingApprovalIfAbsent(runId, approval);
+    await this.savePendingApprovalRecord(runId, approval, false);
   }
 
   async savePendingApprovalIfAbsent(
     runId: string,
     approval: PersistedPendingApproval,
+  ): Promise<boolean> {
+    return await this.savePendingApprovalRecord(runId, approval, true);
+  }
+
+  private async savePendingApprovalRecord(
+    runId: string,
+    approval: PersistedPendingApproval,
+    rejectDuplicate: boolean,
   ): Promise<boolean> {
     const client = await this.ensureClient();
 
@@ -1617,6 +1684,7 @@ export class RedisBackend implements WorkflowBackend {
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        rejectDuplicate ? "1" : "0",
       ],
     );
     if (Number(result) === 2) {
@@ -1670,6 +1738,7 @@ export class RedisBackend implements WorkflowBackend {
       requestedAt: new Date(data.requestedAt),
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
+      recoveryClaimedAt: data.recoveryClaimedAt ? new Date(data.recoveryClaimedAt) : undefined,
     };
   }
 
@@ -1787,12 +1856,53 @@ export class RedisBackend implements WorkflowBackend {
     return result;
   }
 
-  async finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+  async reserveApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const result = await client.eval(
+      RESERVE_APPROVAL_DECISION_SCRIPT,
+      [this.approvalsKey(runId)],
+      [
+        approvalId,
+        recoveryClaimId,
+        staleBefore.toISOString(),
+        JSON.stringify({
+          recoveryClaimId,
+          recoveryClaimedAt: claimedAt.toISOString(),
+        }),
+      ],
+    );
+    return Number(result) === 1;
+  }
+
+  async releaseApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+    await client.eval(
+      RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT,
+      [this.approvalsKey(runId)],
+      [approvalId, recoveryClaimId],
+    );
+  }
+
+  async finalizeApprovalDecision(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId?: string,
+  ): Promise<void> {
     const client = await this.ensureClient();
     await client.eval(
       FINALIZE_APPROVAL_DECISION_SCRIPT,
       [this.approvalsKey(runId)],
-      [approvalId],
+      [approvalId, recoveryClaimId ?? ""],
     );
   }
 

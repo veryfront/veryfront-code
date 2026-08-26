@@ -36,6 +36,7 @@ const logger = baseLogger.component("approval-manager");
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS = 30_000;
 const DEFAULT_DECISION_CLAIM_CHECK_INTERVAL_MS = 60_000;
+const MIN_DECISION_CLAIM_RECOVERY_LEASE_MS = 1_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
 const APPROVAL_CREATION_ALREADY_SETTLED = Symbol("approval-creation-already-settled");
 
@@ -533,99 +534,212 @@ export class ApprovalManager {
 
   private async reconcileApprovalDecisionClaims(): Promise<void> {
     const listClaims = this.config.backend.listApprovalDecisionClaims;
-    if (!listClaims) return;
+    const reserveClaim = this.config.backend.reserveApprovalDecisionClaim;
+    if (!listClaims || !reserveClaim) return;
     const recoveryDelay = this.config.decisionClaimRecoveryDelay ??
       DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS;
+    const recoveryLease = Math.max(recoveryDelay, MIN_DECISION_CLAIM_RECOVERY_LEASE_MS);
     const claims = await listClaims.call(this.config.backend);
 
     for (const { runId, approval } of claims) {
       if (this.destroyed) return;
-      const claimKey = this.decisionClaimKey(runId, approval.id);
-      if (this.activeDecisionClaims.has(claimKey)) continue;
-      if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) continue;
-      const claimAge = Date.now() - approval.decidedAt.getTime();
-      if (claimAge < recoveryDelay) {
-        this.scheduleDecisionClaimRecovery(recoveryDelay - claimAge);
-        continue;
-      }
+      await this.reconcileApprovalDecisionClaim(
+        runId,
+        approval,
+        recoveryDelay,
+        recoveryLease,
+      );
+    }
+  }
 
-      let decision: ApprovalDecision;
+  private async reconcileApprovalDecisionClaim(
+    runId: string,
+    approval: PersistedPendingApproval,
+    recoveryDelay: number,
+    recoveryLease: number,
+  ): Promise<void> {
+    const claimKey = this.decisionClaimKey(runId, approval.id);
+    if (this.activeDecisionClaims.has(claimKey)) return;
+    if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) return;
+
+    const lastClaimedAt = approval.recoveryClaimedAt ?? approval.decidedAt;
+    const requiredAge = approval.recoveryClaimedAt ? recoveryLease : recoveryDelay;
+    const claimAge = Date.now() - lastClaimedAt.getTime();
+    if (claimAge < requiredAge) {
+      this.scheduleDecisionClaimRecovery(requiredAge - claimAge);
+      return;
+    }
+
+    const decision = this.tryReconstructApprovalDecision(runId, approval);
+    if (!decision) return;
+    const recoveryClaimId = await this.reserveApprovalDecisionRecovery(
+      runId,
+      approval.id,
+      recoveryLease,
+    );
+    if (!recoveryClaimId) return;
+    await this.reconcileReservedApprovalDecision(
+      runId,
+      approval,
+      decision,
+      claimKey,
+      recoveryClaimId,
+    );
+  }
+
+  private tryReconstructApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): ApprovalDecision | null {
+    try {
+      return reconstructApprovalDecision(approval);
+    } catch (error) {
+      logger.error(
+        "Cannot reconstruct a durable approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
+      );
+      return null;
+    }
+  }
+
+  private async reserveApprovalDecisionRecovery(
+    runId: string,
+    approvalId: string,
+    recoveryLease: number,
+  ): Promise<string | null> {
+    const reserveClaim = this.config.backend.reserveApprovalDecisionClaim;
+    if (!reserveClaim) return null;
+    const recoveryClaimId = generateId("apr-recovery");
+    const claimedAt = new Date();
+    const reserved = await reserveClaim.call(
+      this.config.backend,
+      runId,
+      approvalId,
+      recoveryClaimId,
+      claimedAt,
+      new Date(claimedAt.getTime() - recoveryLease),
+    );
+    return reserved ? recoveryClaimId : null;
+  }
+
+  private async reconcileReservedApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    claimKey: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    this.activeDecisionClaims.add(claimKey);
+    let releaseReservation = false;
+    try {
+      releaseReservation = await this.applyReservedApprovalDecision(
+        runId,
+        approval,
+        decision,
+        recoveryClaimId,
+      );
+    } catch (error) {
+      logger.error(
+        "Failed to recover an approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
+      );
+    } finally {
       try {
-        decision = reconstructApprovalDecision(approval);
-      } catch (error) {
-        logger.error(
-          "Cannot reconstruct a durable approval decision claim",
-          { approvalId: approval.id, runId },
-          error,
-        );
-        continue;
-      }
-
-      this.activeDecisionClaims.add(claimKey);
-      try {
-        const run = await this.config.backend.getRun(runId);
-        if (!run) {
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
-          continue;
-        }
-        const currentState = run.nodeStates[approval.nodeId];
-        if (
-          !isSameWaitNodeExecution(approval, {
-            nodeId: approval.nodeId,
-            waitInstanceId: currentState?._waitInstanceId,
-          })
-        ) {
-          // The old decision already resumed the run far enough to create a
-          // newer execution of this reusable wait. Reapplying it would approve
-          // the new iteration without its own human decision.
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
-          continue;
-        }
-        if (currentState?.status === "completed") {
-          if (decision.approved && run.status === "waiting") {
-            if (!this.config.executor) continue;
-            await this.config.executor.resume(runId, undefined, run.workerId);
-          }
-          await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
-          continue;
-        }
-
-        const outcome = await reconcileWorkflowRunControl({
-          backend: this.config.backend,
-          operation: {
-            type: "approval-decision",
+        if (releaseReservation) {
+          await this.config.backend.releaseApprovalDecisionClaim?.(
             runId,
-            approvalId: approval.id,
-            nodeId: approval.nodeId,
-            decision,
-            decidedAt: approval.decidedAt,
-            maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
-            resume: this.config.executor
-              ? (id, expectedWorkerId) =>
-                this.config.executor!.resume(id, undefined, expectedWorkerId)
-              : undefined,
-          },
-        });
-        if (
-          shouldRetainDecisionClaim(
-            outcome,
-            decision,
-            this.config.executor !== undefined,
-          )
-        ) {
-          continue;
+            approval.id,
+            recoveryClaimId,
+          );
         }
-        await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
-      } catch (error) {
-        logger.error(
-          "Failed to recover an approval decision claim",
-          { approvalId: approval.id, runId },
-          error,
-        );
       } finally {
         this.activeDecisionClaims.delete(claimKey);
       }
     }
+  }
+
+  /** Return true when the durable decision remains live and its reservation should be released. */
+  private async applyReservedApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    recoveryClaimId: string,
+  ): Promise<boolean> {
+    const run = await this.config.backend.getRun(runId);
+    if (!run) {
+      await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+      return false;
+    }
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      })
+    ) {
+      // The old decision already resumed the run far enough to create a newer
+      // execution of this reusable wait. Reapplying it would approve the new
+      // iteration without its own human decision.
+      await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+      return false;
+    }
+    if (currentState?.status === "completed") {
+      return await this.finishCommittedApprovalDecision(
+        run,
+        approval,
+        decision,
+        recoveryClaimId,
+      );
+    }
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend: this.config.backend,
+      operation: {
+        type: "approval-decision",
+        runId,
+        approvalId: approval.id,
+        nodeId: approval.nodeId,
+        decision,
+        decidedAt: approval.decidedAt!,
+        maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
+        resume: this.config.executor
+          ? (id, expectedWorkerId) => this.config.executor!.resume(id, undefined, expectedWorkerId)
+          : undefined,
+      },
+    });
+    if (shouldRetainDecisionClaim(outcome, decision, this.config.executor !== undefined)) {
+      return true;
+    }
+    await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+    return false;
+  }
+
+  private async finishCommittedApprovalDecision(
+    run: WorkflowRun,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    recoveryClaimId: string,
+  ): Promise<boolean> {
+    if (decision.approved && run.status === "waiting") {
+      if (!this.config.executor) return true;
+      await this.config.executor.resume(run.id, undefined, run.workerId);
+    }
+    await this.finalizeReservedApproval(run.id, approval.id, recoveryClaimId);
+    return false;
+  }
+
+  private async finalizeReservedApproval(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    await this.config.backend.finalizeApprovalDecision?.(
+      runId,
+      approvalId,
+      recoveryClaimId,
+    );
   }
 
   private decisionClaimKey(runId: string, approvalId: string): string {
@@ -862,7 +976,9 @@ export class ApprovalManager {
       );
       if (!failed) {
         const latest = await this.config.backend.getRun(runId);
-        if (latest?.status === "failed") continue;
+        if (
+          latest && latest.status !== "completed" && latest.status !== "cancelled"
+        ) continue;
       }
       try {
         await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);

@@ -320,6 +320,7 @@ class MockRedisAdapter implements RedisAdapter {
       }
       const approval = JSON.parse(args[0]!);
       if (
+        args[4] === "1" &&
         list.some((raw) => {
           const candidate = JSON.parse(raw);
           return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
@@ -429,14 +430,64 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(0);
     }
 
+    if (script.includes("reserve-approval-decision")) {
+      const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
+      const staleBefore = args[2]!;
+      const patch = JSON.parse(args[3]!);
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id !== approvalId) continue;
+          if (approval.reconciliationPending !== true) return Promise.resolve(0);
+          if (
+            approval.recoveryClaimId !== undefined &&
+            (approval.recoveryClaimedAt === undefined ||
+              approval.recoveryClaimedAt > staleBefore)
+          ) return Promise.resolve(2);
+          Object.assign(approval, patch, { recoveryClaimId });
+          list[i] = JSON.stringify(approval);
+          return Promise.resolve(1);
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("release-approval-decision-claim")) {
+      const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id !== approvalId) continue;
+          if (approval.recoveryClaimId !== recoveryClaimId) return Promise.resolve(2);
+          delete approval.recoveryClaimId;
+          delete approval.recoveryClaimedAt;
+          list[i] = JSON.stringify(approval);
+          return Promise.resolve(1);
+        }
+      }
+      return Promise.resolve(0);
+    }
+
     if (script.includes("finalize-approval-decision")) {
       const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
       const list = this.lists.get(key);
       if (list) {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
+            if (
+              recoveryClaimId === ""
+                ? approval.recoveryClaimId !== undefined
+                : approval.recoveryClaimId !== recoveryClaimId
+            ) return Promise.resolve(2);
             delete approval.reconciliationPending;
+            delete approval.recoveryClaimId;
+            delete approval.recoveryClaimedAt;
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -2685,6 +2736,21 @@ describe("RedisBackend", () => {
       assertEquals(pending[0]!.status, "pending");
     });
 
+    it("preserves the historical append semantics of savePendingApproval", async () => {
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      await backend.savePendingApproval("run-ap-append", approval("first"));
+      await backend.savePendingApproval("run-ap-append", approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals("run-ap-append")).map(({ id }) => id),
+        ["first", "second"],
+      );
+    });
+
     it("atomically elects one ownerless approval creator", async () => {
       const runId = "run-ap-ownerless-uniqueness";
       const approval = (id: string): PendingApproval => ({
@@ -3165,6 +3231,55 @@ describe("RedisBackend", () => {
           [1, "test:schema-v1:approvals:*"],
         ],
       );
+    });
+
+    it("leases approval decision recovery to one process at a time", async () => {
+      const runId = "run-ap-recovery-lease";
+      await backend.savePendingApproval(runId, makeApproval("approval-lease"));
+      await backend.updateApproval(runId, "approval-lease", {
+        approved: true,
+        approver: "admin",
+      });
+      const firstClaimedAt = new Date("2026-08-26T10:00:00.000Z");
+
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-first",
+          firstClaimedAt,
+          new Date("2026-08-26T09:59:00.000Z"),
+        ),
+        true,
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-second",
+          new Date("2026-08-26T10:00:01.000Z"),
+          new Date("2026-08-26T09:59:59.000Z"),
+        ),
+        false,
+      );
+
+      await backend.releaseApprovalDecisionClaim(
+        runId,
+        "approval-lease",
+        "recovery-first",
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-second",
+          new Date("2026-08-26T10:00:01.000Z"),
+          new Date("2026-08-26T09:59:59.000Z"),
+        ),
+        true,
+      );
+      await backend.finalizeApprovalDecision(runId, "approval-lease", "recovery-second");
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
   });
 

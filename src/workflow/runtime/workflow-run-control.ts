@@ -575,6 +575,7 @@ function reconcileEventDelivery(
           nodeId: operation.nodeId,
           status: "completed",
           output: outcome,
+          error: undefined,
           attempt: currentNodeState?.attempt ?? 1,
           completedAt: deliveredAt,
         },

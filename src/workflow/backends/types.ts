@@ -139,6 +139,10 @@ export interface PersistedPendingApproval extends PendingApproval {
   reconciliationPending?: true;
   /** Structured response data retained until the durable decision reconciles. */
   decisionData?: unknown;
+  /** Time a replacement process reserved this unfinished reconciliation. */
+  recoveryClaimedAt?: Date;
+  /** Fencing token held by the process recovering this decision. */
+  recoveryClaimId?: string;
 }
 
 /** Event-wait record persisted by workflow backends, including worker ownership. */
@@ -149,6 +153,8 @@ export interface PersistedPendingEventWait extends PendingEventWait {
   workerId?: string;
   /** Time a delivered or expired claim left the pending set. */
   claimedAt?: Date;
+  /** Time a replacement process leased this unfinished claim for recovery. */
+  recoveryClaimedAt?: Date;
   /** Exact event reserved by an unfinished delivery claim. */
   claimedEventId?: string;
   /** Exact event whose delivery was durably finalized. */
@@ -307,8 +313,30 @@ export interface WorkflowBackend {
   listApprovalDecisionClaims?(runId?: string): Promise<
     Array<{ runId: string; approval: PersistedPendingApproval }>
   >;
+  /**
+   * Atomically reserve an unfinished decision for cross-process recovery.
+   * An existing reservation may be replaced only when it is no newer than
+   * `staleBefore`.
+   */
+  reserveApprovalDecisionClaim?(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean>;
+  /** Release a recovery reservation while retaining the unfinished decision. */
+  releaseApprovalDecisionClaim?(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void>;
   /** Release a decision claim after its node outcome commits. */
-  finalizeApprovalDecision?(runId: string, approvalId: string): Promise<void>;
+  finalizeApprovalDecision?(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId?: string,
+  ): Promise<void>;
   listPendingApprovals?(filter?: {
     workflowId?: string;
     approver?: string;
@@ -395,6 +423,13 @@ export interface WorkflowBackend {
    * mutations.
    */
   listTimedEventWaitClaims?(runId?: string): Promise<PersistedPendingEventWait[]>;
+  /** Atomically lease one abandoned timeout claim for recovery. */
+  reserveTimedEventWaitClaim?(
+    runId: string,
+    waitId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean>;
   /** Release a timeout claim after its matching run transition commits. */
   finalizeTimedEventWaitClaim?(runId: string, waitId: string): Promise<void>;
 
@@ -441,6 +476,14 @@ export interface WorkflowBackend {
    * replacement process can recover a publisher that exited after claiming.
    */
   listRunEventDeliveryClaims?(runId?: string): Promise<RunEventDeliveryClaim[]>;
+  /** Atomically lease one abandoned delivery claim for recovery. */
+  reserveRunEventDeliveryClaim?(
+    runId: string,
+    waitId: string,
+    eventId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean>;
   /**
    * Return a claimed event to the mailbox after its delivery failed, at the
    * head of the mailbox rather than the tail.
@@ -650,6 +693,7 @@ type WithEventWaitSupport =
       | "resolvePendingEventWait"
       | "restorePendingEventWait"
       | "listTimedEventWaitClaims"
+      | "reserveTimedEventWaitClaim"
       | "finalizeTimedEventWaitClaim"
       | "appendRunEvent"
       | "removeRunEvent"
@@ -657,6 +701,7 @@ type WithEventWaitSupport =
       | "takeRunEvent"
       | "claimRunEventForWait"
       | "listRunEventDeliveryClaims"
+      | "reserveRunEventDeliveryClaim"
       | "restoreRunEvent"
       | "restoreRunEventDelivery"
       | "finalizeRunEventDelivery"
@@ -713,6 +758,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.resolvePendingEventWait === "function" &&
     typeof backend.restorePendingEventWait === "function" &&
     typeof backend.listTimedEventWaitClaims === "function" &&
+    typeof backend.reserveTimedEventWaitClaim === "function" &&
     typeof backend.finalizeTimedEventWaitClaim === "function" &&
     typeof backend.appendRunEvent === "function" &&
     typeof backend.removeRunEvent === "function" &&
@@ -720,10 +766,12 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.takeRunEvent === "function" &&
     typeof backend.claimRunEventForWait === "function" &&
     typeof backend.listRunEventDeliveryClaims === "function" &&
+    typeof backend.reserveRunEventDeliveryClaim === "function" &&
     typeof backend.restoreRunEvent === "function" &&
     typeof backend.restoreRunEventDelivery === "function" &&
     typeof backend.finalizeRunEventDelivery === "function" &&
     typeof backend.hasRunEventDeliveryReceipt === "function" &&
+    typeof backend.updateRunIfStatus === "function" &&
     hasRunPatchKeyMergeSupport(backend) &&
     (!hasExecutionOwnershipSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")

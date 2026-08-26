@@ -96,6 +96,7 @@ export class DAGExecutor {
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
+      declaredNodeIds: new Set(),
       ownership,
     };
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
@@ -120,6 +121,10 @@ export class DAGExecutor {
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
     const graphNodeIds = new Set(nodeMap.keys());
+    scope = {
+      ...scope,
+      declaredNodeIds: new Set([...scope.declaredNodeIds, ...graphNodeIds]),
+    };
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -324,7 +329,6 @@ export class DAGExecutor {
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
             scope,
-            graphNodeIds,
             abortSignal,
           )
         ),
@@ -588,7 +592,6 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     scope: ExecutionScope,
-    graphNodeIds: ReadonlySet<string>,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
@@ -608,7 +611,6 @@ export class DAGExecutor {
           context,
           nodeStates,
           scope,
-          graphNodeIds,
           abortSignal,
         );
         // A failing node returns a failed state rather than throwing, so the span's own
@@ -641,7 +643,6 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     scope: ExecutionScope,
-    graphNodeIds: ReadonlySet<string>,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     const nodeId = node.id;
@@ -682,7 +683,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
-              parentNodeIds: graphNodeIds,
+              parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
@@ -740,7 +741,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
-              parentNodeIds: graphNodeIds,
+              parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run) =>
                   this.executeChildGraph(nodes, run, scope, undefined, attemptSignal),

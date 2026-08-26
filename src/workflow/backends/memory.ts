@@ -534,7 +534,17 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
-    return this.savePendingApprovalIfAbsent(runId, approval).then(() => undefined);
+    logger.debug("Saving approval", { approvalId: approval.id, runId });
+    const approvals = this.approvals.get(runId) ?? [];
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.approvals.set(runId, approvals);
+    const run = this.runs.get(runId);
+    if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
+    return Promise.resolve();
   }
 
   savePendingApprovalIfAbsent(
@@ -683,9 +693,51 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(claims);
   }
 
-  finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+  reserveApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
     const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
-    if (approval) delete approval.reconciliationPending;
+    if (!approval || approval.reconciliationPending !== true) return Promise.resolve(false);
+    if (approval.recoveryClaimedAt && approval.recoveryClaimedAt > staleBefore) {
+      return Promise.resolve(false);
+    }
+    approval.recoveryClaimId = recoveryClaimId;
+    approval.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
+  releaseApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (approval?.recoveryClaimId === recoveryClaimId) {
+      delete approval.recoveryClaimId;
+      delete approval.recoveryClaimedAt;
+    }
+    return Promise.resolve();
+  }
+
+  finalizeApprovalDecision(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId?: string,
+  ): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (!approval) return Promise.resolve();
+    if (
+      recoveryClaimId === undefined
+        ? approval.recoveryClaimId !== undefined
+        : approval.recoveryClaimId !== recoveryClaimId
+    ) return Promise.resolve();
+    delete approval.reconciliationPending;
+    delete approval.recoveryClaimId;
+    delete approval.recoveryClaimedAt;
     return Promise.resolve();
   }
 
@@ -827,6 +879,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     wait.status = "pending";
     delete wait.claimedAt;
+    delete wait.recoveryClaimedAt;
     delete wait.claimedEventId;
     return Promise.resolve(true);
   }
@@ -848,9 +901,30 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(claims);
   }
 
+  reserveTimedEventWaitClaim(
+    runId: string,
+    waitId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    const isTimedClaim = wait !== undefined && wait.claimedAt !== undefined &&
+      ((wait.waitKind === "delay" && wait.status === "delivered") ||
+        (wait.waitKind === "event" && wait.status === "expired"));
+    if (
+      !isTimedClaim ||
+      (wait.recoveryClaimedAt !== undefined && wait.recoveryClaimedAt > staleBefore)
+    ) return Promise.resolve(false);
+    wait.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
   finalizeTimedEventWaitClaim(runId: string, waitId: string): Promise<void> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
-    if (wait) delete wait.claimedAt;
+    if (wait) {
+      delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
+    }
     return Promise.resolve();
   }
 
@@ -968,6 +1042,27 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(claims);
   }
 
+  reserveRunEventDeliveryClaim(
+    runId: string,
+    waitId: string,
+    eventId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (
+      !claim || claim.wait.id !== waitId ||
+      (claim.wait.recoveryClaimedAt !== undefined &&
+        claim.wait.recoveryClaimedAt > staleBefore)
+    ) {
+      return Promise.resolve(false);
+    }
+    claim.wait.recoveryClaimedAt = new Date(claimedAt);
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (wait) wait.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
   restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
     const mailbox = this.runEvents.get(runId) ?? [];
     restoreRetainedRunEvent(mailbox, event);
@@ -980,11 +1075,10 @@ export class MemoryBackend implements WorkflowBackend {
    * Undo a claimed-but-undelivered delivery: the wait returns to pending and
    * the event to its publication-order mailbox position as one step.
    *
-   * Composed from this backend's own restore primitives so that subclassed
-   * fakes keep observing them; every mutation is synchronous in-memory state,
-   * so the composition cannot be split by a crash the way two separate network
-   * round-trips to a durable backend can. A durable backend must implement
-   * this as a single atomic operation (a transaction or script) instead.
+   * Every mutation is one synchronous in-memory state transition, so callers
+   * cannot observe the restored wait before its event returns to the mailbox.
+   * A durable backend must implement this as a single atomic operation (a
+   * transaction or script) instead.
    */
   restoreRunEventDelivery(
     runId: string,
@@ -998,6 +1092,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (restored) {
       wait.status = "pending";
       delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
       delete wait.claimedEventId;
     }
     // The event goes back even when the wait belongs to another actor now: it
@@ -1015,6 +1110,7 @@ export class MemoryBackend implements WorkflowBackend {
       const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);
       if (wait) {
         delete wait.claimedAt;
+        delete wait.recoveryClaimedAt;
         delete wait.claimedEventId;
         if (delivered) wait.deliveredEventId = eventId;
       }
@@ -1039,6 +1135,7 @@ export class MemoryBackend implements WorkflowBackend {
       const wait = waits.find((candidate) => candidate.id === claim.wait.id);
       if (!wait) continue;
       delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
       delete wait.claimedEventId;
       if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
         wait.deliveredEventId = eventId;

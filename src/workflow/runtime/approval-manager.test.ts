@@ -48,6 +48,32 @@ class FailOnApprovalDecisionBackend extends MemoryBackend {
   }
 }
 
+class ReactivateBeforeExpiryStatusReadBackend extends FailOnApprovalDecisionBackend {
+  private reactivateOnRead = false;
+
+  override async updateApproval(
+    runId: string,
+    approvalId: string,
+    decision: Parameters<MemoryBackend["updateApproval"]>[2],
+  ): Promise<boolean> {
+    const applied = await super.updateApproval(runId, approvalId, decision);
+    this.reactivateOnRead = true;
+    return applied;
+  }
+
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    if (this.reactivateOnRead) {
+      this.reactivateOnRead = false;
+      await super.updateRun(runId, {
+        status: "pending",
+        error: undefined,
+        completedAt: undefined,
+      });
+    }
+    return await super.getRun(runId);
+  }
+}
+
 class ReclaimDuringDecisionBackend extends MemoryBackend {
   reclaimed = false;
 
@@ -300,6 +326,31 @@ describe("ApprovalManager", () => {
       await manager.checkExpiredApprovals();
 
       assertEquals((await backend.getRun(runId))?.status, "failed");
+      assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
+    });
+
+    it("retains an expiry claim when retry reactivates the run", async () => {
+      backend = new ReactivateBeforeExpiryStatusReadBackend();
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-expiry-concurrent-retry";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: { nodeId: "review", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-expiry-concurrent-retry",
+        nodeId: "review",
+        message: "Expired review",
+        requestedAt: pastDate(2_000),
+        expiresAt: pastDate(1_000),
+        status: "pending",
+      });
+
+      await manager.checkExpiredApprovals();
+
+      assertEquals((await backend.getRun(runId))?.status, "pending");
       assertEquals((await backend.listApprovalDecisionClaims(runId)).length, 1);
     });
   });
@@ -1229,6 +1280,68 @@ describe("ApprovalManager", () => {
       });
       assertEquals(resumeCalls, [[runId, undefined, "worker-current-owner"]]);
       assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
+    it("leases abandoned decision recovery across manager instances", async () => {
+      using time = new FakeTime(new Date("2026-08-26T10:00:00.000Z"));
+      const runId = "run-cross-manager-decision-recovery";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: { nodeId: "review", status: "running", attempt: 1 },
+        },
+      }));
+      await backend.savePendingApproval(runId, {
+        id: "apr-cross-manager-decision-recovery",
+        nodeId: "review",
+        message: "approve me",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(runId, "apr-cross-manager-decision-recovery", {
+        approved: true,
+        approver: "reviewer",
+      });
+      await time.tickAsync(30_000);
+
+      const resumeStarted = Promise.withResolvers<void>();
+      const releaseResume = Promise.withResolvers<void>();
+      let resumeCalls = 0;
+      const executor = {
+        resume: async () => {
+          resumeCalls++;
+          resumeStarted.resolve();
+          await releaseResume.promise;
+        },
+      } as unknown as WorkflowExecutor;
+      manager = new ApprovalManager({
+        backend,
+        executor,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 30_000,
+        decisionClaimCheckInterval: 0,
+      });
+      const otherManager = new ApprovalManager({
+        backend,
+        executor,
+        expirationCheckInterval: 0,
+        decisionClaimRecoveryDelay: 30_000,
+        decisionClaimCheckInterval: 0,
+      });
+
+      try {
+        const firstRecovery = manager.checkApprovalDecisionClaims();
+        await resumeStarted.promise;
+        await otherManager.checkApprovalDecisionClaims();
+
+        assertEquals(resumeCalls, 1);
+        releaseResume.resolve();
+        await firstRecovery;
+        assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+      } finally {
+        releaseResume.resolve();
+        otherManager.stop();
+      }
     });
 
     it("does not apply an old decision claim to a newer wait instance", async () => {
