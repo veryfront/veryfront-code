@@ -24,7 +24,7 @@ export async function GET(req: Request): Promise<Response> {
         id,
         name,
         icon,
-        connected: await tokenStore.isConnected(userId, id),
+        connected: await tokenStore.isConnected(userId, id, []),
         connectUrl: `/api/auth/${id}`,
       };
     }),

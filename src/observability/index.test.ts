@@ -31,7 +31,6 @@ const expectedRuntimeExports = [
   "initMetrics",
   "initTracing",
   "initializeOTLP",
-  "initializeApplicationErrorReporter",
   "injectContext",
   "instrument",
   "instrumentBatch",
@@ -104,5 +103,10 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);
     assertEquals("reset" in observability.metrics, false);
+  });
+
+  it("does not expose process-wide error-reporter mutators", () => {
+    assertEquals("initializeApplicationErrorReporter" in observability, false);
+    assertEquals("setApplicationErrorReporter" in observability, false);
   });
 });

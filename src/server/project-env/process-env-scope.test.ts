@@ -14,9 +14,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module server/project-env/process-env-scope.test
  */
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { env, getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { inspect } from "node:util";
+import {
+  createProjectScopedProcessEnvView,
+  projectScopedEnvRecord,
+} from "#veryfront/platform/compat/process/scoped-process-env.ts";
 
 // Importing storage registers the project env scope bridge.
 import { runWithProjectEnv } from "./storage.ts";
@@ -46,6 +51,41 @@ function withHostVar(key: string, value: string, fn: () => void): void {
 }
 
 describe("process.env under an active project env snapshot", () => {
+  it("keeps captured views ambient-scope-aware across project requests", () => {
+    let snapshot: Readonly<Record<string, string>> | undefined;
+    const hostEnv = { HOST_ONLY: "host-value" };
+    const view = createProjectScopedProcessEnvView(hostEnv, () => snapshot);
+    const saved = view;
+
+    snapshot = { API_KEY: "project-a" };
+    assertEquals(saved.API_KEY, "project-a");
+    snapshot = { API_KEY: "project-b" };
+    assertEquals(saved.API_KEY, "project-b");
+    snapshot = undefined;
+    assertEquals(saved.API_KEY, undefined);
+    assertEquals(saved.HOST_ONLY, "host-value");
+    assertEquals(view, saved, "one stable public view must serve every ambient scope");
+  });
+
+  it("materializes scoped records without invoking inherited setters", () => {
+    const key = "VF_SCOPE_PROBE_INHERITED_SETTER";
+    let leaked: unknown;
+    Object.defineProperty(Object.prototype, key, {
+      set(value) {
+        leaked = value;
+      },
+      configurable: true,
+    });
+    try {
+      const record = projectScopedEnvRecord({ [key]: "project-secret" });
+      assertEquals(leaked, undefined);
+      assertEquals(record[key], "project-secret");
+      assertEquals(Object.hasOwn(record, key), true);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[key];
+    }
+  });
+
   it("does not expose host-scoped values through process.env", () => {
     withHostVar("VF_SCOPE_PROBE_HOST_ONLY", "host-scoped-value", () => {
       runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
@@ -90,6 +130,136 @@ describe("process.env under an active project env snapshot", () => {
       } finally {
         deno.env!.delete(scopedKey);
       }
+    });
+  });
+
+  it("does not expose the host environment through inspection", () => {
+    withHostVar("VF_SCOPE_PROBE_INSPECT_ONLY", "host-inspection-value", () => {
+      runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+        const formatted = inspect(processEnv);
+        assertEquals(formatted.includes("VF_SCOPE_PROBE_INSPECT_ONLY"), false);
+        assertEquals(formatted.includes("host-inspection-value"), false);
+        assertEquals(formatted.includes("PROJECT_VAR"), true);
+        assertEquals(formatted.includes("project-value"), true);
+      });
+    });
+  });
+
+  it("preserves host values during inspection outside a project scope", () => {
+    withHostVar("VF_SCOPE_PROBE_INSPECT_HOST", "host-visible-value", () => {
+      const formatted = inspect(processEnv);
+      assertEquals(formatted.includes("VF_SCOPE_PROBE_INSPECT_HOST"), true);
+      assertEquals(formatted.includes("host-visible-value"), true);
+    });
+  });
+
+  /**
+   * The raw environment object as an expression, the way diagnostics access it
+   * (`console.dir(process.env)`), so each access resolves the scope-appropriate
+   * view rather than reusing the module-level capture.
+   */
+  function freshEnv(): Record<string, string | undefined> {
+    return (globalThis as { process?: { env: Record<string, string | undefined> } })
+      .process!.env;
+  }
+
+  it("keeps generic inspection opaque when custom inspect hooks are disabled", () => {
+    // console.dir and inspect(v, { customInspect: false }) skip the custom
+    // inspect hook. Node and Bun read the proxy target directly, so neither host
+    // nor tenant environment values may be stored there.
+    withHostVar("VF_SCOPE_PROBE_RAW_INSPECT", "host-raw-value", () => {
+      runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+        const formatted = inspect(freshEnv(), { customInspect: false });
+        assertEquals(formatted.includes("VF_SCOPE_PROBE_RAW_INSPECT"), false);
+        assertEquals(formatted.includes("host-raw-value"), false);
+      });
+    });
+  });
+
+  it("reflects scoped writes and deletes through the scoped inspect hook", () => {
+    runWithProjectEnv(
+      { PROJECT_VAR: "project-value", VF_SCOPE_PROBE_DROPPED: "dropped-value" },
+      () => {
+        // Mutate through the module-captured view so the write travels between
+        // views: the snapshot's materialized record must pick it up anyway.
+        processEnv!["VF_SCOPE_PROBE_RAW_WRITTEN"] = "written-in-scope";
+        delete processEnv!["VF_SCOPE_PROBE_DROPPED"];
+
+        const formatted = inspect(freshEnv());
+        assertEquals(formatted.includes("VF_SCOPE_PROBE_RAW_WRITTEN"), true);
+        assertEquals(formatted.includes("written-in-scope"), true);
+        assertEquals(formatted.includes("VF_SCOPE_PROBE_DROPPED"), false);
+        assertEquals(formatted.includes("PROJECT_VAR"), true);
+      },
+    );
+  });
+
+  it("keeps scoped inspection distinct across nested scopes", () => {
+    runWithProjectEnv({ VF_SCOPE_PROBE_NESTED: "outer-value" }, () => {
+      runWithProjectEnv({ VF_SCOPE_PROBE_NESTED: "inner-value" }, () => {
+        const formatted = inspect(freshEnv());
+        assertEquals(formatted.includes("inner-value"), true);
+        assertEquals(formatted.includes("outer-value"), false);
+      });
+      const formatted = inspect(freshEnv());
+      assertEquals(formatted.includes("outer-value"), true);
+      assertEquals(formatted.includes("inner-value"), false);
+    });
+  });
+
+  it("does not leak a finished scope's values through generic inspection", () => {
+    runWithProjectEnv({ VF_SCOPE_PROBE_FINISHED: "finished-scope-value" }, () => {
+      assertEquals(
+        inspect(freshEnv()).includes("finished-scope-value"),
+        true,
+      );
+    });
+    const formatted = inspect(freshEnv(), { customInspect: false });
+    assertEquals(formatted.includes("VF_SCOPE_PROBE_FINISHED"), false);
+    assertEquals(formatted.includes("finished-scope-value"), false);
+  });
+
+  it("keeps process.env identity stable within a scope and at host level", () => {
+    runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+      assertEquals(freshEnv() === freshEnv(), true);
+    });
+    assertEquals(freshEnv() === freshEnv(), true);
+    assertEquals(freshEnv() === processEnv, true);
+  });
+
+  it("preserves the native environment prototype", () => {
+    assertEquals(Object.getPrototypeOf(processEnv), Object.prototype);
+    assertEquals(processEnv instanceof Object, true);
+    runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+      assertEquals(Object.getPrototypeOf(freshEnv()), Object.prototype);
+      assertEquals(freshEnv() instanceof Object, true);
+    });
+  });
+
+  it("keeps host-level prototype changes synchronized with the backing environment", () => {
+    const scope: { snapshot?: Readonly<Record<string, string>> } = {};
+    const hostEnv: Record<string, string | undefined> = {};
+    const view = createProjectScopedProcessEnvView(hostEnv, () => scope.snapshot);
+    const originalPrototype = Object.getPrototypeOf(hostEnv);
+    const inherited = { VF_SCOPE_PROBE_INHERITED: "inherited-value" };
+
+    Object.setPrototypeOf(view, inherited);
+    assertStrictEquals(Object.getPrototypeOf(view), inherited);
+    assertStrictEquals(Object.getPrototypeOf(hostEnv), inherited);
+    assertEquals(view.VF_SCOPE_PROBE_INHERITED, "inherited-value");
+
+    scope.snapshot = { PROJECT_VAR: "project-value" };
+    assertThrows(() => Object.setPrototypeOf(view, originalPrototype), TypeError);
+    assertStrictEquals(Object.getPrototypeOf(hostEnv), inherited);
+  });
+
+  it("rejects attempts to make the shared view non-extensible", () => {
+    assertThrows(() => Object.preventExtensions(processEnv!), TypeError);
+    assertEquals(Object.isExtensible(processEnv!), true);
+    assertEquals(Object.keys(processEnv!).length > 0, true);
+    runWithProjectEnv({ PROJECT_VAR: "project-value" }, () => {
+      assertThrows(() => Object.preventExtensions(freshEnv()), TypeError);
+      assertEquals(Object.isExtensible(freshEnv()), true);
     });
   });
 

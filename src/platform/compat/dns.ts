@@ -199,6 +199,25 @@ export function resolveLoopbackAddresses(
   return recordTypes.map((recordType) => LOOPBACK_ADDRESSES[recordType]);
 }
 
+/** Deno 2 raises NotCapable for a missing permission; earlier runtimes used PermissionDenied. */
+function isPermissionError(error: unknown): error is Error {
+  return error instanceof Error &&
+    (error.name === "NotCapable" || error.name === "PermissionDenied");
+}
+
+/**
+ * A DNS lookup failed because net permission is missing, not because the name
+ * did not resolve. Named so boundary layers that collapse unknown errors into
+ * a generic message (e.g. the worker egress broker) can recognize and forward
+ * the permission diagnosis instead of discarding it.
+ */
+export class DnsPermissionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "DnsPermissionError";
+  }
+}
+
 async function resolveHostAddressesUncached(
   hostname: string,
   options: { recordTypes: readonly DnsAddressRecordType[] },
@@ -222,7 +241,29 @@ async function resolveHostAddressesUncached(
     for (const recordType of options.recordTypes) {
       try {
         results.push(...await deno.resolveDns(hostname, recordType));
-      } catch {
+      } catch (error) {
+        // `Deno.resolveDns` checks net permission against the nameserver, not
+        // the queried host, so under a narrowed --allow-net every external
+        // resolution fails with NotCapable whatever the destination. Swallowing
+        // that alongside genuine lookup failures made a permission problem
+        // surface as "unable to resolve host" and sent investigations toward
+        // the network instead of the flags (veryfront-issue-inbox#744). The
+        // caller stays fail-closed either way; only the diagnosis changes.
+        if (isPermissionError(error)) {
+          // The runtime's message names the nameserver it checked — an
+          // internal infrastructure detail that must not ride the cause chain
+          // into logs (AGENTS.md, secret and internal-detail safety). Retain
+          // only the error's classification, never the raw message.
+          throw new DnsPermissionError(
+            "net access to the DNS resolver is not permitted while resolving the requested host; " +
+              `this usually means --allow-net is narrowed (Deno checks permission against the nameserver, not the queried host)`,
+            {
+              cause: new Error(
+                `${error.name} raised by the DNS resolver (resolver address redacted)`,
+              ),
+            },
+          );
+        }
         // A host may legitimately have only one address family.
       }
     }

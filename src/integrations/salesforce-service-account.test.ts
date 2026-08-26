@@ -355,7 +355,9 @@ describe("Salesforce service-account integration source", () => {
     });
 
     const first = await source.executeTool("salesforce__list_cases", {});
-    const second = await source.executeTool("salesforce__list_cases", {});
+    const second = await source.executeTool("salesforce__list_cases", {
+      q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE Status = 'New' ORDER BY LastModifiedDate DESC LIMIT 25",
+    });
 
     assertEquals(first, [{ Id: "500000000000001" }]);
     assertEquals(second, first);
@@ -367,6 +369,49 @@ describe("Salesforce service-account integration source", () => {
     const query = new URL(providerRequests[0]!.request.url).searchParams.get("q");
     assertStringIncludes(query ?? "", "FROM Case");
     assertStringIncludes(query ?? "", "LIMIT 50");
+    const filteredQuery = new URL(providerRequests[1]!.request.url).searchParams.get("q");
+    assertStringIncludes(filteredQuery ?? "", "WHERE Status = 'New'");
+  });
+
+  it("restricts curated SOQL tools to their advertised fields and object", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("unsafe SOQL must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: "SELECT Id, Email FROM Contact LIMIT 1",
+        }),
+      TypeError,
+      "must preserve its selected fields and object",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE ContactId IN (SELECT Id FROM Contact)",
+        }),
+      TypeError,
+      "must preserve its selected fields and object",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE Contact.Email LIKE 'a%'",
+        }),
+      TypeError,
+      "root-object fields",
+    );
+    assertEquals(transport.captures, []);
   });
 
   it("mints a fresh token when a second credential set reuses the same source", async () => {
@@ -593,6 +638,418 @@ describe("Salesforce service-account integration source", () => {
       },
       "an over-length provider response must be rejected instead of returned",
     );
+  });
+
+  it("preserves curated SOQL policy predicates", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("unsafe SOQL must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Draft' ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND Title = '__never__' OR(PublishStatus = 'Draft') ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND Title = '__never__' OR PublishStatus = 'Draft' ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion\nWHERE\n\tPublishStatus = 'Draft'\nORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE NOT (PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE NOT(Title = 'x' AND PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    assertEquals(transport.captures, []);
+  });
+
+  it("permits advertised data category filters with bounded syntax", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(({ request }) =>
+      request.url.endsWith("/services/oauth2/token")
+        ? Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        })
+        : Response.json({ records: [] })
+    );
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases", "salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+    const projection =
+      "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online'";
+
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: `${projection} WITH DATA CATEGORY Geography__c AT Europe__c ORDER BY LastPublishedDate DESC LIMIT 25`,
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: `${projection} WITH DATA CATEGORY Geography__c AT (Europe__c, Asia__c) AND Product__c ABOVE_OR_BELOW Phones__c ORDER BY LastPublishedDate DESC LIMIT 25`,
+    });
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: `${projection} WITH DATA CATEGORY Geography__c AT Europe__c OR Product__c AT Phones__c LIMIT 25`,
+        }),
+      TypeError,
+      "data category",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: `${projection} WITH DATA CATEGORY A__c AT One__c AND B__c AT Two__c AND C__c AT Three__c AND D__c AT Four__c LIMIT 25`,
+        }),
+      TypeError,
+      "data category",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WITH DATA CATEGORY Geography__c AT Europe__c LIMIT 50",
+        }),
+      TypeError,
+      "does not allow data category",
+    );
+
+    const providerQueries = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    );
+    assertEquals(providerQueries.length, 2);
+  });
+
+  it("scans repeated negated policy predicates in one pass", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("unsafe SOQL must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+    const repeatedNegatedPredicate = "NOT(PublishStatus = 'Online') AND ".repeat(28_000);
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__search_knowledge_articles", {
+          q: `SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE ${repeatedNegatedPredicate}Title = 'No policy conjunct'`,
+        }),
+      TypeError,
+      "policy predicates",
+    );
+    assertEquals(transport.captures, []);
+  });
+
+  it("rejects unauthorized SOQL operators and side-effecting clauses", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("unsafe SOQL must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+    const projection =
+      "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case";
+
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE SensitiveTags__c INCLUDES ('vip')`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE SensitiveTag__c NOT IN ('public')`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} ORDER BY LastModifiedDate DESC LIMIT 50 FOR VIEW`,
+        }),
+      TypeError,
+      "side-effecting clauses",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE DAY_ONLY(SensitiveDate__c) = 2026-08-25`,
+        }),
+      TypeError,
+      "predicate functions",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE AT(Status) = 'Closed'`,
+        }),
+      TypeError,
+      "predicate functions",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} GROUP BY Status HAVING COUNT(SensitiveField__c) > 0`,
+        }),
+      TypeError,
+      "predicate functions",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} ORDER BY LastModifiedDate DESC LIMIT 50 UPDATE TRACKING`,
+        }),
+      TypeError,
+      "side-effecting clauses",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE SensitiveTag__c IN('vip')`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE NOT (Status = 'Closed')ORDER BY SensitiveField__c`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} WHERE ${
+            Array.from(
+              { length: 20_000 },
+              (_, index) => `unauthorized_${index}=0`,
+            ).join(" ")
+          }`,
+        }),
+      TypeError,
+      "authorized root-object fields",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `SELECT ${"a,".repeat(100_000)}a FROM Case`,
+        }),
+      TypeError,
+      "must preserve its selected fields and object",
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__list_cases", {
+          q: `${projection} ${"from ".repeat(100_000)}`,
+        }),
+      TypeError,
+      "must preserve its selected fields and object",
+    );
+    assertEquals(transport.captures, []);
+  });
+
+  it("accepts negated predicates and whitespace-separated policy clauses", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(({ request }) =>
+      request.url.endsWith("/services/oauth2/token")
+        ? Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        })
+        : Response.json({ records: [] })
+    );
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases", "salesforce__search_knowledge_articles"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await source.executeTool("salesforce__list_cases", {
+      q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE NOT (Status = 'Closed') ORDER BY LastModifiedDate DESC LIMIT 50",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND NOT (Title = 'Internal') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion\nWHERE\n\tPublishStatus = 'Online'\nORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__list_cases", {
+      q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE (Status = 'New') LIMIT 50",
+    });
+    await source.executeTool("salesforce__list_cases", {
+      q: "SELECT Id, CaseNumber, Subject, Status, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case WHERE Status IN('New', 'Working') LIMIT 50",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus ='Online' ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE PublishStatus = 'Online' AND(Title = 'FAQ') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE (PublishStatus = 'Online') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE ((PublishStatus = 'Online')) AND Title = 'FAQ' ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+    await source.executeTool("salesforce__search_knowledge_articles", {
+      q: "SELECT Id, KnowledgeArticleId, Title, Summary, UrlName, Language, LastPublishedDate FROM KnowledgeArticleVersion WHERE (PublishStatus = 'Online' AND Title = 'FAQ') ORDER BY LastPublishedDate DESC LIMIT 25",
+    });
+
+    const queries = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    ).map((capture) => new URL(capture.request.url).searchParams.get("q"));
+    assertEquals(queries.length, 10);
+    assertStringIncludes(queries[0] ?? "", "WHERE NOT (Status = 'Closed')");
+    assertStringIncludes(queries[1] ?? "", "AND NOT (Title = 'Internal')");
+    assertStringIncludes(queries[2] ?? "", "WHERE\n\tPublishStatus = 'Online'");
+    assertStringIncludes(queries[3] ?? "", "WHERE (Status = 'New')");
+    assertStringIncludes(queries[4] ?? "", "Status IN('New', 'Working')");
+    assertStringIncludes(queries[5] ?? "", "PublishStatus ='Online'");
+    assertStringIncludes(queries[6] ?? "", "AND(Title = 'FAQ')");
+    assertStringIncludes(queries[7] ?? "", "WHERE (PublishStatus = 'Online')");
+    assertStringIncludes(queries[8] ?? "", "((PublishStatus = 'Online')) AND Title");
+    assertStringIncludes(queries[9] ?? "", "(PublishStatus = 'Online' AND Title");
+  });
+
+  it("accepts blank curated queries as defaults and reordered equivalent projections", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(({ request }) =>
+      request.url.endsWith("/services/oauth2/token")
+        ? Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        })
+        : Response.json({ records: [] })
+    );
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__list_cases"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await source.executeTool("salesforce__list_cases", { q: "   " });
+    await source.executeTool("salesforce__list_cases", {
+      q: "SELECT Status, Id, CaseNumber, Subject, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate FROM Case ORDER BY LastModifiedDate DESC LIMIT 50",
+    });
+    await source.executeTool("salesforce__list_cases", {
+      q: "SELECT\nStatus, Id, CaseNumber, Subject, Priority, Origin, ContactId, AccountId, OwnerId, CreatedDate, LastModifiedDate\nFROM\tCase ORDER BY LastModifiedDate DESC LIMIT 50",
+    });
+
+    const queries = transport.captures.filter((capture) =>
+      capture.request.url.includes("/services/data/")
+    ).map((capture) => new URL(capture.request.url).searchParams.get("q"));
+    assertEquals(queries[0]?.startsWith("SELECT Id, CaseNumber"), true);
+    assertEquals(queries[1]?.startsWith("SELECT Status, Id"), true);
+    assertEquals(queries[2]?.includes("\nFROM\tCase"), true);
+  });
+
+  it("documents curated SOQL restrictions on exposed q parameters", async () => {
+    setCredentials();
+    const transport = createTransport(() => {
+      throw new Error("discovery must not access the network");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: [
+        "salesforce__list_cases",
+        "salesforce__list_case_activity",
+        "salesforce__run_soql_query",
+      ],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    const definitions = await source.listTools();
+    const qDescription = (definition: { parameters: unknown } | undefined): string => {
+      const properties = (definition?.parameters as {
+        properties?: Record<string, { description?: string }>;
+      })?.properties;
+      return properties?.q?.description ?? "";
+    };
+
+    assertStringIncludes(
+      qDescription(definitions[0]),
+      "must keep the default query's selected fields and object",
+    );
+    const caseActivityParameters = definitions[1]?.parameters as {
+      properties?: Record<string, { default?: unknown }>;
+    };
+    assertEquals(
+      caseActivityParameters.properties?.q?.default,
+      "SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, IsPublished FROM CaseComment ORDER BY CreatedDate DESC LIMIT 50",
+    );
+    assertEquals(
+      qDescription(definitions[2]).includes("selected fields and object"),
+      false,
+      "the free-form SOQL tool must not advertise curated restrictions",
+    );
+    assertEquals(transport.captures, []);
   });
 
   it("refreshes once after a provider 401 and sends only declared write fields", async () => {

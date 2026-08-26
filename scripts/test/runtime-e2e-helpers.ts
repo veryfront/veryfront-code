@@ -518,6 +518,45 @@ export async function waitForRoute(
   );
 }
 
+/**
+ * Complete the browser half of the CSRF double-submit against a dev server.
+ *
+ * `security.csrf` resolves the same way in every environment, so a mutation
+ * this harness sends has to echo the `__Host-vf_csrf` cookie back in the
+ * `x-csrf-token` header exactly as the framework's own React hooks do through
+ * `csrfMutationHeaders`. A GET that accepts HTML is what issues the cookie, so
+ * the harness fetches the document first and reads the token off the response.
+ *
+ * Returns an empty string when the server issued no token, which is what a
+ * project that set `security.csrf: false` looks like.
+ */
+export async function fetchCsrfToken(rootUrl: URL | string): Promise<string> {
+  const response = await fetch(new URL("/", rootUrl), {
+    headers: { accept: "text/html" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  await response.body?.cancel();
+
+  for (const cookie of response.headers.getSetCookie()) {
+    const token = /^__Host-vf_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (token) return token;
+  }
+  return "";
+}
+
+/** Add the double-submit cookie and header to a mutation's request headers. */
+export function withCsrfDoubleSubmit(
+  token: string,
+  headers: Record<string, string> = {},
+): Record<string, string> {
+  if (!token) return headers;
+  return {
+    ...headers,
+    cookie: `__Host-vf_csrf=${token}`,
+    "x-csrf-token": token,
+  };
+}
+
 export function getDevServerCommand(
   runtime: RuntimeName,
   port: number,

@@ -35,7 +35,6 @@
       "veryfront/schedule": ["./npm/esm/src/schedule/index.d.ts"],
       "veryfront/trigger": ["./npm/esm/src/trigger/index.d.ts"],
       "veryfront/webhook": ["./npm/esm/src/webhook/index.d.ts"],
-      "veryfront/observability/sentry": ["./npm/esm/src/observability/sentry.d.ts"],
       "@veryfront/ext-observability-sentry/node": [
         "./npm/extensions/ext-observability-sentry/esm/node.d.ts"
       ]

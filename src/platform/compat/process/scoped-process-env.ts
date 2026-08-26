@@ -13,6 +13,26 @@
  * Writes made while a snapshot is active are recorded per snapshot, so a
  * project scope observes its own mutations and nothing outside it does.
  *
+ * ## Why `process.env` uses one stable view
+ *
+ * Node and Bun inspect a proxy by reading its target directly when custom
+ * inspect hooks are disabled (`console.dir`, `inspect(v, { customInspect:
+ * false })`), invoking no traps. Whatever sits on a proxy target is therefore
+ * readable from any scope that can reach the proxy, which forces two rules:
+ *
+ * - Host values must never sit on a proxy target: `process.env` is a global,
+ *   so every view is reachable from project scopes through captured
+ *   references, and a host-populated target is exactly the inspection leak
+ *   this module exists to close.
+ *
+ * The `process.env` accessor therefore returns one stable proxy whose target
+ * contains no environment values. Its traps resolve every operation against
+ * the current ambient snapshot, or against the closed-over host record when no
+ * project scope is active. A captured reference follows the active scope rather
+ * than retaining the project that first read it. The custom inspect hook returns
+ * a detached scoped record; inspection modes that bypass hooks see only the
+ * target's masking note and cannot recover host or tenant values.
+ *
  * @module platform/compat/process/scoped-process-env
  */
 
@@ -27,8 +47,10 @@ export type ProjectEnvSnapshotGetter = () => ProjectEnvSnapshot | undefined;
 type ScopedWrites = Map<string, string | null>;
 
 const ObjectKeys = Object.keys;
+const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ReflectApply = Reflect.apply;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectDefineProperty = Reflect.defineProperty;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectGet = Reflect.get;
@@ -36,6 +58,8 @@ const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const ReflectHas = Reflect.has;
 const ReflectOwnKeys = Reflect.ownKeys;
 const ReflectSet = Reflect.set;
+const ReflectSetPrototypeOf = Reflect.setPrototypeOf;
+const INSPECT_CUSTOM = Symbol.for("nodejs.util.inspect.custom");
 
 // Keyed by the snapshot object, which the scope owns for exactly its lifetime.
 const writesBySnapshot = new WeakMap<ProjectEnvSnapshot, ScopedWrites>();
@@ -55,6 +79,20 @@ function writesFor(snapshot: ProjectEnvSnapshot): ScopedWrites {
   const created: ScopedWrites = new Map();
   writesBySnapshot.set(snapshot, created);
   return created;
+}
+
+/**
+ * Record a scoped write (or, with `null`, a delete) against a snapshot.
+ *
+ * Every mutation path funnels through here so all accessors and the stable
+ * process.env view observe the same write log.
+ */
+function recordScopedWrite(
+  snapshot: ProjectEnvSnapshot,
+  key: string,
+  value: string | null,
+): void {
+  writesFor(snapshot).set(key, value);
 }
 
 /**
@@ -158,7 +196,14 @@ export function projectScopedEnvRecord(
   const record: Record<string, string> = {};
   for (const key of scopedKeys(snapshot)) {
     const value = readScoped(snapshot, key);
-    if (value !== undefined) record[key] = value;
+    if (value !== undefined) {
+      ObjectDefineProperty(record, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
   return record;
 }
@@ -212,7 +257,16 @@ function assertEnvDataDescriptor(
   }
 }
 
-function createHandler(
+/**
+ * Handler for the shared host view.
+ *
+ * Scope-aware per operation: with a snapshot active every string-keyed
+ * operation resolves through the scoped rules, so a reference captured outside
+ * a scope still presents the project environment inside one; without a
+ * snapshot everything passes through to the captured host record.
+ */
+function createHostViewHandler(
+  hostEnv: EnvRecord,
   getSnapshot: ProjectEnvSnapshotGetter,
 ): ProxyHandler<EnvRecord> {
   /** Resolve the snapshot for a string key, or undefined to defer to the host record. */
@@ -221,47 +275,89 @@ function createHandler(
 
   return {
     get(target, prop) {
+      if (prop === INSPECT_CUSTOM) return ReflectGet(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectGet(target, prop);
+      if (!snapshot) return ReflectGet(hostEnv, prop);
       return readScoped(snapshot, prop as string);
     },
-    set(target, prop, value) {
+    set(_target, prop, value) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectSet(target, prop, value);
-      writesFor(snapshot).set(prop as string, String(value));
+      if (!snapshot) return ReflectSet(hostEnv, prop, value);
+      recordScopedWrite(snapshot, prop as string, String(value));
       return true;
     },
-    deleteProperty(target, prop) {
+    deleteProperty(_target, prop) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectDeleteProperty(target, prop);
-      writesFor(snapshot).set(prop as string, null);
+      if (!snapshot) return ReflectDeleteProperty(hostEnv, prop);
+      recordScopedWrite(snapshot, prop as string, null);
       return true;
     },
     has(target, prop) {
+      if (prop === INSPECT_CUSTOM) return ReflectHas(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectHas(target, prop);
+      if (!snapshot) return ReflectHas(hostEnv, prop);
       return readScoped(snapshot, prop as string) !== undefined;
     },
-    ownKeys(target) {
+    ownKeys(_target) {
       const snapshot = getSnapshot();
-      if (!snapshot) return ReflectOwnKeys(target);
+      if (!snapshot) return ReflectOwnKeys(hostEnv);
       return scopedKeys(snapshot);
     },
     getOwnPropertyDescriptor(target, prop) {
+      if (prop === INSPECT_CUSTOM) return ReflectGetOwnPropertyDescriptor(target, prop);
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectGetOwnPropertyDescriptor(target, prop);
+      if (!snapshot) return ReflectGetOwnPropertyDescriptor(hostEnv, prop);
       const value = readScoped(snapshot, prop as string);
       if (value === undefined) return undefined;
       return { value, writable: true, enumerable: true, configurable: true };
     },
-    defineProperty(target, prop, descriptor) {
+    defineProperty(_target, prop, descriptor) {
       const snapshot = scopeFor(prop);
-      if (!snapshot) return ReflectDefineProperty(target, prop, descriptor);
+      if (!snapshot) return ReflectDefineProperty(hostEnv, prop, descriptor);
       assertEnvDataDescriptor(descriptor);
-      writesFor(snapshot).set(prop as string, String(descriptor.value));
+      recordScopedWrite(snapshot, prop as string, String(descriptor.value));
       return true;
     },
+    setPrototypeOf(target, prototype) {
+      // A prototype cannot be represented in the per-snapshot write log. Do
+      // not let project code mutate process-wide host state through this path.
+      if (getSnapshot()) return false;
+
+      const originalHostPrototype = ObjectGetPrototypeOf(hostEnv);
+      if (!ReflectSetPrototypeOf(hostEnv, prototype)) return false;
+      if (ReflectSetPrototypeOf(target, prototype)) return true;
+
+      // Keep the two records synchronized if the masking target rejects a
+      // prototype the backing environment accepted.
+      ReflectSetPrototypeOf(hostEnv, originalHostPrototype);
+      return false;
+    },
+    preventExtensions() {
+      return false;
+    },
   };
+}
+
+/** Create the one ambient-scope-aware process.env view installed for this process. */
+export function createProjectScopedProcessEnvView(
+  hostEnv: EnvRecord,
+  getSnapshot: ProjectEnvSnapshotGetter,
+): EnvRecord {
+  const target = ObjectCreate(ObjectGetPrototypeOf(hostEnv)) as EnvRecord;
+  ObjectDefineProperty(target, "<veryfront:masked>", {
+    value: "host environment values are not shown through generic proxy-target " +
+      "inspection; log process.env directly or read getHostEnv() instead",
+    enumerable: true,
+    configurable: true,
+  });
+  ObjectDefineProperty(target, INSPECT_CUSTOM, {
+    value: () => {
+      const snapshot = getSnapshot();
+      return snapshot ? projectScopedEnvRecord(snapshot) : { ...hostEnv };
+    },
+    configurable: true,
+  });
+  return new Proxy(target, createHostViewHandler(hostEnv, getSnapshot));
 }
 
 /**
@@ -321,17 +417,17 @@ export function installProjectScopedProcessEnv(
   if (!processLike || !hostEnv) return;
 
   installed = true;
-  const view = new Proxy(hostEnv, createHandler(getSnapshot));
+  const hostView = createProjectScopedProcessEnvView(hostEnv, getSnapshot);
   try {
     ObjectDefineProperty(processLike, "env", {
-      get: () => view,
-      set: (replacement: unknown) => applyEnvReplacement(view, getSnapshot, replacement),
+      get: () => hostView,
+      set: (replacement: unknown) => applyEnvReplacement(hostView, getSnapshot, replacement),
       enumerable: true,
       configurable: false,
     });
   } catch {
     // A runtime that refuses to redefine the property still gets the view; it
     // just keeps the weaker guarantee a plain assignment gives.
-    processLike.env = view;
+    processLike.env = hostView;
   }
 }

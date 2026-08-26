@@ -1269,9 +1269,20 @@ describe("generated encrypted OAuth token store", () => {
 
     await adapter.setToken("alice", "github", tokens);
     assertEquals(await adapter.getToken("alice", "github"), tokens);
-    assertEquals(await adapter.isConnected("alice", "github"), true);
+    assertEquals(await adapter.isConnected("alice", "github", []), true);
     await adapter.revokeToken("alice", "github");
     assertEquals(await adapter.getToken("alice", "github"), null);
+  });
+
+  it("exports compare-and-clear as a required encrypted-store capability", () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const compareAndClearTokens: (
+      serviceId: string,
+      userId: string,
+      expectedRevision: string,
+    ) => Promise<boolean> = store.compareAndClearTokens;
+
+    assertEquals(typeof compareAndClearTokens, "function");
   });
 
   it("refuses the in-memory example backend in production", () => {

@@ -1,9 +1,8 @@
 /**
- * Chat attachments must satisfy CSRF in a deployed environment.
+ * Chat attachments must satisfy CSRF in every environment.
  *
- * A production build defaults `security.csrf` to on, so the server rejects any
- * non-GET request that lacks an `x-csrf-token` header matching the
- * `__Host-vf_csrf` cookie. #3611 fixed the AG-UI chat turn itself, but
+ * The server rejects a non-GET request that lacks a header matching its
+ * browser-readable CSRF cookie. #3611 fixed the AG-UI chat turn itself, but
  * attachments travel over two *other* transports, and neither sent the token:
  *
  *   - `useUpload` — the one `<Chat uploadApi>` actually wires up
@@ -13,8 +12,7 @@
  *     `veryfront/chat` for an "Uploads" surface. `POST {url}` to upload,
  *     `DELETE {url}?id=` to remove.
  *
- * So a deployed chat *with attachments* still answered 403 after #3611 — while
- * `veryfront dev` (CSRF off) kept working and hid the break.
+ * Both attachment transports therefore need the same helper as the chat turn.
  *
  * These tests drive the real hooks and pipe whatever they emit through the real
  * `CsrfHandler`, so they fail on an actual 403 rather than on a header

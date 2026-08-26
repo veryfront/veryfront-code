@@ -44,6 +44,7 @@ import {
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 export { getLocalFs } from "./local-fs.ts";
 import { getLocalFs } from "./local-fs.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export type CacheLookupResult =
   | { status: "hit"; path: string }
@@ -333,7 +334,7 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
   if (sourceIndex) {
     index[CYCLE_MANIFEST_SOURCES_INDEX_KEY] = sourceIndex.saturated
       ? "*"
-      : JSON.stringify([...sourceIndex.sources].sort());
+      : JSON.stringify([...sourceIndex.sources].sort(compareStrings));
   }
 
   try {

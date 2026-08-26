@@ -517,11 +517,24 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 404, "a missing blob should be a 404");
       }));
 
-    it("lists the adapter's stored files (newest first) when no id is given", () =>
+    it("does not expose stored files when listing is not explicitly enabled", () =>
+      withTempDir(async (dir) => {
+        const storage = new LocalBlobStorage(dir);
+        await storage.put("private", { metadata: { filename: "private.txt" } });
+        const { GET } = createChatUploadHandler({ storage, authorize: () => true });
+
+        const res = await GET(new Request("http://localhost:3000/api/uploads"));
+
+        assertEquals(res.status, 400, "GET without an id must not enumerate uploads by default");
+        assertEquals(await res.json(), { error: "An upload id is required" });
+      }));
+
+    it("lists the adapter's stored files when explicitly enabled", () =>
       withTempDir(async (dir) => {
         const { POST, GET } = createChatUploadHandler({
           storage: new LocalBlobStorage(dir),
           authorize: () => true,
+          allowListing: true,
         });
         await (await POST(postFile(txt("one")))).json();
         await (await POST(postFile(txt("two")))).json();
@@ -545,6 +558,7 @@ describe("chat/upload-handler", () => {
         const { POST, GET } = createChatUploadHandler({
           storage: new LocalBlobStorage(dir),
           authorize: () => true,
+          allowListing: true,
         });
         await POST(postFile(txt("one")));
 
@@ -577,7 +591,11 @@ describe("chat/upload-handler", () => {
           exists: () => Promise.resolve(false),
           stat: () => Promise.resolve(null),
         };
-        const { GET } = createChatUploadHandler({ storage: store, authorize: () => true });
+        const { GET } = createChatUploadHandler({
+          storage: store,
+          authorize: () => true,
+          allowListing: true,
+        });
         const res = await GET(new Request("http://localhost:3000/api/uploads"));
         assertEquals(res.status, 501, "no-list backend reports unsupported");
         assertEquals((await res.json()).items.length, 0, "and an empty list");

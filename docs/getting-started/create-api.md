@@ -40,10 +40,14 @@ Send a chat message from another terminal:
 ```bash
 curl -N -X POST http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
 The `-N` flag tells curl to flush each chunk as it arrives.
+The matching cookie/header pair satisfies the same double-submit check that a
+browser client performs automatically.
 
 The curl response should emit `data:` lines as the answer streams.
 
