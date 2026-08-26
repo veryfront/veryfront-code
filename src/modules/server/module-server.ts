@@ -1642,17 +1642,28 @@ function getModuleHeaders(
 const COMPILED_TO_JS_EXTENSIONS = /\.(?:tsx?|jsx|mdx|md)$/;
 
 /**
+ * The source path a module request refers to.
+ *
+ * The import rewriter appends `.js` to any specifier whose extension it does
+ * not recognise, so `@/lib/data.json` arrives here as `lib/data.json.js` while
+ * the source file, and therefore the body, is still raw JSON.
+ *
+ * The content type and the error body must classify on the same path. They did
+ * not, so a failing `lib/data.json.js` was answered with a JavaScript `throw`
+ * body under `application/json`.
+ */
+function getModuleSourcePath(modulePath: string): string {
+  return modulePath.toLowerCase().replace(/\.(?:mjs|js)$/, "");
+}
+
+/**
  * Content type for a dev module response.
  *
  * Exported for testing.
  */
 export function getDevModuleContentType(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
-  // The import rewriter appends `.js` to any specifier whose extension it does
-  // not recognise, so `@/lib/data.json` arrives here as `lib/data.json.js`
-  // while the source file, and therefore the body, is still raw JSON. Resolve
-  // the source extension the same way the module lookup does before deciding.
-  const sourcePath = normalizedPath.replace(/\.(?:mjs|js)$/, "");
+  const sourcePath = getModuleSourcePath(modulePath);
 
   if (sourcePath.endsWith(".map") || sourcePath.endsWith(".json")) {
     return "application/json; charset=utf-8";
@@ -1684,15 +1695,24 @@ function getClientModuleError(dev: boolean, errorMessage: string): string {
   return dev ? errorMessage : PRODUCTION_MODULE_ERROR;
 }
 
+/**
+ * The body served when a module fails to transform.
+ *
+ * A stylesheet reaches here only when the lookup itself fails rather than
+ * reporting the file missing: a permission or transient storage error escapes
+ * `findSourceFile` and surfaces as a 500 instead of a 404. The response is
+ * typed `text/css` in that case, so the body has to be CSS.
+ */
 function createModuleErrorBody(modulePath: string, errorMessage: string): string {
-  const normalizedPath = modulePath.toLowerCase();
+  const sourcePath = getModuleSourcePath(modulePath);
 
-  if (normalizedPath.endsWith(".css")) {
+  if (sourcePath.endsWith(".css")) {
+    // A comment cannot contain its own terminator.
     const sanitized = errorMessage.replace(/\*\//g, "*\\/");
     return `/* Transform Error: ${sanitized} */`;
   }
 
-  if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".map")) {
+  if (sourcePath.endsWith(".json") || sourcePath.endsWith(".map")) {
     return JSON.stringify({ error: errorMessage });
   }
 

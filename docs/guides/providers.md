@@ -78,6 +78,8 @@ Verify provider resolution through any AG-UI route that uses this agent:
 ```bash
 curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply with the active inference mode if available."}]}]}'
 ```
 
@@ -397,6 +399,8 @@ Call your agent's AG-UI route once provider env vars are set:
 ```bash
 curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
+  -H "Cookie: __Host-vf_csrf=local-check" \
+  -H "x-csrf-token: local-check" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply with the active inference mode if available."}]}]}'
 ```
 

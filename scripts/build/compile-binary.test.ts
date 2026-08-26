@@ -151,7 +151,7 @@ it("compiled CLI embeds every runtime-resolved sibling module", async () => {
   assertEquals(
     runtimeResolvedIncludes.sort(),
     [
-      "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
+      "extensions/ext-document-kreuzberg/src/native-extraction-process.ts",
       "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
       "extensions/ext-react-ssr/src/worker-renderer.ts",
     ],

@@ -16,6 +16,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
+import { validateWorkflowPathSegment } from "./validation.ts";
 
 export type { Workflow } from "../types.ts";
 
@@ -46,6 +47,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
   options: WorkflowOptions<TInput, TOutput>,
 ): Workflow<TInput, TOutput> {
   if (!options.id) throw INVALID_ARGUMENT.create({ detail: "Workflow must have an 'id'" });
+  validateWorkflowPathSegment(options.id, "Workflow ID");
   if (!options.steps) {
     throw INVALID_ARGUMENT.create({ detail: `Workflow "${options.id}" must have 'steps'` });
   }

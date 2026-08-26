@@ -1,3 +1,5 @@
+import { compareStrings } from "#veryfront/utils/compare.ts";
+
 /** Context for hosted child fork instructions. */
 export type HostedChildForkInstructionsContext = {
   projectId?: string | null;
@@ -84,7 +86,7 @@ Do NOT guess or invent project references, always use the values above.
   }
 
   if (context.availableSkillIds?.length) {
-    const ids = [...context.availableSkillIds].sort().join(", ");
+    const ids = [...context.availableSkillIds].sort(compareStrings).join(", ");
     sections.push(`
 ## Available Skills
 Use load_skill to load instructions. Available: ${ids}`);

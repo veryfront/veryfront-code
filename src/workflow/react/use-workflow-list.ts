@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
+import { normalizeWorkflowApiBase, useStableWorkflowHeaders } from "./mutation-headers.ts";
 
 /** Default interval for auto-refreshing the workflow list */
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000;
@@ -13,6 +14,10 @@ export interface UseWorkflowListOptions {
   createdBefore?: Date;
   pageSize?: number;
   apiBase?: string;
+  /** Additional headers, such as a cross-origin authorization token. */
+  headers?: HeadersInit;
+  /** Fetch credential mode for cross-origin cookie-backed sessions. */
+  credentials?: RequestCredentials;
   autoRefresh?: boolean;
   refreshInterval?: number;
 }
@@ -41,9 +46,19 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     createdBefore,
     pageSize = 20,
     apiBase = "/api/workflows",
+    headers,
+    credentials,
     autoRefresh = false,
     refreshInterval = DEFAULT_REFRESH_INTERVAL_MS,
   } = options;
+  const normalizedApiBase = normalizeWorkflowApiBase(apiBase);
+  const stableHeaders = useStableWorkflowHeaders(headers);
+  const authorizationContext = useMemo(
+    () => ({ credentials, normalizedApiBase, stableHeaders }),
+    [credentials, normalizedApiBase, stableHeaders],
+  );
+  const currentAuthorizationContext = useRef(authorizationContext);
+  currentAuthorizationContext.current = authorizationContext;
 
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [totalCount, setTotalCount] = useState<number | undefined>();
@@ -51,6 +66,17 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
+  const [dataAuthorizationContext, setDataAuthorizationContext] = useState(
+    authorizationContext,
+  );
+  const requestSequence = useRef(0);
+  const activeRequestSequence = useRef<number | null>(null);
+  const isCurrentRequest = useCallback(
+    (request: { authorizationContext: typeof authorizationContext; sequence: number }): boolean =>
+      request.sequence === requestSequence.current &&
+      request.authorizationContext === currentAuthorizationContext.current,
+    [],
+  );
 
   const [filter, setFilterState] = useState<RunFilter>({
     workflowId,
@@ -85,10 +111,18 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   }, []);
 
   const fetchRuns = useCallback(
-    async (append = false): Promise<void> => {
+    async (
+      append = false,
+    ): Promise<{ authorizationContext: typeof authorizationContext; sequence: number }> => {
+      const sequence = ++requestSequence.current;
+      const request = { authorizationContext, sequence };
+      activeRequestSequence.current = sequence;
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
-        const response = await fetch(`${apiBase}/runs?${queryString}`);
+        const response = await fetch(`${normalizedApiBase}/runs?${queryString}`, {
+          headers: stableHeaders,
+          credentials,
+        });
 
         if (!response.ok) {
           throw REQUEST_ERROR.create({
@@ -103,25 +137,55 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         const nextCursor: string | undefined = data.cursor;
         const total: number | undefined = data.totalCount;
 
+        if (!isCurrentRequest(request)) return request;
+
+        setDataAuthorizationContext(authorizationContext);
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
         setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
         setTotalCount(total);
         setError(null);
       } catch (err) {
+        if (!isCurrentRequest(request)) return request;
         setError(err instanceof Error ? err : new Error(String(err)));
+      } finally {
+        if (activeRequestSequence.current === sequence) {
+          activeRequestSequence.current = null;
+        }
       }
+      return request;
     },
-    [apiBase, buildQueryString, cursor, filter],
+    [
+      authorizationContext,
+      buildQueryString,
+      credentials,
+      cursor,
+      filter,
+      isCurrentRequest,
+      normalizedApiBase,
+      stableHeaders,
+    ],
   );
+
+  useEffect(() => {
+    // Data from one authorization context must not remain visible while a
+    // replacement request is pending or after it fails.
+    requestSequence.current++;
+    activeRequestSequence.current = null;
+    setRuns([]);
+    setCursor(undefined);
+    setHasMore(false);
+    setTotalCount(undefined);
+    setError(null);
+  }, [authorizationContext]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function doFetch(): Promise<void> {
       setIsLoading(true);
-      await fetchRuns(false);
-      if (!cancelled) setIsLoading(false);
+      const request = await fetchRuns(false);
+      if (!cancelled && isCurrentRequest(request)) setIsLoading(false);
     }
 
     doFetch();
@@ -129,12 +193,13 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     return () => {
       cancelled = true;
     };
-  }, [fetchRuns, filter]);
+  }, [fetchRuns, filter, isCurrentRequest]);
 
   useEffect(() => {
     if (!autoRefresh) return;
 
     const intervalId = setInterval(() => {
+      if (activeRequestSequence.current !== null) return;
       fetchRuns(false);
     }, refreshInterval);
 
@@ -145,16 +210,16 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     if (!hasMore || isLoading) return;
 
     setIsLoading(true);
-    await fetchRuns(true);
-    setIsLoading(false);
-  }, [fetchRuns, hasMore, isLoading]);
+    const request = await fetchRuns(true);
+    if (isCurrentRequest(request)) setIsLoading(false);
+  }, [fetchRuns, hasMore, isCurrentRequest, isLoading]);
 
   const refresh = useCallback(async (): Promise<void> => {
     setCursor(undefined);
     setIsLoading(true);
-    await fetchRuns(false);
-    setIsLoading(false);
-  }, [fetchRuns]);
+    const request = await fetchRuns(false);
+    if (isCurrentRequest(request)) setIsLoading(false);
+  }, [fetchRuns, isCurrentRequest]);
 
   const setFilter = useCallback((newFilter: Partial<UseWorkflowListOptions>): void => {
     setCursor(undefined);
@@ -168,12 +233,14 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     }));
   }, []);
 
+  const hasCurrentAuthorizationData = dataAuthorizationContext === authorizationContext;
+
   return {
-    runs,
-    totalCount,
+    runs: hasCurrentAuthorizationData ? runs : [],
+    totalCount: hasCurrentAuthorizationData ? totalCount : undefined,
     isLoading,
     error,
-    hasMore,
+    hasMore: hasCurrentAuthorizationData ? hasMore : false,
     loadMore,
     refresh,
     setFilter,

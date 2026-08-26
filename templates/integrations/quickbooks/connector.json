@@ -48,8 +48,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -108,8 +109,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -148,8 +150,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -188,8 +191,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -228,8 +232,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -270,8 +275,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -329,8 +335,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -369,8 +376,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -411,8 +419,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -454,8 +463,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -505,8 +515,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -545,8 +556,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -602,8 +614,9 @@
           "host": {
             "type": "string",
             "in": "path",
-            "description": "QuickBooks API host — quickbooks.api.intuit.com for production, sandbox-quickbooks.api.intuit.com for sandbox companies",
-            "default": "quickbooks.api.intuit.com"
+            "description": "QuickBooks environment host: quickbooks.api.intuit.com (production) or sandbox-quickbooks.api.intuit.com (sandbox companies). No other value is accepted.",
+            "default": "quickbooks.api.intuit.com",
+            "pattern": "^(quickbooks\\.api\\.intuit\\.com|sandbox-quickbooks\\.api\\.intuit\\.com)$"
           },
           "realmId": {
             "type": "string",
@@ -682,7 +695,7 @@
       {
         "step": 3,
         "title": "Copy credentials",
-        "description": "From the app's Keys & credentials page, copy the Client ID and Client Secret (Development keys work against the sandbox host; Production keys require app review). Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env."
+        "description": "From the app's Keys & credentials page, copy the Client ID and Client Secret (Development keys work against the sandbox environment; Production keys require app review). Set QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET in your .env."
       },
       {
         "step": 4,
@@ -692,7 +705,7 @@
       {
         "step": 5,
         "title": "Verify access",
-        "description": "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company)."
+        "description": "Run the List Invoices tool with your realmId (set host to sandbox-quickbooks.api.intuit.com for a sandbox company; it defaults to the production host)."
       }
     ],
     "notes": [
@@ -700,7 +713,7 @@
       "Access tokens last 60 minutes; refresh tokens roll and remain valid for up to 100 days",
       "The company realm ID arrives as a query parameter on the OAuth callback, not in the token response — it must be saved and passed to every tool",
       "QuickBooks responds with XML unless the Accept: application/json header is sent (the tools set it by default)",
-      "Sandbox companies use the sandbox-quickbooks.api.intuit.com host"
+      "Every tool takes a host parameter restricted to exactly quickbooks.api.intuit.com (production, the default) or sandbox-quickbooks.api.intuit.com (sandbox companies); no other host is accepted"
     ],
     "documentation": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
   }

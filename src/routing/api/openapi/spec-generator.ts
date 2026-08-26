@@ -22,6 +22,7 @@ import {
 } from "./types.ts";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
 import { logger as baseLogger } from "#veryfront/utils";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = baseLogger.component("open-api");
 
@@ -84,7 +85,7 @@ export async function generateOpenAPISpec(
   }
 
   spec.tags = Array.from(tagSet)
-    .sort()
+    .sort(compareStrings)
     .map((name) => ({ name }));
 
   return spec;

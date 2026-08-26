@@ -3,6 +3,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { CsrfHandler } from "./csrf-handler.ts";
 import { generateCsrfToken } from "../../csrf/helpers.ts";
+import { deriveSecurityContext } from "../config.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
 
@@ -12,6 +14,34 @@ function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
     adapter: { env: { get: () => undefined } } as unknown as HandlerContext["adapter"],
     securityConfig: csrf !== undefined ? { csrf } : null,
   };
+}
+
+/** The deployed rejection body, pinned so it cannot drift with the local one. */
+const PRODUCTION_CSRF_FORBIDDEN_BODY = "Forbidden: invalid or missing CSRF token";
+
+/** A local-development context whose security config came through derivation. */
+function localCtx(): HandlerContext {
+  const ctx = createCtx();
+  ctx.securityConfig = deriveSecurityContext(
+    { security: {} },
+    { productionDefaults: false },
+  ).securityConfig;
+  ctx.isLocalProject = true;
+  return ctx;
+}
+
+/** A mutating request with the transport-authenticated loopback peer recorded. */
+function loopbackRequest(path: string, headers: HeadersInit = {}): Request {
+  const url = new URL(`http://localhost:8000${path}`);
+  const finalHeaders = new Headers(headers);
+  finalHeaders.set("host", url.host);
+  const request = new Request(url, { method: "POST", headers: finalHeaders });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 describe("security/http/csrf/csrf-handler", () => {
@@ -293,267 +323,117 @@ describe("security/http/csrf/csrf-handler", () => {
     });
   });
 
-  describe("when CSRF is not configured", () => {
-    it("suppresses the warning only for the exact local client-log mutation", async () => {
-      const localHandler = new CsrfHandler();
-      const ctx = createCtx();
-      ctx.securityConfig = {};
-      ctx.isLocalProject = true;
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
+  describe("local development parity", () => {
+    it("rejects a local mutating request that omits the CSRF header", async () => {
+      // The reported bug: a hand-rolled browser mutation passed all through
+      // local development and then answered 403 on the first deployed build.
+      const ctx = localCtx();
 
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request("http://localhost/_veryfront/log", { method: "POST" }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/_veryfront/log/subpath", { method: "POST" }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/_veryfront/log", { method: "PUT" }),
-          ctx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
+      const result = await handler.handle(
+        new Request("http://localhost/api/cases", { method: "POST" }),
+        ctx,
+      );
 
       assertEquals(
-        warnings.length,
-        2,
-        "only the registered POST /_veryfront/log mutation is framework-owned",
+        result.continue,
+        false,
+        "a local mutation without the double-submit header must not reach project code",
       );
-      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
-      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
+      assertEquals(
+        result.response?.status,
+        403,
+        "local development must reject exactly what production rejects",
+      );
     });
 
-    it("warns once per path in local development when production would reject", async () => {
-      const localHandler = new CsrfHandler();
-      const ctx = createCtx();
-      ctx.securityConfig = {};
-      ctx.isLocalProject = true;
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
+    it("accepts a local mutating request that echoes the token cookie", async () => {
+      const ctx = localCtx();
+      const { token } = generateCsrfToken({ secure: false });
 
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request("http://localhost/api/cases?attempt=1", { method: "POST" }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/cases?attempt=2", { method: "POST" }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/other", { method: "PUT" }),
-          ctx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      assertEquals(warnings.length, 2);
-      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
-      assertStringIncludes(warnings[0]!, "csrfMutationHeaders");
-      assertStringIncludes(warnings[0]!, '"veryfront/index.client"');
-      assertStringIncludes(warnings[1]!, "PUT request [path redacted]");
-    });
-
-    it("warns when a local mutation sends an empty CSRF header", async () => {
-      const localHandler = new CsrfHandler();
-      const ctx = createCtx();
-      ctx.securityConfig = {};
-      ctx.isLocalProject = true;
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request("http://localhost/api/empty-header", {
-            method: "POST",
-            headers: { "x-csrf-token": "" },
-          }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/blank-header", {
-            method: "POST",
-            headers: { "x-csrf-token": "   " },
-          }),
-          ctx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
+      const result = await handler.handle(
+        new Request("http://localhost/api/cases", {
+          method: "POST",
+          headers: {
+            cookie: `__Host-vf_csrf=${token}`,
+            "x-csrf-token": token,
+          },
+        }),
+        ctx,
+      );
 
       assertEquals(
-        warnings.length,
-        2,
-        "an empty or whitespace x-csrf-token is rejected by validateCsrf in production, so it must still warn locally",
-      );
-      assertStringIncludes(
-        warnings[0]!,
-        "POST request [path redacted]",
-        "the empty-header warning names the method and redacts the path",
-      );
-      assertStringIncludes(
-        warnings[1]!,
-        "POST request [path redacted]",
-        "the whitespace-header warning names the method and redacts the path",
+        result.continue,
+        true,
+        "the double-submit contract must be satisfiable locally, not just enforceable",
       );
     });
 
-    it("does not include raw path segments in the missing-header warning", async () => {
-      const localHandler = new CsrfHandler();
+    it("still rejects an empty local CSRF header the way production does", async () => {
+      const ctx = localCtx();
+      const { token } = generateCsrfToken({ secure: false });
+
+      for (const headerValue of ["", "   "]) {
+        const result = await handler.handle(
+          new Request("http://localhost/api/cases", {
+            method: "POST",
+            headers: {
+              cookie: `__Host-vf_csrf=${token}`,
+              "x-csrf-token": headerValue,
+            },
+          }),
+          ctx,
+        );
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `an empty header value ${JSON.stringify(headerValue)} must fail locally too`,
+        );
+      }
+    });
+
+    it("keeps security.csrf false working as the opt-out in local development", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: false } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const result = await handler.handle(
+        new Request("http://localhost/api/cases", { method: "POST" }),
+        ctx,
+      );
+
+      assertEquals(
+        result.continue,
+        true,
+        "an explicit opt-out must keep local development permissive",
+      );
+    });
+
+    it("enforces rather than passing through when csrf resolves to undefined", async () => {
+      // The permissive `csrfConfig === undefined` branch is gone. A context
+      // that never ran through `deriveSecurityContext` must fail closed
+      // instead of silently skipping the gate.
       const ctx = createCtx();
       ctx.securityConfig = {};
-      ctx.isLocalProject = true;
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-      const sensitiveSegment = "private.email@example.com";
+      const result = await handler.handle(
+        new Request("http://localhost/submit", { method: "POST" }),
+        ctx,
+      );
 
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request(`http://localhost/api/orders/${sensitiveSegment}/charge`, {
-            method: "POST",
-          }),
-          ctx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      assertEquals(warnings.length, 1);
-      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
-      assertEquals(warnings[0]!.includes("/api/orders"), false);
-      assertEquals(warnings[0]!.includes("charge"), false);
-      assertEquals(warnings[0]!.includes(sensitiveSegment), false);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("warns once per local project identity", async () => {
-      const localHandler = new CsrfHandler();
-      const alphaCtx = createCtx();
-      alphaCtx.securityConfig = {};
-      alphaCtx.isLocalProject = true;
-      alphaCtx.projectSlug = "alpha";
-      const betaCtx = createCtx();
-      betaCtx.securityConfig = {};
-      betaCtx.isLocalProject = true;
-      betaCtx.projectSlug = "beta";
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request("http://localhost/api/shared", { method: "POST" }),
-          alphaCtx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/shared", { method: "POST" }),
-          betaCtx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/shared", { method: "POST" }),
-          betaCtx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      assertEquals(warnings.length, 2);
-      assertStringIncludes(warnings[0]!, "POST request [path redacted]");
-      assertStringIncludes(warnings[1]!, "POST request [path redacted]");
-    });
-
-    it("evicts old warning keys without suppressing new routes", async () => {
-      const localHandler = new CsrfHandler();
-      const ctx = createCtx();
-      ctx.securityConfig = {};
-      ctx.isLocalProject = true;
-      ctx.projectSlug = "eviction-project";
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        for (let index = 0; index < 101; index++) {
-          await localHandler.handle(
-            new Request(`http://localhost/api/r${index}`, { method: "POST" }),
-            ctx,
-          );
-        }
-        await localHandler.handle(
-          new Request("http://localhost/api/final-route", { method: "POST" }),
-          ctx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/final-route", { method: "POST" }),
-          ctx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      assertEquals(warnings.length, 102);
-      assertStringIncludes(warnings[101]!, "POST request [path redacted]");
-    });
-
-    it("does not warn outside the absent-header local development case", async () => {
-      const localHandler = new CsrfHandler();
-      const localCtx = createCtx();
-      localCtx.securityConfig = {};
-      localCtx.isLocalProject = true;
-      const disabledCtx = createCtx(false);
-      disabledCtx.isLocalProject = true;
-      const nonLocalCtx = createCtx();
-      nonLocalCtx.securityConfig = {};
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-
-      console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await localHandler.handle(
-          new Request("http://localhost/explicit-off", { method: "POST" }),
-          disabledCtx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/non-local", { method: "POST" }),
-          nonLocalCtx,
-        );
-        await localHandler.handle(new Request("http://localhost/safe"), localCtx);
-        await localHandler.handle(
-          new Request("http://localhost/header-present", {
-            method: "POST",
-            headers: { "x-csrf-token": "present" },
-          }),
-          localCtx,
-        );
-        await localHandler.handle(
-          new Request("http://localhost/api/control-plane/agents/list", {
-            method: "POST",
-            headers: { "x-veryfront-control-plane-jws": "header.payload.signature" },
-          }),
-          localCtx,
-        );
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      assertEquals(warnings, []);
-    });
-
-    it("should pass through all requests when securityConfig is null", async () => {
+    it("fails closed when no security context was derived at all", async () => {
       const ctx = createCtx();
       ctx.securityConfig = null;
       const req = new Request("http://localhost/submit", { method: "POST" });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("should pass through when csrf is false", async () => {
@@ -562,13 +442,220 @@ describe("security/http/csrf/csrf-handler", () => {
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, true);
     });
+  });
 
-    it("should pass through when csrf is undefined", async () => {
+  describe("rejection body", () => {
+    it("keeps the deployed 403 body byte-identical and free of configuration detail", async () => {
       const ctx = createCtx();
-      ctx.securityConfig = {};
-      const req = new Request("http://localhost/submit", { method: "POST" });
-      const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: true },
+      ).securityConfig;
+
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/cases", { method: "POST" }),
+        ctx,
+      );
+      const body = await result.response!.text();
+
+      assertEquals(
+        body,
+        PRODUCTION_CSRF_FORBIDDEN_BODY,
+        "a deployed client must keep receiving the same opaque rejection",
+      );
+      assertEquals(
+        body.includes("my_csrf"),
+        false,
+        "the cookie name must not leak to deployed clients",
+      );
+      assertEquals(
+        body.includes("x-my-csrf"),
+        false,
+        "the header name must not leak to deployed clients",
+      );
+      assertEquals(body.includes("csrfMutationHeaders"), false);
+      assertEquals(body.includes("security.csrf"), false);
+    });
+
+    it("names the configured cookie, header and helper in the local 403 body", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const result = await handler.handle(loopbackRequest("/api/cases"), ctx);
+      const body = await result.response!.text();
+
+      assertStringIncludes(body, "my_csrf", "the local body must name the cookie in effect");
+      assertStringIncludes(body, "x-my-csrf", "the local body must name the header in effect");
+      assertStringIncludes(body, "csrfMutationHeaders");
+      assertStringIncludes(body, "veryfront/index.client");
+      assertStringIncludes(body, "security.csrf");
+      assertEquals(
+        body.includes("__Host-vf_csrf"),
+        false,
+        "a project with configured names must not be told to use the default cookie",
+      );
+    });
+
+    it("names the default cookie and header when the project configures neither", async () => {
+      const ctx = localCtx();
+
+      const result = await handler.handle(loopbackRequest("/api/cases"), ctx);
+      const body = await result.response!.text();
+
+      assertStringIncludes(body, "__Host-vf_csrf");
+      assertStringIncludes(body, "x-csrf-token");
+    });
+
+    it("keeps the body opaque for a local project reached from a non-loopback peer", async () => {
+      // `ctx.isLocalProject` means a project directory was resolved on disk,
+      // which a deployed multi-project runtime also does. Without the loopback
+      // requirement that deployment would serve its configured cookie and
+      // header names, and the opt-out that turns the check off, to anyone.
+      const ctx = localCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+
+      const result = await handler.handle(
+        new Request("https://acme.example.test/api/cases", { method: "POST" }),
+        ctx,
+      );
+      const body = await result.response!.text();
+
+      assertEquals(
+        body,
+        PRODUCTION_CSRF_FORBIDDEN_BODY,
+        "a project resolved on disk but reached over the network gets the deployed body",
+      );
+      assertEquals(
+        body.includes("my_csrf"),
+        false,
+        "the configured cookie name must not leak to a non-loopback caller",
+      );
+      assertEquals(
+        body.includes("x-my-csrf"),
+        false,
+        "the configured header name must not leak to a non-loopback caller",
+      );
+      assertEquals(
+        body.includes("security.csrf"),
+        false,
+        "the opt-out that disables this check must not be advertised over the network",
+      );
+    });
+
+    it("does not repeat the request path back in the local body", async () => {
+      const ctx = localCtx();
+      const sensitiveSegment = "private.email@example.com";
+
+      const result = await handler.handle(
+        loopbackRequest(`/api/orders/${sensitiveSegment}/charge`),
+        ctx,
+      );
+      const body = await result.response!.text();
+
+      assertEquals(body.includes(sensitiveSegment), false);
+      assertEquals(body.includes("/api/orders"), false);
+    });
+  });
+
+  describe("framework-owned local control mutations", () => {
+    it("exempts the development client logger and dashboard API from a trusted loopback peer", async () => {
+      const ctx = localCtx();
+
+      for (
+        const path of [
+          "/_veryfront/log",
+          "/_dev/api/execute-tool",
+          "/_dev/api/start-workflow",
+        ]
+      ) {
+        const result = await handler.handle(loopbackRequest(path), ctx);
+
+        assertEquals(
+          result.continue,
+          true,
+          `${path} is framework owned and must keep working in veryfront dev`,
+        );
+      }
+    });
+
+    it("does not exempt those surfaces for a cross-site browser request", async () => {
+      const ctx = localCtx();
+
+      for (const path of ["/_veryfront/log", "/_dev/api/execute-tool"]) {
+        const result = await handler.handle(
+          loopbackRequest(path, { "sec-fetch-site": "cross-site" }),
+          ctx,
+        );
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} must stay closed to a cross-site page on the developer machine`,
+        );
+      }
+    });
+
+    it("does not exempt those surfaces without a transport-authenticated loopback peer", async () => {
+      const ctx = localCtx();
+
+      for (const path of ["/_veryfront/log", "/_dev/api/execute-tool"]) {
+        const result = await handler.handle(
+          new Request(`http://localhost:8000${path}`, {
+            method: "POST",
+            headers: { host: "localhost:8000" },
+          }),
+          ctx,
+        );
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} must not be exempted on a header claim alone`,
+        );
+      }
+    });
+
+    it("does not exempt a deployed project that is not local development", async () => {
+      const ctx = createCtx(true);
+
+      for (const path of ["/_veryfront/log", "/_dev/api/execute-tool"]) {
+        const result = await handler.handle(loopbackRequest(path), ctx);
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} carries no local-development exemption off the developer machine`,
+        );
+      }
+    });
+
+    it("does not exempt look-alike paths beside the framework surfaces", async () => {
+      const ctx = localCtx();
+
+      for (
+        const path of [
+          "/_veryfront/log/subpath",
+          "/_veryfront/logger",
+          "/_dev/api",
+          "/_dev/apifoo/run",
+          "/_dev/session",
+        ]
+      ) {
+        const result = await handler.handle(loopbackRequest(path), ctx);
+
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} is not a registered framework control surface`,
+        );
+      }
     });
   });
 
@@ -733,6 +820,21 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
+    it("normalizes an explicitly configured default cookie on plain-HTTP LAN origins", async () => {
+      const ctx = createCtx({ cookieName: "__Host-vf_csrf" });
+      const token = "lan-token";
+      const req = new Request("http://192.168.1.20:3000/submit", {
+        method: "POST",
+        headers: {
+          cookie: `vf_csrf=${token}`,
+          "x-csrf-token": token,
+        },
+      });
+
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.continue, true);
+    });
+
     it("should reject when using default names with custom config", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
       const { token } = generateCsrfToken({ secure: false });
@@ -759,6 +861,44 @@ describe("security/http/csrf/csrf-handler", () => {
       const req = new Request("http://localhost/api/webhooks/stripe", { method: "POST" });
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, true);
+    });
+
+    it("should treat a root exclusion as only the root path", async () => {
+      const ctx = createCtx({ excludePaths: ["/"] });
+
+      const rootResult = await handler.handle(
+        new Request("http://localhost/", { method: "POST" }),
+        ctx,
+      );
+      assertEquals(rootResult.continue, true);
+
+      for (const path of ["/api/cases", "/nested/path"]) {
+        const req = new Request(`http://localhost${path}`, { method: "POST" });
+        const result = await handler.handle(req, ctx);
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} is not the root path and must stay CSRF gated`,
+        );
+      }
+    });
+
+    it("continues checking exclusions after a root-only mismatch", async () => {
+      const ctx = createCtx({ excludePaths: ["/", "/api/webhooks"] });
+
+      for (const path of ["/", "/api/webhooks", "/api/webhooks/stripe"]) {
+        const result = await handler.handle(
+          new Request(`http://localhost${path}`, { method: "POST" }),
+          ctx,
+        );
+        assertEquals(result.continue, true, `${path} must match its exclusion`);
+      }
+
+      const protectedResult = await handler.handle(
+        new Request("http://localhost/api/cases", { method: "POST" }),
+        ctx,
+      );
+      assertEquals(protectedResult.response?.status, 403);
     });
 
     it("should not skip paths not in excludePaths", async () => {

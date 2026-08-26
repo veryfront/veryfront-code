@@ -39,9 +39,12 @@ const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectValues = Object.values;
+const RegExpConstructor = RegExp;
+const regexpExec = RegExp.prototype.exec;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
+const stringEndsWith = String.prototype.endsWith;
 const stringIncludes = String.prototype.includes;
 const stringIndexOf = String.prototype.indexOf;
 const stringReplace = String.prototype.replace;
@@ -323,10 +326,11 @@ function enumeratedHostBinding(
   const parameterName = apply(stringSlice, endpoint.url, [tokenStart + 1, tokenEnd]) as string;
   const token = `{${parameterName}}`;
   const parameter = endpoint.params?.[parameterName];
-  if (
-    !parameter || parameter.in !== "path" || parameter.type !== "string" ||
-    !arrayIsArray(parameter.enum) || parameter.enum.length === 0
-  ) {
+  // A tokened authority without a declared enum falls through to the
+  // patterned-authority admission in resolveSupportedEndpointOrigin, which
+  // fails closed unless the parameter carries an anchored pattern.
+  if (!parameter || !arrayIsArray(parameter.enum)) return undefined;
+  if (parameter.in !== "path" || parameter.type !== "string" || parameter.enum.length === 0) {
     configurationError(
       `Local integration tool "${toolId}" endpoint must be a fixed HTTPS URL ` +
         "or restrict its host to an enum",
@@ -429,12 +433,45 @@ function resolveSupportedEndpointOrigin(
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
     return undefined;
-  } else {
-    return assertHttpsCatalogUrl(
-      endpoint.url,
-      `Local integration tool "${toolId}" endpoint`,
-    );
   }
+
+  const authorityMatch = apply(
+    regexpExec,
+    new RegExpConstructor(
+      "^https://\\{([A-Za-z][A-Za-z0-9_]*)\\}(?=/|$)",
+    ),
+    [endpoint.url],
+  ) as RegExpExecArray | null;
+  if (authorityMatch) {
+    const parameterName = authorityMatch[1]!;
+    const field = endpoint.params?.[parameterName];
+    const patternDescriptor = field && getOwnPropertyDescriptor(field, "pattern");
+    const pattern = patternDescriptor && "value" in patternDescriptor
+      ? patternDescriptor.value
+      : undefined;
+    if (
+      !field || field.type !== "string" || field.in !== "path" ||
+      (field.required !== true && field.default === undefined) ||
+      typeof pattern !== "string" ||
+      !stringBoolean(stringStartsWith, pattern, "^") ||
+      !stringBoolean(stringEndsWith, pattern, "$")
+    ) {
+      configurationError(
+        `Local integration tool "${toolId}" authority must use a required patterned string parameter`,
+      );
+    }
+    try {
+      new RegExpConstructor(pattern);
+    } catch {
+      configurationError(`Local integration tool "${toolId}" authority pattern is invalid`);
+    }
+    return undefined;
+  }
+
+  return assertHttpsCatalogUrl(
+    endpoint.url,
+    `Local integration tool "${toolId}" endpoint`,
+  );
 }
 
 function inputPropertySchema(
@@ -444,6 +481,7 @@ function inputPropertySchema(
     default?: unknown;
     enum?: string[];
     exposeDefault?: boolean;
+    pattern?: string;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -467,6 +505,16 @@ function inputPropertySchema(
       append(allowedValues, field.enum[index]!);
     }
     schema.enum = freeze(allowedValues);
+  }
+  // Own-property read: a prototype-traversing `field.pattern` would let an
+  // `Object.prototype.pattern` pollution inject a constraint into every
+  // model-facing schema (or execute an inherited getter).
+  const patternDescriptor = getOwnPropertyDescriptor(field, "pattern");
+  const pattern = patternDescriptor && "value" in patternDescriptor
+    ? patternDescriptor.value
+    : undefined;
+  if (field.type === "string" && typeof pattern === "string") {
+    schema.pattern = pattern;
   }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
@@ -609,7 +657,7 @@ function createLocalIntegrationToolSourceInternal(
       }
       const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
       let endpoint = tool.endpoint;
-      let allowedOrigin = tool.endpointOrigin;
+      let allowedOrigin = tool.endpointOrigin ?? validated.endpointOrigin;
       if (tool.enumeratedHost) {
         const host = validated.args[tool.enumeratedHost.parameterName] ??
           endpoint.params?.[tool.enumeratedHost.parameterName]?.default;

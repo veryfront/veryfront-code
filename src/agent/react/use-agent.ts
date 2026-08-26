@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message as AgentMessage, ToolCall } from "#veryfront/agent/types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { csrfMutationHeaders } from "#veryfront/security/csrf/browser-mutation-headers.ts";
 
 /** Options accepted by use agent. */
 export interface UseAgentOptions {
@@ -65,9 +66,15 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
       abortControllerRef.current = abortController;
 
       try {
-        const response = await fetch(`/api/agents/${options.agent}`, {
+        const endpoint = `/api/agents/${options.agent}`;
+        const response = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          // CSRF is enforced in every environment, local development included,
+          // so this POST has to echo the configured CSRF cookie the document
+          // response issued or the server answers 403.
+          headers: csrfMutationHeaders(endpoint, {
+            headers: { "Content-Type": "application/json" },
+          }),
           body: JSON.stringify({ input, messages }),
           signal: abortController.signal,
         });
