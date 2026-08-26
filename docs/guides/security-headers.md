@@ -166,7 +166,7 @@ Preview deployments serve the same policy as production, so a CSP problem shows 
 
 ## Cross-site request forgery
 
-Veryfront checks CSRF on every protected request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header. HTTPS and loopback origins use `__Host-vf_csrf`; plain-HTTP LAN development uses `vf_csrf`. A protected request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
+Veryfront checks CSRF on every protected request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header. HTTPS and loopback origins use `__Host-vf_csrf`. Plain-HTTP LAN development uses an origin-scoped `vf_csrf_http_<encoded-origin-and-config>` physical cookie plus a `vf_csrf_names_<encoded-origin>` discovery cookie, avoiding collisions with HTTPS siblings. During migration, an HTTPS origin uses `vf_csrf_https_<encoded-origin-and-config>` when an HTTP sibling still advertises the shared legacy token, so HTTPS does not make that token unreadable to the already-open HTTP app. A protected request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
 
 `veryfront dev` runs the same check as your deployed build. Earlier releases skipped it locally, so a mutating `fetch` you wrote by hand worked for as long as you were building the feature and then failed on the first deploy. It now fails on your machine instead, and the local `403` body names the cookie and the header your project expects.
 
@@ -225,8 +225,11 @@ const headers = csrfMutationHeaders("/api/cases", {
 
 `excludePaths` takes canonical absolute paths. A listed path and everything under it skips the check, except `/`, which matches only the root path. This is what a third-party webhook receiver needs, because the sender holds no cookie of yours.
 
-On plain-HTTP LAN development origins, Veryfront uses the non-prefixed
-`vf_csrf` cookie because browsers reject `Secure` `__Host-` cookies there. The
+On plain-HTTP LAN development origins, browsers reject `Secure` `__Host-`
+cookies. Veryfront therefore derives an origin-scoped
+`vf_csrf_http_<encoded-origin-and-config>` token name and advertises it through
+`vf_csrf_names_<encoded-origin>`. Use `csrfMutationHeaders` so discovery stays
+automatic; do not read or construct the physical cookie name directly. The
 header remains `x-csrf-token`, and HTTPS (including deployed origins) keeps the
 hardened `__Host-vf_csrf` cookie.
 
