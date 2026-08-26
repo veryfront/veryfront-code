@@ -766,7 +766,7 @@ function splitModuleSpecifier(specifier: string): { modulePath: string; suffix: 
 
 /** Whether the runtime loads this path as JSON data rather than as a module it executes. */
 function isJSONModulePath(filePath: string): boolean {
-  return filePath.toLowerCase().endsWith(".json");
+  return getLoaderForFile(filePath) === "json";
 }
 
 /** Whether the runtime resolves this specifier through an import map or an installed package. */
@@ -1016,14 +1016,14 @@ function normalizeFileUrlSpecifier(specifier: string): string | null {
 
 function normalizeImportMapScope(prefix: string, baseDir: string): string | null {
   if (prefix.startsWith("./") || prefix.startsWith("../")) {
-    const resolved = resolveImportMapRelativePath(prefix, baseDir);
+    const resolved = resolveImportMapTargetPath(prefix, baseDir);
     return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
   }
   if (!/^file:/i.test(prefix)) return prefix;
 
   try {
     const url = new URL(prefix);
-    const resolved = pathHelper.fromFileUrl(url);
+    const resolved = fromFileUrlPreservingEncodedUrlPathDelimiters(url);
     return url.pathname.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
   } catch {
     return null;
@@ -1046,8 +1046,9 @@ export function lookupImportMapEntry(
 ): string | null {
   const normalizedSpecifier = normalizeImportMapLookupSpecifier(specifier, referrer);
   if (referrer !== undefined) {
+    const normalizedReferrer = normalizeImportMapScopeReferrer(referrer);
     const matchingScopes = Object.entries(importMap.scopes)
-      .filter(([prefix]) => modulePathOfSpecifier(referrer).startsWith(prefix))
+      .filter(([prefix]) => normalizedReferrer.startsWith(prefix))
       .sort(([left], [right]) => right.length - left.length);
     for (const [, imports] of matchingScopes) {
       const target = lookupSpecifierMapping(imports, normalizedSpecifier);
@@ -1056,6 +1057,16 @@ export function lookupImportMapEntry(
   }
 
   return lookupSpecifierMapping(importMap.imports, normalizedSpecifier);
+}
+
+function normalizeImportMapScopeReferrer(referrer: string): string {
+  if (REMOTE_URL_SPECIFIER.test(referrer)) return modulePathOfSpecifier(referrer);
+  if (/^file:/i.test(referrer)) return normalizeFileUrlSpecifier(referrer) ?? referrer;
+  try {
+    return normalizeFileUrlSpecifier(pathHelper.toFileUrl(referrer).href) ?? referrer;
+  } catch {
+    return referrer;
+  }
 }
 
 function normalizeImportMapLookupSpecifier(specifier: string, referrer?: string): string {
@@ -1401,12 +1412,17 @@ function bundledWorkerImportTarget(options: {
     });
   }
 
+  // An inherited or otherwise unreadable map can remap even a relative
+  // Worker import. The worker runs under Deno's loader rather than esbuild, so
+  // validating the literal path would approve a graph different from the one
+  // that executes.
+  if (importMap === null) rejectUnvalidatedWorkerImport(specifier);
+
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     return resolveContainedLocalModule(projectDir, filePath, specifier);
   }
   if (canDirectImportSpecifier(specifier)) return null;
   if (isBareModuleSpecifier(specifier)) {
-    if (importMap === null) rejectUnvalidatedWorkerImport(specifier);
     return null;
   }
   if (REMOTE_URL_SPECIFIER.test(specifier)) return rejectRemoteWorkerImport(specifier);
