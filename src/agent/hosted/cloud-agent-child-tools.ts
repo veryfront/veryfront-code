@@ -252,6 +252,7 @@ export function resolveHostedChildToolNames(
     return undefined;
   }
 
+  const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
   const hasAuthorizedSkills = skillSelectorSnapshot === undefined ||
     skillSelectorSnapshot.allowedSkillIds.length > 0;
   return [
@@ -261,9 +262,9 @@ export function resolveHostedChildToolNames(
       ),
       ...(agentConfig.providerTools ?? []),
       ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
-      ...(hasAuthorizedSkills ? ["load_skill"] : []),
+      ...(hasAuthorizedSkills && !deniedToolNames.has("load_skill") ? ["load_skill"] : []),
     ]),
-  ];
+  ].filter((toolName) => !deniedToolNames.has(toolName));
 }
 
 /** Builds host tools for a configured hosted child run. */
@@ -277,7 +278,9 @@ export function buildHostedChildGlobalTools(
 ): HostToolSet {
   return {
     ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
-    ...(!input.childConfig || (input.childConfig.availableSkillIds?.length ?? 0) > 0
+    ...(!input.childConfig ||
+        ((input.childConfig.availableSkillIds?.length ?? 0) > 0 &&
+          input.childConfig.toolNames?.includes("load_skill") === true)
       ? { load_skill: createLoadSkillTool(context, input.childToolContext) }
       : {}),
     ...(input.childConfig?.delegateIds?.length

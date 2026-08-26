@@ -361,6 +361,45 @@ describe("internal-agents/run-stream", () => {
     assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
   });
 
+  it("applies owned short-name denials to registered-name injected tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    toolRegistryInternal.register("researcher--fetch-paper", {
+      id: "researcher--fetch-paper",
+      shortName: "fetch-paper",
+      ownerAgentId: "researcher",
+      type: "function",
+      description: "Fetch paper",
+      inputSchema: {} as never,
+      execute: () => ({ ok: true }),
+    } as unknown as Tool);
+    try {
+      const runtimeAgent = {
+        id: "researcher",
+        config: {
+          id: "researcher",
+          system: "test",
+          tools: { "fetch-paper": false },
+        },
+      } as unknown as Agent;
+
+      const mergedTools = buildMergedTools(
+        runtimeAgent,
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [{ name: "researcher--fetch-paper", description: "Injected wrapper" }],
+          context: [],
+        } as Parameters<typeof buildMergedTools>[1],
+        sessionManager,
+      );
+
+      assertEquals(mergedTools, undefined);
+    } finally {
+      toolRegistryInternal.delete("researcher--fetch-paper");
+    }
+  });
+
   it("collects only explicit false entries as denied tool names", () => {
     const runtimeAgent = {
       id: "denied-remote",
@@ -1008,6 +1047,62 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, ["get_file", "search_knowledge"]);
+  });
+
+  it("filters source remote grants when forwarded grants are absent", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedToolNames: string[] = [];
+    const agent = {
+      id: "support-agent",
+      config: {
+        id: "support-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { search_knowledge: false, get_file: true },
+        __vfAllowedRemoteTools: ["search_knowledge", "get_file"],
+        __vfRemoteToolSources: [{
+          id: "veryfront-mcp",
+          listTools: async () => [
+            { name: "search_knowledge", description: "Search", parameters: {} },
+            { name: "get_file", description: "Read", parameters: {} },
+          ],
+          executeTool: async () => ({}),
+        }],
+      },
+    } as unknown as Agent;
+
+    await createRuntimeAgentStreamResponse(
+      {
+        agentId: "support-agent",
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent, mergedTools) => {
+          capturedAllowedRemoteTools = (
+            runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] }
+          ).__vfAllowedRemoteTools;
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["get_file"]);
+    assertEquals(capturedToolNames, ["get_file"]);
   });
 
   it("preserves source remote tool allowlists when forwarded allowlists are present", async () => {

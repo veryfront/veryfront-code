@@ -557,6 +557,35 @@ Deno.test("hosted child project agents keep load_skill for a non-empty exact ski
   );
 });
 
+Deno.test("hosted child project agents preserve an explicit load_skill denial", () => {
+  const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+    id: "extraction-agent",
+    name: "Extraction agent",
+    description: "Extract an application",
+    instructions: "Extract the application.",
+    skills: ["extract"],
+    tools: ["get_file"],
+    deniedTools: ["load_skill"],
+  }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+  assertEquals(toolNames, ["get_file"]);
+  const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
+    {} as never,
+    {
+      childAgentId: "extraction-agent",
+      childConfig: {
+        system: "Use exact child policy",
+        toolNames,
+        availableSkillIds: ["extraction-agent--extract"],
+        skillSelectorPolicy: { kind: "allowlist", entries: ["extraction-agent--extract"] },
+        skillSourcePaths: {},
+      },
+      childToolContext: {} as never,
+    },
+  );
+  assertEquals("load_skill" in hostTools, false);
+});
+
 Deno.test("startAgentService keeps application-error reporting active after readiness and cleans up on graceful shutdown", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
