@@ -648,7 +648,8 @@ function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): 
   IntrinsicReflectApply(WeakMapPrototypeSet, map, [key, value]);
 }
 
-function createPublicSpan(providerSpan: Span): Span {
+/** @internal Wrap a provider-owned span before returning it to project code. */
+export function createPublicSpan(providerSpan: Span): Span {
   const existing = weakMapGet(publicSpanFacades, providerSpan);
   if (existing) return existing;
 
@@ -700,7 +701,8 @@ function createPublicSpan(providerSpan: Span): Span {
   return facade;
 }
 
-function unwrapPublicSpan(span: Span): Span {
+/** @internal Restore a provider-owned span at an internal tracing boundary. */
+export function unwrapPublicSpan(span: Span): Span {
   return weakMapGet(publicSpanTargets, span) ?? span;
 }
 

@@ -20,6 +20,7 @@ import {
   type AttributeValue,
   type Context,
   context as shimContext,
+  createPublicSpan,
   defaultTextMapGetter,
   defaultTextMapSetter,
   getTracer,
@@ -31,6 +32,7 @@ import {
   SpanStatusCode,
   trace as shimTrace,
   type Tracer,
+  unwrapPublicSpan,
 } from "./api-shim.ts";
 import { formatTraceparent, parseTraceparent } from "./traceparent.ts";
 import { getHostTelemetryEnv } from "./telemetry-env.ts";
@@ -382,7 +384,7 @@ export async function withSpan<T>(
   try {
     const result = await runAsyncWithContextFallback(
       (callback) => shimContext.with(spanContext, callback),
-      () => fn(span),
+      () => fn(createPublicSpan(span)),
       (error) => reportTelemetryFailure("Failed to activate span context", error),
     );
     return result;
@@ -488,14 +490,14 @@ export function startServerSpan(
   } catch (error) {
     reportTelemetryFailure("Failed to associate server span with context", error);
   }
-  return { span, context: spanContext };
+  return { span: createPublicSpan(span), context: spanContext };
 }
 
 /** End an active server tracing span. */
 export function endServerSpan(span: unknown, statusCode: number, error?: Error): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   runTelemetryOperation(
     () => otelSpan.setAttribute("http.status_code", statusCode),
     "Failed to set server span status code",
@@ -532,7 +534,7 @@ export function setSpanAttributes(
 ): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   for (const [key, value] of Object.entries(sanitizeTelemetryAttributes(attributes))) {
     runTelemetryOperation(
       () => otelSpan.setAttribute(key, value),
@@ -549,7 +551,7 @@ export function addSpanEvent(
 ): void {
   if (!span) return;
 
-  const otelSpan = span as Span;
+  const otelSpan = unwrapPublicSpan(span as Span);
   runTelemetryOperation(
     () =>
       otelSpan.addEvent(

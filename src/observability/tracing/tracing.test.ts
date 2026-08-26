@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertNotStrictEquals,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import {
@@ -7,6 +13,7 @@ import {
   type Context,
   getTracer,
   installGlobalTelemetryAPI,
+  publicTrace,
   type Span,
   type SpanStartOptions,
   trace,
@@ -18,7 +25,12 @@ interface StartedSpanRecord {
   name: string;
   options?: SpanStartOptions;
   parentContext?: Context;
+  span: Span;
 }
+
+const recordingSpanPrototype = {
+  providerSpanMethod(): void {},
+};
 
 /** Recording tracer double: captures every startSpan call the SDK layer makes. */
 function createRecordingTracer(started: StartedSpanRecord[]): Tracer {
@@ -26,7 +38,7 @@ function createRecordingTracer(started: StartedSpanRecord[]): Tracer {
   const createSpan = (): Span => {
     spanCount += 1;
     const spanId = String(spanCount).padStart(16, "0");
-    const span: Span = {
+    const span: Span = Object.assign(Object.create(recordingSpanPrototype), {
       setAttribute: () => span,
       setAttributes: () => span,
       setStatus: () => span,
@@ -40,14 +52,15 @@ function createRecordingTracer(started: StartedSpanRecord[]): Tracer {
         isRemote: false,
       }),
       updateName: () => {},
-    };
+    });
     return span;
   };
 
   return {
     startSpan(name: string, options?: SpanStartOptions, parentContext?: Context): Span {
-      started.push({ name, options, parentContext });
-      return createSpan();
+      const span = createSpan();
+      started.push({ name, options, parentContext, span });
+      return span;
     },
     startActiveSpan: (() => {
       throw new Error("startActiveSpan is not used by these tests");
@@ -617,16 +630,75 @@ describe("Tracing Module", () => {
           started[1]?.parentContext,
           "the child span must be started under a parent context",
         );
-        assertEquals(
+        assertStrictEquals(
           trace.getSpan(started[1]?.parentContext as Context),
+          started[0]?.span,
+          "the provider must receive its own parent span",
+        );
+        assertStrictEquals(
+          publicTrace.getSpan(started[1]?.parentContext as Context),
           parent,
-          "the child span must be started under the parent's context",
+          "the public trace accessor must restore the parent's facade",
         );
         assertEquals(
           started[1]?.options?.attributes,
           { operation: "fetch" },
           "the child span must carry the requested attributes",
         );
+      } finally {
+        shutdownTracing();
+        owner.dispose();
+        _resetShimForTests();
+      }
+    });
+
+    it("wraps spans returned by every top-level public helper", async () => {
+      const started: StartedSpanRecord[] = [];
+      const tracer = createRecordingTracer(started);
+      const owner = installGlobalTelemetryAPI({ tracerProvider: { getTracer: () => tracer } });
+      const {
+        createChildSpan,
+        initTracing,
+        shutdownTracing,
+        startSpan,
+        withSpan,
+        withSpanSync,
+      } = await import("./index.ts");
+
+      try {
+        await initTracing({ enabled: true, serviceName: "test" });
+
+        const parent = startSpan("parent");
+        assertExists(parent);
+        assertNotStrictEquals(parent, started[0]?.span);
+        assertNotStrictEquals(Object.getPrototypeOf(parent), recordingSpanPrototype);
+        assertEquals(Object.isFrozen(parent), true);
+
+        const child = createChildSpan(parent, "child");
+        assertExists(child);
+        assertNotStrictEquals(child, started[1]?.span);
+        assertEquals(Object.isFrozen(child), true);
+        assertStrictEquals(
+          trace.getSpan(started[1]?.parentContext as Context),
+          started[0]?.span,
+        );
+
+        let asyncSpan: Span | null = null;
+        await withSpan("async", (span) => {
+          asyncSpan = span;
+          return Promise.resolve();
+        });
+        assertExists(asyncSpan);
+        assertNotStrictEquals(asyncSpan, started[2]?.span);
+        assertEquals(Object.isFrozen(asyncSpan), true);
+
+        let syncSpan: Span | null = null;
+        withSpanSync("sync", (span) => {
+          syncSpan = span;
+        });
+        assertExists(syncSpan);
+        assertNotStrictEquals(syncSpan, started[3]?.span);
+        assertEquals(Object.isFrozen(syncSpan), true);
       } finally {
         shutdownTracing();
         owner.dispose();
