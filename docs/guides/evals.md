@@ -816,16 +816,25 @@ relied on `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
 
 ```ts
 import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
-import { defineConfig } from "veryfront";
+import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
   extensions: [
     extEvalReportMlflow({
       trackingUri: "https://tenant-mlflow.example",
-      trackingToken: Deno.env.get("TENANT_MLFLOW_TOKEN"),
+      trackingToken: getEnv("TENANT_MLFLOW_TOKEN"),
     }),
   ],
 });
+```
+
+Automatic CLI selection follows `MLFLOW_TRACKING_URI` only. After migrating a
+configured endpoint away from that variable, select the exporter explicitly
+with `--export mlflow` or `VERYFRONT_EVAL_EXPORTERS=mlflow`; otherwise
+`veryfront eval` registers the exporter but exports nothing.
+
+```bash
+veryfront eval deep-research --export mlflow
 ```
 
 When `MLFLOW_TRACKING_URI` is configured, `veryfront eval` automatically exports

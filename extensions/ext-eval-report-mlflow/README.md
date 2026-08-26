@@ -93,13 +93,13 @@ configurations that previously combined a configured endpoint with
 
 ```ts
 import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
-import { defineConfig } from "veryfront";
+import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
   extensions: [
     extEvalReportMlflow({
       trackingUri: "https://tenant-mlflow.example",
-      trackingToken: Deno.env.get("TENANT_MLFLOW_TOKEN"),
+      trackingToken: getEnv("TENANT_MLFLOW_TOKEN"),
     }),
   ],
 });

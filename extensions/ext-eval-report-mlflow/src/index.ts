@@ -1824,7 +1824,8 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,
       );
-      const activationTrackingUri = factoryConfig.trackingUri;
+      const activationTrackingUri = factoryConfig.trackingUri ??
+        readEnv(ENV_TRACKING_URI);
       if (!activationTrackingUri) {
         ctx.logger.debug(
           `[ext-eval-report-mlflow] Skipping EvalReportExporter "${factoryConfig.id}": no MLFLOW_TRACKING_URI configured`,
