@@ -94,6 +94,43 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("hides the previous last run on the first render of a new authorization context", async () => {
+    const restoreDom = installDom();
+    const renderObservations: Array<{ lastRunId: string | null; token: string }> = [];
+    let hook: UseWorkflowStartResult<Record<string, never>> | null = null;
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        const token = new Headers(init?.headers).get("authorization")?.split(" ").at(-1);
+        return Promise.resolve(Response.json({ runId: `${token}-run` }));
+      }) as typeof fetch,
+    );
+
+    function Capture({ token }: { token: string }): null {
+      hook = useWorkflowStart({
+        workflowId: "workflow-1",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      renderObservations.push({ lastRunId: hook.lastRunId, token });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      await hook!.start({});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.lastRunId, "old-run");
+
+      renderObservations.length = 0;
+      flushSync(() => root.render(<Capture token="new" />));
+      assertEquals(renderObservations[0], { lastRunId: null, token: "new" });
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("ignores an obsolete approval response after authorization changes", async () => {
     const restoreDom = installDom();
     const firstResponse = Promise.withResolvers<Response>();
@@ -130,6 +167,50 @@ describe("useWorkflowStart", () => {
       firstResponse.resolve(Response.json({ id: "approval-1", message: "old session" }));
       await new Promise((resolve) => setTimeout(resolve, 20));
       assertEquals(hook!.approval?.message, "new session");
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("hides approval data on the first render of a new request context", async () => {
+    const restoreDom = installDom();
+    const replacementResponse = Promise.withResolvers<Response>();
+    const renderObservations: Array<{ approvalId: string | null; token: string }> = [];
+    let hook: UseApprovalResult | null = null;
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        return authorization === "Bearer old"
+          ? Promise.resolve(Response.json({ id: "old-approval", status: "pending" }))
+          : replacementResponse.promise;
+      }) as typeof fetch,
+    );
+
+    function Capture({ token }: { token: string }): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      renderObservations.push({ approvalId: hook.approval?.id ?? null, token });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.approval?.id, "old-approval");
+
+      renderObservations.length = 0;
+      flushSync(() => root.render(<Capture token="new" />));
+      assertEquals(renderObservations[0], { approvalId: null, token: "new" });
+
+      replacementResponse.resolve(Response.json({ id: "new-approval", status: "pending" }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.approval?.id, "new-approval");
     } finally {
       flushSync(() => root.unmount());
       restoreDom();
@@ -222,6 +303,62 @@ describe("useWorkflowStart", () => {
       firstResponse.resolve(Response.json({ runs: [], totalCount: 1 }));
       await new Promise((resolve) => setTimeout(resolve, 20));
       assertEquals(hook!.totalCount, 2);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("keeps loading active when an obsolete refresh finishes during replacement loading", async () => {
+    const restoreDom = installDom();
+    const oldRefreshResponse = Promise.withResolvers<Response>();
+    const replacementResponse = Promise.withResolvers<Response>();
+    let oldRequestCount = 0;
+    let hook: UseWorkflowListResult | null = null;
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        const authorization = new Headers(init?.headers).get("authorization");
+        if (authorization === "Bearer old") {
+          oldRequestCount++;
+          return oldRequestCount === 1
+            ? Promise.resolve(Response.json({ runs: [] }))
+            : oldRefreshResponse.promise;
+        }
+        return replacementResponse.promise;
+      }) as typeof fetch,
+    );
+
+    function Capture({ token }: { token: string }): null {
+      hook = useWorkflowList({
+        autoRefresh: false,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture token="old" />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isLoading, false);
+
+      const obsoleteRefresh = hook!.refresh();
+      flushSync(() => root.render(<Capture token="new" />));
+      assertEquals(hook!.isLoading, true);
+
+      oldRefreshResponse.resolve(Response.json({ runs: [] }));
+      await obsoleteRefresh;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(
+        hook!.isLoading,
+        true,
+        "the obsolete refresh must not clear loading for the replacement request",
+      );
+
+      replacementResponse.resolve(Response.json({ runs: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isLoading, false);
     } finally {
       flushSync(() => root.unmount());
       restoreDom();

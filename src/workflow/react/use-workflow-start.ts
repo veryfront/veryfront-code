@@ -51,13 +51,18 @@ export function useWorkflowStart<TInput = unknown>(
   const requestSequence = useRef(0);
 
   const [isStarting, setIsStarting] = useState(false);
-  const [lastRunId, setLastRunId] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<
+    {
+      requestContext: typeof requestContext;
+      runId: string;
+    } | null
+  >(null);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     requestSequence.current++;
     setIsStarting(false);
-    setLastRunId(null);
+    setLastRun(null);
     setError(null);
   }, [requestContext]);
 
@@ -97,7 +102,7 @@ export function useWorkflowStart<TInput = unknown>(
         const runId = data.runId ?? data.id ?? "";
 
         if (isCurrentRequest()) {
-          setLastRunId(runId);
+          setLastRun({ requestContext: startedRequestContext, runId });
           onStart?.(runId);
         }
 
@@ -119,6 +124,8 @@ export function useWorkflowStart<TInput = unknown>(
   const resetError = useCallback((): void => {
     setError(null);
   }, []);
+
+  const lastRunId = lastRun?.requestContext === requestContext ? lastRun.runId : null;
 
   return { start, isStarting, lastRunId, error, resetError };
 }

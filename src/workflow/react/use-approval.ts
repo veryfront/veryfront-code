@@ -57,7 +57,12 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   currentRequestContext.current = requestContext;
   const decisionSequence = useRef(0);
 
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [approvalState, setApprovalState] = useState<
+    {
+      approval: PendingApproval;
+      requestContext: typeof requestContext;
+    } | null
+  >(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -75,7 +80,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     if (!runId || !approvalId) return;
     const controller = new AbortController();
     let current = true;
-    setApproval(null);
+    setApprovalState(null);
     setError(null);
     setIsLoading(true);
 
@@ -97,7 +102,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
 
         const data: PendingApproval = await response.json();
         if (!current) return;
-        setApproval(data);
+        setApprovalState({ approval: data, requestContext });
         setError(null);
       } catch (err) {
         if (!current || controller.signal.aborted) return;
@@ -114,7 +119,16 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       current = false;
       controller.abort();
     };
-  }, [runId, approvalId, credentials, normalizedApiBase, onError, stableHeaders, toError]);
+  }, [
+    runId,
+    approvalId,
+    credentials,
+    normalizedApiBase,
+    onError,
+    requestContext,
+    stableHeaders,
+    toError,
+  ]);
 
   const submitDecision = useCallback(
     async (decision: ApprovalDecision): Promise<void> => {
@@ -166,15 +180,18 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
 
         if (!isCurrentRequest()) return;
 
-        setApproval((prev) => {
-          if (!prev) return null;
+        setApprovalState((prev) => {
+          if (!prev || prev.requestContext !== submittedRequestContext) return prev;
 
           return {
-            ...prev,
-            status: decision.approved ? "approved" : "rejected",
-            resolvedAt: new Date(),
-            resolvedBy: resolvedDecision.approver,
-            comment: decision.comment,
+            requestContext: prev.requestContext,
+            approval: {
+              ...prev.approval,
+              status: decision.approved ? "approved" : "rejected",
+              resolvedAt: new Date(),
+              resolvedBy: resolvedDecision.approver,
+              comment: decision.comment,
+            },
           };
         });
 
@@ -217,6 +234,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     [submitDecision, approver],
   );
 
+  const approval = approvalState?.requestContext === requestContext ? approvalState.approval : null;
   const isPending = approval?.status === "pending";
 
   return {
