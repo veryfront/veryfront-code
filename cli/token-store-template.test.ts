@@ -247,6 +247,34 @@ describe("generated OAuth token store", () => {
     assertEquals((await store.getTokens("github", "alice"))?.refreshToken, "refresh-1");
   });
 
+  it("preserves current scope metadata when a provider refresh omits it", async () => {
+    const store = createTokenStore(new MemoryTokenStore("refresh-scope-preserve"));
+    await store.setTokens("github", "alice", {
+      accessToken: "expiring",
+      refreshToken: "refresh-1",
+      scope: "repo read:user",
+      scopeSource: "explicit",
+      expiresAt: Date.now() + 1_000,
+    });
+
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "github",
+        "alice",
+        async () => ({
+          accessToken: "refreshed",
+          expiresAt: Date.now() + 10 * 60_000,
+        }),
+      ),
+      "refreshed",
+    );
+
+    const refreshed = await store.getTokens("github", "alice");
+    assertEquals(refreshed?.scope, "repo read:user");
+    assertEquals(refreshed?.scopeSource, "explicit");
+  });
+
   it("does not overwrite a concurrent reconnect when refresh loses CAS", async () => {
     const store = createTokenStore(new MemoryTokenStore("refresh-cas"));
     await store.setTokens("github", "alice", {

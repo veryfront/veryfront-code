@@ -1274,6 +1274,17 @@ describe("generated encrypted OAuth token store", () => {
     assertEquals(await adapter.getToken("alice", "github"), null);
   });
 
+  it("exports compare-and-clear as a required encrypted-store capability", () => {
+    const store = createEncryptedTokenStore(createMemoryKvBackend());
+    const compareAndClearTokens: (
+      serviceId: string,
+      userId: string,
+      expectedRevision: string,
+    ) => Promise<boolean> = store.compareAndClearTokens;
+
+    assertEquals(typeof compareAndClearTokens, "function");
+  });
+
   it("refuses the in-memory example backend in production", () => {
     Deno.env.set("NODE_ENV", "production");
 

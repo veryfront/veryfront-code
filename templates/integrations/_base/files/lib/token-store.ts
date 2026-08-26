@@ -240,9 +240,12 @@ export async function getRefreshableAccessToken(
       return latest ? unexpiredAccessToken(latest) : null;
     }
 
-    if (refreshed.refreshToken === undefined) {
-      refreshed = { ...refreshed, refreshToken: token.refreshToken };
-    }
+    refreshed = {
+      ...refreshed,
+      ...(refreshed.refreshToken === undefined ? { refreshToken: token.refreshToken } : {}),
+      ...(refreshed.scope === undefined && token.scope !== undefined ? { scope: token.scope } : {}),
+      ...(token.scopeSource === undefined ? {} : { scopeSource: token.scopeSource }),
+    };
 
     const replaced = await store.compareAndSetTokens(
       serviceId,

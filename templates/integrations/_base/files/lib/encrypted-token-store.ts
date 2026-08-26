@@ -107,6 +107,14 @@ export interface EncryptedTokenStoreRotationReport {
   complete: boolean;
 }
 
+export interface EncryptedTokenStore extends RefreshCapableTokenStore {
+  compareAndClearTokens(
+    serviceId: string,
+    userId: string,
+    expectedRevision: string,
+  ): Promise<boolean>;
+}
+
 const ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY";
 const PREVIOUS_ENCRYPTION_KEY_ENV_VAR = "TOKEN_ENCRYPTION_KEY_PREVIOUS";
 const ENVELOPE_PREFIX = "vf-aes-gcm.v2:";
@@ -922,7 +930,7 @@ export async function checkEncryptedTokenStoreRotation(
  */
 export function createEncryptedTokenStore(
   backend: EncryptedKvBackend,
-): RefreshCapableTokenStore {
+): EncryptedTokenStore {
   assertBackend(backend);
   const cipher = new EnvelopeCipher(resolveEncryptionKeyRing());
 

@@ -10,7 +10,7 @@ const SUPERSEDED_OUTLOOK_GROUP_SCOPES = new Set([
 ]);
 
 function scopeEntries(tokens: OAuthTokens): string[] {
-  return typeof tokens.scope === "string" ? tokens.scope.split(/\s+/).filter(Boolean) : [];
+  return stringScopeEntries(ownDataValue(tokens, "scope"));
 }
 
 /**
@@ -18,7 +18,7 @@ function scopeEntries(tokens: OAuthTokens): string[] {
  * service narrowed. Explicit caller-requested grants stay valid.
  */
 export function isSupersededOAuthGrant(serviceId: string, tokens: OAuthTokens): boolean {
-  if (tokens.scopeSource === "explicit") return false;
+  if (ownDataValue(tokens, "scopeSource") === "explicit") return false;
   const scopes = scopeEntries(tokens);
   if (serviceId === DRIVE_SERVICE_ID) {
     return scopes.includes(SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE);
@@ -27,4 +27,13 @@ export function isSupersededOAuthGrant(serviceId: string, tokens: OAuthTokens): 
     return scopes.some((scope) => SUPERSEDED_OUTLOOK_GROUP_SCOPES.has(scope));
   }
   return false;
+}
+
+function ownDataValue(record: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function stringScopeEntries(scope: unknown): string[] {
+  return typeof scope === "string" ? scope.split(/\s+/).filter(Boolean) : [];
 }
