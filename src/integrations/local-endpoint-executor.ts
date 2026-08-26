@@ -345,6 +345,8 @@ function appendQueryValue(
   const append = (item: string): void => {
     const formatted = field.queryValueFormat === "microsoft-graph-search"
       ? `"${replaceAll(item, '"', '\\"')}"`
+      : field.queryValueFormat === "microsoft-graph-conversation-id"
+      ? `conversationId eq '${replaceAll(item, "'", "''")}'`
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };

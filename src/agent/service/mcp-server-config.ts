@@ -42,7 +42,7 @@ export type CreateAgentServiceRemoteMcpConfigInput = {
 };
 
 export function defaultAgentServiceMcpServers(): AgentServiceMcpServerConfig[] {
-  return [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }];
+  return [{ kind: "veryfront-api" }];
 }
 
 /** Build the project-scoped control-plane MCP URL for the active project. */
@@ -93,12 +93,7 @@ function createVeryfrontApiRemoteMcpConfig(
   return {
     id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
     endpoint: () => createProjectScopedMcpUrl(input.apiMcpUrl, input.getProjectId?.()),
-    headers: (context) => {
-      const authToken = typeof context?.authToken === "string" && context.authToken.length > 0
-        ? context.authToken
-        : input.authToken;
-      return { Authorization: `Bearer ${authToken}` };
-    },
+    headers: () => ({ Authorization: `Bearer ${input.authToken}` }),
   };
 }
 

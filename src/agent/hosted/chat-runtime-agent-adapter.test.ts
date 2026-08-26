@@ -156,7 +156,7 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(capturedInput?.context?.conversationId, "conversation-1");
     assertEquals(capturedInput?.context?.projectId, "project-1");
     assertEquals(capturedInput?.context?.projectSlug, "project-slug-1");
-    assertEquals(capturedInput?.context?.authToken, "run-token-1");
+    assertEquals(capturedInput?.context?.authToken, undefined);
     assertEquals(capturedInput?.maxOutputTokens, 1200);
     const expectedChunks = [
       { type: "start", messageId: "assistant-message" },

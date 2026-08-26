@@ -398,6 +398,17 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
     if (packageName) return `${packageName}/${packageSubpath[1]!.slice(2)}`;
   }
 
+  // Deno reports an import of an absent absolute file as a filesystem loader
+  // failure instead of its usual `Cannot find module` resolver wording. Keep
+  // the complete error shape anchored so only the requested file can match;
+  // callers still compare the captured path exactly with the expected source.
+  const denoFilesystemLoad = ReflectApply(
+    RegExpPrototypeExec,
+    /^Unable to load ([^\r\n]+)\r?\n {2}Caused by:\r?\n {4}(?:(?:No such file or directory|The system cannot find the file specified\.?) \(os error 2\)|The system cannot find the path specified\.? \(os error 3\))$/,
+    [message],
+  ) as RegExpExecArray | null;
+  if (denoFilesystemLoad) return denoFilesystemLoad[1];
+
   const bunResolveMessage = ReflectApply(
     RegExpPrototypeExec,
     /^(?:ResolveMessage:\s+)?Cannot find module\s+["']([^"']+)["']\s+from\s+["']([^"']+)["']$/,
@@ -424,7 +435,7 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
   for (
     const pattern of [
       /^Cannot find module\s+["']([^"']+)["']\nRequire stack:(?:\n- [^\r\n]+)+$/,
-      /^(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+imported from\s+(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+$/,
+      /^(?:Cannot find package|Cannot find module)\s+["']([^"']+)["']\s+imported from\s+["']?(?:file:|https?:|npm:|jsr:|\/|[A-Za-z]:|\\\\).+$/,
       /^Module not found\s+["']([^"']+)["']\.$/,
       // Deno, when the importer itself resolves out of the npm cache. The
       // trailing parenthetical names the owning package when the referrer

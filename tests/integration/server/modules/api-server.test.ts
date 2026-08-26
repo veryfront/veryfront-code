@@ -284,24 +284,28 @@ describe("API Server Tests", () => {
   });
 
   describe("API Server - Error Handling", () => {
-    it("returns 404 for missing pages", async () => {
+    it("returns a generic 500 for missing pages", async () => {
       const server = new APIServer({ renderer: new MockRenderer() });
       const response = await server.handleRequest("/_veryfront/data/nonexistent.json");
 
       assertExists(response, "Should return response for missing pages");
-      assertEquals(response.status, 404, "Should return 404 status");
+      assertEquals(response.status, 500, "Should return 500 status");
       assertEquals(
         response.headers.get("content-type"),
         "application/json",
         "Should still return JSON",
       );
+      assertEquals(
+        response.headers.get("cache-control"),
+        "no-store",
+        "Should not cache error responses",
+      );
 
       const data = await response.json();
-      assertExists(data.error, "Should include error message");
       assertEquals(
         data.error,
-        "Page not found: nonexistent",
-        "Should include specific error message",
+        "Failed to render page data",
+        "Should not leak the renderer's error message",
       );
     });
 
@@ -316,10 +320,14 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/error.json");
 
       assertExists(response, "Should return response even when renderer fails");
-      assertEquals(response.status, 404, "Should return 404 for render errors");
+      assertEquals(response.status, 500, "Should return 500 for render errors");
 
       const data = await response.json();
-      assertEquals(data.error, "Render failed unexpectedly", "Should include error message");
+      assertEquals(
+        data.error,
+        "Failed to render page data",
+        "Should not leak the renderer's error message",
+      );
     });
 
     it("handles non-Error exceptions", async () => {
@@ -334,10 +342,14 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/test.json");
 
       assertExists(response, "Should handle non-Error exceptions");
-      assertEquals(response.status, 404, "Should return 404");
+      assertEquals(response.status, 500, "Should return 500");
 
       const data = await response.json();
-      assertEquals(data.error, "String error message", "Should convert non-Error to string");
+      assertEquals(
+        data.error,
+        "Failed to render page data",
+        "Should not leak the thrown value",
+      );
     });
 
     it("continues on logging errors", async () => {
@@ -351,7 +363,7 @@ describe("API Server Tests", () => {
       const response = await server.handleRequest("/_veryfront/data/test.json");
 
       assertExists(response, "Should return response despite potential logging errors");
-      assertEquals(response.status, 404, "Should return 404 for render errors");
+      assertEquals(response.status, 500, "Should return 500 for render errors");
     });
   });
 
