@@ -898,21 +898,83 @@ export default config as const;
       it("classifies Bun ResolveMessage prototype accessors", async () => {
         const error = await loadFailure(
           "vf-config-bun-resolve-prototype-",
-          "class ResolveMessage {}\n" +
-            "Object.defineProperties(ResolveMessage.prototype, {\n" +
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
             "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
             "  message: {\n" +
             "    get() { return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
             "    set(_) {}, enumerable: true, configurable: false,\n" +
             "  },\n" +
             "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
-            "  [Symbol.toStringTag]: { value: 'ResolveMessage', configurable: true },\n" +
             "});\n" +
-            "throw new ResolveMessage();\n",
+            "throw Object.create(resolveMessagePrototype);\n",
         );
 
         assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
         assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("does not leak Bun-shaped prototype accessor failures", async () => {
+        const codeError = await loadFailure(
+          "vf-config-bun-resolve-throwing-prototype-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { throw new Error('hostile code getter'); }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { throw new Error('hostile message getter'); },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+        const messageError = await loadFailure(
+          "vf-config-bun-resolve-throwing-message-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { throw new Error('hostile message getter'); },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+
+        assertEquals(codeError.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(codeError.message, "Failed to load veryfront.config.js");
+        assertEquals(messageError.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(messageError.message, "Failed to load veryfront.config.js");
+      });
+
+      it("does not accept Bun ResolveMessage lookalikes with extra prototype keys", async () => {
+        const counterKey = "__veryfrontConfigBunLookalikeReads";
+        try {
+          const error = await loadFailure(
+            "vf-config-bun-resolve-extra-prototype-",
+            `globalThis.${counterKey} = 0;\n` +
+              "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+              "Object.defineProperties(resolveMessagePrototype, {\n" +
+              "  code: { get() { globalThis.__veryfrontConfigBunLookalikeReads += 1; return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+              "  message: {\n" +
+              "    get() { globalThis.__veryfrontConfigBunLookalikeReads += 1; return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+              "    set(_) {}, enumerable: true, configurable: false,\n" +
+              "  },\n" +
+              "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+              "  constructor: { value: function ResolveMessage() {}, configurable: true },\n" +
+              "});\n" +
+              "throw Object.create(resolveMessagePrototype);\n",
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(
+            (globalThis as Record<string, unknown>)[counterKey],
+            0,
+          );
+        } finally {
+          delete (globalThis as Record<string, unknown>)[counterKey];
+        }
       });
 
       it("does not invoke unbranded inherited resolver accessors", async () => {

@@ -97,7 +97,6 @@ const StringPrototypeTrim = String.prototype.trim;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
 const SymbolSpecies = Symbol.species;
-const SymbolToStringTag = Symbol.toStringTag;
 const TextDecoderPrototypeDecode = TextDecoder.prototype.decode;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
@@ -1754,7 +1753,8 @@ const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
 
 function isIntrinsicError(value: unknown): value is Error {
-  if (typeof value !== "object" || value === null) return false;
+  if (value === null) return false;
+  if (typeof value !== "object") return false;
   let prototype: object | null;
   try {
     prototype = ReflectApply(ObjectGetPrototypeOf, Object, [value]) as object | null;
@@ -1785,6 +1785,16 @@ function readDataDescriptorString(
   return typeof descriptor.value === "string" ? descriptor.value : undefined;
 }
 
+function readAccessorString(value: object, key: PropertyKey): string | undefined {
+  let accessorValue: unknown;
+  try {
+    accessorValue = reflectGet(value, key);
+  } catch {
+    return undefined;
+  }
+  return typeof accessorValue === "string" ? accessorValue : undefined;
+}
+
 function isBunResolveMessagePrototypeAccessor(
   descriptor: PropertyDescriptor | undefined,
   options: Readonly<{ hasSetter: boolean }>,
@@ -1797,6 +1807,29 @@ function isBunResolveMessagePrototypeAccessor(
     !("value" in descriptor);
 }
 
+function hasOnlyBunResolveMessagePrototypeKeys(prototype: object): boolean {
+  const keys = ownKeys(prototype);
+  if (keys.length !== 3) return false;
+
+  let hasCode = false;
+  let hasMessage = false;
+  let hasName = false;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (key === "code") {
+      hasCode = true;
+    } else if (key === "message") {
+      hasMessage = true;
+    } else if (key === "name") {
+      hasName = true;
+    } else {
+      return false;
+    }
+  }
+
+  return hasCode && hasMessage && hasName;
+}
+
 function isBunResolveMessageAccessorObject(value: object): boolean {
   try {
     if (ownKeys(value).length !== 0) return false;
@@ -1805,6 +1838,9 @@ function isBunResolveMessageAccessorObject(value: object): boolean {
 
     const prototype = getPrototypeOf(value);
     if (prototype === null || getPrototypeOf(prototype) !== IntrinsicObjectPrototype) {
+      return false;
+    }
+    if (!hasOnlyBunResolveMessagePrototypeKeys(prototype)) {
       return false;
     }
     if (
@@ -1827,22 +1863,7 @@ function isBunResolveMessageAccessorObject(value: object): boolean {
     const name = readDataDescriptorString(
       getOwnPropertyDescriptor(prototype, "name"),
     );
-    const tag = readDataDescriptorString(
-      getOwnPropertyDescriptor(prototype, SymbolToStringTag),
-    );
-    const constructorDescriptor = getOwnPropertyDescriptor(
-      prototype,
-      "constructor",
-    );
-    const constructorName = constructorDescriptor !== undefined &&
-        "value" in constructorDescriptor &&
-        typeof constructorDescriptor.value === "function"
-      ? readDataDescriptorString(
-        getOwnPropertyDescriptor(constructorDescriptor.value, "name"),
-      )
-      : undefined;
-    return name === "ResolveMessage" && tag === "ResolveMessage" &&
-      constructorName === "ResolveMessage";
+    return name === "ResolveMessage";
   } catch {
     return false;
   }
@@ -1854,12 +1875,12 @@ function missingPackageNameFromBunResolveMessageObject(value: object): string | 
   const hasBunResolveMessageAccessors = ownCode === undefined || ownMessage === undefined
     ? isBunResolveMessageAccessorObject(value)
     : false;
-  const code = ownCode ?? (hasBunResolveMessageAccessors ? reflectGet(value, "code") : undefined);
+  const code = ownCode ??
+    (hasBunResolveMessageAccessors ? readAccessorString(value, "code") : undefined);
   if (code !== BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE) return undefined;
   const message = ownMessage ??
-    (hasBunResolveMessageAccessors ? reflectGet(value, "message") : undefined);
+    (hasBunResolveMessageAccessors ? readAccessorString(value, "message") : undefined);
   if (message === undefined) return undefined;
-  if (typeof message !== "string") return undefined;
   const specifier = reportedMissingSpecifier(message);
   return specifier === undefined ? undefined : missingPackageName(specifier);
 }
