@@ -23,6 +23,7 @@ import {
 } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
+import { isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
 import { timeAsync } from "./request-lifecycle.ts";
 import {
   defaultDiscoveryCache,
@@ -179,7 +180,43 @@ function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
     !opts.releaseId;
 }
 
-function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): boolean {
+function mayServePublicPath(pathname: string): boolean {
+  return pathname.split("/").every((segment) =>
+    !segment.startsWith(".") || segment === ".well-known"
+  );
+}
+
+async function hasPublishedPublicFile(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  pathname: string,
+): Promise<boolean> {
+  if (!mayServePublicPath(pathname)) return false;
+
+  const publicRoot = joinPath(projectDir, "public");
+  const relativePath = pathname.replace(/^\/+/, "");
+  const candidates = relativePath.length === 0
+    ? ["index.html"]
+    : [relativePath, `${relativePath.replace(/\/$/, "")}/index.html`];
+
+  for (const candidate of candidates) {
+    const path = joinPath(publicRoot, candidate);
+    if (!isWithinDirectory(publicRoot, path)) continue;
+    try {
+      if ((await adapter.fs.stat(path)).isFile) return true;
+    } catch {
+      // A miss leaves ownership with the document handlers. StaticHandler
+      // remains responsible for reading and serving any matching bytes.
+    }
+  }
+  return false;
+}
+
+async function requiresStrictPreviewDocumentConfig(
+  opts: AdapterResolutionOptions,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<boolean> {
   if (!opts.isProxyMode || opts.proxyEnv === "production") return false;
   // The shared-runtime denial runs after request context construction. Avoid a
   // zero-age whole-source refresh for a document that no handler may execute.
@@ -187,11 +224,15 @@ function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): bo
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return false;
-  // StaticHandler precedes API discovery and owns ordinary extension paths,
-  // including missing-asset 404s. Only the extension paths that later render
-  // documents, such as standalone Markdown, need strict config binding here.
-  return ssrOwnsDocumentPathname(pathname) ||
+  // StaticHandler precedes API discovery and document rendering. Ordinary
+  // extension paths are already excluded by the document predicates; probe
+  // the public candidates for extensionless and Markdown paths that would
+  // otherwise reach SSR or MarkdownPreviewHandler. This keeps serving public
+  // files compatible with adapters that do not expose strict snapshot markers.
+  const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
     (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
+  return documentCandidate &&
+    !(await hasPublishedPublicFile(projectDir, adapter, pathname));
 }
 
 async function prepareProxyConfigLoad(
@@ -338,7 +379,11 @@ export async function resolveAdapter(
         const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
-          const strictDocumentConfig = requiresStrictPreviewDocumentConfig(opts);
+          const strictDocumentConfig = await requiresStrictPreviewDocumentConfig(
+            opts,
+            effectiveProjectDir,
+            effectiveAdapter,
+          );
           let configSourceSnapshot: PreviewSourceSnapshotMarker | undefined;
           if (strictDocumentConfig) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(

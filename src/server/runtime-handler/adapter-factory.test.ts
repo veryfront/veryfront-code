@@ -907,6 +907,7 @@ describe("adapter-factory", () => {
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/public/robots": { isDirectory: false, isFile: true },
       });
       const extendedFs = {
         ...base.fs,
@@ -940,7 +941,7 @@ describe("adapter-factory", () => {
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
 
       const results = await Promise.all(
-        ["/_vf_modules/app/page.js", "/favicon.ico"].map(async (pathname) =>
+        ["/_vf_modules/app/page.js", "/favicon.ico", "/robots"].map(async (pathname) =>
           resolveAdapter({
             projectDir: "/base/project",
             adapter,
@@ -971,11 +972,12 @@ describe("adapter-factory", () => {
       assertEquals(freshnessCalls, [
         { reason: "config-load", maxAgeMs: undefined },
         { reason: "config-load", maxAgeMs: undefined },
+        { reason: "config-load", maxAgeMs: undefined },
       ]);
-      assertEquals(results.map((result) => result.config?.router), ["pages", "pages"]);
+      assertEquals(results.map((result) => result.config?.router), ["pages", "pages", "pages"]);
       assertEquals(
         results.map((result) => result.previewDocumentSourceSnapshot),
-        [undefined, undefined],
+        [undefined, undefined, undefined],
       );
     });
 
