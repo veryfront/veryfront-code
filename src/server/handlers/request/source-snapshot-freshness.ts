@@ -5,6 +5,7 @@ import {
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { delay } from "#veryfront/platform/compat/std/async.ts";
 import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext, HandlerResult } from "../types.ts";
 
@@ -76,12 +77,41 @@ export async function capturePreviewSourceSnapshotMarker(
   };
 }
 
+/**
+ * Attempts to observe a settled generation before giving up.
+ *
+ * capturePreviewSourceSnapshotMarker() returns undefined when the generation
+ * moves between its two observations. A project whose source is still being
+ * written -- the first document request after project creation is the common
+ * case -- can lose that race repeatedly while being perfectly healthy, and one
+ * observation is not evidence the source is unreadable. Re-observing costs four
+ * adapter reads and is side-effect free, so a bounded retry converts the
+ * dominant transient failure into a slightly slower success.
+ *
+ * Bounded, not unbounded: a source that genuinely never settles must still fail
+ * loudly rather than hold the request open.
+ */
+const REQUIRED_SNAPSHOT_MARKER_ATTEMPTS = 3;
+
+/**
+ * Backoff before re-observing. An attempt is four adapter reads, which against a
+ * remote adapter already spans real time -- but against a cached or local one it
+ * can resolve in microseconds, so three immediate attempts would give a writer no
+ * chance to settle and the retry would buy nothing. Pacing the retries is what
+ * makes them meaningful. Only the failing path pays it, and never before the
+ * first attempt, so a settled source is unaffected.
+ */
+const REQUIRED_SNAPSHOT_MARKER_RETRY_DELAY_MS = 10;
+
 export async function captureRequiredPreviewSourceSnapshotMarker(
   fs: FileSystemAdapter,
   projectSlug: string,
 ): Promise<PreviewSourceSnapshotMarker> {
-  const marker = await capturePreviewSourceSnapshotMarker(fs);
-  if (marker?.identity !== undefined && marker.version !== undefined) return marker;
+  for (let attempt = 0; attempt < REQUIRED_SNAPSHOT_MARKER_ATTEMPTS; attempt++) {
+    if (attempt > 0) await delay(attempt * REQUIRED_SNAPSHOT_MARKER_RETRY_DELAY_MS);
+    const marker = await capturePreviewSourceSnapshotMarker(fs);
+    if (marker?.identity !== undefined && marker.version !== undefined) return marker;
+  }
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
       `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot and concrete generation that produced preview document configuration.`,

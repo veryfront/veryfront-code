@@ -505,3 +505,37 @@ it("rejects identity-only strict config markers without a concrete generation", 
   assertInstanceOf(rejection, VeryfrontError);
   assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
 });
+
+it("settles a generation that moves during the first observations", async () => {
+  // A project whose source is still being written: the generation advances
+  // under the first two captures, then settles. Before the bounded retry this
+  // threw on the first lost race and the document request became a 503.
+  let version = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => {
+    // Two reads per capture attempt; advance across the pair for the first two
+    // attempts so each is discarded, then hold steady.
+    version++;
+    return version < 5 ? version : 5;
+  };
+
+  const marker = await captureRequiredPreviewSourceSnapshotMarker(adapter.fs, "preview-project");
+
+  assertEquals(marker.identity, "branch:preview-project:main");
+  assertEquals(marker.version, 5);
+});
+
+it("still fails loudly when the generation never settles", async () => {
+  let version = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => ++version;
+
+  const error = await assertRejects(() =>
+    captureRequiredPreviewSourceSnapshotMarker(adapter.fs, "preview-project")
+  );
+
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug);
+});
