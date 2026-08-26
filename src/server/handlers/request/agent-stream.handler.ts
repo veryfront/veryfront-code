@@ -522,18 +522,18 @@ function isExplicitStudioMcpServer(
   return server.kind === "veryfront-studio";
 }
 
-function withExplicitVeryfrontStudioRemoteTools(input: {
+async function withExplicitVeryfrontStudioRemoteTools(input: {
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
   forwardedProps?: Record<string, unknown>;
   conversationId?: string;
   availableToolNames?: string[];
-}): Agent {
+}): Promise<Agent> {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0 || !input.token) return input.agent;
 
-  const requestedStudioToolNames = getRequestedUnresolvedBooleanToolNames({
+  let requestedStudioToolNames = getRequestedUnresolvedBooleanToolNames({
     tools: input.agent.config.tools,
     agentId: input.agent.id,
     availableToolNames: input.availableToolNames,
@@ -541,13 +541,20 @@ function withExplicitVeryfrontStudioRemoteTools(input: {
     configuredServers.some((server) => createMcpToolPolicyGate(server.toolPolicy).allows(toolName))
   );
 
-  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
-  if (!studioMcpUrl || !clientAllowsStudioMcp(clientProfile)) return input.agent;
+  if (!clientAllowsStudioMcp(clientProfile)) {
+    throw PERMISSION_DENIED.create({
+      detail: "Studio MCP tools require an authorized Studio client profile.",
+    });
+  }
+  const studioMcpUrl = getHostEnv("VERYFRONT_STUDIO_MCP_URL")?.trim();
+  if (!studioMcpUrl) return input.agent;
 
   const runtimeConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
   const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources: RemoteToolSource[] = [];
+  const broadStudioToolNames = new Set<string>();
+  let hasResolvedStudioSource = false;
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -559,18 +566,32 @@ function withExplicitVeryfrontStudioRemoteTools(input: {
       conversationId: input.conversationId,
       defaultSourceId: VERYFRONT_STUDIO_MCP_SOURCE_ID,
     });
+    if (!remoteConfig) continue;
+    hasResolvedStudioSource = true;
+    const studioSource = createRemoteMCPToolSource(remoteConfig);
+    if (input.agent.config.tools === true) {
+      const policy = createMcpToolPolicyGate(server.toolPolicy);
+      const definitions = await studioSource.listTools({
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+      });
+      for (const definition of definitions) {
+        if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
+      }
+    }
     if (
-      remoteConfig &&
       !remoteTools.some((source) => source.id === remoteConfig.id) &&
       !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
     ) {
-      studioRemoteToolSources.push(createRemoteMCPToolSource(remoteConfig));
+      studioRemoteToolSources.push(studioSource);
     }
   }
-  if (studioRemoteToolSources.length === 0) return input.agent;
+  if (!hasResolvedStudioSource) return input.agent;
+  if (input.agent.config.tools === true) {
+    requestedStudioToolNames = [...broadStudioToolNames].sort();
+  }
 
   const shouldSetAllowedRemoteTools = requestedStudioToolNames.length > 0 ||
-    runtimeConfig.__vfAllowedRemoteTools !== undefined;
+    runtimeConfig.__vfAllowedRemoteTools !== undefined || input.agent.config.tools === true;
 
   return {
     ...input.agent,
@@ -883,7 +904,7 @@ export class AgentStreamHandler extends BaseHandler {
                   projectId: sourceScopedContext.projectId ?? null,
                   availableToolNames: runtimeInput.tools.map((tool) => tool.name),
                 });
-                const runtimeAgent = withExplicitVeryfrontStudioRemoteTools({
+                const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
                   agent: platformRuntimeAgent,
                   token: apiAuthToken || null,
                   projectId: sourceScopedContext.projectId ?? null,

@@ -120,7 +120,11 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import {
+  startAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
+} from "veryfront/agent";
 
 const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
 const releaseId = process.env.DEPLOYED_RELEASE_ID;
