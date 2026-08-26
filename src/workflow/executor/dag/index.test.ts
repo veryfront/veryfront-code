@@ -1361,6 +1361,69 @@ describe("DAGExecutor", () => {
       assertEquals(second.nodeStates["mapped-review_0"], undefined);
     });
 
+    it("resumes a legacy map-in-loop decision under generated local IDs", async () => {
+      const exec = new DAGExecutor({ stepExecutor: createMockStepExecutor() });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            map("mapped-review", {
+              items: [{ id: 1 }],
+              processor: waitForApproval("review-template", { message: "approve?" }),
+            }),
+          ],
+        }),
+      ];
+      const completedDecision: NodeState = {
+        nodeId: "mapped-review_0",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "the-loop": { nodeId: "the-loop", status: "running", attempt: 1 },
+            "mapped-review": {
+              nodeId: "mapped-review",
+              status: "running",
+              attempt: 1,
+            },
+            "mapped-review_0": completedDecision,
+          },
+          context: {
+            input: { topic: "test" },
+            "the-loop_loop_state": {
+              iteration: 0,
+              previousResults: [],
+              iterationNodeStates: {
+                "mapped-review": {
+                  nodeId: "mapped-review",
+                  status: "running",
+                  attempt: 1,
+                },
+                "mapped-review_0": {
+                  nodeId: "mapped-review_0",
+                  status: "running",
+                  attempt: 1,
+                },
+              },
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates["mapped-review_0"], completedDecision);
+      assertEquals(result.nodeStates["the-loop/mapped-review_0"], undefined);
+    });
+
     it("reports every parked wait from a resumed iteration whose record may need recovery", async () => {
       const order: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
