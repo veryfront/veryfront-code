@@ -361,8 +361,8 @@ export async function resolveAdapter(
             }
             return config;
           } catch (error: unknown) {
-            if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
-            if (strictDocumentConfig && hostedConfigAbsent) {
+            const configAbsent = hasNotFoundStatus(error);
+            if (strictDocumentConfig && configAbsent) {
               const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
                 effectiveAdapter.fs,
                 opts.projectSlug!,
@@ -375,6 +375,7 @@ export async function resolveAdapter(
               }
               previewDocumentSourceSnapshot = currentSnapshot;
             }
+            if (configAbsent) hostedConfigAbsent = true;
             throw error;
           }
         };

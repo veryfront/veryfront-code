@@ -1393,6 +1393,51 @@ describe("adapter-factory", () => {
     });
   });
 
+  it("rejects an absent config result when its source generation changes", async () => {
+    let sourceVersion = 1;
+    const adapter = createMockAdapter({});
+    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:noconfig:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    adapter.fs.readFile = () => {
+      sourceVersion++;
+      return Promise.reject(
+        API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),
+      );
+    };
+    const req = await makeReq();
+
+    const rejection = await assertRejects(() =>
+      resolveAdapter({
+        req,
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "noconfig",
+        projectId: "proj_noconfig",
+        proxyToken: "token",
+        releaseId: "rel_1",
+        proxyEnv: "preview",
+        branch: null,
+        environmentName: undefined,
+        parsedDomain: {
+          slug: "noconfig",
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: true,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      })
+    );
+
+    assertInstanceOf(rejection, VeryfrontError);
+    assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+  });
+
   it("still fails when a 404 comes from something other than the config read", async () => {
     // Only getHostedConfig's own 404 means "no config published". A 404 from the
     // snapshot refresh is a real failure and must not be read as absence.
