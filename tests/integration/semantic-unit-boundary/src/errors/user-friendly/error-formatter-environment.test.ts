@@ -492,7 +492,7 @@ describe("formatUserError environment gating", () => {
     });
   });
 
-  it("preserves safe receiver-qualified callable labels", async () => {
+  it("preserves only trusted receiver-qualified callable labels", async () => {
     const error = new Error("unknown error receiver_callable_label_dev");
     error.stack = [
       "Error: unknown error receiver_callable_label_dev",
@@ -503,7 +503,11 @@ describe("formatUserError environment gating", () => {
     await withEnv({ VERYFRONT_ENV: "development" }, () => {
       const result = formatUserError(error);
 
-      assert(result.includes("at Object.handler"), "a standard V8 method label is preserved");
+      assertEquals(
+        result.includes("at Object.handler"),
+        false,
+        "a project-controlled method label is withheld",
+      );
       assert(
         result.includes("at async JSON.parse"),
         "an async built-in receiver-qualified callable label is preserved",

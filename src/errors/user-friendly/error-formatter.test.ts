@@ -157,6 +157,15 @@ describe("formatUserError", () => {
     );
   });
 
+  it("withholds data-bearing project callable labels", () => {
+    assertEquals(
+      sanitizeUserFacingStackFrameForTesting(
+        "    at customer_account_42 (/workspace/app.ts:1:1)",
+      ),
+      "at <anonymous>",
+    );
+  });
+
   it("should not invoke proxy traps in plain output", () => {
     let messageReads = 0;
     const stateful = new Proxy(new Error("unused"), {

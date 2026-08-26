@@ -873,8 +873,16 @@ export function snapshotThrowableDiagnosticRedactingPath(
     ? undefined
     : rawNormalizedPosixVerticalBarPath;
   const jsonEscapedPath = jsonStringify(path);
+  const quoteIndependentEscapedPath = sliceString(
+    jsonEscapedPath,
+    1,
+    jsonEscapedPath.length - 1,
+  );
   let redacted = redactPathFromText(diagnostic, path, replacement);
   redacted = redactPathFromText(redacted, jsonEscapedPath, replacement);
+  if (quoteIndependentEscapedPath !== path) {
+    redacted = redactPathFromText(redacted, quoteIndependentEscapedPath, replacement);
+  }
   if (nodeNullEscapedPath !== undefined) {
     redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
   }
@@ -918,6 +926,8 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
     containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
+    (quoteIndependentEscapedPath !== path &&
+      containsTruncatedFilesystemPathPrefix(redacted, quoteIndependentEscapedPath)) ||
     (nodeNullEscapedPath !== undefined &&
       containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
     (normalizationSource !== path &&

@@ -259,6 +259,9 @@ const CALLABLE_LABEL_TOKEN_SEQUENCE = /^(\S+)(?:\s+([\s\S]*))?$/;
 /** A retained V8 label must contain only JavaScript identifier paths. */
 const CALLABLE_IDENTIFIER_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
 
+/** Platform callables whose fixed display label cannot carry project data. */
+const TRUSTED_CALLABLE_LABEL = /^(?:JSON\.parse)$/;
+
 /** Captures a frame whose text after `at ` can be a bare source location. */
 const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
 
@@ -273,11 +276,17 @@ function isSourceLocationText(text: string): boolean {
 function isRetainableCallableLabel(label: string): boolean {
   // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
   // label gets the same source-location validation as location text itself.
-  return !!label && testRegExp(CALLABLE_IDENTIFIER_PATH, label) &&
-    !isSourceLocationText(label) &&
-    !testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) &&
-    !testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) &&
-    !isHostnameShapedCallableLabel(label);
+  const isTrusted = testRegExp(TRUSTED_CALLABLE_LABEL, label);
+  if (
+    !label || !testRegExp(CALLABLE_IDENTIFIER_PATH, label) ||
+    isSourceLocationText(label) ||
+    testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) ||
+    testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) ||
+    (!isTrusted && isHostnameShapedCallableLabel(label))
+  ) {
+    return false;
+  }
+  return isTrusted;
 }
 
 function isRetainableCallableLabelTokens(label: string): boolean {
