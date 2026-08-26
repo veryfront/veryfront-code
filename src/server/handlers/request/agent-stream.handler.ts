@@ -132,8 +132,6 @@ const logger = serverLogger.component("agent-stream-handler");
 const IntrinsicReflectApply = Reflect.apply;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const FSAdapterWrapperPrototype = FSAdapterWrapper.prototype;
-const FSAdapterWrapperGetUnderlyingAdapter = FSAdapterWrapperPrototype.getUnderlyingAdapter;
-const FSAdapterWrapperIsMultiProjectMode = FSAdapterWrapperPrototype.isMultiProjectMode;
 const FSAdapterWrapperRunWithContext = FSAdapterWrapperPrototype.runWithContext;
 const MultiProjectFSAdapterPrototype = MultiProjectFSAdapter.prototype;
 const MultiProjectFSAdapterRunWithContext = MultiProjectFSAdapterPrototype.runWithContext;
@@ -749,30 +747,11 @@ function runWithCapturedSourceContext<T>(
   const args = [projectSlug, token, fn, projectId, options] as const;
 
   if (isPrototypeInstance(FSAdapterWrapperPrototype, fsWrapper)) {
-    const underlying = IntrinsicReflectApply(
-      FSAdapterWrapperGetUnderlyingAdapter,
+    return IntrinsicReflectApply(
+      FSAdapterWrapperRunWithContext,
       fsWrapper,
-      [],
-    ) as unknown;
-    if (isPrototypeInstance(MultiProjectFSAdapterPrototype, underlying)) {
-      return IntrinsicReflectApply(
-        MultiProjectFSAdapterRunWithContext,
-        underlying,
-        args,
-      ) as Promise<T>;
-    }
-    if (
-      IntrinsicReflectApply(FSAdapterWrapperIsMultiProjectMode, fsWrapper, []) === true
-    ) {
-      return IntrinsicReflectApply(
-        FSAdapterWrapperRunWithContext,
-        fsWrapper,
-        args,
-      ) as Promise<T>;
-    }
-    throw INVALID_ARGUMENT.create({
-      detail: "Alternate agent source requires a multi-project runtime context",
-    });
+      args,
+    ) as Promise<T>;
   }
 
   if (isPrototypeInstance(MultiProjectFSAdapterPrototype, fsWrapper)) {

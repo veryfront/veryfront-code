@@ -3482,6 +3482,46 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("uses a wrapper-captured structural source context runner", async () => {
+    const contextCalls: Array<{ projectSlug: string; token: string }> = [];
+    const interceptedTokens: string[] = [];
+    const fs = createNoopFsAdapter([]);
+    fs.runWithContext = async (projectSlug, token, fn) => {
+      contextCalls.push({ projectSlug, token });
+      return await fn();
+    };
+    const wrapper = new FSAdapterWrapper(
+      fs as unknown as ConstructorParameters<typeof FSAdapterWrapper>[0],
+    );
+    fs.runWithContext = async (_projectSlug, token, fn) => {
+      interceptedTokens.push(token);
+      return await fn();
+    };
+    const ctx = createCtx();
+    ctx.proxyToken = "request-scoped-user-token";
+    ctx.adapter = { ...ctx.adapter, fs: wrapper };
+    const handler = new AgentStreamHandler() as unknown as {
+      withAgentSourceContext<T>(
+        context: HandlerContext,
+        source: { type: "branch"; branch: string },
+        fn: () => Promise<T>,
+      ): Promise<T>;
+    };
+
+    const result = await handler.withAgentSourceContext(
+      ctx,
+      { type: "branch", branch: "main" },
+      () => Promise.resolve("captured-result"),
+    );
+
+    assertEquals(result, "captured-result");
+    assertEquals(contextCalls, [{
+      projectSlug: "demo-project",
+      token: "request-scoped-user-token",
+    }]);
+    assertEquals(interceptedTokens, []);
+  });
+
   it("rejects a branch run when the credential handoff changes the source snapshot", async () => {
     let discoveryCalls = 0;
     let requestFingerprintCalls = 0;

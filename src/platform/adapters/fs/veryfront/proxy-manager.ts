@@ -79,6 +79,10 @@ function currentTime(): number {
   return IntrinsicReflectApply(DateNow, Date, []) as number;
 }
 
+function trimString(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+}
+
 async function hashCredentialPrincipal(token: string): Promise<string> {
   const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as ReturnType<
     typeof encodeText
@@ -176,10 +180,7 @@ export class ProxyFSAdapterManager {
     const effectiveReleaseId = effectiveProductionMode ? (releaseId ?? null) : null;
     const effectiveEnvironmentName = environmentName || null;
     const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
-    const canonicalProjectId = projectId === undefined
-      ? undefined
-      : IntrinsicReflectApply(StringPrototypeTrim, projectId, []) as string;
-
+    const canonicalProjectId = projectId === undefined ? undefined : trimString(projectId);
     if (
       this.baseConfig.veryfront?.proxyMode === true &&
       (!canonicalProjectId || projectId !== canonicalProjectId)

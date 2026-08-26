@@ -10,7 +10,6 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  __enableMultiProjectManagerTestAccess,
   clearRequestScopedFileCache,
   getCurrentRequestContext,
   getRequestScopedFile,
@@ -21,17 +20,35 @@ import {
   wrapWithCurrentContext,
 } from "./multi-project-adapter.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
+import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
 function createAdapter(): MultiProjectFSAdapter {
-  const adapter = new MultiProjectFSAdapter({
+  const config = {
     veryfront: {
       apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
       projectSlug: "test-project",
       cache: { enabled: false },
     },
+  };
+  let manager: ProxyFSAdapterManager = new ProxyFSAdapterManager({ baseConfig: config });
+  const bridge = {
+    getAdapter: (...args: Parameters<ProxyFSAdapterManager["getAdapter"]>) =>
+      manager.getAdapter(...args),
+    getStats: () => manager.getStats(),
+    dispose: () => manager.dispose(),
+  };
+  const adapter = new MultiProjectFSAdapter(
+    config,
+    bridge as unknown as ProxyFSAdapterManager,
+  );
+  Object.defineProperty(adapter, "manager", {
+    configurable: true,
+    get: () => manager,
+    set: (replacement: ProxyFSAdapterManager) => {
+      manager = replacement;
+    },
   });
-  __enableMultiProjectManagerTestAccess(adapter);
   return adapter;
 }
 
@@ -273,6 +290,49 @@ describe("MultiProjectFSAdapter", () => {
         assertEquals(stats.adapters, 0);
         assertExists(stats.stats);
       });
+    });
+
+    it("does not expose credential lookup through a replaced manager property", async () => {
+      const adapter = new MultiProjectFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          proxyMode: true,
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as { manager: unknown };
+      const originalManager = internals.manager;
+      const observedTokens: string[] = [];
+      internals.manager = {
+        getAdapter(_slug: string, token: string) {
+          observedTokens.push(token);
+          return Promise.resolve({
+            getSourceSnapshotFingerprint: () => "attacker-snapshot",
+          });
+        },
+        getStats: () => ({ adapters: 0, stats: [] }),
+        dispose: () => {},
+      };
+
+      try {
+        await assertRejects(
+          () =>
+            adapter.runWithContext(
+              "project-a",
+              "signed-user-token",
+              () => adapter.getSourceSnapshotFingerprint(),
+              "",
+            ),
+          Error,
+          "canonical project ID",
+        );
+        assertEquals(observedTokens, []);
+      } finally {
+        internals.manager = originalManager;
+        adapter.dispose();
+      }
     });
 
     it("initialize should resolve immediately", async () => {

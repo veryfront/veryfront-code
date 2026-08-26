@@ -919,20 +919,9 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("runWithContext should preserve adapter binding for production release materialization", async () => {
-      const adapter = new MultiProjectFSAdapter({
-        veryfront: {
-          apiBaseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
-      const wrapper = new FSAdapterWrapper(adapter);
-      const originalManager = (adapter as any).manager;
       let getAdapterCalled = false;
       let callbackSawMaterializedAdapter = false;
-
-      (adapter as any).manager = {
+      const manager = {
         getAdapter() {
           getAdapterCalled = true;
           return Promise.resolve(createMockFSAdapter());
@@ -940,6 +929,15 @@ describe("FSAdapterWrapper", () => {
         getStats: () => ({ adapters: 0, stats: [] }),
         dispose: () => {},
       };
+      const adapter = new MultiProjectFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      }, manager as never);
+      const wrapper = new FSAdapterWrapper(adapter);
 
       try {
         const result = await wrapper.runWithContext(
@@ -960,7 +958,6 @@ describe("FSAdapterWrapper", () => {
         assertEquals(result, "result");
         assertEquals(callbackSawMaterializedAdapter, true);
       } finally {
-        (adapter as any).manager = originalManager;
         adapter.dispose();
       }
     });

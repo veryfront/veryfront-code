@@ -9,10 +9,7 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import {
-  __enableMultiProjectManagerTestAccess,
-  MultiProjectFSAdapter,
-} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { ProxyFSAdapterManager } from "#veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
 import type {
@@ -290,8 +287,6 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
   });
 
   it("keeps credential-bearing adapter lookup independent of mutable timing hooks", async () => {
-    const adapter = new MultiProjectFSAdapter(baseConfig);
-    __enableMultiProjectManagerTestAccess(adapter);
     const manager = new ProxyFSAdapterManager({
       baseConfig: {
         veryfront: { ...baseConfig.veryfront, proxyMode: true },
@@ -302,11 +297,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         return selectedAdapter;
       },
     });
-    const internals = adapter as unknown as {
-      manager: ProxyFSAdapterManager;
-    };
-    const originalManager = internals.manager;
-    internals.manager = manager;
+    const adapter = new MultiProjectFSAdapter(baseConfig, manager);
     const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
     const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
     let poisonedCalls = 0;
@@ -336,8 +327,6 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       if (originalNow) Object.defineProperty(performance, "now", originalNow);
       else Reflect.deleteProperty(performance, "now");
       Object.defineProperty(String.prototype, "trim", originalTrim);
-      internals.manager = originalManager;
-      manager.dispose();
       adapter.dispose();
     }
 

@@ -18,6 +18,18 @@ import {
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
+type CapturedContextRunner = <T>(
+  projectSlug: string,
+  token: string,
+  fn: () => Promise<T>,
+  projectId?: string,
+  options?: {
+    productionMode?: boolean;
+    releaseId?: string | null;
+    branch?: string | null;
+    environmentName?: string | null;
+  },
+) => Promise<T>;
 const IntrinsicReflectApply = Reflect.apply;
 
 function captureOptionalMethod(value: FSAdapter, key: string): CapturedMethod | undefined {
@@ -185,7 +197,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     | undefined
     | Promise<string | undefined>;
   readonly getSourceSnapshotIdentity?: () => string | undefined | Promise<string | undefined>;
-  #contextRunner: CapturedMethod | undefined;
+  #contextRunner: CapturedContextRunner | undefined;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
@@ -276,30 +288,31 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
           | Promise<string | undefined>;
     }
     const runWithContext = captureOptionalMethod(fsAdapter, "runWithContext");
-    this.#contextRunner = runWithContext;
     if (runWithContext !== undefined) {
+      const contextRunner: CapturedContextRunner = <T>(
+        projectSlug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: {
+          productionMode?: boolean;
+          releaseId?: string | null;
+          branch?: string | null;
+          environmentName?: string | null;
+        },
+      ) =>
+        IntrinsicReflectApply(runWithContext, fsAdapter, [
+          projectSlug,
+          token,
+          fn,
+          projectId,
+          options,
+        ]) as Promise<T>;
+      this.#contextRunner = contextRunner;
       publishFrozen(
         this,
         "runWithContext",
-        <T>(
-          projectSlug: string,
-          token: string,
-          fn: () => Promise<T>,
-          projectId?: string,
-          options?: {
-            productionMode?: boolean;
-            releaseId?: string | null;
-            branch?: string | null;
-            environmentName?: string | null;
-          },
-        ) =>
-          IntrinsicReflectApply(runWithContext, fsAdapter, [
-            projectSlug,
-            token,
-            fn,
-            projectId,
-            options,
-          ]) as Promise<T>,
+        contextRunner,
       );
     }
 
@@ -396,7 +409,11 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       environmentName?: string | null;
     },
   ): Promise<T> {
-    return this.requireContextualMethod("runWithContext", "runWithContext")(
+    const contextRunner = this.#contextRunner;
+    if (contextRunner === undefined) {
+      throw new NotSupportedError("runWithContext", this.adapterType);
+    }
+    return contextRunner(
       projectSlug,
       token,
       fn,
