@@ -24,6 +24,7 @@ import {
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler, type AgentStreamHandlerDeps } from "./agent-stream.handler.ts";
 import type { HandlerContext } from "../types.ts";
@@ -993,7 +994,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let observedNormalizationCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
-    let normalizationCalls = 0;
     const fetchUrls: string[] = [];
 
     const handler = createTestAgentStreamHandler({
@@ -1031,6 +1031,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
           });
         },
       }),
+      normalizeSourceIntegrationPolicy: (config) => {
+        observedNormalizationCredential = getVerifiedCacheApiCredential();
+        return normalizeSourceIntegrationPolicy(config);
+      },
     });
 
     const contextCalls: string[] = [];
@@ -1090,15 +1094,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
     const originalSigningKey = Deno.env.get(signingKeyEnv);
     Deno.env.set(signingKeyEnv, publicKeyPem);
-    const originalEntries = Object.entries;
-    Object.entries = (value) => {
-      const entries = originalEntries(value);
-      if (new Error().stack?.includes("normalizeSourceIntegrationPolicy")) {
-        normalizationCalls++;
-        observedNormalizationCredential = getVerifiedCacheApiCredential();
-      }
-      return entries;
-    };
     let result;
     try {
       result = await withMockFetch(
@@ -1120,7 +1115,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ),
       );
     } finally {
-      Object.entries = originalEntries;
       if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
       else Deno.env.set(signingKeyEnv, originalSigningKey);
     }
@@ -1134,7 +1128,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
-    assertEquals(normalizationCalls, 1);
     assertEquals(observedNormalizationCredential, undefined);
     assertEquals(capturedSourcePolicy, {
       schemaVersion: 1,

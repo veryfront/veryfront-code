@@ -95,6 +95,7 @@ export interface AgentStreamHandlerDeps
   resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
   getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
   loadAgentSourceEnvironment?: AgentSourceEnvironmentLoader;
+  normalizeSourceIntegrationPolicy?: typeof normalizeSourceIntegrationPolicy;
 }
 
 type AgentSourceTargetIdentity = Pick<
@@ -908,9 +909,9 @@ export class AgentStreamHandler extends BaseHandler {
               projectScopedContext,
               payload.agentSource,
               withoutVerifiedCacheApiCredential(async () => {
-                const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
-                  sourceConfig.integrations,
-                );
+                const sourceIntegrationPolicy = (
+                  this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
+                )(sourceConfig.integrations);
                 if (requestSourceFingerprint !== undefined) {
                   const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
                     projectScopedContext,
