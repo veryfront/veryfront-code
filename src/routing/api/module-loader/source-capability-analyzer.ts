@@ -1198,11 +1198,24 @@ function memberPropertyName(node: ASTNode): string | null {
   return property.type === "Identifier" && typeof property.name === "string" ? property.name : null;
 }
 
+function staticNumericPropertyName(node: ASTNode): string | null {
+  if (node.type === "NumericLiteral" && typeof node.value === "number") {
+    return String(node.value);
+  }
+  if (
+    node.type !== "UnaryExpression" ||
+    (node.operator !== "+" && node.operator !== "-") ||
+    !isNode(node.argument)
+  ) return null;
+  const argument = unwrapExpression(node.argument);
+  if (argument.type !== "NumericLiteral" || typeof argument.value !== "number") return null;
+  return String(node.operator === "-" ? -argument.value : +argument.value);
+}
+
 function staticNonStringPropertyName(node: ASTNode): string | null {
   const expression = unwrapExpression(node);
-  if (expression.type === "NumericLiteral" && typeof expression.value === "number") {
-    return String(expression.value);
-  }
+  const numericName = staticNumericPropertyName(expression);
+  if (numericName !== null) return numericName;
   if (expression.type === "BigIntLiteral" && typeof expression.value === "string") {
     return expression.value;
   }
@@ -1210,16 +1223,6 @@ function staticNonStringPropertyName(node: ASTNode): string | null {
     return String(expression.value);
   }
   if (expression.type === "NullLiteral") return "null";
-  if (
-    expression.type === "UnaryExpression" &&
-    (expression.operator === "+" || expression.operator === "-") &&
-    isNode(expression.argument)
-  ) {
-    const argument = unwrapExpression(expression.argument);
-    if (argument.type === "NumericLiteral" && typeof argument.value === "number") {
-      return String(expression.operator === "-" ? -argument.value : +argument.value);
-    }
-  }
   return null;
 }
 
@@ -2087,19 +2090,19 @@ function isMutationTarget(
   while (true) {
     const link = parents.get(current);
     if (!link) return false;
-    if (link.parent.type === "AssignmentExpression" && link.key === "left") return true;
-    if (link.parent.type === "UpdateExpression" && link.key === "argument") return true;
-    if (
-      link.parent.type === "UnaryExpression" && link.parent.operator === "delete" &&
-      link.key === "argument"
-    ) return true;
-    if (
-      (link.parent.type === "ForInStatement" || link.parent.type === "ForOfStatement") &&
-      link.key === "left"
-    ) return true;
+    if (isDirectMutationTarget(link)) return true;
     if (!isNestedBindingPatternPosition(link.parent, link.key, parents)) return false;
     current = link.parent;
   }
+}
+
+function isDirectMutationTarget(link: ParentLink): boolean {
+  return link.parent.type === "AssignmentExpression" && link.key === "left" ||
+    link.parent.type === "UpdateExpression" && link.key === "argument" ||
+    link.parent.type === "UnaryExpression" && link.parent.operator === "delete" &&
+      link.key === "argument" ||
+    (link.parent.type === "ForInStatement" || link.parent.type === "ForOfStatement") &&
+      link.key === "left";
 }
 
 function isDefinitelySymbolValue(
@@ -2402,7 +2405,7 @@ function objectPatternSource(
   parents: WeakMap<ASTNode, ParentLink>,
 ): ASTNode | undefined {
   const pattern = parents.get(property)?.parent;
-  if (!pattern || pattern.type !== "ObjectPattern") return undefined;
+  if (pattern?.type !== "ObjectPattern") return undefined;
   const link = parents.get(pattern);
   if (!link) return undefined;
   if (
@@ -2463,6 +2466,27 @@ function isCrossModuleCapabilityAlias(
     );
 }
 
+function exportedVariableInitializers(node: ASTNode): ASTNode[] {
+  if (!isNode(node.declaration) || node.declaration.type !== "VariableDeclaration") return [];
+  const candidates: ASTNode[] = [];
+  const declarations = Array.isArray(node.declaration.declarations)
+    ? node.declaration.declarations
+    : [];
+  for (const declaration of declarations) {
+    if (isNode(declaration) && isNode(declaration.init)) candidates.push(declaration.init);
+  }
+  return candidates;
+}
+
+function exportedLocalSpecifiers(node: ASTNode): ASTNode[] {
+  if (isNode(node.source) || !Array.isArray(node.specifiers)) return [];
+  const candidates: ASTNode[] = [];
+  for (const specifier of node.specifiers) {
+    if (isNode(specifier) && isNode(specifier.local)) candidates.push(specifier.local);
+  }
+  return candidates;
+}
+
 function applyExportedCapabilityAlias(
   node: ASTNode,
   scope: Scope,
@@ -2470,20 +2494,7 @@ function applyExportedCapabilityAlias(
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
   if (node.type !== "ExportNamedDeclaration") return;
-  const candidates: ASTNode[] = [];
-  if (isNode(node.declaration) && node.declaration.type === "VariableDeclaration") {
-    const declarations = Array.isArray(node.declaration.declarations)
-      ? node.declaration.declarations
-      : [];
-    for (const declaration of declarations) {
-      if (isNode(declaration) && isNode(declaration.init)) candidates.push(declaration.init);
-    }
-  }
-  if (!isNode(node.source) && Array.isArray(node.specifiers)) {
-    for (const specifier of node.specifiers) {
-      if (isNode(specifier) && isNode(specifier.local)) candidates.push(specifier.local);
-    }
-  }
+  const candidates = exportedVariableInitializers(node).concat(exportedLocalSpecifiers(node));
   if (candidates.some((candidate) => isCrossModuleCapabilityAlias(candidate, scope, nodeScopes))) {
     analysis.hasDynamicCodeGeneration = true;
   }
