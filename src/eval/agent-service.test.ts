@@ -844,6 +844,86 @@ describe("eval/agent-service", () => {
     assertEquals(record.metrics?.[0]?.pass, false);
   });
 
+  it("keeps standard AG-UI tool results authoritative in mixed hosted streams", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_1",
+                toolCallName: "search",
+                status: "failed",
+                result: { source: "custom" },
+                error: { message: "custom failure" },
+              },
+            },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_1",
+              toolCallName: "search",
+              result: { source: "ag-ui" },
+            },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_2",
+              toolCallName: "write",
+              isError: true,
+              result: { message: "canonical failure" },
+            },
+          },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_2",
+                toolCallName: "write",
+                status: "completed",
+                result: { source: "custom" },
+              },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:mixed-tool-events",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "mixed", input: "Use tools" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "mixed", input: "Use tools" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.trace?.toolCalls, [
+      {
+        id: "tool_1",
+        name: "search",
+        status: "ok",
+        output: { source: "ag-ui" },
+      },
+      {
+        id: "tool_2",
+        name: "write",
+        status: "error",
+        error: "canonical failure",
+      },
+    ]);
+  });
+
   it("merges AG-UI tool argument placeholders before parsing eval traces", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",

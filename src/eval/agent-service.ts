@@ -332,6 +332,8 @@ function isDeniedToolResult(event: Record<string, unknown>, error: string | unde
 type PendingToolCall = {
   call: EvalToolCall;
   inputText?: string;
+  hasStandardInput?: boolean;
+  hasStandardResult?: boolean;
 };
 
 function getToolCallEntry(
@@ -377,28 +379,34 @@ function applyToolCallStatusEvent(
   if (!id && !name) return true;
 
   const entry = getToolCallEntry(toolCalls, id ?? `name:${name ?? index}`, id, name);
-  if (Object.hasOwn(value, "arguments")) entry.call.input = value.arguments;
-  if (Object.hasOwn(value, "result")) {
-    entry.call.output = value.result;
-  } else if (Object.hasOwn(value, "output")) {
-    entry.call.output = value.output;
+  if (!entry.hasStandardInput && Object.hasOwn(value, "arguments")) {
+    entry.call.input = value.arguments;
   }
 
-  const status = getAgUiSseStringField(value, "status");
-  const error = Object.hasOwn(value, "error") ? stringifyError(value.error) : undefined;
-  const failed = value.isError === true || error !== undefined ||
-    status === "failed" || status === "error" || status === "cancelled" || status === "canceled" ||
-    (typeof value.exitCode === "number" && value.exitCode !== 0);
-  if (status === "denied") {
-    entry.call.status = "denied";
-  } else if (status === "skipped") {
-    entry.call.status = "skipped";
-  } else if (failed) {
-    entry.call.status = "error";
-  } else if (status === "completed") {
-    entry.call.status = "ok";
+  if (!entry.hasStandardResult) {
+    if (Object.hasOwn(value, "result")) {
+      entry.call.output = value.result;
+    } else if (Object.hasOwn(value, "output")) {
+      entry.call.output = value.output;
+    }
+
+    const status = getAgUiSseStringField(value, "status");
+    const error = Object.hasOwn(value, "error") ? stringifyError(value.error) : undefined;
+    const failed = value.isError === true || error !== undefined ||
+      status === "failed" || status === "error" || status === "cancelled" ||
+      status === "canceled" ||
+      (typeof value.exitCode === "number" && value.exitCode !== 0);
+    if (status === "denied") {
+      entry.call.status = "denied";
+    } else if (status === "skipped") {
+      entry.call.status = "skipped";
+    } else if (failed) {
+      entry.call.status = "error";
+    } else if (status === "completed") {
+      entry.call.status = "ok";
+    }
+    if (failed) entry.call.error = error ?? "Tool call failed";
   }
-  if (failed) entry.call.error = error ?? "Tool call failed";
 
   return true;
 }
@@ -428,6 +436,8 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const entry = getToolCallEntry(toolCalls, key, id, toolName);
       const input = Object.hasOwn(event, "input") ? event.input : undefined;
       if (input !== undefined) {
+        entry.hasStandardInput = true;
+        entry.inputText = undefined;
         entry.call.input = input;
         continue;
       }
@@ -435,6 +445,11 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const delta = readToolInputDelta(event);
       if (delta === undefined) continue;
 
+      if (!entry.hasStandardInput) {
+        entry.inputText = "";
+        delete entry.call.input;
+      }
+      entry.hasStandardInput = true;
       entry.inputText = mergeToolInputDelta(entry.inputText ?? "", delta);
       entry.call.input = parseJsonString(entry.inputText);
       continue;
@@ -456,14 +471,19 @@ function createToolCalls(events: Array<Record<string, unknown>>): EvalToolCall[]
       const failed = event.isError === true;
       const error = failed ? getToolResultError(event) : undefined;
       const input = Object.hasOwn(event, "input") ? event.input : undefined;
-      if (input !== undefined) entry.call.input = input;
+      if (input !== undefined) {
+        entry.hasStandardInput = true;
+        entry.inputText = undefined;
+        entry.call.input = input;
+      }
+      entry.hasStandardResult = true;
+      delete entry.call.output;
+      delete entry.call.error;
       if (!failed) {
         const output = readToolOutput(event);
         if (output !== undefined) entry.call.output = output;
       }
-      entry.call.status = failed
-        ? isDeniedToolResult(event, error) ? "denied" : "error"
-        : entry.call.status ?? "ok";
+      entry.call.status = failed ? isDeniedToolResult(event, error) ? "denied" : "error" : "ok";
       if (error) entry.call.error = error;
     }
   }
