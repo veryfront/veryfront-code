@@ -452,6 +452,67 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.getLatestCheckpoint(run.id), null);
   });
 
+  it("re-runs nodes completed after the checkpoint a resume restores", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let lastExecutions = 0;
+    executor.register(
+      workflow({
+        id: "checkpoint-replay",
+        steps: [
+          step("first", { tool: createTool("first", () => ({ ok: true })) }),
+          step("later", { tool: createTool("later", () => ({ ok: true })) }),
+          step("last", {
+            tool: createTool("last", () => {
+              lastExecutions++;
+              return { replayed: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    // The run progressed well past the checkpoint before the explicit restore.
+    const run = {
+      ...createRun("checkpoint-replay"),
+      status: "waiting" as const,
+      context: {
+        input: {},
+        first: { ok: true },
+        later: { ok: true },
+        last: { replayed: false },
+      },
+      nodeStates: {
+        first: { nodeId: "first", status: "completed" as const, attempt: 1 },
+        later: { nodeId: "later", status: "completed" as const, attempt: 1 },
+        last: { nodeId: "last", status: "completed" as const, attempt: 1 },
+      },
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "cp-first",
+      nodeId: "first",
+      timestamp: new Date(),
+      context: { input: {}, first: { ok: true } },
+      nodeStates: { first: { nodeId: "first", status: "completed", attempt: 1 } },
+    });
+
+    await executor.resume(run.id, "cp-first");
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "completed");
+    assertEquals(
+      lastExecutions,
+      1,
+      "a node completed after the restored checkpoint must be re-run on replay: " +
+        "a merged restore leaves it marked completed and silently skips it",
+    );
+    assertEquals(
+      (persisted?.context.last as { replayed?: boolean })?.replayed,
+      true,
+      "stale post-checkpoint context must not survive the snapshot restore",
+    );
+  });
+
   it("persists recovered running-node attempts before re-running side effects", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });

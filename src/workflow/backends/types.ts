@@ -28,12 +28,26 @@ type WorkflowRunScalarUpdate = Partial<
 >;
 
 /**
- * Mutable run fields. Context and node-state entries merge by key atomically,
- * so concurrent node outcomes cannot replace a sibling's persisted entry.
+ * Mutable run fields. On backends that declare `supportsRunPatchKeyMerge`,
+ * context and node-state entries merge by key atomically, so concurrent node
+ * outcomes cannot replace a sibling's persisted entry. Backends without that
+ * declaration replace the maps wholesale (the historical contract), so
+ * callers must send complete maps unless merge support was verified through
+ * `hasRunPatchKeyMergeSupport`.
  */
 export type WorkflowRunUpdate = WorkflowRunScalarUpdate & {
   nodeStates?: WorkflowRun["nodeStates"];
   context?: Partial<WorkflowRun["context"]>;
+};
+
+/**
+ * A complete restore of a run's mutable state, as opposed to a patch. Both
+ * maps are required in full: a snapshot restore is defined by the keys it
+ * does NOT contain as much as by the ones it does.
+ */
+export type WorkflowRunStateSnapshot = WorkflowRunScalarUpdate & {
+  nodeStates: WorkflowRun["nodeStates"];
+  context: WorkflowRun["context"];
 };
 
 const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
@@ -136,10 +150,22 @@ export interface RunEventEnvelope {
 
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
+  /**
+   * Declared true by backends whose `updateRun` family applies `context` and
+   * `nodeStates` patches as an atomic per-key merge. Absent or false means
+   * those maps are replaced wholesale, and the runtime sends complete maps
+   * instead of single-entry patches. A backend declaring this must also
+   * implement `restoreRunStateIfStatus`, because a per-key merge cannot
+   * express a checkpoint restore.
+   */
+  readonly supportsRunPatchKeyMerge?: boolean;
   createRun(run: WorkflowRun): Promise<void>;
   /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;
-  /** Apply a run patch. Context and node-state maps merge by key. */
+  /**
+   * Apply a run patch. Context and node-state maps merge by key only on
+   * backends declaring `supportsRunPatchKeyMerge`; elsewhere they replace.
+   */
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
   /** Apply a run patch only when its current status matches one of the expected statuses. */
   updateRunIfStatus?(
@@ -153,6 +179,23 @@ export interface WorkflowBackend {
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     patch: WorkflowRunUpdate,
+  ): Promise<boolean>;
+  /**
+   * Replace the run's context and node-state maps with a snapshot, only while
+   * its status (and worker owner, when given) matches.
+   *
+   * This is the checkpoint-restore path, and it is replacement on purpose:
+   * keys written after the snapshot was taken must not survive the restore,
+   * or a node completed after the checkpoint stays marked completed and is
+   * skipped on replay while stale context values outlive the rollback. The
+   * `updateRun` family cannot express that on a key-merging backend, so any
+   * backend declaring `supportsRunPatchKeyMerge` must implement this too.
+   */
+  restoreRunStateIfStatus?(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
@@ -317,6 +360,28 @@ export interface WorkflowBackend {
    * already held a place there when it was claimed.
    */
   restoreRunEvent?(runId: string, event: RunEventEnvelope): Promise<void>;
+  /**
+   * Undo a claimed-but-undelivered event delivery as one atomic step: return
+   * the wait to pending (as `restorePendingEventWait` would) AND the claimed
+   * event to the head of its mailbox (as `restoreRunEvent` would).
+   *
+   * This compound operation exists because rolling the two halves back with
+   * separate calls opens a crash window in which the wait is pending again
+   * while its event has already left the mailbox forever: an untimed wait has
+   * no deadline the sweep could recover it through, so the accepted event is
+   * simply lost unless the publisher happens to retry. A durable backend must
+   * implement it as one atomic operation (a transaction or script), never as
+   * a restore followed by a restore.
+   *
+   * Resolves with whether the wait record was returned to pending. The event
+   * is restored either way: it held its mailbox place before the claim, and a
+   * wait resolved by another actor in the meantime does not change that.
+   */
+  restoreRunEventDelivery?(
+    runId: string,
+    waitId: string,
+    event: RunEventEnvelope,
+  ): Promise<boolean>;
 
   /**
    * @deprecated Never implemented by any built-in backend and never called by
@@ -385,6 +450,54 @@ export async function updateRunIfStatus(
   return true;
 }
 
+/**
+ * Check whether `updateRun` patches merge context and node-state maps by key.
+ *
+ * Only a backend that declares this may be sent single-entry patches; every
+ * other backend replaces those maps wholesale, so a one-entry patch would
+ * silently erase every other node's persisted outcome.
+ */
+export function hasRunPatchKeyMergeSupport(backend: WorkflowBackend): boolean {
+  return backend.supportsRunPatchKeyMerge === true;
+}
+
+/**
+ * Replace a run's context and node-state maps with a snapshot, only while its
+ * status (and worker owner, when given) matches.
+ *
+ * A key-merging backend must provide the dedicated replacement operation: its
+ * merge would retain keys written after the snapshot, letting nodes completed
+ * after the checkpoint be skipped on replay. A backend without merge support
+ * already replaces these maps on a plain conditional update, so the snapshot
+ * goes through that path unchanged.
+ */
+export async function restoreRunStateIfStatus(
+  backend: WorkflowBackend,
+  runId: string,
+  expectedStatuses: WorkflowStatus[],
+  snapshot: WorkflowRunStateSnapshot,
+  expectedWorkerId?: string,
+): Promise<boolean> {
+  if (backend.restoreRunStateIfStatus) {
+    return await backend.restoreRunStateIfStatus(
+      runId,
+      expectedStatuses,
+      snapshot,
+      expectedWorkerId,
+    );
+  }
+  if (hasRunPatchKeyMergeSupport(backend)) {
+    // Falling back to the merging update would silently corrupt the restore,
+    // so refuse loudly instead: the backend declared a capability contract it
+    // did not finish implementing.
+    throw INVALID_ARGUMENT.create({
+      detail: "Backend declares supportsRunPatchKeyMerge but does not implement " +
+        "restoreRunStateIfStatus, so a checkpoint snapshot cannot be restored safely",
+    });
+  }
+  return await updateRunIfStatus(backend, runId, expectedStatuses, snapshot, expectedWorkerId);
+}
+
 type WithQueueSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "enqueue" | "dequeue" | "acknowledge">>;
@@ -433,6 +546,7 @@ type WithEventWaitSupport =
       | "takeRunEvent"
       | "claimRunEventForWait"
       | "restoreRunEvent"
+      | "restoreRunEventDelivery"
     >
   >;
 
@@ -441,10 +555,11 @@ type WithEventWaitSupport =
  *
  * The whole group is required, not any single method: a backend that could
  * record a wait but not buffer an event, or buffer an event but not resolve a
- * wait, would park runs that nothing can ever wake. `restorePendingEventWait`
- * and `restoreRunEvent` are part of the group for the same reason: without
- * them a delivery that fails halfway leaves the run parked on a wait already
- * marked delivered, or re-orders its mailbox.
+ * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
+ * `restoreRunEvent`, and `restoreRunEventDelivery` are part of the group for
+ * the same reason: without them a delivery that fails halfway leaves the run
+ * parked on a wait already marked delivered, re-orders its mailbox, or loses
+ * the event outright when a crash lands between the two separate restores.
  *
  * A backend that also supports worker execution ownership must implement
  * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
@@ -463,6 +578,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.takeRunEvent === "function" &&
     typeof backend.claimRunEventForWait === "function" &&
     typeof backend.restoreRunEvent === "function" &&
+    typeof backend.restoreRunEventDelivery === "function" &&
     (!hasWorkerSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")
   );

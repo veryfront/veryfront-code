@@ -51,8 +51,13 @@ class MockRedisAdapter implements RedisAdapter {
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
 
-  private applyRunPatchField(hash: Map<string, string>, field: string, value: string): void {
-    if (field === "nodeStates" || field === "context") {
+  private applyRunPatchField(
+    hash: Map<string, string>,
+    field: string,
+    value: string,
+    replaceMaps = false,
+  ): void {
+    if (!replaceMaps && (field === "nodeStates" || field === "context")) {
       hash.set(
         field,
         JSON.stringify({
@@ -420,8 +425,9 @@ class MockRedisAdapter implements RedisAdapter {
 
       const streamKey = args[expectedCount + 5]!;
       const maxLength = Number(args[expectedCount + 6]);
-      for (let i = expectedCount + 7; i < args.length; i += 2) {
-        this.applyRunPatchField(hash, args[i]!, args[i + 1]!);
+      const replaceMaps = args[expectedCount + 7] === "1";
+      for (let i = expectedCount + 8; i < args.length; i += 2) {
+        this.applyRunPatchField(hash, args[i]!, args[i + 1]!, replaceMaps);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
@@ -1870,6 +1876,70 @@ describe("RedisBackend", () => {
         mockRedis.lastScript,
         "cannot preserve empty arrays",
         "older Redis cjson runtimes must reject ambiguous empty-array patches instead of corrupting them",
+      );
+    });
+
+    it("replaces context and node states wholesale on a snapshot restore", async () => {
+      const runId = "run-snapshot-restore";
+      await backend.createRun(createTestRun(runId));
+      // State accumulated AFTER the checkpoint being restored: the merge path
+      // would retain these keys and let the completed later node be skipped.
+      await backend.updateRun(runId, {
+        status: "waiting",
+        context: { input: { topic: "test" }, early: "kept", late: "post-checkpoint" },
+        nodeStates: {
+          early: { nodeId: "early", status: "completed", attempt: 1 },
+          late: { nodeId: "late", status: "completed", attempt: 1 },
+        },
+      });
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(runId, ["waiting"], {
+          status: "running",
+          context: { input: { topic: "test" }, early: "kept" },
+          nodeStates: { early: { nodeId: "early", status: "completed", attempt: 1 } },
+        }),
+        true,
+      );
+
+      const restored = await backend.getRun(runId);
+      assertEquals(restored?.status, "running");
+      assertEquals(
+        restored?.context,
+        { input: { topic: "test" }, early: "kept" },
+        "a snapshot restore must drop context keys written after the checkpoint",
+      );
+      assertEquals(
+        restored?.nodeStates,
+        { early: { nodeId: "early", status: "completed", attempt: 1 } },
+        "a node completed after the checkpoint must not survive the restore, " +
+          "or replay skips it instead of re-running it",
+      );
+
+      // The replace flag must sit at the fixed ARGV slot the Lua reads, and
+      // the script must branch on it rather than always merging.
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "local replaceMaps = ARGV[expectedCount + 8] == '1'",
+        "the replacement flag must live in the Lua the backend executes, not only in the mock",
+      );
+      const restoreArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[restoreArgvCount + 7],
+        "1",
+        "the snapshot restore must set the replace-maps flag at the ARGV index the Lua reads",
+      );
+
+      // The plain conditional patch keeps the merge flag off.
+      await backend.updateRunIfStatus(runId, ["running"], {
+        nodeStates: { late: { nodeId: "late", status: "running", attempt: 1 } },
+      });
+      const patchArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(mockRedis.lastArgs[patchArgvCount + 7], "0");
+      assertEquals(
+        (await backend.getRun(runId))?.nodeStates.early?.status,
+        "completed",
+        "a plain conditional patch must keep merging by key",
       );
     });
 

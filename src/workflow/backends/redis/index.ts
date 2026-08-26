@@ -22,6 +22,7 @@ import {
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
+  type WorkflowRunStateSnapshot,
   type WorkflowRunUpdate,
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
@@ -193,9 +194,16 @@ end
 redis.call('xadd', ARGV[4], 'MAXLEN', '~', ARGV[5], '*', unpack(fields))
 return revision`;
 
-/** Atomically verify the current status, update fields, and move the status index. */
+/**
+ * Atomically verify the current status, update fields, and move the status
+ * index. The replace-maps flag (ARGV[expectedCount + 8]) switches `context`
+ * and `nodeStates` from the per-key merge to wholesale replacement: checkpoint
+ * restore must drop keys written after the snapshot, which a merge cannot do.
+ */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local replaceMaps = ARGV[expectedCount + 8] == '1'
 local preserveArrays = cjson.decode_array_with_array_mt
 if preserveArrays then preserveArrays(true) end
 local function decodePatchJson(value)
@@ -205,7 +213,7 @@ local function decodePatchJson(value)
   return cjson.decode(value)
 end
 local function applyPatchField(field, value)
-  if field == 'nodeStates' or field == 'context' then
+  if not replaceMaps and (field == 'nodeStates' or field == 'context') then
     local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
     local patch = decodePatchJson(value)
     for key, changed in pairs(patch) do current[key] = changed end
@@ -214,7 +222,6 @@ local function applyPatchField(field, value)
     redis.call('hset', KEYS[1], field, value)
   end
 end
-local expectedCount = tonumber(ARGV[1])
 local allowed = false
 for i = 2, expectedCount + 1 do
   if old == ARGV[i] then
@@ -237,7 +244,7 @@ if nextStatus ~= '' and old ~= nextStatus then
 end
 local streamKey = ARGV[expectedCount + 6]
 local maxLength = ARGV[expectedCount + 7]
-for i = expectedCount + 8, #ARGV, 2 do
+for i = expectedCount + 9, #ARGV, 2 do
   applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
@@ -757,6 +764,8 @@ return 0`;
 
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
+  /** The run-update scripts merge context and node-state maps by key. */
+  readonly supportsRunPatchKeyMerge = true;
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;
   private config: RedisBackendInternalConfig;
@@ -1188,11 +1197,33 @@ export class RedisBackend implements WorkflowBackend {
     );
   }
 
+  /**
+   * Replace context and node-state maps with a snapshot, only while status
+   * and (optionally) worker ownership match. Same atomic script as the
+   * conditional patch, with the replace-maps flag set: checkpoint restore
+   * must drop keys written after the snapshot, which the merge retains.
+   */
+  async restoreRunStateIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    return await this.updateRunConditionally(
+      runId,
+      expectedStatuses,
+      snapshot,
+      expectedWorkerId,
+      true,
+    );
+  }
+
   private async updateRunConditionally(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
+    replaceMapFields = false,
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
@@ -1210,6 +1241,7 @@ export class RedisBackend implements WorkflowBackend {
         expectedWorkerId ?? "",
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        replaceMapFields ? "1" : "0",
         ...fieldArgs,
       ],
     );

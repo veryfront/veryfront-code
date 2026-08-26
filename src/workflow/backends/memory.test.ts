@@ -324,6 +324,53 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun("run-owned"))?.status, "failed");
     });
 
+    it("replaces context and node states wholesale on a snapshot restore", async () => {
+      await backend.createRun(createTestRun("run-restore", {
+        status: "waiting",
+        workerId: "worker-owner",
+        context: { input: {}, early: "kept", late: "post-checkpoint" },
+        nodeStates: {
+          early: { nodeId: "early", status: "completed", attempt: 1 },
+          late: { nodeId: "late", status: "completed", attempt: 1 },
+        },
+      }));
+      const snapshot = {
+        status: "running" as const,
+        context: { input: {}, early: "kept" },
+        nodeStates: { early: { nodeId: "early", status: "completed" as const, attempt: 1 } },
+      };
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus("run-restore", ["waiting"], snapshot, "worker-else"),
+        false,
+        "a restore fenced on a stale worker owner must not apply",
+      );
+      assertEquals(
+        await backend.restoreRunStateIfStatus("run-restore", ["running"], snapshot, "worker-owner"),
+        false,
+        "a restore against an unexpected status must not apply",
+      );
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus("run-restore", ["waiting"], snapshot, "worker-owner"),
+        true,
+      );
+      const restored = await backend.getRun("run-restore");
+      assertEquals(restored?.status, "running");
+      assertEquals(
+        restored?.context,
+        { input: {}, early: "kept" },
+        "a snapshot restore must drop context keys written after the checkpoint, " +
+          "unlike the per-key merge updateRun applies",
+      );
+      assertEquals(
+        restored?.nodeStates,
+        { early: { nodeId: "early", status: "completed", attempt: 1 } },
+        "a node completed after the checkpoint must not survive the restore, " +
+          "or replay skips it instead of re-running it",
+      );
+    });
+
     it("rejects attempts to mutate the source policy after run creation", async () => {
       const run = createTestRun("run-immutable-policy");
       await backend.createRun(run);
@@ -1019,6 +1066,75 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-after",
         "a refused claim must leave the event buffered",
+      );
+    });
+
+    it("restores a claimed wait and its event together as one delivery rollback", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.appendRunEvent("run-events", {
+        id: "evt-claim",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-later",
+        eventName: "payment.confirmed",
+        payload: { seq: 2 },
+        publishedAt: new Date(),
+      });
+      const claimed = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      assertExists(claimed);
+
+      assertEquals(
+        await backend.restoreRunEventDelivery("run-events", "evw-1", claimed),
+        true,
+        "the rollback must report the wait returned to pending",
+      );
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map((wait) => wait.id),
+        ["evw-1"],
+        "the wait must be pending again so a later publish can wake the run",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-claim",
+        "the rolled-back event must be back at the head of the mailbox",
+      );
+    });
+
+    it("puts the event back even when the rolled-back wait belongs to another actor", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await backend.appendRunEvent("run-events", {
+        id: "evt-claim",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      const claimed = await backend.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      assertExists(claimed);
+      // Another actor resolves the record before the rollback lands: the wait
+      // is theirs now, but the event still held its mailbox place.
+      await backend.restorePendingEventWait("run-events", "evw-1");
+      await backend.resolvePendingEventWait("run-events", "evw-1", "cancelled");
+
+      assertEquals(
+        await backend.restoreRunEventDelivery("run-events", "evw-1", claimed),
+        false,
+        "a wait held by another actor must not be reported as restored",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-claim",
+        "the event must go back regardless: it was accepted before the claim",
       );
     });
 

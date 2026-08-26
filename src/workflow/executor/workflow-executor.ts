@@ -23,7 +23,12 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { hasEventWaitSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasEventWaitSupport,
+  restoreRunStateIfStatus,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
@@ -413,7 +418,11 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      const restored = await updateRunIfStatus(
+      // A checkpoint restore is a snapshot replacement, never a merge: keys
+      // written after the checkpoint must not survive it, or a node completed
+      // later stays marked completed and is skipped on replay while stale
+      // context values outlive the rollback.
+      const restored = await restoreRunStateIfStatus(
         this.config.backend,
         runId,
         [run.status],

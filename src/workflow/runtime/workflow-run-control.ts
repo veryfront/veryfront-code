@@ -4,6 +4,7 @@ import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setu
 import {
   hasEventWaitSupport,
   hasLockSupport,
+  hasRunPatchKeyMergeSupport,
   hasWorkerSupport,
   updateRunIfStatus,
   type WorkflowBackend,
@@ -387,6 +388,36 @@ async function reconcileNodeOutcome(
   throw ORCHESTRATION_ERROR.create({ detail: input.ownershipChurnDetail });
 }
 
+/**
+ * Shape one node's outcome for this backend's patch semantics.
+ *
+ * A single-entry patch is only safe on a backend whose updates merge these
+ * maps by key; that is what lets concurrent node outcomes land without
+ * clobbering each other. A backend without that declared capability replaces
+ * the maps wholesale (the historical third-party contract), so a one-entry
+ * patch would silently erase every other node's persisted context and state.
+ * Such a backend receives the complete maps built over the freshly read run,
+ * which is exactly what its conditional update fences were designed around.
+ */
+function buildNodeOutcomePatch(
+  backend: WorkflowBackend,
+  run: WorkflowRun,
+  nodeId: string,
+  contextEntry: unknown,
+  nodeState: NodeState,
+): Pick<WorkflowRunUpdate, "context" | "nodeStates"> {
+  if (hasRunPatchKeyMergeSupport(backend)) {
+    return {
+      context: { [nodeId]: contextEntry },
+      nodeStates: { [nodeId]: nodeState },
+    };
+  }
+  return {
+    context: { ...run.context, [nodeId]: contextEntry },
+    nodeStates: { ...run.nodeStates, [nodeId]: nodeState },
+  };
+}
+
 function reconcileApprovalDecision(
   backend: WorkflowBackend,
   operation: WorkflowRunControlApprovalDecisionOperation,
@@ -407,28 +438,27 @@ function reconcileApprovalDecision(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while applying approval "${operation.approvalId}"`,
-    buildPatch: () => {
-      const runPatch: WorkflowRunUpdate = {
-        context: {
-          [operation.nodeId]: decisionContext,
-        },
-        nodeStates: {
-          [operation.nodeId]: {
-            nodeId: operation.nodeId,
-            status: "completed",
-            output: {
-              approved: operation.decision.approved,
-              approver: operation.decision.approver,
-              ...(operation.decision.comment === undefined
-                ? {}
-                : { comment: operation.decision.comment }),
-              ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
-            },
-            attempt: 1,
-            completedAt: decidedAt,
+    buildPatch: (run) => {
+      const runPatch: WorkflowRunUpdate = buildNodeOutcomePatch(
+        backend,
+        run,
+        operation.nodeId,
+        decisionContext,
+        {
+          nodeId: operation.nodeId,
+          status: "completed",
+          output: {
+            approved: operation.decision.approved,
+            approver: operation.decision.approver,
+            ...(operation.decision.comment === undefined
+              ? {}
+              : { comment: operation.decision.comment }),
+            ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
+          attempt: 1,
+          completedAt: decidedAt,
         },
-      };
+      );
 
       return operation.decision.approved ? runPatch : {
         ...runPatch,
@@ -461,20 +491,20 @@ function reconcileEventDelivery(
     resume: operation.resume,
     ownershipChurnDetail:
       `Workflow execution ownership kept changing while delivering event wait "${operation.waitId}"`,
-    buildPatch: () => ({
-      context: {
-        [operation.nodeId]: { ...outcome, receivedAt: deliveredAt.toISOString() },
-      },
-      nodeStates: {
-        [operation.nodeId]: {
+    buildPatch: (run) =>
+      buildNodeOutcomePatch(
+        backend,
+        run,
+        operation.nodeId,
+        { ...outcome, receivedAt: deliveredAt.toISOString() },
+        {
           nodeId: operation.nodeId,
           status: "completed",
           output: outcome,
           attempt: 1,
           completedAt: deliveredAt,
         },
-      },
-    }),
+      ),
   });
 }
 

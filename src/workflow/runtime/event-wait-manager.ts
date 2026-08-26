@@ -3,6 +3,7 @@ import type { PendingEventWait, WaitNodeConfig, WorkflowRun } from "../types.ts"
 import { generateId, parseDuration } from "../types.ts";
 import {
   hasEventWaitSupport,
+  hasRunPatchKeyMergeSupport,
   type PersistedPendingEventWait,
   type RunEventEnvelope,
   updateRunIfStatus,
@@ -177,23 +178,48 @@ export class EventWaitManager {
       ...(run.workerId === undefined ? {} : { workerId: run.workerId }),
     };
 
-    // Worker-owned waits are reserved atomically, so a delayed onWaiting
-    // callback cannot append after a replacement worker claimed the run.
-    if (run.workerId !== undefined) {
-      const saveOwned = backend.savePendingEventWaitIfStatusAndWorker;
-      const saved = saveOwned
-        ? await saveOwned.call(backend, run.id, ["waiting"], run.workerId, wait)
-        : false;
-      if (!saved) {
-        throw ORCHESTRATION_ERROR.create({
-          detail: "Workflow execution ownership changed before event wait persistence",
-        });
+    // The deadline timer is armed BEFORE the record becomes claimable. A
+    // publish that lands during the persistence await can claim the freshly
+    // visible record and clear its expiry; a timer armed only afterwards
+    // would survive that clear and hold its closure until the original
+    // deadline. Armed first, the claimer's clear always finds it.
+    this.scheduleExpiry(wait);
+    try {
+      // Worker-owned waits are reserved atomically, so a delayed onWaiting
+      // callback cannot append after a replacement worker claimed the run.
+      if (run.workerId !== undefined) {
+        const saveOwned = backend.savePendingEventWaitIfStatusAndWorker;
+        const saved = saveOwned
+          ? await saveOwned.call(backend, run.id, ["waiting"], run.workerId, wait)
+          : false;
+        if (!saved) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Workflow execution ownership changed before event wait persistence",
+          });
+        }
+      } else {
+        await backend.savePendingEventWait(run.id, wait);
       }
-    } else {
-      await backend.savePendingEventWait(run.id, wait);
+    } catch (error) {
+      // Nothing was persisted, so the early timer guards nothing: drop it.
+      this.clearExpiry(wait.id);
+      throw error;
     }
 
-    this.scheduleExpiry(wait);
+    if (
+      wait.expiresAt !== undefined &&
+      wait.expiresAt.getTime() <= Date.now() &&
+      !this.expiryTimers.has(wait.id)
+    ) {
+      // The deadline elapsed while persistence was in flight and the early
+      // timer fired against a record that did not exist yet, so its expiry
+      // was a no-op. Re-arm with the bounded minimum delay: the retry either
+      // enforces the deadline promptly or finds the wait already resolved by
+      // a concurrent claim and quietly does nothing. An absent timer with a
+      // future deadline means a concurrent claim cleared it, and that clear
+      // must be honored, not undone.
+      this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
+    }
     return projectEventWait(wait);
   }
 
@@ -376,15 +402,17 @@ export class EventWaitManager {
   /**
    * Undo a claimed-but-undelivered event so the run stays wakeable.
    *
-   * The wait is restored before the event: a concurrent drain that sees a
-   * pending wait with nothing in the mailbox simply does nothing, whereas one
-   * that sees an event with no pending wait would take it and put it straight
-   * back. Both orders are safe, this one is quieter.
+   * The wait and the event are restored by ONE backend operation, not two.
+   * Committed as separate calls, a crash after the wait restore but before
+   * the event restore would leave the wait pending while its event is gone
+   * from the mailbox forever: the sweep cannot recover an untimed wait, and
+   * an event the publisher was told was accepted would be lost unless it
+   * happened to retry. `restoreRunEventDelivery` closes that window.
    *
-   * The event goes back through `restoreRunEvent`, to the head of the mailbox:
-   * it was the oldest with its name when it was claimed, and re-appending it
-   * at the tail would deliver a later same-name event before it on the next
-   * drain, reordering the run's mail after a transient failure.
+   * The event goes back to the head of the mailbox: it was the oldest with
+   * its name when it was claimed, and re-appending it at the tail would
+   * deliver a later same-name event before it on the next drain, reordering
+   * the run's mail after a transient failure.
    */
   private async rollBackDelivery(
     wait: PersistedPendingEventWait,
@@ -393,8 +421,8 @@ export class EventWaitManager {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) return;
     try {
-      await this.restoreClaimedWait(wait);
-      await backend.restoreRunEvent(wait.runId, event);
+      const restored = await backend.restoreRunEventDelivery(wait.runId, wait.id, event);
+      if (restored) this.rearmRestoredWaitExpiry(wait);
     } catch (error) {
       logger.error(
         "Failed to roll back an event wait delivery; the run may stay parked until it is retried",
@@ -407,27 +435,36 @@ export class EventWaitManager {
   /**
    * Return a wait this process claimed to pending, and re-arm its deadline.
    *
-   * The deadline is only re-armed when the record really came back. A claim
-   * that cannot be given back belongs to whoever holds it now.
-   *
-   * An already-elapsed deadline is left to the periodic sweep when one exists.
-   * Managers with sweeping disabled re-arm it with a bounded minimum delay, so
-   * a failed delay delivery remains live without spinning on every event-loop
-   * tick.
+   * This is the no-event path (a delay whose delivery failed, an expired
+   * deadline whose run failure did not commit); a claimed EVENT is given back
+   * through `rollBackDelivery`, whose backend operation restores the wait and
+   * the event atomically.
    */
   private async restoreClaimedWait(wait: PersistedPendingEventWait): Promise<boolean> {
     const backend = this.config.backend;
     if (!hasEventWaitSupport(backend)) return false;
     const restored = await backend.restorePendingEventWait(wait.runId, wait.id);
-    if (restored && wait.expiresAt) {
-      const remaining = wait.expiresAt.getTime() - Date.now();
-      if (remaining > 0) {
-        this.scheduleExpiry(wait);
-      } else if ((this.config.expirationCheckInterval ?? 0) <= 0) {
-        this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
-      }
-    }
+    if (restored) this.rearmRestoredWaitExpiry(wait);
     return restored;
+  }
+
+  /**
+   * Re-arm the deadline of a wait whose record really came back to pending.
+   *
+   * Only for restored records: a claim that could not be given back belongs
+   * to whoever holds it now. An already-elapsed deadline is left to the
+   * periodic sweep when one exists. Managers with sweeping disabled re-arm it
+   * with a bounded minimum delay, so a failed delay delivery remains live
+   * without spinning on every event-loop tick.
+   */
+  private rearmRestoredWaitExpiry(wait: PersistedPendingEventWait): void {
+    if (!wait.expiresAt) return;
+    const remaining = wait.expiresAt.getTime() - Date.now();
+    if (remaining > 0) {
+      this.scheduleExpiry(wait);
+    } else if ((this.config.expirationCheckInterval ?? 0) <= 0) {
+      this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
+    }
   }
 
   private async nodeOutcomeCommitted(wait: PersistedPendingEventWait): Promise<boolean> {
@@ -579,21 +616,25 @@ export class EventWaitManager {
     if (!ACTIVE_WAIT_STATUSES.includes(run.status)) return true;
 
     const existingNodeState = run.nodeStates[wait.nodeId];
+    const failedNodeState = {
+      ...existingNodeState,
+      nodeId: wait.nodeId,
+      status: "failed" as const,
+      error: `Wait for event "${wait.eventName}" timed out`,
+      attempt: existingNodeState?.attempt ?? 1,
+      completedAt: timedOutAt,
+    };
     return await updateRunIfStatus(backend, wait.runId, ACTIVE_WAIT_STATUSES, {
       status: "failed",
       error: {
         message: `Wait for event "${wait.eventName}" at node "${wait.nodeId}" timed out`,
       },
-      nodeStates: {
-        [wait.nodeId]: {
-          ...existingNodeState,
-          nodeId: wait.nodeId,
-          status: "failed",
-          error: `Wait for event "${wait.eventName}" timed out`,
-          attempt: existingNodeState?.attempt ?? 1,
-          completedAt: timedOutAt,
-        },
-      },
+      // A single-entry patch relies on the backend merging node states by
+      // key; a replacement-semantics backend would erase every sibling's
+      // persisted state, so it gets the complete map instead.
+      nodeStates: hasRunPatchKeyMergeSupport(backend)
+        ? { [wait.nodeId]: failedNodeState }
+        : { ...run.nodeStates, [wait.nodeId]: failedNodeState },
       completedAt: timedOutAt,
     });
   }

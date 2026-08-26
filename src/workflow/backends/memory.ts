@@ -22,6 +22,7 @@ import {
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
+  type WorkflowRunStateSnapshot,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
@@ -119,6 +120,8 @@ interface MemoryRunObserver {
 
 /** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
+  /** updateRun patches merge context and node-state maps by key. */
+  readonly supportsRunPatchKeyMerge = true;
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
   private approvals = new Map<string, PersistedPendingApproval[]>();
@@ -241,6 +244,48 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     return this.updateRun(runId, patch).then(() => true);
+  }
+
+  restoreRunStateIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+
+    try {
+      assertWorkflowRunUpdate(snapshot);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    logger.debug(`Restoring run state snapshot: ${runId}`);
+
+    // Replacement, not the per-key merge updateRun applies: keys written after
+    // the snapshot must not survive a checkpoint restore, or nodes completed
+    // after the checkpoint stay completed and are skipped on replay.
+    const updated: WorkflowRun = { ...run, ...snapshot };
+    this.runs.set(runId, updated);
+    this.publishRunObservation(runId, updated);
+
+    if (snapshot.status && snapshot.status !== "running") {
+      this.stalledClaims.delete(runId);
+    }
+    if (
+      snapshot.status === "completed" || snapshot.status === "failed" ||
+      snapshot.status === "cancelled"
+    ) {
+      this.runEvents.delete(runId);
+    }
+    return Promise.resolve(true);
   }
 
   deleteRun(runId: string): Promise<void> {
@@ -785,6 +830,28 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
     return Promise.resolve();
+  }
+
+  /**
+   * Undo a claimed-but-undelivered delivery: the wait returns to pending and
+   * the event to the head of its mailbox as one step.
+   *
+   * Composed from this backend's own restore primitives so that subclassed
+   * fakes keep observing them; every mutation is synchronous in-memory state,
+   * so the composition cannot be split by a crash the way two separate network
+   * round-trips to a durable backend can. A durable backend must implement
+   * this as a single atomic operation (a transaction or script) instead.
+   */
+  async restoreRunEventDelivery(
+    runId: string,
+    waitId: string,
+    event: RunEventEnvelope,
+  ): Promise<boolean> {
+    const restored = await this.restorePendingEventWait(runId, waitId);
+    // The event goes back even when the wait belongs to another actor now: it
+    // held its mailbox place before the claim.
+    await this.restoreRunEvent(runId, event);
+    return restored;
   }
 
   // =========================================================================

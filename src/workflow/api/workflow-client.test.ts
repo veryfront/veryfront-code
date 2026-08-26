@@ -30,6 +30,7 @@ import {
   getPendingApprovalResponseSchemaId,
   projectPendingApproval,
 } from "../runtime/pending-approval-metadata.ts";
+import type { EventWaitManager } from "../runtime/event-wait-manager.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
@@ -2056,6 +2057,66 @@ class CompleteSiblingDuringTimeoutBackend extends MemoryBackend {
   }
 }
 
+/**
+ * Claims a timed wait the moment its record is persisted, before the manager
+ * that created it regains control: the window in which another client's
+ * publish can resolve the record and clear its expiry.
+ */
+class ClaimDuringPersistBackend extends MemoryBackend {
+  manager?: EventWaitManager;
+  claimedWaitIds: string[] = [];
+
+  override async savePendingEventWaitIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<boolean> {
+    const saved = await super.savePendingEventWaitIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      wait,
+    );
+    if (saved && wait.expiresAt !== undefined && this.manager) {
+      await super.resolvePendingEventWait(runId, wait.id, "delivered");
+      this.manager.clearWaitExpiry(wait.id);
+      this.claimedWaitIds.push(wait.id);
+    }
+    return saved;
+  }
+}
+
+/**
+ * Distinguishes the atomic delivery rollback from the two-call sequence it
+ * replaced: a standalone wait restore during a rollback is the crash window
+ * in which the event would be lost.
+ */
+class RollbackObservingBackend extends BlockableRunUpdateBackend {
+  standaloneWaitRestores = 0;
+  combinedRestores = 0;
+  private inCombinedRestore = false;
+
+  override restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
+    if (!this.inCombinedRestore) this.standaloneWaitRestores++;
+    return super.restorePendingEventWait(runId, waitId);
+  }
+
+  override async restoreRunEventDelivery(
+    runId: string,
+    waitId: string,
+    event: RunEventEnvelope,
+  ): Promise<boolean> {
+    this.combinedRestores++;
+    this.inCombinedRestore = true;
+    try {
+      return await super.restoreRunEventDelivery(runId, waitId, event);
+    } finally {
+      this.inCombinedRestore = false;
+    }
+  }
+}
+
 class FailingTerminalWaitCleanupBackend extends MemoryBackend {
   override resolvePendingEventWait(
     runId: string,
@@ -2611,6 +2672,89 @@ describe("WorkflowClient durable event waits", () => {
       );
     } finally {
       await flakyClient.destroy();
+    }
+  });
+
+  it("rolls a failed delivery back through one atomic backend restore", async () => {
+    const flaky = new RollbackObservingBackend();
+    const flakyClient = createWorkflowClient({ backend: flaky });
+    try {
+      flakyClient.register(eventWorkflow);
+      const handle = await flakyClient.start("event-workflow", {});
+      await handle.settled();
+
+      flaky.blockRunUpdates = true;
+      const refused = await flakyClient.publishEvent(handle.runId, "payment.confirmed", {
+        amount: 7,
+      });
+      flaky.blockRunUpdates = false;
+
+      assertEquals(refused, "delivery-failed");
+      assertEquals(
+        flaky.combinedRestores,
+        1,
+        "the rollback must restore the wait and the event as one backend operation",
+      );
+      assertEquals(
+        flaky.standaloneWaitRestores,
+        0,
+        "a standalone wait restore during rollback is the crash window in which " +
+          "the event is lost forever; the atomic operation must be used instead",
+      );
+      assertEquals(
+        (await flakyClient.getPendingEventWaits(handle.runId)).length,
+        1,
+        "the atomic rollback must leave the wait pending again",
+      );
+      assertEquals(
+        (await flaky.takeRunEvent(handle.runId, "payment.confirmed"))?.payload,
+        { amount: 7 },
+        "the atomic rollback must leave the event back in the mailbox",
+      );
+    } finally {
+      await flakyClient.destroy();
+    }
+  });
+
+  it("arms a timed wait's deadline before its record becomes claimable", async () => {
+    const racing = new ClaimDuringPersistBackend();
+    const racingClient = createWorkflowClient({
+      backend: racing,
+      eventWait: { expirationCheckInterval: 3_600_000 },
+    });
+    try {
+      racing.manager = racingClient.getEventWaitManager();
+      racingClient.register(workflow({
+        id: "claim-during-persist-workflow",
+        steps: [
+          waitForEvent("await-payment", { eventName: "payment.confirmed", timeout: "1h" }),
+          step("after", { tool: createMockTool("after-tool", { done: true }) }),
+        ],
+      }));
+
+      const handle = await racingClient.start("claim-during-persist-workflow", {});
+      await handle.settled();
+
+      assertEquals(
+        racing.claimedWaitIds.length,
+        1,
+        "the concurrent claim must have fired inside the persistence window, " +
+          "otherwise this proves nothing",
+      );
+      // Reaching into the private timer map is deliberate: the leak this
+      // guards against is purely an in-process timer closure held until the
+      // original deadline, with no other observable surface.
+      const timers =
+        (racing.manager as unknown as { expiryTimers: Map<string, unknown> }).expiryTimers;
+      assertEquals(
+        timers.size,
+        0,
+        "a wait claimed while its record was being persisted must not leave a " +
+          "live deadline timer behind: armed after publication, the claimer's " +
+          "clear would miss it and the closure would survive until the deadline",
+      );
+    } finally {
+      await racingClient.destroy();
     }
   });
 

@@ -2,6 +2,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
+import type { WorkflowBackend } from "../backends/types.ts";
 import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -441,6 +442,30 @@ class ConcurrentNodeOutcomeBackend extends MemoryBackend {
       patch,
     );
   }
+}
+
+/**
+ * A minimal third-party backend with the historical replacement semantics:
+ * `updateRun` overwrites context and nodeStates wholesale, no conditional
+ * update methods exist, and nothing declares `supportsRunPatchKeyMerge`.
+ * Reconciliation must send such a backend complete maps, never one-entry
+ * merge patches.
+ */
+function createReplacementSemanticsBackend(initial: WorkflowRun): {
+  backend: WorkflowBackend;
+  read(): WorkflowRun;
+} {
+  let stored = structuredClone(initial);
+  const backend = {
+    getRun: () => Promise.resolve(structuredClone(stored)),
+    updateRun: (_runId: string, patch: Partial<WorkflowRun>) => {
+      stored = { ...stored, ...patch } as WorkflowRun;
+      return Promise.resolve();
+    },
+    getPendingApprovals: () => Promise.resolve([]),
+    destroy: () => Promise.resolve(),
+  } as unknown as WorkflowBackend;
+  return { backend, read: () => stored };
 }
 
 function withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
@@ -1163,6 +1188,87 @@ describe("workflow/runtime/workflow-run-control reconcile", () => {
     assertEquals(persisted?.nodeStates.second?.status, "completed");
     assertEquals((persisted?.context.first as { payload?: unknown })?.payload, { value: 1 });
     assertEquals((persisted?.context.second as { payload?: unknown })?.payload, { value: 2 });
+  });
+
+  it("sends complete maps to a backend without declared key-merge support", async () => {
+    // The historical third-party contract: updateRun overwrites context and
+    // nodeStates wholesale, and nothing declares supportsRunPatchKeyMerge.
+    // A single-entry patch would erase every other node's persisted outcome.
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-approval"),
+      status: "waiting",
+      context: { input: {}, earlier: { done: true } },
+      nodeStates: {
+        earlier: { nodeId: "earlier", status: "completed", attempt: 1 },
+        review: { nodeId: "review", status: "running", attempt: 1 },
+      },
+    });
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: "reconcile-replacement-approval",
+        approvalId: "approval-replacement",
+        nodeId: "review",
+        decision: { approved: true, approver: "reviewer" },
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(read().nodeStates.review?.status, "completed");
+    assertEquals(
+      read().nodeStates.earlier,
+      { nodeId: "earlier", status: "completed", attempt: 1 },
+      "deciding one approval must not erase a sibling node's persisted state " +
+        "on a backend that replaces the map wholesale",
+    );
+    assertEquals(
+      read().context.earlier,
+      { done: true },
+      "deciding one approval must not erase prior workflow outputs on a " +
+        "replacement-semantics backend",
+    );
+  });
+
+  it("sends complete maps for an event delivery on a replacement-semantics backend", async () => {
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-event"),
+      status: "waiting",
+      context: { input: {}, earlier: { done: true } },
+      nodeStates: {
+        earlier: { nodeId: "earlier", status: "completed", attempt: 1 },
+        "await-payment": { nodeId: "await-payment", status: "running", attempt: 1 },
+      },
+    });
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "event-delivery",
+        runId: "reconcile-replacement-event",
+        waitId: "wait-replacement",
+        nodeId: "await-payment",
+        eventName: "payment.confirmed",
+        waitKind: "event",
+        payload: { amount: 42 },
+      },
+    });
+
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(read().nodeStates["await-payment"]?.status, "completed");
+    assertEquals(
+      read().nodeStates.earlier?.status,
+      "completed",
+      "delivering one event must not erase a sibling node's persisted state " +
+        "on a backend that replaces the map wholesale",
+    );
+    assertEquals(read().context.earlier, { done: true });
+    assertEquals(
+      (read().context["await-payment"] as { payload?: unknown })?.payload,
+      { amount: 42 },
+    );
   });
 
   it("omits an absent approval comment while preserving structured data", async () => {
