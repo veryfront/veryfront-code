@@ -1149,7 +1149,7 @@ function argumentsForResolvedCall(
   if (isMemberExpressionWithObject(callee) && resolvesCallee(callee.object)) {
     const invocation = memberPropertyName(callee);
     if (invocation === "call") return args.slice(1);
-    if (invocation === "apply") return null;
+    if (invocation === "apply" || invocation === "bind") return null;
   }
   if (
     resolvesToGlobalIntrinsicMember(callee, "Reflect", "apply", scope, nodeScopes) &&
@@ -2232,9 +2232,7 @@ function applyCallCapability(
   applyDynamicRequireCapability(node, callee, scope, nodeScopes, analysis);
   applyGetBuiltinModuleCapability(node, scope, nodeScopes, analysis);
   applyDenoRunCapability(node, scope, nodeScopes, analysis);
-  if (isMemberExpressionWithObject(callee)) {
-    applyDescriptorReadCapability(node, callee, scope, nodeScopes, analysis);
-  }
+  applyDescriptorReadCapability(node, scope, nodeScopes, analysis);
 }
 
 function applyReflectGetCapability(
@@ -2359,17 +2357,35 @@ function applyDenoRunCapability(
 
 function applyDescriptorReadCapability(
   node: ASTNode,
-  callee: ASTNode & { object: ASTNode },
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
-  if (memberPropertyName(callee) !== "getOwnPropertyDescriptor") return;
-  if (
-    !resolvesToGlobalIntrinsic(callee.object, "Object", scope, nodeScopes) &&
-    !resolvesToGlobalIntrinsic(callee.object, "Reflect", scope, nodeScopes)
-  ) return;
-  const descriptorKey = staticString(callArguments(node)[1]);
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) =>
+      resolvesToGlobalIntrinsicMember(
+        candidate,
+        "Object",
+        "getOwnPropertyDescriptor",
+        scope,
+        nodeScopes,
+      ) || resolvesToGlobalIntrinsicMember(
+        candidate,
+        "Reflect",
+        "getOwnPropertyDescriptor",
+        scope,
+        nodeScopes,
+      ),
+    scope,
+    nodeScopes,
+  );
+  if (args === undefined) return;
+  if (args === null) {
+    analysis.hasDynamicCodeGeneration = true;
+    return;
+  }
+  const descriptorKey = staticString(args[1]);
   if (descriptorKey === null || descriptorKey === "constructor") {
     analysis.hasDynamicCodeGeneration = true;
   }
