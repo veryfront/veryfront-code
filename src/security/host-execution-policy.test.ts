@@ -10,11 +10,33 @@ import {
 } from "./host-execution-policy.ts";
 
 describe("security/host-execution-policy operator override", () => {
-  it("treats the deprecated override as ignored in every runtime topology", () => {
+  it("lets an operator grant host execution to a shared runtime", () => {
+    // The platform's own rendering and executor runtime is shared, and no dedicated
+    // isolated runtime is provisioned for hosted project previews or agents. Without
+    // an honoured grant, tenant /api/* returns 503 PROJECT_EXECUTION_UNAVAILABLE and
+    // the Studio preview pane fails to load (veryfront-issue-inbox#848, #356).
+    //
+    // This re-accepts a known posture: tenant code runs in the shared process, where
+    // per-request separation is source scoping rather than a tenant boundary. It is
+    // the posture production already runs. Withdrawing it belongs with routing
+    // execution to a dedicated runtime, not ahead of it.
     assertEquals(
       resolveHostProjectExecutionPosture({ sharedRuntime: true, overrideConfigured: true }),
-      { allowHostProjectCodeExecution: false, overrideIgnored: true },
+      { allowHostProjectCodeExecution: true, overrideIgnored: false },
     );
+  });
+
+  it("keeps a shared runtime fail-closed when no grant is configured", () => {
+    assertEquals(
+      resolveHostProjectExecutionPosture({ sharedRuntime: true, overrideConfigured: false }),
+      { allowHostProjectCodeExecution: false, overrideIgnored: false },
+    );
+  });
+
+  it("reports the grant as ignored where it changes nothing", () => {
+    // A dedicated runtime already carries the capability, so the grant is redundant
+    // there. Reporting it lets startup surface stale operator configuration without
+    // implying it did any work.
     assertEquals(
       resolveHostProjectExecutionPosture({ sharedRuntime: false, overrideConfigured: true }),
       { allowHostProjectCodeExecution: true, overrideIgnored: true },

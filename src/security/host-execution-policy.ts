@@ -34,7 +34,7 @@ export function isHostProjectExecutionOverrideConfigured(
   }
 }
 
-/** @deprecated The override no longer enables host execution. */
+/** @deprecated Prefer isHostProjectExecutionOverrideConfigured. */
 export const isHostProjectExecutionOverrideEnabled = isHostProjectExecutionOverrideConfigured;
 
 /** Resolve the only two supported production execution topologies. */
@@ -43,7 +43,11 @@ export function resolveHostProjectExecutionPosture(options: {
   overrideConfigured: boolean;
 }): { allowHostProjectCodeExecution: boolean; overrideIgnored: boolean } {
   return {
-    allowHostProjectCodeExecution: !options.sharedRuntime,
-    overrideIgnored: options.overrideConfigured,
+    // A dedicated runtime always carries the capability. A shared runtime carries it
+    // only where an operator has granted it at the host-owned entrypoint.
+    allowHostProjectCodeExecution: !options.sharedRuntime || options.overrideConfigured,
+    // Configured but redundant: a dedicated runtime already had the capability, so the
+    // grant did no work and startup can report it as stale operator configuration.
+    overrideIgnored: options.overrideConfigured && !options.sharedRuntime,
   };
 }
