@@ -558,9 +558,10 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Add redirect URI: http://localhost:3000/api/auth/quickbooks/callback",
       "Select Accounting scope",
       "Copy Client ID and Secret to .env",
+      "For a sandbox company, set QUICKBOOKS_API_HOST=sandbox-quickbooks.api.intuit.com",
     ],
     link: "https://developer.intuit.com/app/developer/dashboard",
-    envVars: ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET"],
+    envVars: ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET", "QUICKBOOKS_API_HOST"],
   },
   xero: {
     title: "Xero OAuth Setup",

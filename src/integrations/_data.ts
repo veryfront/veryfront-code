@@ -329,7 +329,7 @@ export const connectors: IntegrationConfig[] = [
       "description":
         "Adyen Checkout API URL prefix without scheme. Keep the default checkout-test.adyen.com for test. For live, use your prefixed live host from Developers > API URLs followed by /checkout, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout, because live Checkout endpoints sit under that extra path segment.",
       "required": false,
-      "sensitive": false,
+      "sensitive": true,
       "default": "checkout-test.adyen.com",
     }],
     "tools": [{

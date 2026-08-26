@@ -1439,6 +1439,7 @@ describe("integration endpoint specs", () => {
   it("masks configured hosts that may name self-hosted infrastructure", () => {
     for (
       const [connectorName, variableName] of [
+        ["adyen", "ADYEN_CHECKOUT_HOST"],
         ["langfuse", "LANGFUSE_HOST"],
         ["posthog", "POSTHOG_HOST"],
       ] as const
@@ -1447,6 +1448,23 @@ describe("integration endpoint specs", () => {
         (candidate) => candidate.name === variableName,
       );
       assertEquals(envVar?.sensitive, true, `${variableName} must be masked in CLI output`);
+    }
+  });
+
+  it("shows the QuickBooks sandbox host in scaffolded setup guidance", async () => {
+    const setupMarkdown = await Deno.readTextFile(
+      new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url),
+    );
+    const setupHelpers = await Deno.readTextFile(
+      new URL(
+        "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
+        import.meta.url,
+      ),
+    );
+
+    for (const setupSurface of [setupMarkdown, setupHelpers]) {
+      assertEquals(setupSurface.includes("QUICKBOOKS_API_HOST"), true);
+      assertEquals(setupSurface.includes("sandbox-quickbooks.api.intuit.com"), true);
     }
   });
 

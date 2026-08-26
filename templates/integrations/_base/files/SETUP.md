@@ -514,10 +514,12 @@ STRIPE_PUBLISHABLE_KEY=pk_test_your-publishable-key
 1. Go to [Intuit Developer](https://developer.intuit.com/)
 2. Create app and get OAuth credentials
 3. Redirect URI: `http://localhost:3000/api/auth/quickbooks/callback`
+4. For a sandbox company, set the API host to `sandbox-quickbooks.api.intuit.com`
 
 ```env
 QUICKBOOKS_CLIENT_ID=your-client-id
 QUICKBOOKS_CLIENT_SECRET=your-client-secret
+QUICKBOOKS_API_HOST=sandbox-quickbooks.api.intuit.com
 ```
 
 ### Xero
