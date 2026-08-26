@@ -294,6 +294,22 @@ describe("readDenoImportMap", () => {
     );
   });
 
+  it("resolves URL-relative scope prefixes against the import map", async () => {
+    const projectDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(projectDir, "deno.json"),
+      `{ "scopes": { "lib/": { "helper": "./lib/helper.ts" } } }\n`,
+    );
+
+    const importMap = await readDenoImportMap(fs, projectDir);
+    assertNotEquals(importMap, null);
+    assertEquals(
+      lookupImportMapEntry(importMap!, "helper", join(projectDir, "lib", "route.ts")),
+      join(projectDir, "lib", "helper.ts"),
+      "scope prefixes without dot notation are relative to the import map URL",
+    );
+  });
+
   it("selects the local target belonging to the importing file's scope", async () => {
     const projectDir = await makeTempDir();
     await fs.writeTextFile(
@@ -3251,6 +3267,43 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(route),
       "beside-helperx",
       "each bundled module must resolve adjacent resources against its own URL",
+    );
+  });
+
+  denoIt("preserves import.meta dirname and filename for dependencies when bundling", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"));
+    await fs.writeTextFile(join(tmpDir, "lib", "asset.txt"), "beside-helper");
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "helper.ts"),
+      [
+        `export const readAdjacent = async () => {`,
+        `  const value = await Deno.readTextFile(import.meta.dirname + "/asset.txt");`,
+        `  return value + String(import.meta.filename.endsWith("/lib/helper.ts"));`,
+        `};`,
+      ].join("\n"),
+    );
+    const modulePath = join(tmpDir, "dependency-path-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { readAdjacent } from "./lib/helper.ts";`,
+        `const marker = /x/;`,
+        `export const GET = async () => new Response((await readAdjacent()) + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(
+      await getText(route),
+      "beside-helpertruex",
+      "each bundled module must retain its source directory and filename",
     );
   });
 

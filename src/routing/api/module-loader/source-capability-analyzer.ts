@@ -1,5 +1,6 @@
 import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import * as pathHelper from "#veryfront/compat/path";
 
 interface ParentLink {
   parent: ASTNode;
@@ -245,6 +246,15 @@ export async function rewriteImportMetaLocations(
       });
       return;
     }
+    const importMetaPath = importMetaPathProperty(node);
+    if (importMetaPath !== null && hasSourceRange(node, source.length)) {
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        value: importMetaPathValue(moduleUrl, importMetaPath),
+      });
+      return;
+    }
     forEachChild(node, visit);
   };
   visit(program);
@@ -257,6 +267,17 @@ export async function rewriteImportMetaLocations(
       rewritten.slice(replacement.end),
     source,
   );
+}
+
+function importMetaPathValue(moduleUrl: string, property: "dirname" | "filename"): string {
+  try {
+    const url = new URL(moduleUrl);
+    if (url.protocol !== "file:") return "undefined";
+    const filename = pathHelper.fromFileUrl(url);
+    return JSON.stringify(property === "dirname" ? pathHelper.dirname(filename) : filename);
+  } catch {
+    return "undefined";
+  }
 }
 
 function resolveImportMetaUrlSpecifier(specifier: string, moduleUrl: string): string | null {
@@ -2512,6 +2533,12 @@ function isImportMetaResolve(node: ASTNode | undefined): boolean {
   return isImportMetaMember(node, "resolve");
 }
 
+function importMetaPathProperty(node: ASTNode | undefined): "dirname" | "filename" | null {
+  if (isImportMetaMember(node, "dirname")) return "dirname";
+  if (isImportMetaMember(node, "filename")) return "filename";
+  return null;
+}
+
 function isImportMetaMember(node: ASTNode | undefined, propertyName: string): boolean {
   if (!node) return false;
   const expression = unwrapExpression(node);
@@ -3195,11 +3222,19 @@ function recordModuleSpecifier(
 }
 
 function staticImportExportSpecifier(node: ASTNode): string | undefined {
-  const isImport = node.type === "ImportDeclaration" && node.importKind !== "type";
+  const isImport = node.type === "ImportDeclaration" && node.importKind !== "type" &&
+    hasRuntimeSpecifiers(node, "importKind");
   const isExport = (node.type === "ExportNamedDeclaration" ||
-    node.type === "ExportAllDeclaration") && node.exportKind !== "type";
+    node.type === "ExportAllDeclaration") &&
+    node.exportKind !== "type" &&
+    hasRuntimeSpecifiers(node, "exportKind");
   if ((!isImport && !isExport) || !isNode(node.source)) return undefined;
   return staticString(node.source) ?? undefined;
+}
+
+function hasRuntimeSpecifiers(node: ASTNode, kind: "importKind" | "exportKind"): boolean {
+  if (!Array.isArray(node.specifiers) || node.specifiers.length === 0) return true;
+  return node.specifiers.some((specifier) => !isNode(specifier) || specifier[kind] !== "type");
 }
 
 function tsImportEqualsSpecifier(node: ASTNode): string | null | undefined {
@@ -3299,6 +3334,18 @@ function applyMemberCapability(
     (property === "constructor" ||
       node.computed === true && property === null && !computedKeyIsDefinitelySymbol);
   if (mayReadConstructor && !objectIsProvablyPlain) analysis.hasDynamicCodeGeneration = true;
+  if (
+    property === "extensions" && object !== undefined &&
+    resolvesToUnboundIdentifier(object, "require", scope, nodeScopes)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+  if (
+    resolvesToDenoCommand(node, scope, nodeScopes) &&
+    !isNewExpressionCallee(node, parents) && !isAliasInitializerUse(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
   if (!objectIsGlobal) return;
   if (property === null || property === "eval" || property === "Function") {
     analysis.hasDynamicCodeGeneration = true;
@@ -3482,8 +3529,28 @@ function applyCallCapability(
   applyDynamicRequireCapability(node, callee, scope, nodeScopes, analysis);
   applyGetBuiltinModuleCapability(node, scope, nodeScopes, analysis);
   applySubprocessCallCapability(node, scope, nodeScopes, analysis);
+  applyReflectConstructionCapability(node, scope, nodeScopes, analysis);
   applyDescriptorReadCapability(node, scope, nodeScopes, analysis);
   applyIndirectPropertyCopyCapability(node, scope, nodeScopes, analysis);
+}
+
+function applyReflectConstructionCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) =>
+      resolvesToGlobalIntrinsicMember(candidate, "Reflect", "construct", scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args === undefined) return;
+  if (args === null || args[0] && resolvesToDenoCommand(args[0], scope, nodeScopes)) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
 }
 
 function applyIndirectPropertyCopyCapability(
@@ -3866,6 +3933,23 @@ function applyDescriptorReadCapability(
   nodeScopes: WeakMap<ASTNode, Scope>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
+  const pluralArgs = argumentsForResolvedCall(
+    node,
+    (candidate) =>
+      resolvesToGlobalIntrinsicMember(
+        candidate,
+        "Object",
+        "getOwnPropertyDescriptors",
+        scope,
+        nodeScopes,
+      ),
+    scope,
+    nodeScopes,
+  );
+  if (pluralArgs !== undefined) {
+    analysis.hasDynamicCodeGeneration = true;
+    return;
+  }
   const args = argumentsForResolvedCall(
     node,
     (candidate) =>
@@ -3922,7 +4006,7 @@ function applyObjectPatternCapability(
 
 function destructuredKeyMayExposeGenerator(key: string | null): boolean {
   return key === null || key === "eval" || key === "Function" || key === "constructor" ||
-    key === "getOwnPropertyDescriptor";
+    key === "getOwnPropertyDescriptor" || key === "getOwnPropertyDescriptors";
 }
 
 function objectPatternSource(
@@ -4060,6 +4144,13 @@ function isCrossModuleCapabilityAlias(
       expression,
       "Reflect",
       "getOwnPropertyDescriptor",
+      scope,
+      nodeScopes,
+    ) ||
+    resolvesToGlobalIntrinsicMember(
+      expression,
+      "Object",
+      "getOwnPropertyDescriptors",
       scope,
       nodeScopes,
     ) ||

