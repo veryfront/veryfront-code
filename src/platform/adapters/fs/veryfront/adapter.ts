@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors";
 import type {
   CacheStats,
@@ -54,6 +54,9 @@ import {
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
 const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
+const ArrayPrototypeSort = Array.prototype.sort;
+const JSONStringify = JSON.stringify;
+const IntrinsicReflectApply = Reflect.apply;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
@@ -93,6 +96,23 @@ function sourceSnapshotsEqual(
       prior.size === file.size &&
       prior.updated_at === file.updated_at;
   });
+}
+
+function serializeSourceSnapshot(files: SourceSnapshotFile[]): string {
+  const records: string[] = [];
+  for (const file of files) {
+    records[records.length] = IntrinsicReflectApply(JSONStringify, JSON, [[
+      file.path,
+      file.id ?? null,
+      file.version_id ?? null,
+      file.content ?? null,
+      file.type ?? null,
+      file.size ?? null,
+      file.updated_at ?? null,
+    ]]) as string;
+  }
+  IntrinsicReflectApply(ArrayPrototypeSort, records, []);
+  return IntrinsicReflectApply(JSONStringify, JSON, [records]) as string;
 }
 
 interface BranchSnapshotRecoveryOptions<T> {
@@ -165,6 +185,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private sourceSnapshotVersion = nextSourceSnapshotGeneration();
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
+  private sourceSnapshotFingerprint:
+    | { version: number; value: Promise<string> }
+    | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
   private sourceSnapshotMutationTail: Promise<void> = Promise.resolve();
 
@@ -1180,6 +1203,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getSourceSnapshotVersion(): number {
     return this.sourceSnapshotVersion;
+  }
+
+  getSourceSnapshotFingerprint(): Promise<string | undefined> {
+    const files = this.sourceSnapshotFiles;
+    if (!files) return Promise.resolve(undefined);
+
+    const version = this.sourceSnapshotVersion;
+    if (this.sourceSnapshotFingerprint?.version === version) {
+      return this.sourceSnapshotFingerprint.value;
+    }
+
+    const value = computeHash(serializeSourceSnapshot(files));
+    this.sourceSnapshotFingerprint = { version, value };
+    return value;
   }
 
   getPokeMetrics(): {

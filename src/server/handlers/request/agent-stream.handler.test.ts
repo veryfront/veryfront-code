@@ -2795,6 +2795,68 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(getVerifiedCacheApiCredential(), undefined);
   });
 
+  it("rejects a branch run when the credential handoff changes the source snapshot", async () => {
+    let discoveryCalls = 0;
+    const runWithContextCalls: Array<{
+      token?: string;
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    }> = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => {
+        throw new Error("runtime should not be created across source snapshots");
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "request-scoped-user-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.proxyToken = "run-scoped-token";
+    const fs = createNoopFsAdapter(runWithContextCalls);
+    fs.getSourceSnapshotFingerprint = () =>
+      getCurrentRequestContext()?.token === "request-scoped-user-token"
+        ? "request-snapshot"
+        : "runtime-snapshot";
+    ctx.adapter = { ...ctx.adapter, fs };
+
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(runWithContextCalls.length, 2);
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("does not promote an unsigned header fallback into the verified cache scope", async () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>

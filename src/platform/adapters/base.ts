@@ -321,6 +321,8 @@ export interface FileSystemAdapter {
    * derived state while this value is unchanged.
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  /** Stable content identity for the active source snapshot. */
+  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
 }
 
 /** A filesystem adapter that advertises genuine bounded byte reads. */

@@ -87,6 +87,7 @@ export type SourceContextTestFsAdapter = FileSystemAdapter & {
   getUnderlyingAdapter(): FileSystemAdapter;
   isVeryfrontAdapter(): boolean;
   isMultiProjectMode(): boolean;
+  getSourceSnapshotFingerprint(): string | undefined | Promise<string | undefined>;
   runWithContext<R>(
     slug: string,
     token: string,
@@ -136,6 +137,8 @@ export function createNoopFsAdapter(
     getUnderlyingAdapter: () => adapter,
     isVeryfrontAdapter: () => true,
     isMultiProjectMode: () => true,
+    ensureSourceSnapshotFresh: () => Promise.resolve(),
+    getSourceSnapshotFingerprint: () => "stable-test-snapshot",
     runWithContext: async (
       projectSlug,
       token,

@@ -230,7 +230,7 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("source snapshot freshness", () => {
-    it("should delegate freshness checks and snapshot versions", async () => {
+    it("should delegate freshness checks and snapshot identities", async () => {
       let reason: string | undefined;
       const fsAdapter = {
         ...createMockFSAdapter(),
@@ -241,6 +241,9 @@ describe("FSAdapterWrapper", () => {
         getSourceSnapshotVersion() {
           return 11;
         },
+        getSourceSnapshotFingerprint() {
+          return "snapshot-11";
+        },
       };
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -248,6 +251,7 @@ describe("FSAdapterWrapper", () => {
 
       assertEquals(reason, "page-routing");
       assertEquals(await wrapper.getSourceSnapshotVersion?.(), 11);
+      assertEquals(await wrapper.getSourceSnapshotFingerprint?.(), "snapshot-11");
     });
 
     it("should omit freshness methods when the adapter does not support them", () => {
@@ -255,6 +259,7 @@ describe("FSAdapterWrapper", () => {
 
       assertEquals(wrapper.ensureSourceSnapshotFresh, undefined);
       assertEquals(wrapper.getSourceSnapshotVersion, undefined);
+      assertEquals(wrapper.getSourceSnapshotFingerprint, undefined);
     });
   });
 

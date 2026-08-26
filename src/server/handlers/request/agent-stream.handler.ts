@@ -59,6 +59,7 @@ import {
   INVALID_ARGUMENT,
   isVeryfrontError,
   PERMISSION_DENIED,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -611,7 +612,33 @@ type SourceContextFsWrapper = {
       environmentName?: string | null;
     },
   ) => Promise<R>;
+  ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
+  getSourceSnapshotFingerprint?: () =>
+    | string
+    | undefined
+    | Promise<string | undefined>;
 };
+
+async function requireAgentSourceSnapshotFingerprint(
+  ctx: HandlerContext,
+  reason: string,
+): Promise<string> {
+  const fs = ctx.adapter.fs as SourceContextFsWrapper;
+  if (!fs.ensureSourceSnapshotFresh || !fs.getSourceSnapshotFingerprint) {
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail: "The project filesystem cannot verify the branch source snapshot identity",
+    });
+  }
+
+  await fs.ensureSourceSnapshotFresh(reason);
+  const fingerprint = await fs.getSourceSnapshotFingerprint();
+  if (!fingerprint) {
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail: "The project filesystem did not provide a branch source snapshot identity",
+    });
+  }
+  return fingerprint;
+}
 
 function assertAgentSourceMatchesHostedTarget(
   ctx: HandlerContext,
@@ -841,6 +868,12 @@ export class AgentStreamHandler extends BaseHandler {
               payload.agentSource,
               envVarsForAgent,
             );
+            const requestSourceFingerprint = payload.agentSource.type === "branch"
+              ? await requireAgentSourceSnapshotFingerprint(
+                requestScopedContext,
+                "agent-source-config-identity",
+              )
+              : undefined;
             const sourceScopedContext: HandlerContext = {
               ...requestScopedContext,
               config: sourceConfig,
@@ -863,8 +896,21 @@ export class AgentStreamHandler extends BaseHandler {
             return await this.withAgentSourceContext(
               projectScopedContext,
               payload.agentSource,
-              () =>
-                runWithExactSourceIntegrationPolicy(
+              async () => {
+                if (requestSourceFingerprint !== undefined) {
+                  const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
+                    projectScopedContext,
+                    "agent-source-credential-handoff",
+                  );
+                  if (runtimeSourceFingerprint !== requestSourceFingerprint) {
+                    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                      detail:
+                        "The branch source changed while credentials were isolated for agent execution",
+                    });
+                  }
+                }
+
+                return await runWithExactSourceIntegrationPolicy(
                   sourceIntegrationPolicy,
                   async () => {
                     await this.deps.ensureProjectDiscovery(projectScopedContext);
@@ -954,7 +1000,8 @@ export class AgentStreamHandler extends BaseHandler {
                       : response;
                     return this.respond(applyBuilderHeaders(responseWithOwner, builder.headers));
                   },
-                ),
+                );
+              },
             );
           },
         );

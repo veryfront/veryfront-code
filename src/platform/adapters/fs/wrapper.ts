@@ -149,6 +149,10 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   readonly refreshSourceSnapshot?: (reason?: string) => Promise<void>;
   readonly ensureSourceSnapshotFresh?: (reason?: string) => Promise<void>;
   readonly getSourceSnapshotVersion?: () => number | undefined | Promise<number | undefined>;
+  readonly getSourceSnapshotFingerprint?: () =>
+    | string
+    | undefined
+    | Promise<string | undefined>;
 
   constructor(fsAdapter: FSAdapter) {
     this._fsAdapter = fsAdapter;
@@ -209,6 +213,14 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
           | undefined
           | Promise<number | undefined>;
     }
+    const fingerprint = captureOptionalMethod(fsAdapter, "getSourceSnapshotFingerprint");
+    if (fingerprint !== undefined) {
+      this.getSourceSnapshotFingerprint = () =>
+        Reflect.apply(fingerprint, fsAdapter, []) as
+          | string
+          | undefined
+          | Promise<string | undefined>;
+    }
 
     for (
       const key of [
@@ -221,6 +233,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
         "refreshSourceSnapshot",
         "ensureSourceSnapshotFresh",
         "getSourceSnapshotVersion",
+        "getSourceSnapshotFingerprint",
       ] as const
     ) {
       publishFrozen(this, key, this[key]);

@@ -117,6 +117,7 @@ describe("VeryfrontFSAdapter", () => {
       "refreshSourceSnapshot",
       "ensureSourceSnapshotFresh",
       "getSourceSnapshotVersion",
+      "getSourceSnapshotFingerprint",
     ] as const;
 
     for (const method of methods) {
@@ -782,6 +783,40 @@ describe("VeryfrontFSAdapter", () => {
       adapter.setRequestBranch("feature-branch");
       adapter.setRequestBranch(null);
       assertEquals(adapter.getRequestBranch(), null);
+    });
+  });
+
+  describe("source snapshot fingerprints", () => {
+    it("identifies snapshot contents independently of file-list order", async () => {
+      const adapter = createAdapter();
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{
+          path: string;
+          version_id?: string;
+          content?: string;
+        }>;
+        sourceSnapshotVersion: number;
+      };
+      internals.sourceSnapshotFiles = [
+        { path: "pages/index.tsx", version_id: "version-1", content: "first" },
+        { path: "veryfront.config.ts", version_id: "version-2", content: "second" },
+      ];
+      const first = await adapter.getSourceSnapshotFingerprint();
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles = [...internals.sourceSnapshotFiles].reverse();
+      const reordered = await adapter.getSourceSnapshotFingerprint();
+
+      internals.sourceSnapshotVersion += 1;
+      internals.sourceSnapshotFiles[0] = {
+        ...internals.sourceSnapshotFiles[0],
+        path: internals.sourceSnapshotFiles[0]!.path,
+        version_id: "version-3",
+      };
+      const changed = await adapter.getSourceSnapshotFingerprint();
+
+      assertEquals(reordered, first);
+      assertNotEquals(changed, first);
     });
   });
 

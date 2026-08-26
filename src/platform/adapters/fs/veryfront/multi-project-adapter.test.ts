@@ -233,6 +233,7 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => {
         assertMethod(adapter, "ensureSourceSnapshotFresh");
         assertMethod(adapter, "getSourceSnapshotVersion");
+        assertMethod(adapter, "getSourceSnapshotFingerprint");
       });
     });
 
@@ -332,6 +333,9 @@ describe("MultiProjectFSAdapter", () => {
               getSourceSnapshotVersion() {
                 return sourceSnapshotVersion;
               },
+              getSourceSnapshotFingerprint() {
+                return "snapshot-7";
+              },
             });
           },
           getStats: () => ({ adapters: 0, stats: [] }),
@@ -347,6 +351,7 @@ describe("MultiProjectFSAdapter", () => {
               await adapter.ensureSourceSnapshotFresh("page-routing");
               assertEquals(getRequestScopedFile("file:pages/index.mdx"), undefined);
               assertEquals(await adapter.getSourceSnapshotVersion(), 7);
+              assertEquals(await adapter.getSourceSnapshotFingerprint(), "snapshot-7");
 
               setRequestScopedFile("file:pages/index.mdx", "current-content");
               await adapter.ensureSourceSnapshotFresh("page-routing");
@@ -380,6 +385,7 @@ describe("MultiProjectFSAdapter", () => {
             async () => {
               await adapter.ensureSourceSnapshotFresh("config-load");
               assertEquals(await adapter.getSourceSnapshotVersion(), undefined);
+              assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
             },
             "project-id-a",
             { branch: "main" },

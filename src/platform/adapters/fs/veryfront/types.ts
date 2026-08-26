@@ -46,6 +46,7 @@ export interface FSAdapter {
   refreshSourceSnapshot?(reason?: string): Promise<void>;
   ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {

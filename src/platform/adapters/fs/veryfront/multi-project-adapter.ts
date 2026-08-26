@@ -285,6 +285,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
       : undefined;
   }
 
+  async getSourceSnapshotFingerprint(): Promise<string | undefined> {
+    const adapter = await this.getAdapter();
+    return typeof adapter.getSourceSnapshotFingerprint === "function"
+      ? await adapter.getSourceSnapshotFingerprint()
+      : undefined;
+  }
+
   dispose(): void {
     this.manager.dispose();
     this.defaultAdapter?.dispose();
