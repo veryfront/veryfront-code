@@ -76,6 +76,8 @@ export interface SerializedDataContext {
   request: SerializedRequest;
   /** URL.toString() */
   url: string;
+  /** Application identity snapshot admitted by the host boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
 }
 
 /**

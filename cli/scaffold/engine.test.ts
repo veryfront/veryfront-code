@@ -11,6 +11,7 @@ import {
   planScaffold,
   scaffoldAuthFiles,
   scaffoldProjectFile,
+  testBuildSecureScaffoldWriterCommand,
 } from "./engine.ts";
 
 async function withTempProject(fn: (projectDir: string) => Promise<void>): Promise<void> {
@@ -44,6 +45,36 @@ function forcedCollidingIdentity(info: Deno.FileInfo): FileIdentity {
 }
 
 describe("scaffold engine", () => {
+  it("runs the secure writer through the CLI entrypoint under Node", () => {
+    const command = testBuildSecureScaffoldWriterCommand({
+      execPath: "/usr/local/bin/node",
+      moduleUrl: "file:///workspace/npm/esm/cli/scaffold/engine.js",
+      runtimeKind: "node",
+      standalone: false,
+    });
+
+    assertEquals(command.command, "/usr/local/bin/node");
+    assertEquals(command.args, [
+      "/workspace/npm/esm/cli/main.js",
+      "__veryfront_internal_scaffold_writer",
+    ]);
+  });
+
+  it("runs the secure writer through the CLI entrypoint under Bun", () => {
+    const command = testBuildSecureScaffoldWriterCommand({
+      execPath: "/usr/local/bin/bun",
+      moduleUrl: "file:///workspace/npm/esm/cli/scaffold/engine.js",
+      runtimeKind: "bun",
+      standalone: false,
+    });
+
+    assertEquals(command.command, "/usr/local/bin/bun");
+    assertEquals(command.args, [
+      "/workspace/npm/esm/cli/main.js",
+      "__veryfront_internal_scaffold_writer",
+    ]);
+  });
+
   it("plans app-router route files", () => {
     const projectDir = "/project";
 

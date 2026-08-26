@@ -438,7 +438,7 @@ async function parseJwksDocument(
   const output = new NativeMap<string, PublicJwk>();
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index];
-    const selected = isPlainObject(key) && key.kid === requestedKid;
+    const selected = requestedKid !== undefined && isPlainObject(key) && key.kid === requestedKid;
     let parsed: PublicJwk;
     try {
       parsed = await parsePublicJwk(key);

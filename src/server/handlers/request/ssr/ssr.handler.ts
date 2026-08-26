@@ -303,6 +303,7 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
+          applicationIdentity: ctx.applicationIdentity ?? null,
         });
         const rendered: SSRRenderResult = {
           ...result,

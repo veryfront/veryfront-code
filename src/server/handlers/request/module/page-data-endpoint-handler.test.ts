@@ -6,7 +6,9 @@ import { FakeTime } from "#std/testing/time";
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
+import type { RenderOptions } from "#veryfront/rendering/orchestrator/types.ts";
 import type { Renderer } from "#veryfront/rendering/renderer.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import {
   destroyRendererAdapter,
   type RendererInitializer,
@@ -135,6 +137,18 @@ function createPageData(slug: string, sequence: number): PageDataResponse {
   };
 }
 
+function createIdentity(): ApplicationIdentity {
+  return {
+    issuer: "https://issuer.example.test",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: ["engineering"],
+    roles: ["reader"],
+    groupsComplete: true,
+    claims: { sub: "user-123" },
+  };
+}
+
 function createInitializer(resolvePageData: Renderer["resolvePageData"]): RendererInitializer {
   const renderer = {
     resolvePageData,
@@ -219,6 +233,31 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     assertEquals(second.status, 200);
     assertEquals(calls, 1);
     assertEquals(await first.text(), await second.text());
+  });
+
+  it("does not share page-data cache entries for admitted application identity", async () => {
+    let calls = 0;
+    setRendererInitializer(
+      createInitializer((slug) => Promise.resolve(createPageData(slug, ++calls))),
+    );
+
+    const ctx = makeCtx({ applicationIdentity: createIdentity() });
+
+    const first = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?b=2&a=1"),
+      ctx,
+    );
+    const second = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/index.json?a=1&b=2"),
+      ctx,
+    );
+
+    assertEquals(first.status, 200);
+    assertEquals(second.status, 200);
+    assertEquals((await first.json()).frontmatter.sequence, 1);
+    assertEquals((await second.json()).frontmatter.sequence, 2);
+    assertEquals(first.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+    assertEquals(second.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
   });
 
   it("does not share anonymous page-data responses across projects", async () => {
@@ -454,6 +493,44 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       assertEquals(observedRequest?.headers.get("x-auth-subject"), null);
       assertEquals(observedRequest?.headers.get("x-project-id"), null);
       assertEquals(observedRequest?.headers.get("x-token"), null);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+    }
+  });
+
+  it("passes admitted application identity into page data rendering", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const identity = createIdentity();
+    let observedOptions:
+      | (RenderOptions & {
+        readonly applicationIdentity?: ApplicationIdentity | null;
+      })
+      | undefined;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((slug, _ctx, options) => {
+          observedOptions = options;
+          return Promise.resolve(createPageData(slug, 1));
+        }),
+      );
+
+      const response = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/index.json", {
+          headers: { "x-auth-subject": "forged-user" },
+        }),
+        makeCtx({
+          applicationIdentity: identity,
+          applicationIdentityHeaderNames: ["x-auth-subject"],
+        }),
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(observedOptions?.applicationIdentity, identity);
+      assertEquals(observedOptions?.request?.headers.get("x-auth-subject"), null);
     } finally {
       setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
       clearReactVersionCache();

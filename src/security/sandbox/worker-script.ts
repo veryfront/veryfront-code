@@ -1325,8 +1325,12 @@ function snapshotDataContext(value: unknown): SerializedDataContext {
   const record = requireRecordShape(
     value,
     ["params", "query", "request", "url"],
-    [],
+    ["applicationIdentity"],
     "context",
+  );
+  const applicationIdentity = readOptionalDataProperty(
+    record,
+    "applicationIdentity",
   );
   return {
     params: snapshotStringRecord(
@@ -1346,6 +1350,9 @@ function snapshotDataContext(value: unknown): SerializedDataContext {
       MAX_WORKER_URL_CHARS,
       false,
     ),
+    applicationIdentity: applicationIdentity.present
+      ? snapshotWorkerApplicationIdentity(applicationIdentity.value)
+      : null,
   };
 }
 
@@ -2685,17 +2692,22 @@ function deserializeDataContext(
   query: URLSearchParams;
   request: Request;
   url: URL;
+  identity: ApplicationIdentity | null;
+  applicationIdentity: ApplicationIdentity | null;
 } {
   const request = new NativeRequest(s.request.url, {
     method: s.request.method,
     headers: s.request.headers,
     body: s.request.body as BodyInit | null,
   });
+  const applicationIdentity = s.applicationIdentity ?? null;
   return {
     params: s.params,
     query: new NativeURLSearchParams(s.query),
     request,
     url: new NativeURL(s.url),
+    identity: applicationIdentity,
+    applicationIdentity,
   };
 }
 

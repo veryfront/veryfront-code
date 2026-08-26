@@ -7,6 +7,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RenderOptions } from "#veryfront/rendering/orchestrator/types.ts";
 import type { Renderer } from "#veryfront/rendering/renderer.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import {
   destroyRendererAdapter,
   type RendererInitializer,
@@ -61,6 +62,18 @@ function makeCtx(projectDir: string): HandlerContext {
     projectDir,
     adapter: createMockAdapter(),
     securityConfig: null,
+  };
+}
+
+function createIdentity(): ApplicationIdentity {
+  return {
+    issuer: "https://issuer.example.test",
+    subject: "user-123",
+    email: "user@example.test",
+    groups: ["engineering"],
+    roles: ["reader"],
+    groupsComplete: true,
+    claims: { sub: "user-123" },
   };
 }
 
@@ -433,6 +446,50 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
       assertEquals(observedRequest?.headers.get("x-auth-subject"), null);
       assertEquals(observedRequest?.headers.get("x-project-id"), null);
       assertEquals(observedRequest?.headers.get("x-token"), null);
+    } finally {
+      restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("passes admitted application identity into project data rendering", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-data-identity-" });
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const identity = createIdentity();
+    let observedOptions:
+      | (RenderOptions & {
+        readonly applicationIdentity?: ApplicationIdentity | null;
+      })
+      | undefined;
+
+    try {
+      deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      clearReactVersionCache();
+      setRendererInitializer(
+        createInitializer((_slug, _ctx, options) => {
+          observedOptions = options;
+          return Promise.resolve({
+            html: "<main>identity</main>",
+            frontmatter: {},
+          });
+        }),
+      );
+
+      const response = await callDataEndpoint(
+        new Request("http://localhost/_veryfront/data/docs.json", {
+          headers: { "x-auth-subject": "forged-user" },
+        }),
+        {
+          ...makeCtx(projectDir),
+          applicationIdentity: identity,
+          applicationIdentityHeaderNames: ["x-auth-subject"],
+        },
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(observedOptions?.applicationIdentity, identity);
+      assertEquals(observedOptions?.request?.headers.get("x-auth-subject"), null);
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
       clearReactVersionCache();

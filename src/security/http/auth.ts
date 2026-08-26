@@ -129,10 +129,10 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
   const auth = snapshotOwnDataRecord(value, AUTH_CONFIG_KEYS);
   if (!auth) return INVALID_AUTH;
 
-  const hasBasic = Object.hasOwn(auth, "basic");
-  const hasBearer = Object.hasOwn(auth, "bearer");
-  const hasOidc = Object.hasOwn(auth, "oidc");
-  const hasTrustedProxy = Object.hasOwn(auth, "trustedProxy");
+  const hasBasic = auth.basic !== undefined;
+  const hasBearer = auth.bearer !== undefined;
+  const hasOidc = auth.oidc !== undefined;
+  const hasTrustedProxy = auth.trustedProxy !== undefined;
   if ([hasBasic, hasBearer, hasOidc, hasTrustedProxy].filter(Boolean).length !== 1) {
     return INVALID_AUTH;
   }

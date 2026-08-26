@@ -79,6 +79,7 @@ export function handleDataEndpoint(
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
+          applicationIdentity: ctx.applicationIdentity ?? null,
         });
 
         const data = {

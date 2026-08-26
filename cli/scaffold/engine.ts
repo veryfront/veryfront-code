@@ -9,6 +9,7 @@ import {
   resolve,
 } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
+import { type RuntimeKind, runtimeKind } from "#veryfront/platform/compat/runtime.ts";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
 import { filenameToId } from "veryfront/discovery";
@@ -636,6 +637,11 @@ interface SecureWriterResponse {
   identity?: FileIdentity;
 }
 
+interface SecureWriterCommand {
+  command: string;
+  args: string[];
+}
+
 interface OwnedPath {
   path: string;
   identity: FileIdentity;
@@ -683,12 +689,9 @@ function timeMs(value: Date | null | undefined): number | null {
 }
 
 async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<FileIdentity> {
-  const helperPath = fromFileUrl(new URL("./secure-writer.ts", import.meta.url));
-  const args = Deno.build.standalone
-    ? ["__veryfront_internal_scaffold_writer"]
-    : ["run", "--quiet", "--allow-read", "--allow-write", helperPath];
-  const child = new Deno.Command(Deno.execPath(), {
-    args,
+  const writerCommand = buildSecureScaffoldWriterCommand();
+  const child = new Deno.Command(writerCommand.command, {
+    args: writerCommand.args,
     cwd: request.rootGuard.path,
     stdin: "piped",
     stdout: "piped",
@@ -722,6 +725,50 @@ async function runSecureScaffoldWriter(request: SecureWriterRequest): Promise<Fi
     throw new Error("Secure scaffold writer failed");
   }
   return response.identity ?? null;
+}
+
+function buildSecureScaffoldWriterCommand(options?: {
+  execPath?: string;
+  moduleUrl?: string;
+  runtimeKind?: RuntimeKind;
+  standalone?: boolean;
+}): SecureWriterCommand {
+  const executable = options?.execPath ?? Deno.execPath();
+  const currentRuntime = options?.runtimeKind ?? runtimeKind;
+  const standalone = options?.standalone ?? Deno.build.standalone;
+  const moduleUrl = options?.moduleUrl ?? import.meta.url;
+  if (standalone) {
+    return {
+      command: executable,
+      args: ["__veryfront_internal_scaffold_writer"],
+    };
+  }
+  if (currentRuntime === "node" || currentRuntime === "bun") {
+    return {
+      command: executable,
+      args: [
+        fromFileUrl(new URL("../main.js", moduleUrl)),
+        "__veryfront_internal_scaffold_writer",
+      ],
+    };
+  }
+  return {
+    command: executable,
+    args: [
+      "run",
+      "--quiet",
+      "--allow-read",
+      "--allow-write",
+      fromFileUrl(new URL("./secure-writer.ts", moduleUrl)),
+    ],
+  };
+}
+
+/** @internal Test seam for npm runtime command construction. */
+export function testBuildSecureScaffoldWriterCommand(
+  options: Parameters<typeof buildSecureScaffoldWriterCommand>[0],
+): SecureWriterCommand {
+  return buildSecureScaffoldWriterCommand(options);
 }
 
 async function assertRootIdentity(
