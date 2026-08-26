@@ -57,7 +57,7 @@ const textEncoder = new TextEncoder();
 const NativeUint8Array = Uint8Array;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
+const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
 const DateNow = Date.now;
@@ -102,14 +102,6 @@ function trimString(value: string): string {
   return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
 }
 
-function isConcreteVeryfrontFSAdapter(adapter: unknown): boolean {
-  return IntrinsicReflectApply(
-    ObjectPrototypeIsPrototypeOf,
-    VeryfrontFSAdapterPrototype,
-    [adapter],
-  ) as boolean;
-}
-
 function captureAdapterMethod(
   adapter: VeryfrontFSAdapter,
   key: keyof CapturedAdapterCapabilities,
@@ -126,12 +118,26 @@ function captureAdapterMethod(
     }
     return ownDescriptor.value as CapturedAdapterMethod;
   }
-  if (isConcreteVeryfrontFSAdapter(adapter)) return concreteMethod;
-  const method = adapter[key];
-  if (typeof method !== "function") {
-    throw new TypeError(`Veryfront filesystem adapter ${key} must be a function`);
+
+  let owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [adapter]) as
+    | object
+    | null;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === VeryfrontFSAdapterPrototype) return concreteMethod;
+    const descriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [owner, key],
+    ) as PropertyDescriptor | undefined;
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        throw new TypeError(`Veryfront filesystem adapter ${key} must be a data-property method`);
+      }
+      return descriptor.value as CapturedAdapterMethod;
+    }
+    owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [owner]) as object | null;
   }
-  return method as CapturedAdapterMethod;
+  throw new TypeError(`Veryfront filesystem adapter ${key} must inherit a function`);
 }
 
 function captureAdapterCapabilities(adapter: VeryfrontFSAdapter): CapturedAdapterCapabilities {

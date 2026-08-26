@@ -322,6 +322,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     });
     const adapter = new MultiProjectFSAdapter(baseConfig, manager);
     const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+    const originalDateNow = Object.getOwnPropertyDescriptor(Date, "now")!;
     const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
     let poisonedCalls = 0;
 
@@ -339,6 +340,13 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         throw new Error("project string hook must not run");
       },
     });
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("project wall-clock hook must not run");
+      },
+    });
     try {
       await adapter.runWithContext(
         "my-slug",
@@ -349,6 +357,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     } finally {
       if (originalNow) Object.defineProperty(performance, "now", originalNow);
       else Reflect.deleteProperty(performance, "now");
+      Object.defineProperty(Date, "now", originalDateNow);
       Object.defineProperty(String.prototype, "trim", originalTrim);
       adapter.dispose();
     }

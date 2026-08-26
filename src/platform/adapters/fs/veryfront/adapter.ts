@@ -63,6 +63,7 @@ const SOURCE_SNAPSHOT_HASH_CHUNK_CODE_UNITS = 32 * 1_024;
 const SOURCE_SNAPSHOT_YIELD_CODE_UNITS = 2 * 1_024 * 1_024;
 const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
 const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
+const DateNow = Date.now;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -84,6 +85,10 @@ const HashPrototypeDigest = SourceSnapshotHashPrototype.digest;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
+
+function currentTime(): number {
+  return IntrinsicReflectApply(DateNow, Date, []) as number;
+}
 
 function nextSourceSnapshotGeneration(): number {
   if (sourceSnapshotGeneration >= Number.MAX_SAFE_INTEGER) {
@@ -513,7 +518,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       cacheKey,
       files,
       snapshotVersion: this.sourceSnapshotVersion,
-      retainedAt: Date.now(),
+      retainedAt: currentTime(),
     };
   }
 
@@ -541,7 +546,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
-    if (Date.now() - retained.retainedAt > this.fileListRetentionMs) {
+    if (currentTime() - retained.retainedAt > this.fileListRetentionMs) {
       logger.debug("Retained file list expired", { cacheKey });
       this.clearRetainedFileList();
       return undefined;
@@ -926,7 +931,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const failedAt = this.branchMissRecoveryFailures.get(key);
     if (!failedAt) return false;
 
-    if (Date.now() - failedAt < BRANCH_MISS_RECOVERY_FAILURE_TTL_MS) return true;
+    if (currentTime() - failedAt < BRANCH_MISS_RECOVERY_FAILURE_TTL_MS) return true;
 
     this.branchMissRecoveryFailures.delete(key);
     return false;
@@ -1004,7 +1009,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       try {
         await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after result miss", {
           path: this.normalizer.normalize(path),
           projectSlug: this.projectSlug,
@@ -1016,7 +1021,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       const retryResult = await operation();
       if (options?.isRecoverableMissResult?.(retryResult)) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
       }
       return retryResult;
     } catch (error) {
@@ -1026,7 +1031,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       try {
         await this.#refreshBranchSnapshotAfterMiss(path);
       } catch (refreshError) {
-        this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+        this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         logger.warn("Branch snapshot recovery failed after not-found miss", {
           path: this.normalizer.normalize(path),
           projectSlug: this.projectSlug,
@@ -1040,7 +1045,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return await operation();
       } catch (retryError) {
         if (isNotFoundLikeError(retryError)) {
-          this.branchMissRecoveryFailures.set(recoveryKey, Date.now());
+          this.branchMissRecoveryFailures.set(recoveryKey, currentTime());
         }
         throw retryError;
       }
@@ -1196,7 +1201,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.sourceSnapshotFiles = files;
     this.sourceSnapshotIdentity = identity;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
-    this.sourceSnapshotCheckedAt = Date.now();
+    this.sourceSnapshotCheckedAt = currentTime();
   }
 
   private runSourceSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -1355,7 +1360,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // would make that valid digest resolve unavailable without advancing
         // the version that keys its cache.
         this.sourceSnapshotIdentity = refreshIdentity;
-        this.sourceSnapshotCheckedAt = Date.now();
+        this.sourceSnapshotCheckedAt = currentTime();
         // The API just confirmed this listing is current, so the index built
         // from it may answer "absent" on its own again. Skipping this leaves
         // the index expired after the first probe past
@@ -1466,7 +1471,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (
       maxAgeMs > 0 &&
       this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
-      Date.now() - this.sourceSnapshotCheckedAt < maxAgeMs
+      currentTime() - this.sourceSnapshotCheckedAt < maxAgeMs
     ) {
       return;
     }

@@ -36,6 +36,11 @@ import {
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
+const DateNow = Date.now;
+
+function currentTime(): number {
+  return DateNow();
+}
 
 function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
   return typeof url === "string" ? sanitizeUrlForSpan(url) : undefined;
@@ -75,7 +80,7 @@ export class WebSocketManager {
   private ws: WebSocket | null = null;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private wsLastPong = Date.now();
+  private wsLastPong = currentTime();
   private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths = new Set<string>();
@@ -215,12 +220,12 @@ export class WebSocketManager {
             }),
           );
         }
-        this.wsLastPong = Date.now();
+        this.wsLastPong = currentTime();
         this.startHeartbeat(projectId);
       };
 
       this.ws.onmessage = (event) => {
-        this.wsLastPong = Date.now();
+        this.wsLastPong = currentTime();
         logger.debug("WebSocket message received", {
           payloadType: typeof event.data,
           payloadLength: typeof event.data === "string" ? event.data.length : undefined,
@@ -364,11 +369,11 @@ export class WebSocketManager {
         : null;
 
       const timeSinceLastPoke = this.pokeMetrics.lastPokeTime > 0
-        ? Date.now() - this.pokeMetrics.lastPokeTime
+        ? currentTime() - this.pokeMetrics.lastPokeTime
         : null;
 
       this.pokeMetrics.received++;
-      this.pokeMetrics.lastPokeTime = Date.now();
+      this.pokeMetrics.lastPokeTime = currentTime();
 
       const isProductionMode = contentContext?.sourceType !== "branch";
       const currentBranch = contentContext?.branch ?? null;
@@ -624,7 +629,7 @@ export class WebSocketManager {
   }
 
   private async performSelectiveInvalidation(): Promise<void> {
-    const startTime = Date.now();
+    const startTime = currentTime();
     const changedPaths = Array.from(this.pendingChangedPaths);
     this.pendingChangedPaths.clear();
 
@@ -791,7 +796,7 @@ export class WebSocketManager {
 
       logger.info("Selective invalidation complete", {
         changedPathsCount: changedPaths.length,
-        durationMs: Date.now() - startTime,
+        durationMs: currentTime() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
         reloadTriggered: !reloadSuperseded,
       });
@@ -812,7 +817,7 @@ export class WebSocketManager {
   }
 
   private async performInvalidation(): Promise<void> {
-    const startTime = Date.now();
+    const startTime = currentTime();
     const contentContext = this.deps.getContentContext();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
@@ -981,7 +986,7 @@ export class WebSocketManager {
         statCacheCleared: totalStatCount,
         dirCacheCleared: totalDirCount,
         filesListCacheCleared: totalFilesListCount,
-        durationMs: Date.now() - startTime,
+        durationMs: currentTime() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
 
@@ -1002,7 +1007,7 @@ export class WebSocketManager {
 
   private startHeartbeat(projectId: string): void {
     this.wsHeartbeatTimer = setInterval(() => {
-      const timeSinceLastPong = Date.now() - this.wsLastPong;
+      const timeSinceLastPong = currentTime() - this.wsLastPong;
       if (timeSinceLastPong <= WS_HEARTBEAT_TIMEOUT_MS) return;
 
       logger.warn(
@@ -1053,7 +1058,7 @@ export class WebSocketManager {
           data: {
             invalidationType: type,
             changedPaths: changedPaths ?? [],
-            timestamp: Date.now(),
+            timestamp: currentTime(),
             connectionId: this.wsConnectionId,
             totalInvalidations: this.pokeMetrics.invalidationsTriggered,
           },

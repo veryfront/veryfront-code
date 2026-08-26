@@ -1200,6 +1200,79 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("preserves effective lifecycle overrides from adapter subclasses", async () => {
+      const calls = {
+        dispose: 0,
+        getCacheStats: 0,
+        getContentContext: 0,
+        initialize: 0,
+        setContentContext: 0,
+      };
+      class CustomAdapter extends VeryfrontFSAdapter {
+        override dispose(): void {
+          calls.dispose += 1;
+          super.dispose();
+        }
+
+        override getCacheStats(): ReturnType<VeryfrontFSAdapter["getCacheStats"]> {
+          calls.getCacheStats += 1;
+          return super.getCacheStats();
+        }
+
+        override getContentContext(): ReturnType<VeryfrontFSAdapter["getContentContext"]> {
+          calls.getContentContext += 1;
+          return super.getContentContext();
+        }
+
+        override initialize(): Promise<void> {
+          calls.initialize += 1;
+          return Promise.resolve();
+        }
+
+        override setContentContext(
+          context: Parameters<VeryfrontFSAdapter["setContentContext"]>[0],
+        ): void {
+          calls.setContentContext += 1;
+          super.setContentContext(context);
+        }
+      }
+
+      const manager = createManager({
+        adapterFactory: (config) => new CustomAdapter(config),
+      });
+      try {
+        await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        manager.getStats();
+      } finally {
+        manager.dispose();
+      }
+
+      assertEquals(calls, {
+        dispose: 1,
+        getCacheStats: 1,
+        getContentContext: 1,
+        initialize: 1,
+        setContentContext: 1,
+      });
+    });
+
     it("does not expose credential principals in logs or cache invariant errors", async () => {
       const token = "vf_test_diagnostic_credential";
       const credentialPrincipal =
