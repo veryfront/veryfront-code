@@ -9,10 +9,10 @@ import {
 } from "./http-validator.ts";
 import {
   __setSourceCapabilityParserLoaderForTests,
-  rewriteImportMetaUrl,
+  rewriteImportMetaLocations,
 } from "./source-capability-analyzer.ts";
 
-describe("rewriteImportMetaUrl", () => {
+describe("rewriteImportMetaLocations", () => {
   it("rewrites syntax nodes without changing inert text", async () => {
     const moduleUrl = "file:///project/lib/helper.ts";
     const source = [
@@ -23,7 +23,7 @@ describe("rewriteImportMetaUrl", () => {
     ].join("\n");
 
     assertEquals(
-      await rewriteImportMetaUrl(source, moduleUrl),
+      await rewriteImportMetaLocations(source, moduleUrl),
       [
         `const direct = ${JSON.stringify(moduleUrl)};`,
         `const computed = ${JSON.stringify(moduleUrl)};`,
@@ -32,15 +32,59 @@ describe("rewriteImportMetaUrl", () => {
       ].join("\n"),
     );
     assertEquals(
-      await rewriteImportMetaUrl(`const url = import /* comment */ . meta.url;`, moduleUrl),
+      await rewriteImportMetaLocations(`const url = import /* comment */ . meta.url;`, moduleUrl),
       `const url = ${JSON.stringify(moduleUrl)};`,
       "comments between import.meta tokens must not bypass the module URL rewrite",
     );
     assertEquals(
-      await rewriteImportMetaUrl(`const text = "import metadata";`, moduleUrl),
+      await rewriteImportMetaLocations(`const text = "import metadata";`, moduleUrl),
       `const text = "import metadata";`,
       "the conservative prefilter must leave parser-confirmed inert text unchanged",
     );
+  });
+
+  it("resolves import.meta.resolve against the declaring module", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source = [
+      `const direct = import.meta.resolve("./asset.txt");`,
+      `const computed = import.meta["resolve"]("../shared.ts");`,
+      `const text = "import.meta.resolve('./inert.ts')";`,
+      `// import.meta.resolve("./comment.ts")`,
+    ].join("\n");
+
+    assertEquals(
+      await rewriteImportMetaLocations(source, moduleUrl),
+      [
+        `const direct = "file:///project/lib/asset.txt";`,
+        `const computed = "file:///project/shared.ts";`,
+        `const text = "import.meta.resolve('./inert.ts')";`,
+        `// import.meta.resolve("./comment.ts")`,
+      ].join("\n"),
+      "bundling must not move import.meta.resolve to the emitted bundle",
+    );
+    assertEquals(
+      await rewriteImportMetaLocations(`const resolve = import.meta.resolve;`, moduleUrl),
+      null,
+      "a detached resolver cannot be preserved without binding the original module location",
+    );
+    assertEquals(
+      await rewriteImportMetaLocations(
+        `const path = "./asset.txt"; import.meta.resolve(path);`,
+        moduleUrl,
+      ),
+      null,
+      "a dynamic specifier must fail closed instead of resolving from the emitted bundle",
+    );
+    for (const specifier of ["#missing", "?missing"]) {
+      assertEquals(
+        await rewriteImportMetaLocations(
+          `const resolved = import.meta.resolve(${JSON.stringify(specifier)});`,
+          moduleUrl,
+        ),
+        null,
+        `${specifier} is not a dependency unless an import map resolves it`,
+      );
+    }
   });
 });
 
@@ -349,7 +393,6 @@ describe("routing/api/module-loader/http-validator", () => {
           "Node global aliases must retain the global evaluator capability",
         );
       }
-
       await validateHTTPImports(
         `const global = { Function: () => "local", eval: () => "local" };` +
           ` export const GET = () => new Response(global.Function() + global.eval());`,
@@ -509,6 +552,8 @@ describe("routing/api/module-loader/http-validator", () => {
         const descriptorAlias of [
           `export const get = Object.getOwnPropertyDescriptor;`,
           `const get = Reflect.getOwnPropertyDescriptor; export { get };`,
+          `export default Object.getOwnPropertyDescriptor;`,
+          `const get = Reflect.getOwnPropertyDescriptor; export default get;`,
           `const readers = {}; readers.get = Object.getOwnPropertyDescriptor;` +
           ` export const get = readers.get;`,
           `const source = { read: Object.getOwnPropertyDescriptor };` +
@@ -1672,6 +1717,52 @@ describe("routing/api/module-loader/http-validator", () => {
       }
       for (
         const source of [
+          `const getCommand = () => Deno.Command;` +
+          ` new (getCommand())(Deno.execPath(), { args: ["run", "./unchecked.ts"] });`,
+          `function getCommand() { return Deno.Command; }` +
+          ` new (getCommand())(Deno.execPath(), { args: ["run", "./unchecked.ts"] });`,
+          `const getSpawn = () => Bun.spawn; getSpawn()(["deno", "run", "./unchecked.ts"]);`,
+          `const getBuiltin = () => process.getBuiltinModule; getBuiltin()("node:test");`,
+          `const getBinding = () => process.binding; getBinding()("spawn_sync").spawn({});`,
+          `const getExecve = () => process.execve;` +
+          ` getExecve()(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a local function return must retain its runtime loading capability",
+        );
+      }
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const getRequire = () => require; getRequire()("./unchecked.cjs");`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a returned CommonJS loader must not escape static graph validation",
+      );
+      for (
+        const source of [
+          `Bun.plugin({ name: "route", setup() {} });`,
+          `const register = Bun.plugin; register({ name: "route", setup() {} });`,
+          `const { plugin } = Bun; plugin({ name: "route", setup() {} });`,
+          `export const register = Bun.plugin;`,
+          `export default Bun.plugin;`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "Bun.plugin can install unchecked source transforms",
+        );
+      }
+      for (
+        const source of [
           `process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
           `const run = process.execve;` +
           ` run(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
@@ -1807,6 +1898,21 @@ describe("routing/api/module-loader/http-validator", () => {
 
     it("should ignore locally shadowed subprocess capability names", async () => {
       await validateHTTPImports(
+        `const Object = { getOwnPropertyDescriptor() {} };` +
+          ` export default Object.getOwnPropertyDescriptor;`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin(_value: unknown) {} };` +
+          ` Bun.plugin({}); export default Bun.plugin;`,
+        [],
+      );
+      await validateHTTPImports(
+        `const getCommand = (Deno: { Command: new () => object }) => Deno.Command;` +
+          ` class LocalCommand {} new (getCommand({ Command: LocalCommand }))();`,
+        [],
+      );
+      await validateHTTPImports(
         `const process = { execve() { return "local"; } }; process.execve();`,
         [],
       );
@@ -1815,6 +1921,141 @@ describe("routing/api/module-loader/http-validator", () => {
           ` process.binding("spawn_sync").spawn({});`,
         [],
       );
+      await validateHTTPImports(
+        `const process = { binding() { return { spawn() {} }; } };` +
+          ` export const getProcess = () => process;`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` export const getBun = () => ({ plugin: Bun.plugin });`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` const outer = () => ({ inner: () => ({ plugin: Bun.plugin }) });` +
+          ` outer().inner().plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const process = { binding() { return { spawn() {} }; } };` +
+          ` const outer = () => ({ inner: { binding: process.binding } });` +
+          ` outer().inner.binding("local").spawn({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `class Command { constructor(_name: string) {} }` +
+          ` const Deno = { Command };` +
+          ` const outer = () => ({ inner: () => ({ Command: Deno.Command }) });` +
+          ` new (outer().inner().Command)("local");`,
+        [],
+      );
+      await validateHTTPImports(
+        `const plugin = (_options: unknown) => undefined;` +
+          ` const one = () => () => plugin; one()()({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` export default () => ({ inner: () => ({ plugin: Bun.plugin }) });`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` const getBunApi = () => [Bun.plugin]; getBunApi()[0]({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const process = { binding() { return () => ({ spawn() {} }); } };` +
+          ` const get = () => ({ binding() { return process.binding; } });` +
+          ` get().binding()("local")().spawn({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` const get = () => ({ get plugin() { return Bun.plugin; } }); get().plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const process = { binding() { return () => ({ spawn() {} }); } };` +
+          ` class Cap { static binding() { return process.binding; } }` +
+          ` Cap.binding()("local")().spawn({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` class Cap { plugin() { return Bun.plugin; } } new Cap().plugin()({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` export default class Cap { static get plugin() { return Bun.plugin; } }`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} }; const api = {};` +
+          ` Object.defineProperty(api, "plugin", { get() { return Bun.plugin; } });` +
+          ` api.plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` class Cap { #plugin() { return Bun.plugin; }` +
+          ` run() { return this.#plugin(); } } new Cap().run()({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` const getCap = () => class Cap { plugin() { return Bun.plugin; } };` +
+          ` new (getCap())().plugin()({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` class Base { plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base {} new Cap().plugin()({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const Bun = { plugin() {} };` +
+          ` const holder = () => ({ Base: class { static plugin = Bun.plugin; } });` +
+          ` class Cap extends holder().Base {} Cap.plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const local = () => {};` +
+          ` class Base { plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base { plugin() { return local; } }` +
+          ` new Cap().plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const local = () => {}; const dangerous = { plugin: Bun.plugin };` +
+          ` const safe = { ...dangerous, plugin: local }; safe.plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const local = () => {}; const dangerous = { plugin: Bun.plugin };` +
+          ` const safe = Object.assign({}, dangerous, { plugin: local });` +
+          ` safe.plugin({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const local = () => {}; const safe = [Bun.plugin];` +
+          ` safe[0] = local; safe[0]({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `const local = () => {}; const safe = [Bun.plugin];` +
+          ` class Cap { static field = (safe[0] = local); } safe[0]({});`,
+        [],
+      );
+      await validateHTTPImports(
+        `class A extends B {} class B extends A {} export default A;`,
+        [],
+      );
+      await validateHTTPImports(`export function cycle() { return cycle; }`, []);
+      await validateHTTPImports(`const cycle = () => cycle(); cycle().safe;`, []);
       await validateHTTPImports(
         'const Bun = { $() { return "local"; } }; Bun.$`ordinary text`;',
         [],
@@ -2012,6 +2253,17 @@ describe("routing/api/module-loader/http-validator", () => {
         "Worker",
         "reflective construction must not bypass Worker URL validation",
       );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const getWorker = () => Worker;` +
+              ` new (getWorker())("https://blocked.example/mod.js", { type: "module" });`,
+            [],
+          ),
+        Error,
+        "Worker",
+        "a returned Worker constructor must retain URL validation",
+      );
     });
 
     it("should classify a Worker constructor assigned in the construction itself", async () => {
@@ -2063,6 +2315,239 @@ describe("routing/api/module-loader/http-validator", () => {
           Error,
           "Worker",
           "a direct Worker must not hide an aliased construction from the textual fallback",
+        );
+      } finally {
+        __setSourceCapabilityParserLoaderForTests();
+      }
+    });
+
+    it("should reject capability factories exported across module boundaries", async () => {
+      for (
+        const source of [
+          `export default function getBinding() { return process.binding; }`,
+          `export function getBinding() { return process.binding; }`,
+          `export default () => Bun.plugin;`,
+          `export const getPlugin = () => Bun.plugin;`,
+          `export default () => require;`,
+          `export default () => process;`,
+          `export function commandFactory() { return Deno.Command; }`,
+          `export default async () => Bun.plugin;`,
+          `export default () => ({ inner: () => ({ plugin: Bun.plugin }) });`,
+          `export const getBinding = () => ({ inner: { binding: process.binding } });`,
+          `export default () => [Bun.plugin];`,
+          `export default () => ({ plugin() { return Bun.plugin; } });`,
+          `export default class Cap { plugin() { return Bun.plugin; } }`,
+          `export default class Cap { static get binding() { return process.binding; } }`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "an exported factory must not launder a restricted runtime capability",
+        );
+      }
+    });
+
+    it("should reject restricted capabilities returned inside local object wrappers", async () => {
+      for (
+        const source of [
+          `const getInternals = () => ({ binding: process.binding });` +
+          ` getInternals().binding("spawn_sync").spawn({});`,
+          `const getProc = () => ({ execve: process.execve });` +
+          ` getProc().execve("/bin/sh", [], {});`,
+          `const getBunApi = () => ({ plugin: Bun.plugin });` +
+          ` getBunApi().plugin({ name: "route", setup() {} });`,
+          `const getDenoApi = () => ({ Command: Deno.Command });` +
+          ` new (getDenoApi().Command)("sh");`,
+          `const getBinding = async () => process.binding;` +
+          ` (await getBinding())("spawn_sync").spawn({});`,
+          `const outer = () => ({ inner: () => ({ plugin: Bun.plugin }) });` +
+          ` outer().inner().plugin({ name: "route", setup() {} });`,
+          `const outer = () => ({ inner: () => ({ binding: process.binding }) });` +
+          ` outer().inner().binding("spawn_sync").spawn({});`,
+          `const outer = () => ({ inner: () => ({ Command: Deno.Command }) });` +
+          ` new (outer().inner().Command)("sh");`,
+          `const outer = () => ({ inner: { plugin: Bun.plugin } });` +
+          ` outer().inner.plugin({ name: "route", setup() {} });`,
+          `const outer = () => ({ inner: { binding: process.binding } });` +
+          ` outer().inner.binding("spawn_sync").spawn({});`,
+          `const one = () => () => Bun.plugin;` +
+          ` one()()({ name: "route", setup() {} });`,
+          `const getBunApi = () => [Bun.plugin]; getBunApi()[0]({});`,
+          `const get = () => ({ binding() { return process.binding; } });` +
+          ` get().binding()("spawn_sync").spawn({});`,
+          `const get = () => ({ get plugin() { return Bun.plugin; } });` +
+          ` get().plugin({});`,
+          `class Cap { static binding() { return process.binding; } }` +
+          ` Cap.binding()("spawn_sync").spawn({});`,
+          `class Cap { static Command() { return Deno.Command; } }` +
+          ` new (Cap.Command())("sh");`,
+          `class Cap { plugin() { return Bun.plugin; } }` +
+          ` new Cap().plugin()({});`,
+          `class Cap { static get plugin() { return Bun.plugin; } } Cap.plugin({});`,
+          `class Cap { plugin = Bun.plugin; } new Cap().plugin({});`,
+          `const api = {};` +
+          ` Object.defineProperty(api, "plugin", { get() { return Bun.plugin; } });` +
+          ` api.plugin({});`,
+          `const api = {};` +
+          ` Object.defineProperty(api, "binding", { get: () => process.binding });` +
+          ` api.binding("spawn_sync").spawn({});`,
+          `class Cap { #plugin() { return Bun.plugin; }` +
+          ` run() { return this.#plugin(); } } new Cap().run()({});`,
+          `const getCap = () => class Cap { plugin() { return Bun.plugin; } };` +
+          ` new (getCap())().plugin()({ name: "route", setup() {} });`,
+          `const getCap = () => class Cap { get binding() { return process.binding; } };` +
+          ` new (getCap())().binding("spawn_sync").spawn({});`,
+          `const getCap = () => class Cap { Command = Deno.Command; };` +
+          ` new (new (getCap())().Command)("sh");`,
+          `const getCap = () => class Cap { ["plugin"]() { return Bun.plugin; } };` +
+          ` new (getCap())().plugin()({ name: "route", setup() {} });`,
+          `const root = () => ({ Cap: () => class { plugin() { return Bun.plugin; } } });` +
+          ` new (root().Cap())().plugin()({ name: "route", setup() {} });`,
+          `class Base { static binding() { return process.binding; } }` +
+          ` class Cap extends Base {} Cap.binding()("spawn_sync").spawn({});`,
+          `class Base { plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base {}` +
+          ` new Cap().plugin()({ name: "route", setup() {} });`,
+          `class Base { plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base { plugin() { return super.plugin(); } }` +
+          ` new Cap().plugin()({ name: "route", setup() {} });`,
+          `class Base { get plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base { get plugin() { return super.plugin; } }` +
+          ` new Cap().plugin({ name: "route", setup() {} });`,
+          `class Base { static plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base { static plugin() { return super.plugin(); } }` +
+          ` Cap.plugin()({ name: "route", setup() {} });`,
+          `class Base { static get plugin() { return Bun.plugin; } }` +
+          ` class Cap extends Base { static get plugin() { return super.plugin; } }` +
+          ` Cap.plugin({ name: "route", setup() {} });`,
+          `class Base { get wrapper() { return { plugin: Bun.plugin }; } }` +
+          ` class Cap extends Base { get plugin() { return super.wrapper.plugin; } }` +
+          ` new Cap().plugin({ name: "route", setup() {} });`,
+          `class Base { wrapper() { return { binding: process.binding }; } }` +
+          ` class Cap extends Base { binding() { return super.wrapper().binding; } }` +
+          ` new Cap().binding()("spawn_sync").spawn({});`,
+          `class Base { get caps() { return [Bun.plugin]; } }` +
+          ` class Cap extends Base { get plugin() { return super.caps[0]; } }` +
+          ` new Cap().plugin({ name: "route", setup() {} });`,
+          `class Base { caps() { return [Deno.Command]; } }` +
+          ` class Cap extends Base { Command() { return super.caps()[0]; } }` +
+          ` new (new Cap().Command())("sh");`,
+          `class Base { get wrapper() {` +
+          ` return { inner: { plugin: Bun.plugin } }; } }` +
+          ` class Cap extends Base { get plugin() {` +
+          ` return super.wrapper.inner.plugin; } }` +
+          ` new Cap().plugin({ name: "route", setup() {} });`,
+          `class Base { static get wrapper() { return { plugin: Bun.plugin }; } }` +
+          ` class Cap extends Base { static get plugin() {` +
+          ` return super.wrapper.plugin; } }` +
+          ` Cap.plugin({ name: "route", setup() {} });`,
+          `class Base { static wrapper() { return { binding: process.binding }; } }` +
+          ` class Cap extends Base { static binding() {` +
+          ` return super.wrapper().binding; } }` +
+          ` Cap.binding()("spawn_sync").spawn({});`,
+          `const holder = () => ({ Base: class { static Command = Deno.Command; } });` +
+          ` class Cap extends holder().Base {} new Cap.Command("sh");`,
+          `const holder = { Base: class { static plugin = Bun.plugin; } };` +
+          ` class Cap extends holder.Base {}` +
+          ` Cap.plugin({ name: "route", setup() {} });`,
+          `const holder = () => ({ Base: class {` +
+          ` static binding() { return process.binding; } } });` +
+          ` class Cap extends holder().Base {}` +
+          ` Cap.binding()("spawn_sync").spawn({});`,
+          `const bases = [class { static plugin = Bun.plugin; }];` +
+          ` class Cap extends bases[0] {}` +
+          ` Cap.plugin({ name: "route", setup() {} });`,
+          `const holder = () => ({ Base: class { plugin() { return Bun.plugin; } } });` +
+          ` class Cap extends holder().Base {}` +
+          ` new Cap().plugin()({ name: "route", setup() {} });`,
+          `const local = () => {}; const caps = [Bun.plugin];` +
+          ` if (false) caps[0] = local; caps[0]({ name: "route", setup() {} });`,
+          `const local = () => {}; const caps = [Bun.plugin];` +
+          ` class Cap { field = (caps[0] = local); }` +
+          ` caps[0]({ name: "route", setup() {} });`,
+          `const local = () => {}; const caps = [Bun.plugin];` +
+          ` class Cap { #field = (caps[0] = local); }` +
+          ` caps[0]({ name: "route", setup() {} });`,
+          `const local = () => {}; const caps = [Bun.plugin];` +
+          ` class Cap { accessor field = (caps[0] = local); }` +
+          ` caps[0]({ name: "route", setup() {} });`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a returned wrapper must retain its restricted runtime capability",
+        );
+      }
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `class Base { plugin() { return Bun.plugin; } }` +
+              ` export default class Cap extends Base {}`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an exported subclass must retain inherited restricted capabilities",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const holder = () => ({ Base: class { static plugin = Bun.plugin; } });` +
+              ` export default class Cap extends holder().Base {}`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "an exported subclass must retain wrapped inherited capabilities",
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `const getRequire = () => ({ require });` +
+              ` getRequire().require("node:child_process");`,
+            [],
+          ),
+        Error,
+        "unconstrained dynamic import",
+        "a returned object must not hide the CommonJS loader",
+      );
+    });
+
+    it("should fail closed on parser-dependent capabilities when the parser is unavailable", async () => {
+      __setSourceCapabilityParserLoaderForTests(() =>
+        Promise.reject(new Error("parser unavailable"))
+      );
+      try {
+        for (
+          const source of [
+            `process.binding("spawn_sync").spawn({});`,
+            `process.execve(process.execPath, [process.execPath, "./unchecked.cjs"], process.env);`,
+            `new Deno.Command("deno", { args: ["run", "./unchecked.ts"] });`,
+            `Bun.spawn(["bun", "./unchecked.ts"]);`,
+            `process.getBuiltinModule("node:test");`,
+            `const loaders = {}; loaders.load = require; loaders.load("./unchecked.cjs");`,
+            `const assign = Object.assign; export { assign };`,
+          ]
+        ) {
+          await assertRejects(
+            async () => await validateHTTPImports(source, []),
+            Error,
+            "dynamic code generation",
+            "parser failure must reject capabilities that the textual scanner cannot classify",
+          );
+        }
+
+        await validateHTTPImports(
+          `const value = 1; export const GET = () => new Response(String(value));`,
+          [],
+        );
+        await validateHTTPImports(
+          `import value from "https://allowed.example/mod.js"; export { value };`,
+          ["https://allowed.example"],
         );
       } finally {
         __setSourceCapabilityParserLoaderForTests();

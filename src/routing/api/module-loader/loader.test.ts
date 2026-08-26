@@ -122,7 +122,7 @@ describe("readDenoImportMap", () => {
     assertEquals(
       lookupImportMapEntry(
         importMap!,
-        "https://example.com/dep.js",
+        "HTTPS://EXAMPLE.COM/pkg/../dep.js",
         join(projectDir, "route.ts"),
       ),
       "https://blocked.example/mod.js",
@@ -412,6 +412,15 @@ describe("readDenoImportMap", () => {
       lookupImportMapEntry(importMap!, "./helper.ts", join(projectDir, "route.ts")),
       "https://blocked.example/mod.js",
       "a relative edge and its equivalent absolute file URL key must match",
+    );
+    assertEquals(
+      lookupImportMapEntry(
+        importMap!,
+        "./helper.ts",
+        toFileUrl(join(projectDir, "route.ts")).href,
+      ),
+      "https://blocked.example/mod.js",
+      "a bundled file URL referrer must use the same local import-map key",
     );
   });
 });
@@ -3245,6 +3254,114 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  denoIt("preserves import.meta.resolve for dependencies when bundling", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"));
+    await fs.writeTextFile(join(tmpDir, "asset.txt"), "beside-route");
+    await fs.writeTextFile(join(tmpDir, "lib", "asset.txt"), "beside-helper");
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "helper.ts"),
+      `export const readAdjacent = () => Deno.readTextFile(` +
+        `new URL(import.meta.resolve("./asset.txt")));`,
+    );
+    const modulePath = join(tmpDir, "dependency-resolve-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { readAdjacent } from "./lib/helper.ts";`,
+        `const marker = /x/;`,
+        `export const GET = async () => new Response((await readAdjacent()) + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(
+      await getText(route),
+      "beside-helperx",
+      "each bundled resolver must stay bound to the module that declared it",
+    );
+  });
+
+  denoIt("applies scoped import maps to bundled import.meta.resolve calls", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"));
+    await fs.writeTextFile(join(tmpDir, "lib", "asset.txt"), "scoped-asset");
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      JSON.stringify({
+        scopes: {
+          "./lib/": {
+            asset: "./lib/asset.txt",
+            "#asset": "./lib/asset.txt",
+            "?asset": "./lib/asset.txt",
+          },
+        },
+      }),
+    );
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "helper.ts"),
+      `const read = (specifier: string) => Deno.readTextFile(new URL(specifier));` +
+        ` export const readMapped = async () => (await Promise.all([` +
+        `read(import.meta.resolve("asset")),` +
+        `read(import.meta.resolve("#asset")),` +
+        `read(import.meta.resolve("?asset"))])).join("|");`,
+    );
+    const modulePath = join(tmpDir, "scoped-resolve-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { readMapped } from "./lib/helper.ts";`,
+        `const marker = /x/;`,
+        `export const GET = async () => new Response((await readMapped()) + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(
+      await getText(route),
+      "scoped-asset|scoped-asset|scoped-assetx",
+      "a resolver must use the import-map scope belonging to its declaring module",
+    );
+  });
+
+  denoIt("rejects unmapped dependency-like import.meta.resolve specifiers", async () => {
+    for (const specifier of ["#missing", "?missing"]) {
+      const tmpDir = await makeTempDir();
+      const modulePath = join(tmpDir, "unmapped-resolve-route.ts");
+      await fs.writeTextFile(
+        modulePath,
+        `const marker = /x/;` +
+          ` export const GET = () => new Response(` +
+          `import.meta.resolve(${JSON.stringify(specifier)}) + marker.source);`,
+      );
+
+      await assertRejects(
+        () =>
+          loadHandlerModule({
+            projectDir: tmpDir,
+            modulePath,
+            adapter,
+            config: undefined,
+          }),
+        Error,
+        "import.meta location cannot be preserved",
+        `${specifier} must fail closed when the import map does not resolve it`,
+      );
+    }
+  });
+
   denoIt(
     "keeps a route on the direct path when the project's map leaves its bare specifier alone",
     async () => {
@@ -3636,7 +3753,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     await fs.writeTextFile(
       modulePath,
       [
-        `import { value } from "https://example.com/dep.js";`,
+        `import { value } from "HTTPS://EXAMPLE.COM/pkg/../dep.js";`,
         `const marker = /x/;`,
         `export const GET = () => new Response(value + marker.source);`,
       ].join("\n"),

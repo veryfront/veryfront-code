@@ -445,6 +445,41 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("preserves import.meta.resolve for a fetched remote module", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(`export const dependency = import.meta.resolve("./dep.js");`, {
+              status: 200,
+            })) as typeof fetch,
+        );
+        const result = await loadHandler({
+          path: "https://esm.sh/module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals(
+          (result as { contents: string }).contents,
+          `export const dependency = "https://esm.sh/dep.js";`,
+          "a remote resolver must stay bound to the fetched module URL",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
     it("rejects local Worker entries declared by a fetched remote module", async () => {
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
       const plugin = createHTTPPlugin(["https://esm.sh"]);
