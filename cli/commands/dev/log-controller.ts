@@ -1,4 +1,4 @@
-import { deleteEnv, getEnv, setEnv } from "../../../src/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { isTruthyEnvValue, refreshLoggerConfig } from "veryfront/utils";
 
 export interface DevLogController {

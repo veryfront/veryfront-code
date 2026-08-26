@@ -34,8 +34,9 @@ describe("platform/index.ts exports", () => {
 
   describe("compat re-exports", () => {
     it("should export the host runtime seam", async () => {
-      const { createInMemoryHostRuntime, isHostExit, liveHostRuntime } = await importIndex();
-      assertEquals(typeof liveHostRuntime, "function", "live adapter factory is exported");
+      const publicPlatform = await importIndex();
+      const { createInMemoryHostRuntime, isHostExit } = publicPlatform;
+      assertEquals("liveHostRuntime" in publicPlatform, false, "live adapter stays internal");
       assertEquals(typeof createInMemoryHostRuntime, "function", "in-memory factory is exported");
       assertEquals(typeof isHostExit, "function", "host exit guard is exported");
     });

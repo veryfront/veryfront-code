@@ -178,14 +178,14 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 
 ### Constants
 
-| Name             | Description                   | Source                                                                                           |
-| ---------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
-| `agentLogger`    | Shared agent logger value.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1082) |
-| `bundlerLogger`  | Shared bundler logger value.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1080) |
-| `cliLogger`      |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1074) |
-| `logger`         | Shared logger value.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1085) |
-| `rendererLogger` | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1078) |
-| `serverLogger`   | Shared server logger value.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1076) |
+| Name             | Description | Source                                                                                        |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| `agentLogger`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L45) |
+| `bundlerLogger`  |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L46) |
+| `cliLogger`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L47) |
+| `logger`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L48) |
+| `rendererLogger` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L50) |
+| `serverLogger`   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L51) |
 
 ## Deep imports
 
@@ -252,14 +252,14 @@ import { colorize, createRequestLogger, createRunUserLogger } from "veryfront/ut
 
 #### Constants
 
-| Name                          | Description                   | Source                                                                                                  |
-| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `__resetLoggerConfigForTests` |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L249)         |
-| `agentLogger`                 | Shared agent logger value.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1082)        |
-| `bundlerLogger`               | Shared bundler logger value.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1080)        |
-| `cliLogger`                   |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1074)        |
-| `logger`                      | Shared logger value.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1085)        |
-| `proxyLogger`                 |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1083)        |
-| `rendererLogger`              | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1078)        |
-| `requestContextStore`         |                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L24) |
-| `serverLogger`                | Shared server logger value.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L1076)        |
+| Name                          | Description | Source                                                                                                  |
+| ----------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `__resetLoggerConfigForTests` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L249)         |
+| `agentLogger`                 |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L45)           |
+| `bundlerLogger`               |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L46)           |
+| `cliLogger`                   |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L47)           |
+| `logger`                      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L48)           |
+| `proxyLogger`                 |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L49)           |
+| `rendererLogger`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L50)           |
+| `requestContextStore`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L24) |
+| `serverLogger`                |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/index.ts#L51)           |

@@ -8,12 +8,10 @@
  */
 
 export {
-  deleteEnv,
   env,
   type EnvBooleanOptions,
   getEnv,
   getEnvBoolean,
   getEnvNumber,
   getEnvString,
-  setEnv,
 } from "./env.ts";

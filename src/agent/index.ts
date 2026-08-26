@@ -496,14 +496,12 @@ export {
   type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
 } from "./service/node-runtime-infrastructure.ts";
-export {
-  type AgentServiceBootstrapExit,
-  type AgentServiceTraceContext,
-  type AgentServiceTraceContextGetter,
-  bootstrapAgentService,
-  type BootstrapAgentServiceOptions,
-  runAgentServiceMain,
-  type RunAgentServiceMainOptions,
+export type {
+  AgentServiceBootstrapExit,
+  AgentServiceTraceContext,
+  AgentServiceTraceContextGetter,
+  BootstrapAgentServiceOptions,
+  RunAgentServiceMainOptions,
 } from "./service/bootstrap.ts";
 export {
   type AbortRejectionEvent,

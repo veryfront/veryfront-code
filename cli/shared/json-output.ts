@@ -7,7 +7,7 @@
  * @module cli/shared/json-output
  */
 
-import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { refreshLoggerConfig } from "veryfront/utils";
 
 /** Whether the current command should output JSON */

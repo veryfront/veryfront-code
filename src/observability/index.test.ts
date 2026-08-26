@@ -91,6 +91,8 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);
     assertEquals("reset" in observability.metrics, false);
+    assertEquals(Object.isFrozen(observability.metrics), true);
+    assertEquals(Reflect.set(observability.metrics, "incRequest", () => {}), false);
     for (
       const processGlobal of [
         "getErrorCollector",

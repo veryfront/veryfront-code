@@ -46,7 +46,6 @@ export {
   type InMemoryHostRuntime,
   type InMemoryHostRuntimeInit,
   isHostExit,
-  liveHostRuntime,
 } from "./compat/process/host-runtime.ts";
 
 // Compat: filesystem

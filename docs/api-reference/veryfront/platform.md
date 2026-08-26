@@ -51,7 +51,6 @@ import {
 | `isInteractive`             | Check if stdin is a TTY (terminal)                                                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L103)    |
 | `isNotFoundError`           |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210)      |
 | `isStdoutTTY`               | Check if stdout is a TTY (terminal)                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L113)    |
-| `liveHostRuntime`           | The production adapter: every member delegates to the compat functions, so behaviour is identical to calling them directly.                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/host-runtime.ts#L60)  |
 | `lookupMimeType`            |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/media-types.ts#L21)           |
 | `mkdir`                     | Create a directory.                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L572)                   |
 | `onGlobalError`             | Register global error handlers for uncaught exceptions and unhandled promise rejections. These handlers prevent the process from crashing due to application code errors.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L259)    |
@@ -109,20 +108,18 @@ These import paths group focused functionality under this module. Each is a sepa
 Project-scoped environment helpers for cross-runtime applications. Host environment access and the trusted project-snapshot bridge remain internal framework controls and are not exported from this module.
 
 ```ts
-import { deleteEnv, env, getEnv } from "veryfront/platform/env";
+import { env, getEnv, getEnvBoolean } from "veryfront/platform/env";
 ```
 
 #### Functions
 
 | Name            | Description                                                 | Source                                                                                                  |
 | --------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `deleteEnv`     | Delete a process environment variable.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L255) |
 | `env`           | Read and write process environment variables.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L57)  |
 | `getEnv`        | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L155) |
 | `getEnvBoolean` |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L209) |
 | `getEnvNumber`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L195) |
 | `getEnvString`  |                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L187) |
-| `setEnv`        | Sets env.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L235) |
 
 #### Types
 

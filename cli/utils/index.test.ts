@@ -8,7 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { refreshLoggerConfig, serverLogger } from "veryfront/utils";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 import { setJsonMode } from "../shared/json-output.ts";

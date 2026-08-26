@@ -15,6 +15,13 @@ import {
 } from "#veryfront/security/http/local-control-request.ts";
 
 export class MetricsHandler extends BaseHandler {
+  readonly #metrics: Pick<typeof metrics, "snapshot">;
+
+  constructor(metricsRuntime: Pick<typeof metrics, "snapshot"> = metrics) {
+    super();
+    this.#metrics = metricsRuntime;
+  }
+
   metadata: HandlerMetadata = {
     name: "MetricsHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
@@ -37,7 +44,7 @@ export class MetricsHandler extends BaseHandler {
     const corsConfig = ctx.securityConfig?.cors;
 
     try {
-      const snap = metrics.snapshot();
+      const snap = this.#metrics.snapshot();
       const profiling = snapshotRequestProfiles();
       const memory = this.safeCall(memoryUsage);
       const uptimeValue = this.safeCall(uptime);

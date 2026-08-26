@@ -102,8 +102,9 @@ export { markRequestProfilePhase, profilePhase, profileSyncPhase } from "./reque
 export type { RequestProfileRecord } from "./request-profiler.ts";
 
 // Simple in-process metrics
+import { metrics as internalMetrics } from "./simple-metrics/index.ts";
+export const metrics = Object.freeze({ ...internalMetrics });
 export {
-  metrics,
   recordApiRequest,
   recordApiRetry,
   recordContentCacheHit,

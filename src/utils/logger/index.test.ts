@@ -14,4 +14,21 @@ describe("veryfront/utils/logger public export surface", () => {
     assertEquals("__resetLogRecordEmitterForTests" in publicLogger, false);
     assertEquals("__resetTraceContextGetterForTests" in publicLogger, false);
   });
+
+  it("exports immutable shared logger facades", () => {
+    for (
+      const name of [
+        "agentLogger",
+        "bundlerLogger",
+        "cliLogger",
+        "logger",
+        "proxyLogger",
+        "rendererLogger",
+        "serverLogger",
+      ] as const
+    ) {
+      assertEquals(Object.isFrozen(publicLogger[name]), true, `${name} must be immutable`);
+      assertEquals(Reflect.set(publicLogger[name], "info", () => {}), false);
+    }
+  });
 });

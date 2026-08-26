@@ -17,7 +17,7 @@ import {
   describe,
   it,
 } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import {

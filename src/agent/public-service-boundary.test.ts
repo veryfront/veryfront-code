@@ -7,5 +7,7 @@ it("keeps the process-global agent service bootstrap off the public barrel", () 
   assertEquals("initializeNodeAgentServiceOpenTelemetry" in publicAgentApi, false);
   assertEquals("initializeNodeHostedAgentServiceOpenTelemetry" in publicAgentApi, false);
   assertEquals("installAbortRejectionGuard" in publicAgentApi, false);
+  assertEquals("bootstrapAgentService" in publicAgentApi, false);
+  assertEquals("runAgentServiceMain" in publicAgentApi, false);
   assertEquals(typeof publicAgentApi.startNodeVeryfrontCloudAgentService, "function");
 });
