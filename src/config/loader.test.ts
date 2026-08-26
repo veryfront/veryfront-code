@@ -1585,6 +1585,20 @@ export default config as const;
 
         assertEquals(question.message.includes("registry.internal"), false);
         assertStringIncludes(question.message, "Failed (see [url])? Retry");
+
+        for (const punctuation of ["…", "。", "¿", "»"] as const) {
+          const unicode = await loadFailure(
+            "vf-config-paren-unicode-punctuation-",
+            `throw new Error(${
+              JSON.stringify(
+                `Failed (see https://registry.internal/x)${punctuation} Retry`,
+              )
+            });\n`,
+          );
+
+          assertEquals(unicode.message.includes("registry.internal"), false);
+          assertStringIncludes(unicode.message, `Failed (see [url])${punctuation} Retry`);
+        }
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

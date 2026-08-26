@@ -1771,6 +1771,8 @@ const CSI_GLUED_URL =
 // punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
 // opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
 // with its token in the caller-visible detail.
+// Unicode's `Punctuation` property supplies the structural category, covering
+// sentence marks such as `…`, `。`, `¿`, and `»` without another ASCII allowlist.
 //
 // Asking the structural question settles both at once. A `)` whose remaining
 // token is only punctuation before a boundary is prose, so it stays outside the
@@ -1788,10 +1790,10 @@ const CSI_GLUED_URL =
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![.,;:!?)\]}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?!\p{P}{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
-  "g",
+  "gu",
 );
 
 // Both the userinfo run and the parenthesised interior are length-bounded, and
@@ -1838,7 +1840,7 @@ const SCHEME_URL = new RegExp(
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
 const MALFORMED_SCHEME_URL = new RegExp(
   String.raw`(?:https?|wss?|ftp):/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
-  "gi",
+  "giu",
 );
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
@@ -1854,7 +1856,7 @@ const MALFORMED_SCHEME_URL = new RegExp(
 // and the hostname survived into the caller-visible detail.
 const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`(?:https?|wss?|ftp):(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
-  "gi",
+  "giu",
 );
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
@@ -1864,7 +1866,7 @@ const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // remote URL, which is this PR's original misclassification running backwards.
 const FILE_URL_ABSOLUTE_PATH = new RegExp(
   String.raw`file:///${URL_TOKEN_TAIL_SOURCE}`,
-  "gi",
+  "giu",
 );
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
