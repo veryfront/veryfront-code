@@ -16,11 +16,10 @@ import { DEFAULT_DEV_PORT } from "../shared/constants.ts";
 import { bold, brand, dim, error as errorColor, warning as warningColor } from "../ui/colors.ts";
 import { isJsonMode } from "../shared/json-output.ts";
 import {
-  cliLogger as _canonicalCliLogger,
-  LogLevel,
   refreshLoggerConfig as _refreshCanonicalLoggerConfig,
   setLogLevel as _setCanonicalLogLevel,
-} from "veryfront/utils/logger";
+} from "#cli/logger-config";
+import { cliLogger as _canonicalCliLogger, LogLevel } from "veryfront/utils/logger";
 
 type LoggerMethod = (...args: unknown[]) => void;
 

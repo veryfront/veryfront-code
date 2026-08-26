@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
-import { isNotFoundError, runtime, type RuntimeAdapter } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
+import { isNotFoundError, type RuntimeAdapter } from "veryfront/platform";
 import { getConfig, type VeryfrontConfig } from "veryfront/config";
 import { CONFIG_INVALID } from "veryfront/errors";
 import { buildProduction } from "veryfront/build";

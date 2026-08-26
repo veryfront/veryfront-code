@@ -127,7 +127,7 @@ describe("SSR module distributed cache on a local dev server", () => {
       await runWithCacheDir(cacheDir, async () => {
         // The loader reads project files through the adapter, so it must be the
         // one for the runtime this test is running on, not always Deno's.
-        const { runtime } = await import("#veryfront/platform");
+        const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
         const adapter = await runtime.get();
         const { SSRModuleLoader } = await import("../loader.ts?dev-disk-parent-restart");
         const memory = await import("./memory.ts");

@@ -43,7 +43,7 @@ export async function checkProjectStructure(projectDir: string): Promise<Diagnos
 
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
   try {
-    const { runtime } = await import("veryfront/platform");
+    const { runtime } = await import("#cli/runtime-adapter");
     const adapter = await runtime.get();
     const config = await getConfig(projectDir, adapter);
     const reactVersion = config?.react?.version ?? "auto";

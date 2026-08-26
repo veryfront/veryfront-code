@@ -9,7 +9,7 @@ import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import { createFileSystem } from "veryfront/platform";
 import { setEnv } from "#cli/process-env";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, logWarning, showHeader } from "#cli/utils";
-import { refreshLoggerConfig } from "veryfront/utils";
+import { refreshLoggerConfig } from "#cli/logger-config";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { isValidPortEnv, parsePortEnv, resolveEnvironmentPort } from "#cli/shared/port-env";

@@ -5,7 +5,6 @@
  */
 
 export {
-  __resetLoggerConfigForTests,
   createRequestLogger,
   createRunUserLogger,
   getDefaultLevel,
@@ -14,9 +13,6 @@ export {
   type Logger,
   LogLevel,
   type LogRecordEmitter,
-  refreshLoggerConfig,
-  setLoggerPreset,
-  setLogLevel,
 } from "./logger.ts";
 import {
   agentLogger as internalAgentLogger,
@@ -80,7 +76,6 @@ export {
   getRequestContext,
   getRequestLogger,
   type RequestContext,
-  requestContextStore,
   runWithRequestContext,
   runWithRequestContextAsync,
 } from "./request-context.ts";

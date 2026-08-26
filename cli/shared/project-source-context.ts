@@ -3,9 +3,9 @@ import {
   enhanceAdapterWithFS,
   getEnv,
   isExtendedFSAdapter,
-  runtime,
   type RuntimeAdapter,
 } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "./runtime-auth.ts";
 
 interface ProxyProjectSourceContext {

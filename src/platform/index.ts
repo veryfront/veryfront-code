@@ -7,13 +7,12 @@
 
 // Adapters
 export { getAdapter } from "./adapters/detect.ts";
-export { getLocalAdapter, runtime } from "./adapters/registry.ts";
+export { getLocalAdapter } from "./adapters/registry.ts";
 export { createMockAdapter } from "./adapters/mock.ts";
 export type { RuntimeAdapter } from "./adapters/base.ts";
 
 // Compat: process
 export {
-  chdir,
   type CommandResult,
   cwd,
   env,
@@ -26,7 +25,6 @@ export {
   getTerminalSize,
   isInteractive,
   isStdoutTTY,
-  onGlobalError,
   onSignal,
   promptSync,
   readStdinByteSync,

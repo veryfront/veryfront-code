@@ -8,7 +8,7 @@
  */
 
 import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
-import { refreshLoggerConfig } from "veryfront/utils";
+import { refreshLoggerConfig } from "#cli/logger-config";
 
 /** Whether the current command should output JSON */
 let _jsonMode = false;

@@ -464,8 +464,6 @@ export {
   type AgentServiceEnvFileLoadResult,
   type HostedAgentServiceEnvFileLoadOptions,
   type HostedAgentServiceEnvFileLoadResult,
-  loadAgentServiceEnvFiles,
-  loadHostedAgentServiceEnvFiles,
 } from "./service/env-files.ts";
 export {
   type InitializeNodeAgentServiceTelemetryOptions,

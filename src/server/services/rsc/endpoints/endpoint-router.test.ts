@@ -10,7 +10,7 @@ import {
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
-import { refreshLoggerConfig } from "#veryfront/utils";
+import { refreshLoggerConfig } from "#veryfront/utils/logger/logger.ts";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import {
   type RscActionAuthorizationProvider,

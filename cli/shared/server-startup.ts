@@ -1,4 +1,4 @@
-import { runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import {
   type DevServerOptions,

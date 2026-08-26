@@ -2,7 +2,8 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { __resetLoggerConfigForTests, LogLevel } from "#veryfront/utils/logger/index.ts";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import { LogLevel } from "#veryfront/utils/logger/index.ts";
 import { delay } from "#std/async";
 
 function importFresh(): Promise<typeof import("#veryfront/utils/logger/index.ts")> {

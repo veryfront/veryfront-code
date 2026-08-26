@@ -27,7 +27,6 @@ export {
   createRunUserLogger,
   getBaseLogger,
   logger,
-  refreshLoggerConfig,
   rendererLogger,
   runWithRequestContextAsync,
   serverLogger,

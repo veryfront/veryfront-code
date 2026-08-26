@@ -9,10 +9,15 @@ describe("veryfront/utils/logger public export surface", () => {
   });
 
   it("does not expose process-wide registration or reset hooks", () => {
+    assertEquals("__resetLoggerConfigForTests" in publicLogger, false);
     assertEquals("__registerRequestContextGetter" in publicLogger, false);
     assertEquals("__registerTraceContextGetter" in publicLogger, false);
     assertEquals("__resetLogRecordEmitterForTests" in publicLogger, false);
     assertEquals("__resetTraceContextGetterForTests" in publicLogger, false);
+    assertEquals("refreshLoggerConfig" in publicLogger, false);
+    assertEquals("requestContextStore" in publicLogger, false);
+    assertEquals("setLoggerPreset" in publicLogger, false);
+    assertEquals("setLogLevel" in publicLogger, false);
   });
 
   it("exports immutable shared logger facades", () => {

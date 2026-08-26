@@ -8,9 +8,9 @@ function importIndex(): Promise<typeof import("./index.ts")> {
 
 describe("platform/index.ts exports", () => {
   describe("adapters re-exports", () => {
-    it("should export runtime", async () => {
-      const { runtime } = await importIndex();
-      assertExists(runtime);
+    it("does not export the mutable runtime registry", async () => {
+      const publicPlatform = await importIndex();
+      assertEquals("runtime" in publicPlatform, false);
     });
 
     it("should export createFSAdapter", async () => {

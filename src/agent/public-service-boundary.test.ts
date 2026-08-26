@@ -9,5 +9,7 @@ it("keeps the process-global agent service bootstrap off the public barrel", () 
   assertEquals("installAbortRejectionGuard" in publicAgentApi, false);
   assertEquals("bootstrapAgentService" in publicAgentApi, false);
   assertEquals("runAgentServiceMain" in publicAgentApi, false);
+  assertEquals("loadAgentServiceEnvFiles" in publicAgentApi, false);
+  assertEquals("loadHostedAgentServiceEnvFiles" in publicAgentApi, false);
   assertEquals(typeof publicAgentApi.startNodeVeryfrontCloudAgentService, "function");
 });

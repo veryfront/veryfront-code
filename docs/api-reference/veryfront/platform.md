@@ -8,12 +8,12 @@ order: 24
 
 ```ts
 import {
-  chdir,
   createEscapeBuffer,
   createFileSystem,
   createFSAdapter,
   createInMemoryHostRuntime,
   createKVStore,
+  createMockAdapter,
 } from "veryfront/platform";
 ```
 
@@ -23,7 +23,6 @@ import {
 
 | Name                        | Description                                                                                                                                                                                                             | Source                                                                                                           |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `chdir`                     |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L33)     |
 | `createEscapeBuffer`        | Create an escape sequence buffer.                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/stdin.ts#L291)                |
 | `createFileSystem`          | Create the runtime-native filesystem implementation.                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L449)                   |
 | `createFSAdapter`           |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/fs/factory.ts#L6)           |
@@ -52,7 +51,6 @@ import {
 | `isStdoutTTY`               | Check if stdout is a TTY (terminal)                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L113)    |
 | `lookupMimeType`            |                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/media-types.ts#L21)           |
 | `mkdir`                     | Create a directory.                                                                                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L572)                   |
-| `onGlobalError`             | Register global error handlers for uncaught exceptions and unhandled promise rejections. These handlers prevent the process from crashing due to application code errors.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L259)    |
 | `onSignal`                  | Register a SIGINT or SIGTERM handler for graceful shutdown.                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L184)    |
 | `promptSync`                | Synchronous prompt function that works across Deno and Bun. Displays a message and reads user input from stdin.                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L409)    |
 | `readDir`                   | Read directory entries.                                                                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L582)                   |
@@ -93,10 +91,9 @@ import {
 
 ### Constants
 
-| Name      | Description                                                      | Source                                                                                                 |
-| --------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `isDeno`  | True if running in the real Deno runtime rather than a dnt shim. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts#L103)    |
-| `runtime` |                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/registry.ts#L226) |
+| Name     | Description                                                      | Source                                                                                              |
+| -------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `isDeno` | True if running in the real Deno runtime rather than a dnt shim. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts#L103) |
 
 ## Deep imports
 
