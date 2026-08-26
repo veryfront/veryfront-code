@@ -33,6 +33,7 @@ const MAX_REMOTE_MCP_CURSOR_LENGTH = 4_096;
 const MAX_REMOTE_MCP_CORRELATION_ID_LENGTH = 256;
 const UTF8_ENCODER = new TextEncoder();
 const NativeURL = URL;
+const nativeEncodeURIComponent = encodeURIComponent;
 const reflectApply = Reflect.apply;
 const urlHrefGetter = Object.getOwnPropertyDescriptor(
   NativeURL.prototype,
@@ -411,21 +412,22 @@ function buildOauthConnectUrl(
   integration: string,
   context?: ToolExecutionContext,
 ): string {
-  const encodedIntegration = encodeURIComponent(integration);
+  const encodedIntegration = nativeEncodeURIComponent(integration);
   const projectId = typeof context?.projectId === "string" && context.projectId.length > 0
     ? context.projectId
     : null;
+  const path = `/oauth/connect/${encodedIntegration}`;
+  const query = projectId ? `?projectId=${nativeEncodeURIComponent(projectId)}` : "";
 
   try {
-    const url = new URL(`/oauth/connect/${encodedIntegration}`, endpoint);
-    if (projectId) {
-      url.searchParams.set("projectId", projectId);
+    if (!urlOriginGetter) {
+      throw new TypeError("Remote MCP endpoint URL primordials are unavailable");
     }
-    return url.toString();
+    const url = new NativeURL(endpoint);
+    const origin = reflectApply(urlOriginGetter, url, []) as string;
+    return `${origin}${path}${query}`;
   } catch {
-    return projectId
-      ? `/oauth/connect/${encodedIntegration}?projectId=${encodeURIComponent(projectId)}`
-      : `/oauth/connect/${encodedIntegration}`;
+    return `${path}${query}`;
   }
 }
 

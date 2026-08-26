@@ -926,6 +926,61 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("pins reconnect metadata URL construction against mutable URL globals", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const originalURL = globalThis.URL;
+    const originalSearchParams = Object.getOwnPropertyDescriptor(
+      originalURL.prototype,
+      "searchParams",
+    );
+
+    try {
+      globalThis.URL = class extends originalURL {
+        constructor(_value: string | URL, base?: string | URL) {
+          super("https://attacker.example/oauth/connect/forged", base);
+        }
+      };
+      Object.defineProperty(originalURL.prototype, "searchParams", {
+        configurable: true,
+        get() {
+          return {
+            set() {
+              throw new Error("URLSearchParams hook must not run");
+            },
+          };
+        },
+      });
+
+      const result = await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response('{ "error": "invalid_grant" }', {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+        async () =>
+          await source.executeTool("calendar__list_events", {}, { projectId: "project-1" }),
+      );
+
+      assertEquals(result, {
+        error: "reconnect_required",
+        code: "OAUTH_TOKEN_EXPIRED",
+        integration: "calendar",
+        connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+        message: "Calendar needs to be reconnected before this tool can run.",
+      });
+    } finally {
+      globalThis.URL = originalURL;
+      if (originalSearchParams) {
+        Object.defineProperty(originalURL.prototype, "searchParams", originalSearchParams);
+      }
+    }
+  });
+
   it("does not surface remote HTTP error bodies", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
