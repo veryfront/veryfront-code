@@ -196,6 +196,8 @@ export function resolveHostedRuntimeRequestConfig(
     input.request.model ?? getForwardedHostedModelId(input.request.forwardedProps) ??
       input.agentConfig.model,
   );
+  const failClosedUnrestrictedToolDenials = input.agentConfig.tools === true &&
+    Boolean(input.agentConfig.deniedTools?.length);
 
   return {
     effectiveRuntimeOverrides,
@@ -221,7 +223,8 @@ export function resolveHostedRuntimeRequestConfig(
       configuredProviderTools: input.agentConfig.providerTools,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,
     }),
-    includeRuntimeEssentialToolsWhenEmpty: effectiveRuntimeOverrides?.allowedTools === undefined,
+    includeRuntimeEssentialToolsWhenEmpty: !failClosedUnrestrictedToolDenials &&
+      effectiveRuntimeOverrides?.allowedTools === undefined,
     deniedToolNames: input.agentConfig.deniedTools?.length
       ? [...input.agentConfig.deniedTools]
       : undefined,
