@@ -68,6 +68,48 @@ async function runBash(
   }).output();
 }
 
+interface PackageFixture {
+  packageDir: string;
+  npmLog: string;
+}
+
+async function withPackageFixture(
+  packageName: string,
+  fn: (fixture: PackageFixture) => Promise<void>,
+): Promise<void> {
+  await withTempDir(async (stateDir) => {
+    const packageDir = `${stateDir}/package`;
+    const npmLog = `${stateDir}/npm.log`;
+    await Deno.mkdir(packageDir);
+    await Deno.writeTextFile(
+      `${packageDir}/package.json`,
+      JSON.stringify({ name: packageName }),
+    );
+    await Deno.writeTextFile(npmLog, "");
+    await fn({ packageDir, npmLog });
+  });
+}
+
+const LOG_NPM_CALL = '  printf "%s\\n" "$*" >> "$NPM_LOG"';
+
+// Compose a release-publish run whose npm mock logs every call to $NPM_LOG.
+function releasePublishScript(npmMockBody: string[]): string {
+  return [
+    "set -euo pipefail",
+    'source "$SCRIPT_PATH"',
+    "npm() {",
+    LOG_NPM_CALL,
+    ...npmMockBody,
+    "}",
+    "sleep() { :; }",
+    'release_publish_package_dir "$PACKAGE_DIR"',
+  ].join("\n");
+}
+
+async function loggedNpmCalls(npmLog: string): Promise<string[]> {
+  return (await Deno.readTextFile(npmLog)).trim().split("\n");
+}
+
 describe("npm package publishing", () => {
   it("publishes the canonical tarball without repacking the materialized package", async () => {
     await withTempDir(async (stateDir) => {
@@ -617,7 +659,7 @@ describe("npm package publishing", () => {
     });
   });
 
-  it("skips a package already published for the commit on a release rerun", async () => {
+  it("does not recover a package already published for the commit on a release rerun", async () => {
     const stateDir = await Deno.makeTempDir();
     const packageDir = `${stateDir}/package`;
     const npmLog = `${stateDir}/npm.log`;
@@ -639,6 +681,7 @@ describe("npm package publishing", () => {
           '    printf "%s\\n" "$GITHUB_SHA"',
           "    return 0",
           "  fi",
+          '  printf "%s\\n" "previously published versions: $VERSION"',
           "  return 92",
           "}",
           "sleep() { return 93; }",
@@ -652,15 +695,14 @@ describe("npm package publishing", () => {
         },
       );
 
-      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(output.code, 92, decoder.decode(output.stderr));
       const calls = (await Deno.readTextFile(npmLog)).trim().split("\n");
       assertEquals(calls, [
-        "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
-        "view @veryfront/ext-auth-jwt@0.1.1069 gitHead",
+        `publish ${packageDir} --provenance --access public`,
       ]);
-      assertStringIncludes(
-        decoder.decode(output.stdout),
-        "already published for this commit; skipping npm publish",
+      assertEquals(
+        decoder.decode(output.stdout).includes("skipping npm publish"),
+        false,
       );
     } finally {
       await Deno.remove(stateDir, { recursive: true });
@@ -847,6 +889,57 @@ describe("npm package publishing", () => {
       await Deno.remove(stateDir, { recursive: true });
     }
   });
+
+  it("fails the release preflight when a version already exists, even for this commit", async () => {
+    await withTempDir(async (stateDir) => {
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.writeTextFile(npmLog, "");
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "package_names_from_workspace() {",
+          '  printf "%s\\n" "@veryfront/ext-existing"',
+          "}",
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "view" ] && [ "$3" = "name" ]; then',
+          '    printf "%s\\n" "@veryfront/ext-existing"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          "run_preflight",
+        ].join("\n"),
+        {
+          GITHUB_SHA: "expected-commit",
+          NPM_LOG: npmLog,
+          VERSION: "0.1.1189",
+        },
+      );
+
+      assertEquals(output.code, 1, decoder.decode(output.stderr));
+      assertStringIncludes(
+        decoder.decode(output.stdout),
+        "already exists on npm. Bump deno.json before releasing.",
+      );
+      const calls = await loggedNpmCalls(npmLog);
+      assertEquals(calls, [
+        "view @veryfront/ext-existing@* name",
+        "view @veryfront/ext-existing@0.1.1189 version",
+      ], "preflight must fail closed without consulting gitHead metadata");
+    });
+  });
+
   // npm answers a burst of publishes with `409 Conflict - Failed to save
   // packument`. The write sometimes still lands, so the publish path has to
   // recheck the registry and retry rather than failing the whole release.
@@ -908,55 +1001,105 @@ describe("npm package publishing", () => {
         assertEquals(publishes.length, 2);
       });
     });
-
-    it(`accepts a 409 whose publish already landed in ${publishFunction}`, async () => {
-      await withTempDir(async (stateDir) => {
-        const packageDir = `${stateDir}/package`;
-        const npmLog = `${stateDir}/npm.log`;
-        await Deno.mkdir(packageDir);
-        await Deno.writeTextFile(
-          `${packageDir}/package.json`,
-          JSON.stringify({ name: "@veryfront/ext-llm-google" }),
-        );
-        await Deno.writeTextFile(npmLog, "");
-
-        const output = await runBash(
-          [
-            "set -euo pipefail",
-            'source "$SCRIPT_PATH"',
-            "npm() {",
-            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-            '  if [ "$1" = "publish" ]; then',
-            '    printf "%s\\n" "$CONFLICT_OUTPUT"',
-            "    return 1",
-            "  fi",
-            // not published before the attempt; the conflicting write did land
-            '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
-            '  if [ "$1" = "view" ]; then',
-            '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 0 ]; then return 1; fi',
-            '    printf "%s\\n" "$GITHUB_SHA"',
-            "    return 0",
-            "  fi",
-            "}",
-            `${publishFunction} "$PACKAGE_DIR"`,
-          ].join("\n"),
-          {
-            CONFLICT_OUTPUT,
-            GITHUB_SHA: "0".repeat(40),
-            NPM_LOG: npmLog,
-            NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
-            PACKAGE_DIR: packageDir,
-            VERSION: "0.1.0",
-          },
-        );
-
-        assertEquals(output.code, 0, decoder.decode(output.stderr));
-        const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
-          .filter((line) => line.startsWith("publish"));
-        assertEquals(publishes.length, 1);
-      });
-    });
   }
+
+  it("accepts a 409 whose publish already landed in rc_publish_package_dir", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          // not published before the attempt; the conflicting write did land
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
+          '  if [ "$1" = "view" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 0 ]; then return 1; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      const publishes = (await loggedNpmCalls(npmLog))
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(publishes.length, 1);
+    });
+  });
+
+  // The stable path must never accept a conflicted write through registry
+  // metadata: gitHead is attacker-controllable, so an existing version after a
+  // 409 fails the release even when the reported gitHead matches this commit.
+  it("fails closed when a conflicted release publish lands on the registry", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        releasePublishScript([
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          // the conflicting write landed with a matching (spoofable) gitHead
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then',
+          '    printf "%s\\n" "$VERSION"',
+          "    return 0",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+        ]),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(
+        output.code,
+        1,
+        "a stable release must fail closed once the conflicted version exists",
+      );
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "Stable releases fail closed",
+      );
+      assertEquals(
+        decoder.decode(output.stdout).includes("landed despite an npm registry conflict"),
+        false,
+        "an existing stable version must never be recovered via gitHead metadata",
+      );
+      const calls = await loggedNpmCalls(npmLog);
+      assertEquals(
+        calls.filter((line) => line.startsWith("publish")).length,
+        1,
+      );
+      assertEquals(
+        calls.filter((line) => line.endsWith("gitHead")).length,
+        0,
+        "fail-closed conflict handling must not consult gitHead metadata",
+      );
+    });
+  });
 
   it("does not retry a non-conflict npm publish failure", async () => {
     await withTempDir(async (stateDir) => {
@@ -1045,11 +1188,12 @@ describe("npm package publishing", () => {
 
   // The conflicting write can surface while the retry delay elapses. npm
   // refuses to reuse a published name/version, so a blind republish would turn
-  // a recoverable conflict into a fatal already-published error.
+  // a recoverable conflict into a fatal already-published error. Only the RC
+  // path may recover through gitHead; the stable path fails closed instead
+  // (covered above).
   for (
     const [publishFunction, gitHeadVisibleAfter] of [
       ["rc_publish_package_dir", "1"],
-      ["release_publish_package_dir", "2"],
     ]
   ) {
     it(`rechecks gitHead after the conflict delay in ${publishFunction}`, async () => {
@@ -1248,7 +1392,6 @@ describe("npm package publishing", () => {
   for (
     const publishFunction of [
       "rc_publish_package_dir",
-      "release_publish_package_dir",
     ]
   ) {
     it(`rechecks after the final conflict in ${publishFunction}`, async () => {
@@ -1301,6 +1444,95 @@ describe("npm package publishing", () => {
     });
   }
 
+  // The stable path has no final-conflict gitHead recovery: when the bounded
+  // retries end in a conflict, the release fails even though the registry
+  // reports a matching gitHead for the version.
+  it("fails closed after the final release conflict despite a matching gitHead", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        releasePublishScript([
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+        ]),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_ATTEMPTS: "1",
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(
+        output.code,
+        1,
+        "a stable release must not recover the final conflict through gitHead metadata",
+      );
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "npm registry conflict persisted",
+      );
+      const calls = await loggedNpmCalls(npmLog);
+      assertEquals(
+        calls.filter((line) => line.startsWith("publish")).length,
+        1,
+      );
+      assertEquals(
+        calls.filter((line) => line.endsWith("gitHead")).length,
+        0,
+        "fail-closed conflict handling must not consult gitHead metadata",
+      );
+    });
+  });
+
+  // The retry mode is part of the publish security contract, so a typo in a
+  // caller must fail the conflicted publish instead of quietly recovering.
+  it("fails a conflicted publish under an unknown retry mode", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    return 1",
+          "  fi",
+          "  return 1",
+          "}",
+          'publish_npm_package_with_retry bogus veryfront "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertStringIncludes(decoder.decode(output.stdout), "EXIT=1");
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        'Unknown npm publish retry mode "bogus"',
+      );
+      const publishes = (await loggedNpmCalls(npmLog))
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(publishes.length, 1);
+    });
+  });
+
   // The conflicting write can also land between the pre-retry registry check
   // and the retry publish. npm rejects that publish as an ordinary
   // already-published error rather than a conflict, so the registry has to
@@ -1308,79 +1540,120 @@ describe("npm package publishing", () => {
   const ALREADY_PUBLISHED_OUTPUT =
     "npm error code E403\nnpm error 403 403 Forbidden - PUT https://registry.npmjs.org/@veryfront%2fext-llm-google - You cannot publish over the previously published versions: 0.1.0.";
 
-  for (
-    const publishFunction of [
-      "rc_publish_package_dir",
-      "release_publish_package_dir",
-    ]
-  ) {
-    it(`accepts an already-published retry rejection in ${publishFunction}`, async () => {
-      await withTempDir(async (stateDir) => {
-        const packageDir = `${stateDir}/package`;
-        const npmLog = `${stateDir}/npm.log`;
-        await Deno.mkdir(packageDir);
-        await Deno.writeTextFile(
-          `${packageDir}/package.json`,
-          JSON.stringify({ name: "@veryfront/ext-llm-google" }),
-        );
-        await Deno.writeTextFile(npmLog, "");
+  it("accepts an already-published retry rejection in rc_publish_package_dir", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
+          '      printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    else",
+          '      printf "%s\\n" "$ALREADY_PUBLISHED_OUTPUT"',
+          "    fi",
+          "    return 1",
+          "  fi",
+          // the conflicting write stays invisible until the retry races it
+          '  if [ "$1" = "view" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -le 1 ]; then return 1; fi',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR"',
+        ].join("\n"),
+        {
+          ALREADY_PUBLISHED_OUTPUT,
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
 
-        const output = await runBash(
-          [
-            "set -euo pipefail",
-            'source "$SCRIPT_PATH"',
-            "npm() {",
-            '  printf "%s\\n" "$*" >> "$NPM_LOG"',
-            '  if [ "$1" = "publish" ]; then',
-            '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
-            '      printf "%s\\n" "$CONFLICT_OUTPUT"',
-            "    else",
-            '      printf "%s\\n" "$ALREADY_PUBLISHED_OUTPUT"',
-            "    fi",
-            "    return 1",
-            "  fi",
-            // the conflicting write stays invisible until the retry races it
-            '  if [ "$1" = "view" ]; then',
-            '    if [ "$(grep -c "^publish" "$NPM_LOG")" -le 1 ]; then return 1; fi',
-            '    printf "%s\\n" "$GITHUB_SHA"',
-            "    return 0",
-            "  fi",
-            "  return 1",
-            "}",
-            `${publishFunction} "$PACKAGE_DIR"`,
-          ].join("\n"),
-          {
-            ALREADY_PUBLISHED_OUTPUT,
-            CONFLICT_OUTPUT,
-            GITHUB_SHA: "0".repeat(40),
-            NPM_LOG: npmLog,
-            NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
-            PACKAGE_DIR: packageDir,
-            VERSION: "0.1.0",
-          },
-        );
-
-        assertEquals(
-          output.code,
-          0,
-          `${publishFunction} must accept a raced already-published rejection whose gitHead matches this commit: ${
-            decoder.decode(output.stderr)
-          }`,
-        );
-        const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
-          .filter((line) => line.startsWith("publish"));
-        assertEquals(
-          publishes.length,
-          2,
-          `${publishFunction} must stop publishing once the registry shows this commit, but issued: ${
-            publishes.join(", ")
-          }`,
-        );
-      });
+      assertEquals(
+        output.code,
+        0,
+        `the RC publish must accept a raced already-published rejection whose gitHead matches this commit: ${
+          decoder.decode(output.stderr)
+        }`,
+      );
+      const publishes = (await loggedNpmCalls(npmLog))
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(
+        publishes.length,
+        2,
+        `the RC publish must stop publishing once the registry shows this commit, but issued: ${
+          publishes.join(", ")
+        }`,
+      );
     });
-  }
+  });
 
-  it("keeps the caller's errexit state so the release rerun recovery still runs", async () => {
+  // The same raced rejection fails a stable release: after an earlier
+  // conflict, an already-published answer means the version cannot be
+  // attributed to this workflow, matching gitHead or not.
+  it("fails closed when a raced release retry is rejected as already published", async () => {
+    await withPackageFixture("@veryfront/ext-llm-google", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        releasePublishScript([
+          '  if [ "$1" = "publish" ]; then',
+          '    if [ "$(grep -c "^publish" "$NPM_LOG")" -eq 1 ]; then',
+          '      printf "%s\\n" "$CONFLICT_OUTPUT"',
+          "    else",
+          '      printf "%s\\n" "$ALREADY_PUBLISHED_OUTPUT"',
+          "    fi",
+          "    return 1",
+          "  fi",
+          // the read replica lags while gitHead would report this commit
+          '  if [ "$1" = "view" ] && [ "$3" = "version" ]; then return 1; fi',
+          '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
+          '    printf "%s\\n" "$GITHUB_SHA"',
+          "    return 0",
+          "  fi",
+          "  return 1",
+        ]),
+        {
+          ALREADY_PUBLISHED_OUTPUT,
+          CONFLICT_OUTPUT,
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      assertEquals(
+        output.code,
+        1,
+        "a stable release must fail once npm rejects the retry over an existing version",
+      );
+      assertEquals(
+        decoder.decode(output.stdout).includes("landed despite an npm registry conflict"),
+        false,
+        "an already-published stable rejection must never be recovered",
+      );
+      const calls = await loggedNpmCalls(npmLog);
+      assertEquals(
+        calls.filter((line) => line.startsWith("publish")).length,
+        2,
+      );
+      assertEquals(
+        calls.filter((line) => line.endsWith("gitHead")).length,
+        0,
+        "fail-closed conflict handling must not consult gitHead metadata",
+      );
+    });
+  });
+
+  it("fails closed when a release publish is rejected over an existing version", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
       const npmLog = `${stateDir}/npm.log`;
@@ -1403,7 +1676,6 @@ describe("npm package publishing", () => {
           "    return 1",
           "  fi",
           '  if [ "$1" = "view" ] && [ "$3" = "gitHead" ]; then',
-          '    if [ "$(grep -c gitHead "$NPM_LOG")" -le 1 ]; then return 1; fi',
           '    printf "%s\\n" "$GITHUB_SHA"',
           "    return 0",
           "  fi",
@@ -1422,18 +1694,16 @@ describe("npm package publishing", () => {
       );
 
       const stdout = decoder.decode(output.stdout);
+      assertEquals(output.code, 1, decoder.decode(output.stderr));
       assertEquals(
-        output.code,
-        0,
-        `the publish retry helper must not enable errexit under a caller that disabled it: ${
-          decoder.decode(output.stderr)
-        }`,
+        stdout.includes("gitHead matches this commit; continuing."),
+        false,
+        "an existing release version must never be recovered, even for a matching gitHead",
       );
-      assertStringIncludes(
-        stdout,
-        "already exists, and gitHead matches this commit; continuing.",
-      );
-      assertStringIncludes(stdout, "RECOVERY_REACHED");
+      assertEquals(stdout.includes("RECOVERY_REACHED"), false);
+      const publishes = (await Deno.readTextFile(npmLog)).trim().split("\n")
+        .filter((line) => line.startsWith("publish"));
+      assertEquals(publishes.length, 1);
     });
   });
 

@@ -3514,7 +3514,7 @@ describe("automated review workflow", () => {
     assertEquals(record(job.permissions, "review permissions"), {
       contents: "read",
       issues: "write",
-      "pull-requests": "read",
+      "pull-requests": "write",
       statuses: "write",
     });
     const publisherConcurrency = {
