@@ -812,6 +812,7 @@ describe("configSchema", () => {
         { cookieName: "csrf\r\nInjected" },
         { cookieName: "vf_csrf_names" },
         { cookieName: csrfNamesCookieName("https://example.test") },
+        { cookieName: "vf_csrf_http_forbidden" },
         { cookieName: "x".repeat(257) },
         { headerName: "" },
         { headerName: "x csrf" },

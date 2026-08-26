@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   CSRF_NAMES_COOKIE_NAME,
+  csrfHttpTokenCookieName,
   csrfNamesCookieName,
   decodeCsrfNamesAdvertisement,
   DEFAULT_CSRF_COOKIE_NAME,
@@ -14,6 +15,41 @@ import {
 const ORIGIN = "https://app.test";
 
 describe("security/csrf/names advertisement", () => {
+  it("gives fresh custom HTTP tokens an origin-scoped cookie name", () => {
+    const first = csrfHttpTokenCookieName("vf_csrf", "http://localhost:3000");
+    const second = csrfHttpTokenCookieName("vf_csrf", "http://localhost:4000");
+
+    assertEquals(first.startsWith("vf_csrf_http_"), true);
+    assertEquals(first === second, false);
+    assertThrows(
+      () => csrfHttpTokenCookieName("vf_csrf", "https://localhost:3000"),
+      TypeError,
+      "canonical HTTP origin",
+    );
+
+    const longConfiguredName = "x".repeat(256);
+    const longScopedName = csrfHttpTokenCookieName(
+      longConfiguredName,
+      "http://localhost:3000",
+    );
+    const advertisement = encodeCsrfNamesAdvertisement(
+      longScopedName,
+      "x-csrf-token",
+      "http://localhost:3000",
+    );
+    assertEquals(
+      decodeCsrfNamesAdvertisement(advertisement ?? undefined, "http://localhost:3000"),
+      { cookieName: longScopedName, headerName: "x-csrf-token" },
+      "an internal derived name may exceed the configured-name limit without becoming unreadable",
+    );
+    assertThrows(
+      () => requireNonReservedCsrfCookieName(longScopedName),
+      TypeError,
+      "reserved",
+      "a caller must not configure a name inside the internal HTTP token namespace",
+    );
+  });
+
   it("gives each origin its own advertisement cookie", () => {
     const first = csrfNamesCookieName("http://localhost:3000");
     const second = csrfNamesCookieName("http://localhost:4000");

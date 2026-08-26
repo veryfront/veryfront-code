@@ -3,6 +3,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { csrfMutationHeadersFor } from "./browser-mutation-headers.ts";
 import {
+  csrfHttpTokenCookieName,
   csrfNamesCookieName,
   DEFAULT_CSRF_COOKIE_NAME,
   DEFAULT_CSRF_HEADER_NAME,
@@ -128,6 +129,22 @@ describe("csrfMutationHeadersFor", () => {
       null,
       "the advertised header must not also be sent",
     );
+  });
+
+  it("keeps an explicit HTTP custom name compatible with an origin-scoped token", () => {
+    const origin = "http://app.test";
+    const cookieName = csrfHttpTokenCookieName("vf_explicit", origin);
+    const headers = csrfMutationHeadersFor(
+      "/api/cases",
+      {
+        cookie: `${cookieName}=tok-explicit`,
+        baseURI: `${origin}/page`,
+        origin,
+      },
+      { cookieName: "vf_explicit", headerName: "x-explicit" },
+    );
+
+    assertEquals(headers.get("x-explicit"), "tok-explicit");
   });
 
   it("normalizes an explicit documented default for a plain HTTP origin", () => {
