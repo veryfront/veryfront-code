@@ -178,7 +178,6 @@ class BoundedFallback<K, V> implements LocalFallbackLike<K, V> {
     // Reject individually oversized entries up front: admitting one would make
     // the eviction loop below flush every cached entry (including this one).
     if (entrySize > this.maxSizeBytes) {
-      this.delete(key);
       return;
     }
     this.delete(key);

@@ -187,6 +187,23 @@ describe("transforms/esm/transform-cache", () => {
       }
     });
 
+    it("preserves an existing entry when its replacement is oversized", () => {
+      __injectCachesForTests(null);
+      __injectCachesForTests({ cacheBackend: null });
+      destroyTransformCache();
+
+      try {
+        setCachedTransform("same-key", "small-code", "small-hash");
+
+        const oversizedTransform = "x".repeat(26 * 1024 * 1024);
+        setCachedTransform("same-key", oversizedTransform, "oversized-hash");
+
+        assertEquals(getCachedTransform("same-key")?.hash, "small-hash");
+      } finally {
+        destroyTransformCache();
+      }
+    });
+
     it("evicts least recently used entries to stay within the byte limit", () => {
       __injectCachesForTests(null);
       __injectCachesForTests({ cacheBackend: null });
