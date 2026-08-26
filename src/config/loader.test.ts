@@ -1028,6 +1028,30 @@ export default config as const;
         assertEquals(error.message.includes("((x))"), false);
       });
 
+      it("redacts a URL whose path nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-path-",
+          `throw new Error("Fetch https://registry.internal/a((TOKENVALUE1234)) failed");\n`,
+        );
+
+        // The residue here is a URL path fragment, not decoration: whatever sat
+        // inside the parentheses survived into the caller-visible detail.
+        assertStringIncludes(error.message, "[url]");
+        assertEquals(error.message.includes("TOKENVALUE1234"), false);
+        assertEquals(error.message.includes("registry.internal"), false);
+      });
+
+      it("redacts a file URL whose path nests parentheses", async () => {
+        const error = await loadFailure(
+          "vf-config-nested-paren-file-url-",
+          `throw new Error("Fetch file:///home/alice/a((TOKENVALUE1234)) failed");\n`,
+        );
+
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("TOKENVALUE1234"), false);
+        assertEquals(error.message.includes("/home/alice"), false);
+      });
+
       it("redacts a single-slash URL-like token without misclassifying Windows paths", async () => {
         const error = await loadFailure(
           "vf-config-single-slash-url-",
