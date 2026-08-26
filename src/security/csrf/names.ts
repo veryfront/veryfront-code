@@ -82,6 +82,10 @@ export function resolveCsrfNames(options?: CsrfNameOptions): {
  * is not reading, which fails closed with a 403.
  */
 export const CSRF_NAMES_COOKIE_NAME = "vf_csrf_names";
+const CSRF_HTTP_TOKEN_COOKIE_PREFIX = "vf_csrf_http_";
+const CSRF_HTTPS_TOKEN_COOKIE_PREFIX = "vf_csrf_https_";
+const MAX_INTERNAL_CSRF_COOKIE_NAME_LENGTH = 2048;
+const nativeAtob = globalThis.atob;
 
 /**
  * Return the advertisement cookie name reserved for one browser origin.
@@ -96,10 +100,146 @@ export function csrfNamesCookieName(origin: string): string {
   return `${CSRF_NAMES_COOKIE_NAME}_${base64urlEncode(origin)}`;
 }
 
-/** Reports whether a cookie name belongs to the discovery-cookie namespace. */
+/**
+ * Return the HTTP-only token name used when an unprefixed configured name has
+ * no existing cookie to migrate.
+ *
+ * Secure cookies are shared with HTTPS but cannot be replaced from HTTP. A
+ * name scoped to the complete HTTP origin lets an HTTP sibling mint its own
+ * token even when an HTTPS-first sibling already owns the configured name as a
+ * Secure cookie. The configured name remains part of the derived name so
+ * independent CSRF configurations on the same origin cannot alias each other.
+ */
+export function csrfHttpTokenCookieName(cookieName: string, origin: string): string {
+  const configuredName = requireNonReservedCsrfCookieName(
+    requireCsrfName(cookieName, "CSRF cookieName"),
+  );
+  const parsed = new URL(origin);
+  if (parsed.origin !== origin || parsed.protocol !== "http:") {
+    throw new TypeError("HTTP CSRF token origin must be a canonical HTTP origin");
+  }
+  return `${CSRF_HTTP_TOKEN_COOKIE_PREFIX}${base64urlEncode(`${origin}\0${configuredName}`)}`;
+}
+
+/** Return the HTTPS-only token name used while migrating a shared legacy token. */
+export function csrfHttpsTokenCookieName(cookieName: string, origin: string): string {
+  const configuredName = requireNonReservedCsrfCookieName(
+    requireCsrfName(cookieName, "CSRF cookieName"),
+  );
+  const parsed = new URL(origin);
+  if (parsed.origin !== origin || parsed.protocol !== "https:") {
+    throw new TypeError("HTTPS CSRF token origin must be a canonical HTTPS origin");
+  }
+  return `${CSRF_HTTPS_TOKEN_COOKIE_PREFIX}${base64urlEncode(`${origin}\0${configuredName}`)}`;
+}
+
+/** Select the token name that issuance and browser discovery use for one origin. */
+export function effectiveCsrfTokenCookieNameForOrigin(
+  configuredCookieName: string,
+  origin: string,
+  hasConfiguredToken: boolean,
+): string {
+  const cookieName = requireNonReservedCsrfCookieName(
+    requireCsrfName(configuredCookieName, "CSRF cookieName"),
+  );
+  if (
+    hasConfiguredToken || cookieName.startsWith("__Host-") ||
+    cookieName.startsWith("__Secure-") || new URL(origin).protocol !== "http:"
+  ) {
+    return cookieName;
+  }
+  return csrfHttpTokenCookieName(cookieName, origin);
+}
+
+function isDerivedCsrfTokenCookieName(
+  cookieName: string,
+  prefix: string,
+  protocol: "http:" | "https:",
+): boolean {
+  if (!cookieName.startsWith(prefix)) return false;
+  // Every supported browser and server runtime provides atob. If an unknown
+  // runtime does not, preserve the collision-safe behavior rather than admit
+  // a name that might be one of the internal encodings.
+  if (typeof nativeAtob !== "function") return true;
+
+  const encoded = cookieName.slice(prefix.length);
+  if (!encoded || encoded.length % 4 === 1) return false;
+  const padding = "=".repeat((4 - encoded.length % 4) % 4);
+  let decoded: string;
+  try {
+    decoded = nativeAtob(encoded.replaceAll("-", "+").replaceAll("_", "/") + padding);
+  } catch {
+    return false;
+  }
+  // Reject non-canonical base64url spellings before interpreting the payload.
+  if (base64urlEncode(decoded) !== encoded) return false;
+
+  const separator = decoded.indexOf("\0");
+  if (separator <= 0 || separator !== decoded.lastIndexOf("\0")) return false;
+  const origin = decoded.slice(0, separator);
+  const configuredName = decoded.slice(separator + 1);
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === protocol && parsed.origin === origin &&
+      requireCsrfName(configuredName, "CSRF cookieName") === configuredName &&
+      !isReservedCsrfCookieName(configuredName);
+  } catch {
+    return false;
+  }
+}
+
+function isDerivedCsrfNamesCookieName(cookieName: string): boolean {
+  const prefix = `${CSRF_NAMES_COOKIE_NAME}_`;
+  if (!cookieName.startsWith(prefix)) return false;
+  // Match the derived-token check above: an unknown runtime without atob must
+  // preserve the collision-safe behavior rather than admit an internal name.
+  if (typeof nativeAtob !== "function") return true;
+
+  const encoded = cookieName.slice(prefix.length);
+  if (!encoded || encoded.length % 4 === 1) return false;
+  const padding = "=".repeat((4 - encoded.length % 4) % 4);
+  let origin: string;
+  try {
+    origin = nativeAtob(encoded.replaceAll("-", "+").replaceAll("_", "/") + padding);
+  } catch {
+    return false;
+  }
+  // Only the canonical spelling emitted by csrfNamesCookieName is reserved.
+  if (base64urlEncode(origin) !== encoded) return false;
+
+  try {
+    const parsed = new URL(origin);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Reports whether a cookie name belongs to an internal CSRF cookie namespace. */
 export function isReservedCsrfCookieName(cookieName: string): boolean {
   return cookieName === CSRF_NAMES_COOKIE_NAME ||
-    cookieName.startsWith(`${CSRF_NAMES_COOKIE_NAME}_`);
+    isDerivedCsrfNamesCookieName(cookieName) ||
+    isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTP_TOKEN_COOKIE_PREFIX, "http:") ||
+    isDerivedCsrfTokenCookieName(cookieName, CSRF_HTTPS_TOKEN_COOKIE_PREFIX, "https:");
+}
+
+function requireAdvertisedCsrfCookieName(cookieName: string): string {
+  if (
+    cookieName.startsWith(CSRF_HTTP_TOKEN_COOKIE_PREFIX) ||
+    cookieName.startsWith(CSRF_HTTPS_TOKEN_COOKIE_PREFIX)
+  ) {
+    if (
+      cookieName.length > MAX_INTERNAL_CSRF_COOKIE_NAME_LENGTH ||
+      !HTTP_TOKEN_PATTERN.test(cookieName)
+    ) {
+      throw new TypeError("Advertised derived CSRF cookieName is invalid");
+    }
+    return cookieName;
+  }
+  return requireNonReservedCsrfCookieName(
+    requireCsrfName(cookieName, "CSRF cookieName"),
+  );
 }
 
 /**
@@ -113,16 +253,18 @@ export function isReservedCsrfCookieName(cookieName: string): boolean {
 const CSRF_NAMES_SEPARATOR = ":";
 
 /**
- * Reject a configured name that would collide with the advertisement cookie.
+ * Reject a configured name that would collide with an internal companion cookie.
  *
  * Without this, `security.csrf.cookieName: "vf_csrf_names"` would make the
- * advertisement overwrite the random token cookie, silently disabling CSRF.
+ * advertisement overwrite the random token cookie, while a derived token name
+ * could alias the token Veryfront validates for another configuration. A
+ * pre-existing configured name that merely shares the readable prefix remains
+ * valid unless its suffix decodes to a real derived token identity.
  */
 export function requireNonReservedCsrfCookieName(cookieName: string): string {
   if (isReservedCsrfCookieName(cookieName)) {
     throw new TypeError(
-      `CSRF cookieName must not use the reserved "${CSRF_NAMES_COOKIE_NAME}" advertisement ` +
-        "namespace: reusing it would overwrite a configured-name cookie",
+      "CSRF cookieName must not use a reserved Veryfront CSRF cookie namespace",
     );
   }
   return cookieName;
@@ -145,7 +287,7 @@ export function encodeCsrfNamesAdvertisement(
   headerName: string,
   origin: string,
 ): string | null {
-  requireNonReservedCsrfCookieName(cookieName);
+  requireAdvertisedCsrfCookieName(cookieName);
   if (cookieName === DEFAULT_CSRF_COOKIE_NAME && headerName === DEFAULT_CSRF_HEADER_NAME) {
     return null;
   }
@@ -178,9 +320,7 @@ export function decodeCsrfNamesAdvertisement(
 
   try {
     return {
-      cookieName: requireNonReservedCsrfCookieName(
-        requireCsrfName(cookieName, "CSRF cookieName"),
-      ),
+      cookieName: requireAdvertisedCsrfCookieName(cookieName),
       headerName: requireCsrfName(headerName, "CSRF headerName"),
     };
   } catch {
