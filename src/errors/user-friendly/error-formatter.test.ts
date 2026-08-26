@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { formatErrorBox, formatUserError } from "./error-formatter.ts";
+import {
+  formatErrorBox,
+  formatUserError,
+  sanitizeUserFacingStackFrameForTesting,
+} from "./error-formatter.ts";
 import { CONFIG_NOT_FOUND, DEPENDENCY_MISSING } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
 
@@ -154,6 +158,24 @@ describe("formatUserError", () => {
     for (const forbidden of ["\x1b]2;owned", "\x1b[2J", "\x07", "\nFAKE SUCCESS"]) {
       assertEquals(output.includes(forbidden), false);
     }
+  });
+
+  it("withholds DNS-shaped properties on built-in receivers", () => {
+    assertEquals(
+      sanitizeUserFacingStackFrameForTesting(
+        "    at Object.acmeOrder42 (/workspace/app.ts:1:1)",
+      ),
+      "at <anonymous>",
+    );
+  });
+
+  it("withholds data-bearing project callable labels", () => {
+    assertEquals(
+      sanitizeUserFacingStackFrameForTesting(
+        "    at customer_account_42 (/workspace/app.ts:1:1)",
+      ),
+      "at <anonymous>",
+    );
   });
 
   it("should not invoke proxy traps in plain output", () => {

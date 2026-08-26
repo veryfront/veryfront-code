@@ -167,13 +167,13 @@ describe("ERROR_SOLUTIONS", () => {
     }
   });
 
-  it("should have steps arrays when present", () => {
+  it("should have non-empty steps for every error solution", () => {
     for (const [key, solution] of Object.entries(ERROR_SOLUTIONS)) {
       const steps = solution.steps;
-      if (steps === undefined) continue;
-
-      assert(Array.isArray(steps), `${key} steps should be an array`);
-      assert(steps.length > 0, `${key} steps should not be empty`);
+      assert(
+        Array.isArray(steps) && steps.length > 0,
+        `${key} must ship remediation steps`,
+      );
 
       for (const step of steps) {
         assert(typeof step === "string" && step.length > 0, `${key} has empty step`);
@@ -213,6 +213,21 @@ describe("ERROR_SOLUTIONS", () => {
       assertEquals(guidance.includes("remove any trailing comma"), false);
       assert(guidance.includes("trailing commas are valid"));
     });
+
+    it("should name the configuration file family it actually loads", () => {
+      const sol = ERROR_SOLUTIONS["invalid-config"];
+      assertExists(sol);
+
+      assert(
+        sol.message.toLowerCase().includes("veryfront.config"),
+        "invalid-config must name the veryfront.config file family",
+      );
+      assertEquals(
+        /vf\.config|\.config\.json/i.test(JSON.stringify(sol)),
+        false,
+        "invalid-config must not name a config file the loader never reads",
+      );
+    });
   });
 
   describe("port-in-use", () => {
@@ -238,6 +253,26 @@ describe("ERROR_SOLUTIONS", () => {
       assertEquals(
         sol.docs,
         "https://veryfront.com/docs/code/guides/errors#client-boundary-violation",
+      );
+    });
+
+    it("should demonstrate both halves of the fix in its example", () => {
+      const sol = ERROR_SOLUTIONS["client-boundary"];
+      assertExists(sol);
+      assertExists(sol.example);
+
+      assert(sol.example.includes("use client"), "example shows the client directive");
+      assert(sol.example.includes("await db.query"), "example shows the server-side data fetch");
+      const queryAssignment =
+        /const\s+(?:\{\s*([A-Za-z_$][\w$]*)\s*\}|([A-Za-z_$][\w$]*))\s*=\s*await db\.query/.exec(
+          sol.example,
+        );
+      assertExists(queryAssignment, "example assigns the server-side query result");
+      const fetchedValue = queryAssignment[1] ?? queryAssignment[2];
+      assertExists(fetchedValue);
+      assert(
+        new RegExp(`<[A-Z][\\w$]*\\s+[\\w$]+=\\{${fetchedValue}\\}\\s*/>`).test(sol.example),
+        "example shows data passed across the boundary",
       );
     });
   });

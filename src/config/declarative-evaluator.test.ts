@@ -660,6 +660,31 @@ export default defineConfig({
     }
   });
 
+  it("classifies host globals apart from ordinary unbound identifiers", async () => {
+    const declared = await assertEvaluationError(
+      "const Deno = {}; export default {};",
+      "forbidden-capability",
+      "host-global",
+    );
+    assertEquals(
+      declared.phase,
+      "validate",
+      "a shadowed host global is caught before evaluation starts",
+    );
+
+    await assertEvaluationError(
+      "export default { value: Deno };",
+      "forbidden-capability",
+      "host-global",
+    );
+
+    await assertEvaluationError(
+      "export default { value: notDefined };",
+      "invalid-binding",
+      "unbound-identifier",
+    );
+  });
+
   it("validates the complete program before evaluating any earlier declaration", async () => {
     const error = await assertEvaluationError(
       `const wouldFailDuringEvaluation = 1 / 0;
@@ -744,6 +769,10 @@ export default {};`,
         `export default { extensions: ["plain-data"] };`,
         `export default { extensions: [{ name: "materialized", version: "1", capabilities: [] }] };`,
         `export default { extensions: [{ name: "disabled", enabled: false, extra: true }] };`,
+        `export default { extensions: [{ name: "evil-ext", enabled: true }] };`,
+        `export default { extensions: [{ name: "evil-ext", enabled: "false" }] };`,
+        `export default { extensions: [{ name: "evil-ext", enabled: 0 }] };`,
+        `export default { extensions: [{ name: "${"a".repeat(257)}", enabled: false }] };`,
       ]
     ) {
       await assertEvaluationError(
@@ -1212,19 +1241,29 @@ export default process.env;`,
     const validationNested = `${"[".repeat(DECLARATIVE_CONFIG_LIMITS.maxValidationDepth + 1)}null${
       "]".repeat(DECLARATIVE_CONFIG_LIMITS.maxValidationDepth + 1)
     }`;
-    await assertEvaluationError(
+    const validationError = await assertEvaluationError(
       `export default ${validationNested};`,
       "resource-limit-exceeded",
       "evaluation-depth",
+    );
+    assertEquals(
+      validationError.phase,
+      "validate",
+      "validation-depth guard must reject during validation, before evaluation runs",
     );
 
     const evaluationNested = `${"[".repeat(DECLARATIVE_CONFIG_LIMITS.maxEvaluationDepth + 1)}null${
       "]".repeat(DECLARATIVE_CONFIG_LIMITS.maxEvaluationDepth + 1)
     }`;
-    await assertEvaluationError(
+    const evaluationError = await assertEvaluationError(
       `export default ${evaluationNested};`,
       "resource-limit-exceeded",
       "evaluation-depth",
+    );
+    assertEquals(
+      evaluationError.phase,
+      "evaluate",
+      "evaluation-depth guard must reject during evaluation",
     );
 
     const fields = repeatedList(

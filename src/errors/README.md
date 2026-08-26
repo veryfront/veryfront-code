@@ -76,8 +76,10 @@ https://veryfront.com/docs/code/guides/errors#<slug>
 Choose the response helper based on the boundary:
 
 - `errorToRFC9457Response()` is the environment-aware HTTP boundary serializer.
-  It includes stacks only for local projects, removes `cause` in production,
-  and also removes `detail` from production 5xx responses.
+  It includes stacks only for local projects, removes `cause` from every
+  response in every environment (the diagnostic sanitizer cannot make
+  arbitrary upstream payloads safe), and also removes `detail` from
+  production 5xx responses.
 - `errorToResponse()` is the safe generic serializer. It removes `cause` from
   every response, removes `detail` from every 5xx response, and never mutates
   the source error.

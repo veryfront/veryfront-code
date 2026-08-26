@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import type { ErrorSlug } from "../error-registry.ts";
 import { CONFIG_ERROR_CATALOG } from "./config-errors.ts";
 
@@ -65,17 +66,24 @@ describe("errors/catalog/config-errors", () => {
     });
 
     it("should give accurate configuration recovery guidance", () => {
-      const guidance = JSON.stringify(CONFIG_ERROR_CATALOG).toLowerCase();
+      const solution = CONFIG_ERROR_CATALOG["config-not-found"]!;
+      const step = solution.steps?.find((candidate) => candidate.includes("veryfront.config."));
+      assertExists(step, "config-not-found must have a recovery step naming the config files");
 
-      for (
-        const filename of [
-          "veryfront.config.js",
-          "veryfront.config.ts",
-          "veryfront.config.mjs",
-        ]
-      ) {
-        assertEquals(guidance.includes(filename), true);
+      for (const filename of VERYFRONT_CONFIG_FILES) {
+        assertEquals(
+          step.includes(filename),
+          true,
+          `${filename} must appear in the config-not-found recovery step`,
+        );
       }
+      assertEquals(
+        [...new Set(JSON.stringify(solution).match(/veryfront\.config\.[a-z]+/g) ?? [])].sort(),
+        [...VERYFRONT_CONFIG_FILES].sort(),
+        "config-not-found guidance must name exactly the loader's supported filenames",
+      );
+
+      const guidance = JSON.stringify(CONFIG_ERROR_CATALOG).toLowerCase();
       assertEquals(guidance.includes("veryfront init"), false);
       assertEquals(guidance.includes("vf init"), false);
       assertEquals(guidance.includes("remove any trailing comma"), false);

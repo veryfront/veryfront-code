@@ -157,8 +157,20 @@ describe("error-registry", () => {
       assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
-    it("classifies invalid sync metadata as a runtime error", () => {
-      assertEquals(getErrorBySlug("sync-state-invalid")?.exitCode, undefined);
+    it("classifies invalid sync metadata as a deploy error without a CLI exit code", () => {
+      const error = getErrorBySlug("sync-state-invalid");
+      assertExists(error, "sync-state-invalid must stay registered");
+      assertEquals(error.category, "DEPLOY", "sync metadata failures are deploy errors");
+      assertEquals(
+        error.status,
+        400,
+        "invalid local sync metadata is a client-side precondition failure",
+      );
+      assertEquals(
+        error.exitCode,
+        undefined,
+        "sync-state-invalid must not carry a CLI usage exit code",
+      );
     });
 
     it("should return correct error for all slugs", () => {

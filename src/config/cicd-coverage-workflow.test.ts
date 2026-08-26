@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
@@ -56,13 +61,63 @@ const readDenoTask = async (name: string): Promise<string> => {
   return task;
 };
 
+/**
+ * Slices one job out of the workflow. Job-level and step-level settings are
+ * spelled identically (`timeout-minutes: 5` sits on the setup-deno step of a
+ * dozen jobs), so a whole-file substring search cannot tell the coverage gate's
+ * own timeout from any other job's step timeout. Scope the text first, then
+ * match the four-space job-level indent.
+ */
+const jobBlock = (workflow: string, jobId: string): string => {
+  const start = workflow.search(new RegExp(`^ {2}${jobId}:$`, "m"));
+  assert(
+    start !== -1,
+    `.github/workflows/cicd.yml defines no "${jobId}" job`,
+  );
+  const body = workflow.slice(start);
+  const next = body.slice(1).search(/^ {2}\S/m);
+  return next === -1 ? body : body.slice(0, next + 1);
+};
+
+/**
+ * Reads a job's own `timeout-minutes`, which is indented four spaces. Step
+ * timeouts sit eight spaces deep and are excluded by the indent alone.
+ */
+const jobTimeoutMinutes = (workflow: string, jobId: string): number =>
+  Number(jobBlock(workflow, jobId).match(/^ {4}timeout-minutes: (\d+)$/m)?.[1]);
+
+/**
+ * Slices the setup-deno step out of a job and reads its timeout on its own,
+ * so an unrelated key added to the step (name:, id:) or reordered keys cannot
+ * fail the invariant.
+ */
+const assertSetupDenoStepTimeout = (workflow: string, jobId: string): void => {
+  const setupDenoStep = jobBlock(workflow, jobId)
+    .split(/\n(?= {6}- )/)
+    .find((step) => step.includes("uses: ./.github/actions/setup-deno"));
+  assert(
+    setupDenoStep !== undefined,
+    `${jobId} job must run ./.github/actions/setup-deno`,
+  );
+  assertMatch(
+    setupDenoStep,
+    /^ {8}timeout-minutes: 5$/m,
+    `setup-deno step timeout must stay at 5 minutes inside the ${jobId} job`,
+  );
+};
+
 describe("cicd coverage workflow", () => {
   it("shards unit coverage as portable lcov artifacts", async () => {
     const workflow = await readWorkflow();
 
     assertStringIncludes(workflow, "coverage-shards:");
     assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/8");
-    assertStringIncludes(workflow, "timeout-minutes: 5");
+    assertEquals(
+      jobTimeoutMinutes(workflow, "coverage-shards"),
+      15,
+      "coverage shard job-level timeout must stay at 15 minutes",
+    );
+    assertSetupDenoStepTimeout(workflow, "coverage-shards");
     assertStringIncludes(workflow, "shard: [1, 2, 3, 4, 5, 6, 7, 8]");
     assertStringIncludes(
       workflow,
@@ -86,7 +141,12 @@ describe("cicd coverage workflow", () => {
       workflow,
       "if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
     );
-    assertStringIncludes(workflow, "timeout-minutes: 5");
+    assertEquals(
+      jobTimeoutMinutes(workflow, "coverage"),
+      10,
+      "coverage gate job-level timeout must stay a fast 10 minutes so the required merge check cannot stall a PR",
+    );
+    assertSetupDenoStepTimeout(workflow, "coverage");
     assertStringIncludes(workflow, "actions/download-artifact");
     assertStringIncludes(workflow, "Download unit coverage lcov files");
     assertStringIncludes(workflow, "pattern: coverage-shard-*");
