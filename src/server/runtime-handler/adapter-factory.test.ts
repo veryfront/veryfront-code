@@ -841,6 +841,7 @@ describe("adapter-factory", () => {
           allowIframeEmbed: false,
         },
         req: await makeReq(),
+        pathname: "/notes.md",
         isProxyMode: true,
         prepareHostedConfigContext: async () => ({
           sourceContext: { productionMode: false, branch: "main" },

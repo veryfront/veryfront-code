@@ -37,7 +37,10 @@ import {
   type PreviewSourceSnapshotMarker,
   previewSourceSnapshotMarkersEqual,
 } from "../handlers/request/source-snapshot-freshness.ts";
-import { ssrOwnsDocumentPathname } from "../handlers/request/ssr/document-ownership.ts";
+import {
+  markdownPreviewOwnsDocumentPathname,
+  ssrOwnsDocumentPathname,
+} from "../handlers/request/ssr/document-ownership.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -179,7 +182,8 @@ function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): bo
   if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return false;
-  return ssrOwnsDocumentPathname(pathname);
+  return ssrOwnsDocumentPathname(pathname) ||
+    (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
 }
 
 async function prepareProxyConfigLoad(

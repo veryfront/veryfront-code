@@ -270,3 +270,15 @@ it("rejects strict config markers without an identifiable snapshot", async () =>
   assertInstanceOf(rejection, VeryfrontError);
   assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
 });
+
+it("rejects identity-only strict config markers without a concrete generation", async () => {
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+
+  const rejection = await assertRejects(() =>
+    captureRequiredPreviewSourceSnapshotMarker(adapter.fs, "preview-project")
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+});

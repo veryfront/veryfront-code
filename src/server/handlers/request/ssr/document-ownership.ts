@@ -25,3 +25,11 @@ export function ssrOwnsDocumentPathname(pathname: string): boolean {
     !pathname.startsWith("/.veryfront");
   return !hasFileExtension;
 }
+
+/** True when the preview Markdown handler renders the pathname as an HTML document. */
+export function markdownPreviewOwnsDocumentPathname(pathname: string): boolean {
+  return pathname.endsWith(".md") &&
+    !pathname.includes("/pages/") &&
+    !pathname.includes("/app/") &&
+    !pathname.startsWith("/_");
+}

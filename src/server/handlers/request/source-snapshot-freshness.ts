@@ -72,10 +72,10 @@ export async function captureRequiredPreviewSourceSnapshotMarker(
   projectSlug: string,
 ): Promise<PreviewSourceSnapshotMarker> {
   const marker = await capturePreviewSourceSnapshotMarker(fs);
-  if (marker !== undefined) return marker;
+  if (marker?.version !== undefined) return marker;
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
-      `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot that produced preview document configuration.`,
+      `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot and concrete generation that produced preview document configuration.`,
   });
 }
 

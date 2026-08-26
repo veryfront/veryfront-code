@@ -21,6 +21,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
+import { markdownPreviewOwnsDocumentPathname } from "../request/ssr/document-ownership.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -39,12 +40,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    if (!pathname.endsWith(".md")) {
-      logger.debug("Skipping - no .md extension", { pathname });
-      return this.continue();
-    }
-
-    if (pathname.includes("/pages/") || pathname.includes("/app/") || pathname.startsWith("/_")) {
+    if (!markdownPreviewOwnsDocumentPathname(pathname)) {
+      logger.debug("Skipping - not a standalone Markdown document", { pathname });
       return this.continue();
     }
 

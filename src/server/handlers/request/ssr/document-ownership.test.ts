@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
+import {
+  markdownPreviewOwnsDocumentPathname,
+  ssrOwnsDocumentPathname,
+} from "./document-ownership.ts";
 
 describe("server/handlers/request/ssr/document-ownership", () => {
   it("owns extensionless document paths", () => {
@@ -36,5 +39,14 @@ describe("server/handlers/request/ssr/document-ownership", () => {
   it("owns virtual .veryfront documents despite their dotted segments", () => {
     assertEquals(ssrOwnsDocumentPathname("/.veryfront/page.tsx"), true);
     assertEquals(ssrOwnsDocumentPathname("/project/.veryfront/page.tsx"), true);
+  });
+
+  it("identifies Markdown documents rendered as standalone HTML", () => {
+    assertEquals(markdownPreviewOwnsDocumentPathname("/notes.md"), true);
+    assertEquals(markdownPreviewOwnsDocumentPathname("/docs/readme.md"), true);
+    assertEquals(markdownPreviewOwnsDocumentPathname("/pages/readme.md"), false);
+    assertEquals(markdownPreviewOwnsDocumentPathname("/app/readme.md"), false);
+    assertEquals(markdownPreviewOwnsDocumentPathname("/_internal/readme.md"), false);
+    assertEquals(markdownPreviewOwnsDocumentPathname("/logo.svg"), false);
   });
 });
