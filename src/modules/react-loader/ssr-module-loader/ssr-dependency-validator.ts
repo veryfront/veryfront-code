@@ -312,6 +312,7 @@ export class SSRDependencyValidator {
               options,
             );
 
+            importPathMap.set(imp.rewriteSpecifier ?? imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {

@@ -17,6 +17,8 @@ import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-intr
 
 export interface LocalImport {
   specifier: string;
+  /** Exact specifier present in transformed code when it differs from authored source. */
+  rewriteSpecifier?: string;
   absolutePath: string;
   /** Lexical project path the author addressed, used for metadata and CSS identity. */
   requestedPath?: string;
@@ -171,6 +173,7 @@ export async function parseLocalImports(
       if (resolved) {
         const entry = {
           specifier: authoredSpecifier,
+          rewriteSpecifier: specifier,
           absolutePath: resolved.absolutePath,
           requestedPath: resolved.requestedPath,
           projectContained: true as const,

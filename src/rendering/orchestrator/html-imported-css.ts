@@ -4,6 +4,7 @@ import {
   rewriteCssModuleContent,
 } from "#veryfront/transforms/css-modules/naming.ts";
 import type { CSSImportReference } from "#veryfront/modules/react-loader/css-import-collector.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 interface CssFsAdapterLike {
   readFile(path: string): Promise<string>;
@@ -59,9 +60,11 @@ export async function mergeImportedCSS({
   const regularCssSegments: string[] = [];
   const moduleCssSegments: string[] = [];
 
-  // First-occurrence discovery order is the authored cascade order; sorting
-  // by dedup key here would silently reorder concatenated stylesheets.
-  for (const { cssPath, normalizedCssPath, read } of uniqueImports.values()) {
+  const orderedImports = [...uniqueImports.values()].toSorted((left, right) =>
+    compareStrings(left.normalizedCssPath, right.normalizedCssPath) ||
+    compareStrings(left.cssPath, right.cssPath)
+  );
+  for (const { cssPath, normalizedCssPath, read } of orderedImports) {
     if (normalizedCssPath === configuredStylesheetAbsolute) {
       continue;
     }

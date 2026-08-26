@@ -161,7 +161,11 @@ describe("SSRDependencyValidator", () => {
       await writeTextFile(dependencyPath, 'export const child = "from-disk";');
 
       const importPaths = await validator.processLocalImports(
-        [{ absolutePath: dependencyPath, specifier: "./child.tsx" }],
+        [{
+          absolutePath: dependencyPath,
+          specifier: "./child.tsx",
+          rewriteSpecifier: `file://${dependencyPath}`,
+        }],
         join(projectDir, "page.tsx"),
         0,
         createFileSystem(),
@@ -183,6 +187,7 @@ describe("SSRDependencyValidator", () => {
         "/tmp/child.js",
         "the transformed dependency output must be mapped for the specifier",
       );
+      assertEquals(importPaths.get(`file://${dependencyPath}`), "/tmp/child.js");
       assertEquals(
         validator.missingDependencies,
         [],

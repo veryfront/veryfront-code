@@ -1613,7 +1613,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
     });
 
-    it("preserves discovery order while deduplicating repeated imports", async () => {
+    it("sorts concurrently discovered imports while deduplicating repeats", async () => {
       const readPaths: string[] = [];
       const merged = await mergeImportedCSS({
         fs: {
@@ -1633,13 +1633,13 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(
         readPaths,
-        ["/project/z.css", "/project/a.css"],
-        "each import is read once, in first-occurrence order",
+        ["/project/a.css", "/project/z.css"],
+        "each import is read once in deterministic path order",
       );
       assertEquals(
         merged,
-        ".z { color: red; }\n.a { color: blue; }",
-        "concatenation must keep the authored cascade order, not a sorted order",
+        ".a { color: blue; }\n.z { color: red; }",
+        "concurrent discovery timing must not change the cascade",
       );
     });
 

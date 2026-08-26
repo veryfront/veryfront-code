@@ -332,6 +332,11 @@ describe("transforms/esm/import-parser", () => {
         );
         assertEquals(imp.projectContained, true);
       }
+      assertEquals(
+        result.imports.some((imp) => imp.rewriteSpecifier?.startsWith("file://")),
+        true,
+        "the compiled file URL must remain available for the final import rewrite",
+      );
     } finally {
       stub.restore();
       await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
