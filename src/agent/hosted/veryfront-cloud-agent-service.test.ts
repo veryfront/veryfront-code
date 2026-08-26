@@ -628,6 +628,20 @@ Deno.test("hosted child project agents keep load_skill for an unrestricted tool 
   );
 });
 
+Deno.test("hosted child project agents fail closed for tools true with denials", () => {
+  const toolNames = veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+    id: "extraction-agent",
+    name: "Extraction agent",
+    description: "Extract an application",
+    instructions: "Extract the application.",
+    skills: ["extract"],
+    tools: true,
+    deniedTools: ["load_skill"],
+  }, { allowedSkillIds: ["extraction-agent--extract"] });
+
+  assertEquals(toolNames, []);
+});
+
 Deno.test("hosted child project agents deny load_skill under an unrestricted tool selector", () => {
   const hostTools = veryfrontCloudAgentServiceInternals.buildHostedChildGlobalTools(
     {} as never,

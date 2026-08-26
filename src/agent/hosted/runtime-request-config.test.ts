@@ -195,6 +195,20 @@ Deno.test("resolveHostedRuntimeRequestConfig carries explicit tool denials throu
   ]);
 });
 
+Deno.test("resolveHostedRuntimeRequestConfig fails closed for tools true with denials", () => {
+  const result = resolveHostedRuntimeRequestConfig({
+    request: { forwardedProps: {} },
+    agentConfig: createAgentConfig({
+      tools: true,
+      deniedTools: ["load_skill"],
+    }),
+    resolveModelId: (model) => model,
+  });
+
+  assertEquals(result.requestedAllowedTools, []);
+  assertEquals(result.deniedToolNames, ["load_skill"]);
+});
+
 Deno.test("resolveHostedRuntimeRequestConfig resolves no denials when none are configured", () => {
   const result = resolveHostedRuntimeRequestConfig({
     request: { forwardedProps: {} },

@@ -492,6 +492,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
     ? remoteToolNames
     : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
+  const compatibleProviderToolNames = toolLoadingMode === "deferred"
+    ? providerToolNames
+    : providerToolNames.filter((toolName) => compatibleToolNames.has(toolName));
   const bootstrapToolNames = availableToolNames.filter((toolName) => toolName === "load_skill");
   const hasDeferredTools = availableToolNames.length > bootstrapToolNames.length;
   const modelVisibleToolNames = toolLoadingMode === "deferred"
@@ -532,7 +535,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     remoteToolSources,
     localToolNames: compatibleLocalToolNames,
     remoteToolNames,
-    providerToolNames,
+    providerToolNames: compatibleProviderToolNames,
     availableToolNames,
     modelVisibleToolNames,
     toolLoadingMode,

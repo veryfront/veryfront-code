@@ -146,11 +146,13 @@ export function resolveHostedRuntimeThinkingOverride(input: {
 /** Resolve the explicit request tool selector or fall back to configured agent bindings. */
 export function resolveHostedRuntimeAllowedTools(input: {
   configuredTools: RuntimeAgentMarkdownDefinition["tools"];
+  configuredDeniedTools?: RuntimeAgentMarkdownDefinition["deniedTools"];
   configuredDelegates: RuntimeAgentMarkdownDefinition["delegates"];
   configuredSkills: RuntimeAgentMarkdownDefinition["skills"];
   requestedTools: string[] | undefined;
 }): string[] | undefined {
   if (input.configuredTools === true) {
+    if (input.configuredDeniedTools?.length) return [];
     return input.requestedTools === undefined ? undefined : [...new Set(input.requestedTools)];
   }
 
@@ -210,6 +212,7 @@ export function resolveHostedRuntimeRequestConfig(
     requestedMaxOutputTokens: effectiveRuntimeOverrides?.maxOutputTokens,
     requestedAllowedTools: resolveHostedRuntimeAllowedTools({
       configuredTools: input.agentConfig.tools,
+      configuredDeniedTools: input.agentConfig.deniedTools,
       configuredDelegates: input.agentConfig.delegates,
       configuredSkills: input.agentConfig.skills,
       requestedTools: effectiveRuntimeOverrides?.allowedTools,

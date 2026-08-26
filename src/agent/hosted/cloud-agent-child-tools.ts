@@ -249,6 +249,7 @@ export function resolveHostedChildToolNames(
   >,
 ): string[] | undefined {
   if (agentConfig.tools === true) {
+    if (agentConfig.deniedTools?.length) return [];
     return undefined;
   }
 
