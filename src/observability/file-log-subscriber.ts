@@ -537,6 +537,8 @@ export class FileLogSubscriber {
   }
 }
 
+Object.freeze(FileLogSubscriber.prototype);
+
 /** Create file log subscriber. */
 export function createFileLogSubscriber(config: FileLogConfig): FileLogSubscriber {
   return new FileLogSubscriber(config);

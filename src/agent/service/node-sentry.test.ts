@@ -1,6 +1,6 @@
 import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
+import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/logger.ts";
 import type {
   ApplicationErrorContext,
   ApplicationErrorReporter,
@@ -340,7 +340,7 @@ describe("agent/service/node-sentry", () => {
 
     try {
       assertEquals(lifecycle.enabled, true);
-      const { __registerLogRecordEmitter } = await import("#veryfront/utils/logger/index.ts");
+      const { __registerLogRecordEmitter } = await import("#veryfront/utils/logger/logger.ts");
       __registerLogRecordEmitter((entry) => {
         otelRecords.push(entry.message);
       });
@@ -378,7 +378,7 @@ describe("agent/service/node-sentry", () => {
     });
 
     try {
-      const { __registerLogRecordEmitter } = await import("#veryfront/utils/logger/index.ts");
+      const { __registerLogRecordEmitter } = await import("#veryfront/utils/logger/logger.ts");
       __registerLogRecordEmitter((entry) => {
         otelRecords.push(entry.message);
       });

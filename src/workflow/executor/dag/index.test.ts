@@ -33,7 +33,7 @@ import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
 import { loop, map, parallel, step, waitForApproval } from "../../dsl/index.ts";
 

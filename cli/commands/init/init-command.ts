@@ -234,7 +234,7 @@ export async function initCommand(
         log(`  Your project was created locally. ${manualDeployHint}`);
       }
     } else {
-      const { chdir } = await import("veryfront/platform");
+      const { chdir } = await import("#cli/process-lifecycle");
       const { ensureAuthenticated } = await import("../../auth/index.ts");
       const { deployCommand } = await import("../deploy/index.ts");
       const authResult = await ensureAuthenticated(undefined, createdProjectDir);

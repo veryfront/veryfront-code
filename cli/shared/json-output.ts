@@ -7,8 +7,8 @@
  * @module cli/shared/json-output
  */
 
-import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
-import { refreshLoggerConfig } from "veryfront/utils";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
+import { refreshLoggerConfig } from "#cli/logger-config";
 
 /** Whether the current command should output JSON */
 let _jsonMode = false;

@@ -200,13 +200,22 @@ function isLoopbackHost(hostname: string): boolean {
     hostname === "::1" || hostname === "[::1]";
 }
 
-function normalizeHttpUri(uri: string, label: string): string {
+type TrackingCredentialSource = "configuration" | "environment";
+
+function normalizeHttpUri(
+  uri: string,
+  label: string,
+  trackingCredentialSource: TrackingCredentialSource = "environment",
+): string {
   const trimmed = uri.trim().replace(/\/+$/, "");
   try {
     const url = new URL(trimmed);
     if (url.username || url.password) {
+      const guidance = trackingCredentialSource === "configuration"
+        ? "Use trackingToken, or trackingUsername and trackingPassword, in the same extension configuration instead."
+        : "Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.";
       throw new Error(
-        `MLflow ${label} must not include credentials. Use MLFLOW_TRACKING_TOKEN or MLFLOW_TRACKING_USERNAME/MLFLOW_TRACKING_PASSWORD instead.`,
+        `MLflow ${label} must not include credentials. ${guidance}`,
       );
     }
     if (url.protocol === "https:") return trimmed;
@@ -470,24 +479,53 @@ function readBooleanEnv(name: string): boolean | undefined {
   throw new Error(`MLflow ${name} must be true or false.`);
 }
 
+type OAuthCredentialSource = "config" | "environment";
+
+function hasOAuthClientCredentials(
+  config: Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthTokenUrl"
+  >,
+): boolean {
+  return [
+    config.oauthTokenUrl,
+    config.oauthClientId,
+    config.oauthClientSecret,
+  ].some((value) => value !== undefined && value.length > 0);
+}
+
+function validateOAuthClientCredentials<
+  T extends Pick<
+    EvalReportMlflowExtensionConfig,
+    "oauthClientId" | "oauthClientSecret" | "oauthTokenUrl"
+  >,
+>(
+  config: T,
+  source: OAuthCredentialSource,
+): config is T & {
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthTokenUrl: string;
+} {
+  if (!hasOAuthClientCredentials(config)) return false;
+
+  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
+    throw new Error(
+      source === "config"
+        ? "MLflow OAuth config requires oauthTokenUrl, oauthClientId, and oauthClientSecret together."
+        : "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
+    );
+  }
+  return true;
+}
+
 function resolveOAuthClientCredentials(
   config: Pick<
     EvalReportMlflowExtensionConfig,
     "oauthClientId" | "oauthClientSecret" | "oauthScope" | "oauthTokenUrl"
   >,
 ): MlflowOAuthClientCredentialsConfig | undefined {
-  const configured = [
-    config.oauthTokenUrl,
-    config.oauthClientId,
-    config.oauthClientSecret,
-  ].some((value) => value !== undefined && value.length > 0);
-  if (!configured) return undefined;
-
-  if (!config.oauthTokenUrl || !config.oauthClientId || !config.oauthClientSecret) {
-    throw new Error(
-      "MLflow OAuth requires MLFLOW_OAUTH_TOKEN_URL, MLFLOW_OAUTH_CLIENT_ID, and MLFLOW_OAUTH_CLIENT_SECRET together.",
-    );
-  }
+  if (!validateOAuthClientCredentials(config, "config")) return undefined;
 
   return {
     tokenUrl: normalizeHttpUri(config.oauthTokenUrl, "OAuth token URL"),
@@ -522,23 +560,55 @@ async function createOAuthTrackingAuthHeaders(
   return { authorization: `Bearer ${payload.access_token}` };
 }
 
+function validateConfiguredTransport(config: EvalReportMlflowExtensionConfig): void {
+  if (config.fetch !== undefined && config.trackingUri === undefined) {
+    throw new Error("MLflow fetch requires trackingUri in the same extension config.");
+  }
+}
+
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
+  validateConfiguredTransport(config);
+
+  const configuredOAuthTokenUrl = config.oauthTokenUrl || undefined;
+  const hasConfiguredOAuthCredentials = hasOAuthClientCredentials(config);
+  // Environment credentials may only use the environment-selected transport.
+  // Config-controlled endpoints and fetch implementations must provide their
+  // own credentials so host secrets never cross that trust boundary.
+  const allowEnvironmentCredentials = config.trackingUri === undefined &&
+    config.fetch === undefined && !hasConfiguredOAuthCredentials;
+  // Ambient artifact endpoints, UI settings, and experiment/run naming
+  // describe the environment-selected tracking deployment. A configured
+  // trackingUri targets a different deployment, so supply those settings in
+  // the same configuration.
+  const allowEnvironmentDeploymentEndpoints = config.trackingUri === undefined &&
+    config.fetch === undefined;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
-    artifactsPort: config.artifactsPort ?? readEnv(ENV_ARTIFACTS_PORT),
-    artifactsUri: config.artifactsUri ?? readEnv(ENV_ARTIFACTS_URI),
-    experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
-    runName: config.runName ?? readEnv(ENV_RUN_NAME),
-    trackingToken: config.trackingToken ?? readEnv(ENV_TRACKING_TOKEN),
-    trackingUsername: config.trackingUsername ?? readEnv(ENV_TRACKING_USERNAME),
-    trackingPassword: config.trackingPassword ?? readEnv(ENV_TRACKING_PASSWORD),
-    oauthTokenUrl: config.oauthTokenUrl ?? readEnv(ENV_OAUTH_TOKEN_URL),
-    oauthClientId: config.oauthClientId ?? readEnv(ENV_OAUTH_CLIENT_ID),
-    oauthClientSecret: config.oauthClientSecret ?? readEnv(ENV_OAUTH_CLIENT_SECRET),
-    oauthScope: config.oauthScope ?? readEnv(ENV_OAUTH_SCOPE),
+    artifactsPort: config.artifactsPort ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_PORT) : undefined),
+    artifactsUri: config.artifactsUri ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_URI) : undefined),
+    experimentName: config.experimentName ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_EXPERIMENT_NAME) : undefined),
+    runName: config.runName ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_RUN_NAME) : undefined),
+    trackingToken: config.trackingToken ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_TOKEN) : undefined),
+    trackingUsername: config.trackingUsername ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_USERNAME) : undefined),
+    trackingPassword: config.trackingPassword ??
+      (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_PASSWORD) : undefined),
+    oauthTokenUrl: configuredOAuthTokenUrl ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_TOKEN_URL) : undefined),
+    oauthClientId: config.oauthClientId ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_CLIENT_ID) : undefined),
+    oauthClientSecret: config.oauthClientSecret ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_CLIENT_SECRET) : undefined),
+    oauthScope: config.oauthScope ??
+      (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_SCOPE) : undefined),
     exportArtifacts: config.exportArtifacts ?? readBooleanEnv(ENV_EXPORT_ARTIFACTS),
     requestTimeoutMs: config.requestTimeoutMs ?? readIntegerEnv(
       ENV_REQUEST_TIMEOUT_MS,
@@ -555,9 +625,16 @@ function resolveExporterConfig(
       0,
       MAX_RETRY_DELAY_MS,
     ),
-    runUrlTemplate: config.runUrlTemplate ?? readEnv(ENV_RUN_URL_TEMPLATE),
+    runUrlTemplate: config.runUrlTemplate ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_RUN_URL_TEMPLATE) : undefined),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   };
+}
+
+function hasTrackingUri(
+  config: EvalReportMlflowExtensionConfig & { id: string },
+): config is EvalReportMlflowExtensionConfig & { id: string; trackingUri: string } {
+  return config.trackingUri !== undefined;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -1622,9 +1699,14 @@ export class EvalReportMlflowExporter implements EvalReportExporter {
       trackingUri: string;
     },
     fetchImpl: EvalReportMlflowFetch = fetch,
+    trackingCredentialSource: TrackingCredentialSource = "configuration",
   ) {
     this.id = config.id;
-    const trackingUri = normalizeHttpUri(config.trackingUri, "trackingUri");
+    const trackingUri = normalizeHttpUri(
+      config.trackingUri,
+      "trackingUri",
+      trackingCredentialSource,
+    );
     const artifactsUri = resolveArtifactsUri(config, trackingUri);
     const oauth = resolveOAuthClientCredentials(config);
     const request = resolveMlflowRequestOptions(config);
@@ -1772,7 +1854,13 @@ export function createEvalReportMlflowExporter(
 }
 
 const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
-  const factoryConfig = resolveExporterConfig(normalizeConfig(config));
+  const normalizedFactoryConfig = normalizeConfig(config);
+  validateConfiguredTransport(normalizedFactoryConfig);
+  const oauthCredentialSource: OAuthCredentialSource = hasOAuthClientCredentials(
+      normalizedFactoryConfig,
+    )
+    ? "config"
+    : "environment";
   let registry: EvalReportExporterRegistry | undefined;
   let registeredId: string | undefined;
 
@@ -1811,26 +1899,26 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,
       );
-      const activationTrackingUri = readEnv(ENV_TRACKING_URI);
-      if (!activationTrackingUri) {
+      const setupConfig = resolveExporterConfig(normalizedFactoryConfig);
+      if (!hasTrackingUri(setupConfig)) {
         ctx.logger.debug(
-          `[ext-eval-report-mlflow] Skipping EvalReportExporter "${factoryConfig.id}": no MLFLOW_TRACKING_URI configured`,
+          `[ext-eval-report-mlflow] Skipping EvalReportExporter "${setupConfig.id}": no MLFLOW_TRACKING_URI configured`,
         );
         return;
       }
 
+      validateOAuthClientCredentials(setupConfig, oauthCredentialSource);
+
       registry.register(
         new EvalReportMlflowExporter(
-          {
-            ...factoryConfig,
-            trackingUri: factoryConfig.trackingUri ?? activationTrackingUri,
-          },
-          factoryConfig.fetch,
+          setupConfig,
+          setupConfig.fetch,
+          normalizedFactoryConfig.trackingUri === undefined ? "environment" : "configuration",
         ),
       );
-      registeredId = factoryConfig.id;
+      registeredId = setupConfig.id;
       ctx.logger.debug(
-        `[ext-eval-report-mlflow] EvalReportExporter "${factoryConfig.id}" registered`,
+        `[ext-eval-report-mlflow] EvalReportExporter "${setupConfig.id}" registered`,
       );
     },
     teardown() {

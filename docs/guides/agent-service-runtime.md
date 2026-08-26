@@ -33,19 +33,16 @@ service runtime:
 
 ```ts
 // service.ts
-import {
-  loadAgentServiceEnvFiles,
-  startNodeVeryfrontCloudAgentService,
-} from "veryfront/agent";
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
-await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService();
 ```
 
 `startNodeVeryfrontCloudAgentService()` starts the runtime from the environment
 that is already loaded. It does not load local `.env` files or initialize
-process-wide telemetry. Call `loadAgentServiceEnvFiles()` first when the
-standalone process uses Veryfront's `.env` conventions, as shown above.
+process-wide telemetry. Load standalone service environment files through the
+trusted deployment wrapper before it imports `service.ts`. Project modules
+cannot mutate the shared process environment through the public agent API.
 
 Initialize service-level OpenTelemetry in the trusted deployment wrapper before
 it loads `service.ts`. Do not let project code select process-wide exporters,
@@ -131,12 +128,7 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import {
-  loadAgentServiceEnvFiles,
-  startNodeVeryfrontCloudAgentService,
-} from "veryfront/agent";
-
-await loadAgentServiceEnvFiles();
+import { startNodeVeryfrontCloudAgentService } from "veryfront/agent";
 
 const environmentName = process.env.DEPLOYED_ENVIRONMENT_NAME;
 const releaseId = process.env.DEPLOYED_RELEASE_ID;
@@ -176,13 +168,11 @@ This service startup config uses `endpoint` and `headers`. Per-agent config in
 
 ```ts
 import {
-  loadAgentServiceEnvFiles,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "veryfront/agent";
 
-await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService({
   serviceName: "support-agent",
   mcpServers: [
@@ -219,14 +209,11 @@ immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
 import {
-  loadAgentServiceEnvFiles,
   startNodeVeryfrontCloudAgentService,
   veryfrontApiMcpServer,
   veryfrontStudioMcpServer,
 } from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
-
-await loadAgentServiceEnvFiles();
 
 function requiredUrl(name: string): string {
   const value = process.env[name];
@@ -292,7 +279,6 @@ custom execution preparation, or custom infrastructure.
 
 | Helper                                             | Use                                                                                  |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `loadAgentServiceEnvFiles()`                       | Load standalone service `.env` files before resolving startup options.               |
 | `defineAgentService()`                             | Normalize one or more agents into a service registry contract.                       |
 | `startNodeAgentService()`                          | Start a Node service around a request-native runtime.                                |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |

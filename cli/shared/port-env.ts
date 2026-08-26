@@ -1,4 +1,4 @@
-import type { HostRuntime } from "veryfront/platform";
+import type { HostRuntime } from "#cli/host-runtime";
 import { logWarning } from "#cli/utils";
 
 const DECIMAL_PORT_PATTERN = /^\d+$/;

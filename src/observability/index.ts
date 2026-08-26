@@ -19,12 +19,10 @@ export {
   endSpan,
   extractContext,
   getActiveContext,
-  initTracing,
   injectContext,
   isTracingDegraded,
   isTracingEnabled,
   setSpanAttributes,
-  shutdownTracing,
   SpanNames,
   type SpanOptions,
   startSpan,
@@ -35,8 +33,6 @@ export {
 } from "./tracing/index.ts";
 
 export {
-  getMetricsState,
-  initMetrics,
   isMetricsEnabled,
   type MetricsConfig,
   recordBuild,
@@ -58,12 +54,10 @@ export {
   recordRSCStream,
   recordSecurityHeaders,
   setCacheSize,
-  shutdownMetrics,
 } from "./metrics/index.ts";
 
 export {
   type AutoInstrumentConfig,
-  initAutoInstrumentation,
   instrument,
   instrumentBatch,
   instrumentErrorHandler,
@@ -76,15 +70,14 @@ export {
 
 export {
   getTraceContext,
-  initializeOTLP,
   isOTLPEnabled,
   type OTLPConfig,
   setActiveSpanAttributes,
-  shutdownOTLP,
 } from "./tracing/otlp-setup.ts";
 
-// OpenTelemetry API shim (spans, metrics, context primitives)
-export { getGlobalMetricsAPI, SpanKind, SpanStatusCode, trace } from "./tracing/api-shim.ts";
+// OpenTelemetry API shim (spans, metrics, context primitives). `trace` is the
+// read-only facade: the process-wide tracer-provider setter stays internal.
+export { publicTrace as trace, SpanKind, SpanStatusCode } from "./tracing/api-shim.ts";
 export type {
   AttributeValue,
   Context,
@@ -99,17 +92,32 @@ export type {
 export { isReservedSharedRuntimeTelemetryEnvKey } from "./tracing/telemetry-env.ts";
 
 // Per-request profiling
-export {
-  markRequestProfilePhase,
-  profilePhase,
-  profileSyncPhase,
-  snapshotRequestProfiles,
-} from "./request-profiler.ts";
+export { markRequestProfilePhase, profilePhase, profileSyncPhase } from "./request-profiler.ts";
 export type { RequestProfileRecord } from "./request-profiler.ts";
 
 // Simple in-process metrics
+import { metrics as internalMetrics } from "./simple-metrics/index.ts";
+export const metrics = Object.freeze({
+  incRequest: internalMetrics.incRequest,
+  recordHttp: internalMetrics.recordHttp,
+  recordCacheGet: internalMetrics.recordCacheGet,
+  recordCacheSet: internalMetrics.recordCacheSet,
+  recordCacheInvalidate: internalMetrics.recordCacheInvalidate,
+  recordSSR: internalMetrics.recordSSR,
+  recordRSCStreamDuration: internalMetrics.recordRSCStreamDuration,
+  recordRSC: internalMetrics.recordRSC,
+  recordCorsRejection: internalMetrics.recordCorsRejection,
+  recordSecurityHeaders: internalMetrics.recordSecurityHeaders,
+  recordApiRequest: internalMetrics.recordApiRequest,
+  recordApiRetry: internalMetrics.recordApiRetry,
+  recordContentCacheHit: internalMetrics.recordContentCacheHit,
+  recordContentNetworkFetch: internalMetrics.recordContentNetworkFetch,
+  recordModuleServe: internalMetrics.recordModuleServe,
+  recordModuleTransform: internalMetrics.recordModuleTransform,
+  recordRouteManifestLookup: internalMetrics.recordRouteManifestLookup,
+  recordSSRSourceUnavailable: internalMetrics.recordSSRSourceUnavailable,
+});
 export {
-  metrics,
   recordApiRequest,
   recordApiRetry,
   recordContentCacheHit,
@@ -141,20 +149,15 @@ export {
   type ErrorFilter,
   type ErrorSubscriber,
   type ErrorType,
-  getErrorCollector,
   parseCompileError,
-  resetErrorCollector,
 } from "./error-collector.ts";
 
 export {
-  getLogBuffer,
-  interceptConsole,
   LogBuffer,
   type LogEntry,
   type LogFilter as LogBufferFilter,
   type LogLevel,
   type LogSubscriber,
-  resetLogBuffer,
 } from "./log-buffer.ts";
 
 export {

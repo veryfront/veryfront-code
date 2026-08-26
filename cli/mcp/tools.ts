@@ -7,11 +7,11 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import {
   type DevError,
   type ErrorType,
-  getErrorCollector,
-  getLogBuffer,
   type LogEntry,
   type LogLevel,
 } from "veryfront/observability";
+import { getErrorCollector } from "#cli/observability/error-collector";
+import { getLogBuffer } from "#cli/observability/log-buffer";
 import { createFileSystem } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import type { MCPTool } from "veryfront/mcp";

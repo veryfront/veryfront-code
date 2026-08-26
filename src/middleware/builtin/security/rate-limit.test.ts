@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { MS_PER_MINUTE } from "#veryfront/utils/constants/http.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 import { MAX_RATE_LIMIT_KEY_LENGTH } from "./rate-limit-validation.ts";

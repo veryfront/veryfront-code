@@ -16,9 +16,10 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
   refreshLoggerConfig,
-} from "#veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
+import { getGetAdapterParamsSchema } from "#veryfront/platform/adapters/fs/veryfront/schemas/index.ts";
 
 const baseConfig = {
   veryfront: {
@@ -69,6 +70,82 @@ async function assertGetAdapterRejects(
 }
 
 describe("ProxyFSAdapterManager", () => {
+  it("keeps credential-bearing adapter collections outside the public object graph", () => {
+    const manager = createManager();
+    try {
+      const ownProperties = Object.getOwnPropertyNames(manager);
+      assertEquals(ownProperties.includes("adapters"), false);
+      assertEquals(ownProperties.includes("pendingAdapters"), false);
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it("uses the validation method captured before project code can replace it", async () => {
+    const manager = createManager({
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        return adapter;
+      },
+    });
+    const schema = getGetAdapterParamsSchema();
+    const originalSafeParse = schema.safeParse;
+    let poisonedCalls = 0;
+    schema.safeParse = ((...args: Parameters<typeof originalSafeParse>) => {
+      poisonedCalls += 1;
+      return originalSafeParse.apply(schema, args);
+    }) as typeof schema.safeParse;
+    try {
+      await manager.getAdapter("my-project", "request-token", undefined, false);
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      schema.safeParse = originalSafeParse;
+      manager.dispose();
+    }
+  });
+
+  it("canonicalizes hosted project IDs without a mutable trim hook", async () => {
+    const manager = createManager({
+      baseConfig: {
+        veryfront: {
+          ...baseConfig.veryfront,
+          proxyMode: true,
+        },
+      },
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        return adapter;
+      },
+    });
+    await manager.getAdapter(
+      "my-project",
+      "signed-user-token",
+      "canonical-project-id",
+      false,
+    );
+    const originalTrim = String.prototype.trim;
+    let poisonedCalls = 0;
+    String.prototype.trim = function () {
+      poisonedCalls += 1;
+      throw new Error("project trim hook must not run");
+    };
+
+    try {
+      await manager.getAdapter(
+        "my-project",
+        "signed-user-token",
+        "canonical-project-id",
+        false,
+      );
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      String.prototype.trim = originalTrim;
+      manager.dispose();
+    }
+  });
+
   describe("exact preview source", () => {
     it("propagates a missing push branch without loading main", async () => {
       const branch = "push-20260324t121046";
@@ -839,6 +916,58 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("does not treat a pending-adapter follower as initialized by its own request", async () => {
+      const initializationStarted = Promise.withResolvers<void>();
+      const releaseInitialization = Promise.withResolvers<void>();
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => {
+            initializationStarted.resolve();
+            await releaseInitialization.promise;
+          };
+          return adapter;
+        },
+      });
+      let leaderInitialized: boolean | undefined;
+      let followerInitialized: boolean | undefined;
+      try {
+        const leader = manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => {
+            leaderInitialized = initialized;
+          },
+        );
+        await initializationStarted.promise;
+        const follower = manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => {
+            followerInitialized = initialized;
+          },
+        );
+        releaseInitialization.resolve();
+        await Promise.all([leader, follower]);
+
+        assertEquals(leaderInitialized, true);
+        assertEquals(followerInitialized, false);
+      } finally {
+        releaseInitialization.resolve();
+        manager.dispose();
+      }
+    });
+
     it("should remove all adapters on dispose", async () => {
       const disposedSlugs: string[] = [];
       const manager = createManager({
@@ -965,6 +1094,297 @@ describe("ProxyFSAdapterManager", () => {
       } finally {
         manager.dispose();
       }
+    });
+
+    it("partitions credential principals after Array.from is replaced", async () => {
+      const originalArrayFrom = Array.from;
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+
+      try {
+        Array.from = ((source: unknown, ...args: unknown[]) => {
+          if (source instanceof Uint8Array) return [];
+          return Reflect.apply(originalArrayFrom, Array, [source, ...args]);
+        }) as typeof Array.from;
+
+        const first = await manager.getAdapter(
+          "tenant",
+          "credential-one",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const second = await manager.getAdapter(
+          "tenant",
+          "credential-two",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertNotStrictEquals(first, second);
+      } finally {
+        Array.from = originalArrayFrom;
+        manager.dispose();
+      }
+    });
+
+    it("does not dispatch adapter creation through a mutable prototype property", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      const prototype = ProxyFSAdapterManager.prototype as unknown as Record<
+        string,
+        unknown
+      >;
+      const originalCreateAdapter = Object.getOwnPropertyDescriptor(
+        prototype,
+        "createAdapter",
+      );
+      let interceptedToken: string | undefined;
+      Object.defineProperty(prototype, "createAdapter", {
+        configurable: true,
+        value: (...args: unknown[]) => {
+          interceptedToken = args[3] as string | undefined;
+          throw new Error("mutable createAdapter dispatch was invoked");
+        },
+      });
+
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertExists(adapter);
+        assertEquals(interceptedToken, undefined);
+      } finally {
+        if (originalCreateAdapter) {
+          Object.defineProperty(prototype, "createAdapter", originalCreateAdapter);
+        } else {
+          Reflect.deleteProperty(prototype, "createAdapter");
+        }
+        manager.dispose();
+      }
+    });
+
+    it("keeps cached invariant checks outside mutable prototype dispatch", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          (adapter as unknown as { initialized: boolean }).initialized = true;
+          return adapter;
+        },
+      });
+      const prototype = ProxyFSAdapterManager.prototype as unknown as Record<string, unknown>;
+      const keys = [
+        "assertContextMatches",
+        "getIdentityMismatchReason",
+        "getContextMismatchReason",
+      ];
+      const descriptors = new Map(
+        keys.map((key) => [key, Object.getOwnPropertyDescriptor(prototype, key)]),
+      );
+      let interceptedToken: string | undefined;
+      for (const key of keys) {
+        Object.defineProperty(prototype, key, {
+          configurable: true,
+          value: (...args: unknown[]) => {
+            const cached = args.find((arg) =>
+              typeof arg === "object" && arg !== null && "adapter" in arg
+            ) as { adapter?: { apiToken?: string } } | undefined;
+            interceptedToken = cached?.adapter?.apiToken;
+            throw new Error(`mutable ${key} dispatch was invoked`);
+          },
+        });
+      }
+
+      try {
+        const first = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const second = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertStrictEquals(second, first);
+        assertEquals(interceptedToken, undefined);
+      } finally {
+        for (const [key, descriptor] of descriptors) {
+          if (descriptor === undefined) Reflect.deleteProperty(prototype, key);
+          else Object.defineProperty(prototype, key, descriptor);
+        }
+        manager.dispose();
+      }
+    });
+
+    it("uses captured concrete setup methods after project prototype mutation", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          (adapter as unknown as { initialized: boolean }).initialized = true;
+          return adapter;
+        },
+      });
+      const originalSetContentContext = Object.getOwnPropertyDescriptor(
+        VeryfrontFSAdapter.prototype,
+        "setContentContext",
+      )!;
+      const originalInitialize = Object.getOwnPropertyDescriptor(
+        VeryfrontFSAdapter.prototype,
+        "initialize",
+      )!;
+      const observedTokens: string[] = [];
+      const observeToken = function (this: { apiToken?: string }) {
+        if (this.apiToken) observedTokens.push(this.apiToken);
+      };
+      Object.defineProperty(VeryfrontFSAdapter.prototype, "setContentContext", {
+        configurable: true,
+        value: function (this: { apiToken?: string }) {
+          observeToken.call(this);
+        },
+      });
+      Object.defineProperty(VeryfrontFSAdapter.prototype, "initialize", {
+        configurable: true,
+        value: function (this: { apiToken?: string }) {
+          observeToken.call(this);
+          return Promise.resolve();
+        },
+      });
+
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertExists(adapter);
+        assertEquals(observedTokens, []);
+      } finally {
+        Object.defineProperty(
+          VeryfrontFSAdapter.prototype,
+          "setContentContext",
+          originalSetContentContext,
+        );
+        Object.defineProperty(
+          VeryfrontFSAdapter.prototype,
+          "initialize",
+          originalInitialize,
+        );
+        manager.dispose();
+      }
+    });
+
+    it("preserves effective lifecycle overrides from adapter subclasses", async () => {
+      const calls = {
+        dispose: 0,
+        getCacheStats: 0,
+        getContentContext: 0,
+        initialize: 0,
+        setContentContext: 0,
+      };
+      class CustomAdapter extends VeryfrontFSAdapter {
+        override dispose(): void {
+          calls.dispose += 1;
+          super.dispose();
+        }
+
+        override getCacheStats(): ReturnType<VeryfrontFSAdapter["getCacheStats"]> {
+          calls.getCacheStats += 1;
+          return super.getCacheStats();
+        }
+
+        override getContentContext(): ReturnType<VeryfrontFSAdapter["getContentContext"]> {
+          calls.getContentContext += 1;
+          return super.getContentContext();
+        }
+
+        override initialize(): Promise<void> {
+          calls.initialize += 1;
+          return Promise.resolve();
+        }
+
+        override setContentContext(
+          context: Parameters<VeryfrontFSAdapter["setContentContext"]>[0],
+        ): void {
+          calls.setContentContext += 1;
+          super.setContentContext(context);
+        }
+      }
+
+      const manager = createManager({
+        adapterFactory: (config) => new CustomAdapter(config),
+      });
+      try {
+        await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        await manager.getAdapter(
+          "tenant",
+          "signed-user-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        manager.getStats();
+      } finally {
+        manager.dispose();
+      }
+
+      assertEquals(calls, {
+        dispose: 1,
+        getCacheStats: 1,
+        getContentContext: 1,
+        initialize: 1,
+        setContentContext: 1,
+      });
     });
 
     it("does not expose credential principals in logs or cache invariant errors", async () => {
@@ -1112,14 +1532,10 @@ describe("ProxyFSAdapterManager", () => {
 
     it("evicts the least recently used adapter, not the most recent", async () => {
       const disposedSlugs: string[] = [];
-      // ProxyFSAdapterManager stamps lastAccessed with Date.now(), so a pinned
-      // clock is what makes the three admissions strictly ordered instead of
-      // sharing a millisecond.
-      const originalNow = Date.now;
       let clock = 1_000_000;
-      Date.now = (): number => clock;
       const manager = createManager({
         maxAdapters: 2,
+        now: () => clock,
         adapterFactory: createRecordingAdapterFactory(disposedSlugs),
       });
 
@@ -1149,7 +1565,6 @@ describe("ProxyFSAdapterManager", () => {
           "eviction must dispose only the least recently used adapter",
         );
       } finally {
-        Date.now = originalNow;
         manager.dispose();
       }
     });

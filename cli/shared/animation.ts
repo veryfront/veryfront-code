@@ -7,7 +7,7 @@
  * @module cli/shared/animation
  */
 
-import { type HostRuntime, liveHostRuntime } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 
 let _animationDisabled = false;
 

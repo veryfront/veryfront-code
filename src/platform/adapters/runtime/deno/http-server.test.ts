@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createDenoServer,
@@ -243,6 +248,176 @@ describe("Deno HTTP server lifecycle", () => {
       "cancelled",
     );
     assertEquals(fake.getServeCalls(), 0);
+  });
+
+  it("names the address when the port is already bound", async () => {
+    // Deno.serve() throws synchronously when the address is taken. The raw
+    // `AddrInUse: Address already in use (os error 98)` reached Sentry with no
+    // hostname or port in it (veryfront-issue-inbox#806).
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    // The address is the whole point of the fix, so it is asserted directly
+    // rather than through the absence of the raw OS string.
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 4321 },
+        ),
+      Error,
+      "127.0.0.1:4321",
+    ) as Error & { slug?: string; cause?: unknown };
+
+    assertEquals(error.slug, "initialization-error");
+    // The original is preserved rather than swallowed: an operator still needs
+    // the OS-level signature to correlate with the platform's own logs.
+    assertStrictEquals(error.cause, addrInUse);
+    // The canonical phrase is a contract, not decoration. `isPortInUseError` in
+    // cli/commands/dev/port-fallback.ts classifies a taken port by matching it,
+    // and server-start-failure.integration.test.ts asserts the surfaced message
+    // still says the port is in use. Dropping it disabled the dev server's port
+    // fallback silently -- nothing threw, the retry just stopped happening.
+    // Asserted here rather than by importing the CLI, which this layer must not
+    // depend on.
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
+  });
+
+  it("reports the port alone when the bind host could be private", async () => {
+    // A deployment can bind through an internal DNS name, and AGENTS.md:124
+    // lists private hostnames among the values that must never reach an error
+    // message -- this one is logged and reaches Sentry. The port is the
+    // actionable half and is still named.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "registry.internal", port: 4321 },
+        ),
+      Error,
+      "4321",
+    ) as Error;
+
+    assertEquals(error.message.includes("registry.internal"), false);
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
+  });
+
+  it("leaves an address-unavailable failure classified as itself", async () => {
+    // `isAddressFamilyUnavailableError` in cli/commands/dev/port-fallback.ts
+    // tells "this host has no address in that family" apart from "that port is
+    // taken", because probing a family a host does not have must not make every
+    // port look busy -- an IPv4-only container would never find a free port to
+    // fall back to. An earlier revision relabelled AddrNotAvailable as in-use,
+    // which inverted that classification exactly.
+    const notAvailable = new Error("Cannot assign requested address (os error 99)");
+    notAvailable.name = "AddrNotAvailable";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw notAvailable;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "0.0.0.0", port: 4321 },
+        ),
+      Error,
+      "Cannot assign requested address",
+    ) as Error;
+
+    assertStrictEquals(error, notAvailable);
+    assertEquals(error.message.toLowerCase().includes("already in use"), false);
+  });
+
+  it("treats a DNS name that merely starts with 127. as private", async () => {
+    // `127.api.prod.internal` is a hostname, not a loopback literal. A `127.`
+    // prefix check exposed it -- the same leak the redaction exists to prevent,
+    // reintroduced by the shape of the allowlist.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "127.api.prod.internal", port: 4321 },
+        ),
+      Error,
+      "4321",
+    ) as Error;
+
+    assertEquals(error.message.includes("127.api.prod.internal"), false);
+    assertEquals(error.message.includes("prod.internal"), false);
+  });
+
+  it("brackets an IPv6 bind host so the port stays readable", async () => {
+    // `::1` and `4321` joined by a colon reads as another segment of the
+    // address rather than as a port.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "::1", port: 4321 },
+        ),
+      Error,
+      "[::1]:4321",
+    ) as Error;
+
+    assertStringIncludes(error.message.toLowerCase(), "address already in use");
+  });
+
+  it("rethrows a non-bind serve failure untouched", async () => {
+    // The counterpart that keeps the catch honest. Relabelling every serve
+    // failure as an address collision would report an unrelated startup fault
+    // as the wrong thing, which is worse than the raw error it replaces.
+    const unrelated = new Error("permission denied reading TLS key");
+    unrelated.name = "PermissionDenied";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw unrelated;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 4321 },
+        ),
+      Error,
+      "permission denied reading TLS key",
+    ) as Error & { slug?: string };
+
+    assertStrictEquals(error, unrelated);
+    assertEquals(error.slug, undefined);
   });
 
   it("stops the listener when onListen throws", async () => {

@@ -2,7 +2,8 @@ import "../../_helpers/contract-init.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { __resetLoggerConfigForTests, LogLevel } from "#veryfront/utils/logger/index.ts";
+import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
+import { LogLevel } from "#veryfront/utils/logger/index.ts";
 import { delay } from "#std/async";
 
 function importFresh(): Promise<typeof import("#veryfront/utils/logger/index.ts")> {
@@ -38,6 +39,8 @@ function captureStrings(messages: string[]): (...args: unknown[]) => void {
 describe("Logger", () => {
   describe("Log Levels", () => {
     it("LogLevel enum has correct values", () => {
+      assertEquals(Object.isFrozen(LogLevel), true);
+      assertEquals(Reflect.set(LogLevel, "ERROR", 0), false);
       assertEquals(LogLevel.DEBUG, 0);
       assertEquals(LogLevel.INFO, 1);
       assertEquals(LogLevel.WARN, 2);

@@ -464,13 +464,9 @@ export {
   type AgentServiceEnvFileLoadResult,
   type HostedAgentServiceEnvFileLoadOptions,
   type HostedAgentServiceEnvFileLoadResult,
-  loadAgentServiceEnvFiles,
-  loadHostedAgentServiceEnvFiles,
 } from "./service/env-files.ts";
 export {
-  initializeNodeAgentServiceOpenTelemetry,
   type InitializeNodeAgentServiceTelemetryOptions,
-  initializeNodeHostedAgentServiceOpenTelemetry,
   type InitializeNodeHostedAgentServiceTelemetryOptions,
   type NodeAgentServiceInstrumentationConfig,
   type NodeAgentServiceTelemetryConfig,
@@ -498,21 +494,18 @@ export {
   type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
 } from "./service/node-runtime-infrastructure.ts";
-export {
-  type AgentServiceBootstrapExit,
-  type AgentServiceTraceContext,
-  type AgentServiceTraceContextGetter,
-  bootstrapAgentService,
-  type BootstrapAgentServiceOptions,
-  runAgentServiceMain,
-  type RunAgentServiceMainOptions,
+export type {
+  AgentServiceBootstrapExit,
+  AgentServiceTraceContext,
+  AgentServiceTraceContextGetter,
+  BootstrapAgentServiceOptions,
+  RunAgentServiceMainOptions,
 } from "./service/bootstrap.ts";
 export {
   type AbortRejectionEvent,
   type AbortRejectionEventTarget,
   type AbortRejectionGuardLogger,
   type AbortRejectionProcessTarget,
-  installAbortRejectionGuard,
   type InstallAbortRejectionGuardOptions,
   type InstalledAbortRejectionGuard,
   isAbortRejectionReason,

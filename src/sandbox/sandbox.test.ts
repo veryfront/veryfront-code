@@ -21,7 +21,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
-import { logger } from "#veryfront/utils";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 
 // Mock fetch for testing
 const originalFetch = globalThis.fetch;

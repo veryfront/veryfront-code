@@ -9,7 +9,7 @@ import {
   resolve,
 } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
-import { type RuntimeKind, runtimeKind } from "#veryfront/platform/compat/runtime.ts";
+import { type RuntimeKind, runtimeKind } from "#cli/platform-runtime";
 import { ensureDir, fileExists } from "../utils/fs.ts";
 import { toComponentName, toSlug } from "../utils/string.ts";
 import { filenameToId } from "veryfront/discovery";

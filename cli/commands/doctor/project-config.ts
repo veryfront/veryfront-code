@@ -10,7 +10,7 @@ import type { VeryfrontConfig } from "veryfront/config";
  */
 export async function loadConfigOrNull(projectDir: string): Promise<VeryfrontConfig | null> {
   try {
-    const { runtime } = await import("veryfront/platform");
+    const { runtime } = await import("#cli/runtime-adapter");
     const adapter = await runtime.get();
     return await getConfig(projectDir, adapter);
   } catch {

@@ -5,9 +5,9 @@ import {
   enhanceAdapterWithFS,
   getEnv,
   isExtendedFSAdapter,
-  runtime,
   type VeryfrontApiClient,
 } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
 import {
   buildPreparedCSSArtifactFromFiles,
   createStyleScopeProfile,

@@ -1,19 +1,20 @@
 import { logger as baseLogger, sanitizeUrlForSpan } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
-import type { CacheBackend } from "../types.ts";
-import { getEnvValue } from "./helpers.ts";
+import type { CacheBackend, CacheReadOptions } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
+import {
+  resolveCacheRequestAuthority,
+  type ResolvedCacheAuthority,
+} from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 import {
   assertCacheReadMaximumBytes,
   assertCacheValueWithinLimit,
@@ -36,48 +37,16 @@ const ERROR_BODY_MAX_LENGTH = 500;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
 
-type CacheRequestContext = {
-  token?: string;
-  projectId?: string;
-  projectSlug?: string;
-};
-
 type CacheRequestOptions = {
   failOnError?: boolean;
   boundedJsonString?: { fieldName: string; maximumBytes: number };
+  /**
+   * Reports the authority this request resolves at the moment it performs the
+   * read, so a caller holding results in front of the authority gate can bind
+   * what it holds to the credential and project that actually fetched them.
+   */
+  onAuthority?: (authority: ResolvedCacheAuthority) => void;
 };
-
-let warnedMissingAdapterContract = false;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function getCurrentRequestContext(): CacheRequestContext | null {
-  const adapter = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
-
-  // The adapter is installed dynamically, so validate its shape instead of an
-  // unchecked cast. If it exists but no longer exposes getCurrentRequestContext
-  // (e.g., renamed/moved), the API cache would otherwise silently fail to
-  // authenticate forever with only a debug log — so warn once, loudly.
-  if (
-    adapter !== undefined &&
-    !(isRecord(adapter) && typeof adapter.getCurrentRequestContext === "function")
-  ) {
-    if (!warnedMissingAdapterContract) {
-      warnedMissingAdapterContract = true;
-      logger.warn("Multi-project adapter present but missing getCurrentRequestContext()");
-    }
-    return null;
-  }
-
-  if (!isRecord(adapter) || typeof adapter.getCurrentRequestContext !== "function") {
-    return null;
-  }
-
-  const ctx = (adapter.getCurrentRequestContext as () => unknown)();
-  return isRecord(ctx) ? (ctx as CacheRequestContext) : null;
-}
 
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
@@ -128,6 +97,16 @@ export class ApiCacheBackend implements CacheBackend {
     });
   }
 
+  /**
+   * The authority every read through this backend is gated on. Exposed so the
+   * process-local file-cache tier scopes what it holds on this backend's own
+   * resolution, including a caller-selected endpoint credential, rather than
+   * re-deriving the ambient one and drifting from the gate it sits in front of.
+   */
+  cacheAuthority(): ResolvedCacheAuthority {
+    return resolveCacheRequestAuthority(this.explicitApiToken);
+  }
+
   private async prefixKey(key: string): Promise<string> {
     const prefixed = this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
     const sanitized = await sanitizeCacheKey(prefixed, this.keyPrefix);
@@ -168,35 +147,22 @@ export class ApiCacheBackend implements CacheBackend {
         ),
       };
     }
-    const reqCtx = getCurrentRequestContext();
-    const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
-    const envToken = getEnvValue("VERYFRONT_API_TOKEN");
-    const verifiedCredential = getVerifiedCacheApiCredential();
-    const verifiedRequestToken = verifiedCredential?.token;
     if (this.hasExplicitApiBaseUrl && !this.explicitApiToken) {
       logger.warn("Caller-selected cache API endpoint omitted its credential", {
         apiOrigin: this.apiOrigin,
       });
       return null;
     }
-    // The private verified-request context cannot be changed through the
-    // globally exposed filesystem request context.
-    const token = this.explicitApiToken ?? verifiedRequestToken ?? hostToken ?? reqCtx?.token ??
-      envToken ?? null;
-    const tokenSource = this.explicitApiToken
-      ? "explicit-endpoint"
-      : verifiedRequestToken
-      ? "verified-control-plane"
-      : hostToken
-      ? "host-env"
-      : reqCtx?.token
-      ? "request"
-      : envToken
-      ? "env"
-      : "none";
-    const projectRef = verifiedCredential?.projectId || verifiedCredential?.projectSlug ||
-      reqCtx?.projectId || reqCtx?.projectSlug ||
-      tryGetCacheKeyContext()?.projectId || null;
+    // Shared with the process-local file-cache tier, which must scope what it
+    // holds on exactly the authority this read would have been made under.
+    // Resolved here, when the request is performed, and reported to the caller
+    // before the gate below: a batched read that fails over to individual gets
+    // re-resolves the authority per attempt, and a caller admitting results
+    // into a local tier must learn about every authority that could have
+    // fetched them.
+    const authority = this.cacheAuthority();
+    options.onAuthority?.(authority);
+    const { token, projectRef, tokenSource } = authority;
 
     if (!token || !projectRef) {
       logger.debug("Missing auth or project context", {
@@ -329,11 +295,13 @@ export class ApiCacheBackend implements CacheBackend {
     }
   }
 
-  async get(key: string): Promise<string | null> {
+  async get(key: string, options?: CacheReadOptions): Promise<string | null> {
     const prefixedKey = await this.prefixKey(key);
     const result = await this.request<{ value: string | null }>(
       "GET",
       `/get?key=${encodeURIComponent(prefixedKey)}`,
+      undefined,
+      { onAuthority: options?.onAuthority },
     );
     return result?.value ?? null;
   }
@@ -355,7 +323,10 @@ export class ApiCacheBackend implements CacheBackend {
     return result;
   }
 
-  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+  async getBatch(
+    keys: string[],
+    options?: CacheReadOptions,
+  ): Promise<Map<string, string | null>> {
     if (keys.length === 0) return new Map<string, string | null>();
 
     const prefixedByKey = new Map(
@@ -365,13 +336,14 @@ export class ApiCacheBackend implements CacheBackend {
       "POST",
       "/get-batch",
       { keys: keys.map((k) => prefixedByKey.get(k) as string) },
+      { onAuthority: options?.onAuthority },
     );
 
     if (!response?.values) {
       logger.debug("Batch endpoint failed, falling back to individual gets", {
         keyCount: keys.length,
       });
-      return this.getIndividually(keys);
+      return this.getIndividually(keys, options);
     }
 
     return buildBatchResults(keys, (key) => {
@@ -380,8 +352,13 @@ export class ApiCacheBackend implements CacheBackend {
     });
   }
 
-  private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
-    const results = await Promise.all(keys.map(async (key) => [key, await this.get(key)] as const));
+  private async getIndividually(
+    keys: string[],
+    options?: CacheReadOptions,
+  ): Promise<Map<string, string | null>> {
+    const results = await Promise.all(
+      keys.map(async (key) => [key, await this.get(key, options)] as const),
+    );
     return new Map(results);
   }
 

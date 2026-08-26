@@ -6,7 +6,8 @@ import {
   getConfig,
   getEnvironmentConfig,
 } from "veryfront/config";
-import { createFileSystem, isNotFoundError, runtime } from "veryfront/platform";
+import { runtime } from "#cli/runtime-adapter";
+import { createFileSystem, isNotFoundError } from "veryfront/platform";
 import { join, relative, resolve } from "veryfront/platform/path";
 import { isWithinDirectory, normalizePath } from "veryfront/utils";
 import {

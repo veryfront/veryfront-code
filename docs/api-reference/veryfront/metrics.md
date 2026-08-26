@@ -10,16 +10,6 @@ order: 20
 import { counter, gauge, histogram, metrics } from "veryfront/metrics";
 ```
 
-## Examples
-
-```ts
-import { metrics } from "veryfront/metrics";
-
-metrics.counter("vf_eval_result_total", 1, { provider: "openai" });
-metrics.histogram("vf_eval_latency_ms", 420, { model: "gpt-5" });
-metrics.gauge("vf_eval_queue_depth", 3);
-```
-
 ## Exports
 
 ### Functions
@@ -40,6 +30,6 @@ metrics.gauge("vf_eval_queue_depth", 3);
 
 ### Constants
 
-| Name      | Description | Source                                                                                    |
-| --------- | ----------- | ----------------------------------------------------------------------------------------- |
-| `metrics` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/index.ts#L549) |
+| Name      | Description                                         | Source                                                                                    |
+| --------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `metrics` | Immutable metric recording facade for project code. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/metrics/public.ts#L19) |

@@ -490,24 +490,30 @@ describe("observability/file-log-subscriber", () => {
         };
 
         if (stage === "directory") {
-          internals.ensureDir = () => {
-            filesystemCalls++;
-            return Promise.reject(denial);
-          };
+          Object.defineProperty(internals, "ensureDir", {
+            value: () => {
+              filesystemCalls++;
+              return Promise.reject(denial);
+            },
+          });
         } else if (stage === "open/stat") {
-          internals.openFile = () => {
-            filesystemCalls++;
-            return Promise.reject(denial);
-          };
+          Object.defineProperty(internals, "openFile", {
+            value: () => {
+              filesystemCalls++;
+              return Promise.reject(denial);
+            },
+          });
         } else {
           internals.file = fakeFile;
           if (stage === "rotation") {
             internals.currentSize = 1;
             internals.maxSizeBytes = 1;
-            internals.rotate = () => {
-              filesystemCalls++;
-              return Promise.reject(denial);
-            };
+            Object.defineProperty(internals, "rotate", {
+              value: () => {
+                filesystemCalls++;
+                return Promise.reject(denial);
+              },
+            });
           }
         }
 
@@ -651,7 +657,7 @@ describe("observability/file-log-subscriber", () => {
         queueGeneration: number;
         writeEntry(entry: unknown): Promise<void>;
       };
-      internals.writeEntry = () => gate;
+      Object.defineProperty(internals, "writeEntry", { value: () => gate });
       const subscriber = sub.getSubscriber();
       const entry = {
         id: "queued",
@@ -741,10 +747,12 @@ describe("observability/file-log-subscriber", () => {
         },
         close() {},
       };
-      internals.writeEntry = () => {
-        signalWriteStarted();
-        return writeGate;
-      };
+      Object.defineProperty(internals, "writeEntry", {
+        value: () => {
+          signalWriteStarted();
+          return writeGate;
+        },
+      });
 
       const firstFlush = sub.flush();
       await firstSyncStarted;

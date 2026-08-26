@@ -20,7 +20,7 @@ import {
   markNativeFileSystemAdapter,
 } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
-import { resolve } from "../../../compat/path/index.ts";
+import { posix, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError, FileSnapshotPathError } from "../../file-snapshot-error.ts";
 import {
@@ -40,7 +40,61 @@ const silentLogger: NodeFileSystemLogger = {
 };
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const NativePromise = Promise;
+const promiseAll = NativePromise.all;
 const reflectApply = Reflect.apply;
+const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
+const stringStartsWith = String.prototype.startsWith;
+
+interface AwaitedPair<First, Second> {
+  first: First;
+  second: Second;
+}
+
+async function awaitPair<First, Second>(
+  first: Promise<First>,
+  second: Promise<Second>,
+): Promise<AwaitedPair<First, Second>> {
+  const iterable: Iterable<Promise<First> | Promise<Second>> = {
+    [symbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<Promise<First> | Promise<Second>> {
+          if (index === 0) {
+            index = 1;
+            return { done: false, value: first };
+          }
+          if (index === 1) {
+            index = 2;
+            return { done: false, value: second };
+          }
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+  const values = await (reflectApply(promiseAll, NativePromise, [iterable]) as Promise<
+    [First, Second]
+  >);
+  return { first: values[0], second: values[1] };
+}
+
+function resolveSnapshotPath(platform: NativeSnapshotPlatform, path: string): string {
+  return platform === "posix" ? posix.resolve(path) : resolve(path);
+}
+
+function isSnapshotPathContainedBy(
+  platform: NativeSnapshotPlatform,
+  candidate: string,
+  root: string,
+): boolean {
+  if (platform === "windows") return isPathContainedBy(candidate, root);
+  const relation = posix.relative(root, candidate);
+  return relation === "" || relation === "." ||
+    (relation !== ".." &&
+      !(reflectApply(stringStartsWith, relation, ["../"]) as boolean) &&
+      !posix.isAbsolute(relation));
+}
 
 interface NodeFileSnapshotStat {
   readonly dev: bigint;
@@ -75,6 +129,8 @@ export interface NodeFileSystemCapabilityOptions {
   readonly noFollow?: number;
   /** Test seam for native open and path semantics. */
   readonly platform?: NativeSnapshotPlatform;
+  /** Adapter-owned assertion that Windows bigint handle identity and generation fields are usable. */
+  readonly windowsSnapshotIdentity?: boolean;
   /** Test seam for create-new primitive availability. */
   readonly exclusiveCreate?: boolean;
   /** Test seam for deterministic filesystem races and write failures. */
@@ -153,10 +209,10 @@ function detectNodeCompatibleRuntime(): NodeCompatibleRuntimeProvenance {
 export function hasUsableWindowsSnapshotIdentity(
   runtime: NodeCompatibleRuntimeProvenance,
 ): boolean {
-  // Node exposes bigint file identity and generation fields on Windows. Each
-  // snapshot still validates that the native identity is present and usable.
-  // Bun and Deno do not currently document an equivalent contract, so their
-  // Windows adapters must fail closed.
+  // Runtime detection grants this default only to Node. Bun and Deno adapters
+  // opt in after asserting that their Node-compatible file handles expose the
+  // same bigint identity and generation fields. Each snapshot still validates
+  // that those native fields are present and usable.
   return runtime === "node";
 }
 
@@ -237,12 +293,12 @@ export async function readNodeFileSnapshotWithinLimit(
     }
     openFlags = nodeFsConstants.O_RDONLY | noFollow;
   }
-  const lexicalRoot = resolve(containmentRoot);
-  const candidate = resolve(path);
+  const lexicalRoot = resolveSnapshotPath(platform, containmentRoot);
+  const candidate = resolveSnapshotPath(platform, path);
   const canonicalRoot = await operations.realpath(lexicalRoot);
   if (
-    !isPathContainedBy(candidate, lexicalRoot) &&
-    !isPathContainedBy(candidate, canonicalRoot)
+    !isSnapshotPathContainedBy(platform, candidate, lexicalRoot) &&
+    !isSnapshotPathContainedBy(platform, candidate, canonicalRoot)
   ) {
     throw new FileSnapshotPathError("Snapshot path must be contained by the requested root");
   }
@@ -288,10 +344,12 @@ export async function readNodeFileSnapshotWithinLimit(
       let canonicalTarget: string;
       let pathnameOpened: NodeFileSnapshotStat;
       try {
-        [canonicalTarget, pathnameOpened] = await Promise.all([
+        const pair = await awaitPair(
           operations.realpath(candidate),
           operations.lstat(candidate),
-        ]);
+        );
+        canonicalTarget = pair.first;
+        pathnameOpened = pair.second;
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File target became uncertain while opening the snapshot",
@@ -309,7 +367,7 @@ export async function readNodeFileSnapshotWithinLimit(
         pathnameOpened,
         "Stable native file identity is unavailable while verifying the snapshot",
       );
-      if (!isPathContainedBy(canonicalTarget, canonicalRoot)) {
+      if (!isSnapshotPathContainedBy(platform, canonicalTarget, canonicalRoot)) {
         throw new FileSnapshotPathError(
           "Snapshot target must be contained by the canonical root",
         );
@@ -350,10 +408,12 @@ export async function readNodeFileSnapshotWithinLimit(
         );
       }
       try {
-        [pathnameAfter, canonicalTargetAfter] = await Promise.all([
+        const pair = await awaitPair(
           operations.lstat(candidate),
           operations.realpath(candidate),
-        ]);
+        );
+        pathnameAfter = pair.first;
+        canonicalTargetAfter = pair.second;
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File identity became uncertain after reading the snapshot",
@@ -374,7 +434,7 @@ export async function readNodeFileSnapshotWithinLimit(
         !sameGeneration(handleBefore, handleAfter) ||
         !sameGeneration(handleBefore, pathnameAfter) ||
         canonicalTargetAfter !== canonicalTarget ||
-        !isPathContainedBy(canonicalTargetAfter, canonicalRoot)
+        !isSnapshotPathContainedBy(platform, canonicalTargetAfter, canonicalRoot)
       ) {
         throw changed("File snapshot changed during the read");
       }
@@ -431,7 +491,8 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     const noFollow = resolveNoFollowFlag(options, nodeFsConstants);
     const platform = options.platform ?? (runtimeUsesWindowsPaths() ? "windows" : "posix");
     const canOpenExactSnapshot = platform === "windows"
-      ? hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
+      ? options.windowsSnapshotIdentity === true ||
+        hasUsableWindowsSnapshotIdentity(detectNodeCompatibleRuntime())
       : typeof noFollow === "number" && noFollow !== 0;
     if (canOpenExactSnapshot) {
       Object.defineProperty(this, "readFileSnapshotWithinLimit", {

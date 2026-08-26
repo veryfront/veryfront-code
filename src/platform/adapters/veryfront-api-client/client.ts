@@ -18,6 +18,10 @@ import type {
 } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicObjectFreeze = Object.freeze;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const IntrinsicReflectOwnKeys = Reflect.ownKeys;
 
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
@@ -689,3 +693,30 @@ export class VeryfrontApiClient {
     });
   }
 }
+
+function freezeOverridableMethodPrototype(prototype: VeryfrontApiClient): void {
+  for (const key of IntrinsicReflectOwnKeys(prototype)) {
+    if (key === "constructor") continue;
+    const descriptor = IntrinsicObjectGetOwnPropertyDescriptor(prototype, key);
+    if (!descriptor || typeof descriptor.value !== "function") continue;
+
+    const method = descriptor.value;
+    IntrinsicObjectDefineProperty(prototype, key, {
+      configurable: false,
+      enumerable: descriptor.enumerable,
+      get: () => method,
+      set(this: VeryfrontApiClient, replacement: unknown) {
+        if (this === prototype) return;
+        IntrinsicObjectDefineProperty(this, key, {
+          configurable: true,
+          enumerable: descriptor.enumerable,
+          value: replacement,
+          writable: true,
+        });
+      },
+    });
+  }
+  IntrinsicObjectFreeze(prototype);
+}
+
+freezeOverridableMethodPrototype(VeryfrontApiClient.prototype);

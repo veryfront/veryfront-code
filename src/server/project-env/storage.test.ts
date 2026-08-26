@@ -12,6 +12,7 @@ import {
   isProjectEnvActive,
   runWithProjectEnv,
 } from "./storage.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 describe("project-env/storage", () => {
   it("returns undefined outside any context", () => {
@@ -22,6 +23,56 @@ describe("project-env/storage", () => {
     runWithProjectEnv({ FOO: "bar" }, () => {
       assertEquals(getProjectEnv("FOO"), "bar");
     });
+  });
+
+  it("uses context operations captured before project prototype mutation", () => {
+    const originalDisable = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "disable",
+    )!;
+    const originalEnterWith = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "enterWith",
+    )!;
+    const originalRun = Object.getOwnPropertyDescriptor(AsyncLocalStorage.prototype, "run")!;
+    const originalGetStore = Object.getOwnPropertyDescriptor(
+      AsyncLocalStorage.prototype,
+      "getStore",
+    )!;
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls += 1;
+      throw new Error("project AsyncLocalStorage hook must not run");
+    };
+    Object.defineProperty(AsyncLocalStorage.prototype, "disable", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "run", {
+      configurable: true,
+      value: poison,
+    });
+    Object.defineProperty(AsyncLocalStorage.prototype, "getStore", {
+      configurable: true,
+      value: poison,
+    });
+
+    try {
+      runWithProjectEnv({ FOO: "captured" }, () => {
+        assertEquals(getProjectEnv("FOO"), "captured");
+        assertEquals(isProjectEnvActive(), true);
+      });
+    } finally {
+      Object.defineProperty(AsyncLocalStorage.prototype, "disable", originalDisable);
+      Object.defineProperty(AsyncLocalStorage.prototype, "enterWith", originalEnterWith);
+      Object.defineProperty(AsyncLocalStorage.prototype, "run", originalRun);
+      Object.defineProperty(AsyncLocalStorage.prototype, "getStore", originalGetStore);
+    }
+    assertEquals(poisonedCalls, 0);
   });
 
   it("returns undefined for keys not in the overlay", () => {

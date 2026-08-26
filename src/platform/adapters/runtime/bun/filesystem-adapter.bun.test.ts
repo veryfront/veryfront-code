@@ -65,8 +65,11 @@ describe("BunFileSystemAdapter native integration", () => {
         Error,
       );
 
-      if (
-        platform() === "win32" ||
+      if (platform() === "win32") {
+        // The adapter asserts verified Windows snapshot identity, so the
+        // capability must be constructed on Windows instead of omitted.
+        assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+      } else if (
         typeof constants.O_NOFOLLOW !== "number" ||
         constants.O_NOFOLLOW === 0
       ) {

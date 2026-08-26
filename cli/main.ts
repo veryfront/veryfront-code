@@ -15,7 +15,7 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
 }
 
 // Set the CLI logger preset before importing modules that may log during initialization.
-const { setLoggerPreset } = await import("veryfront/utils/logger");
+const { setLoggerPreset } = await import("#cli/logger-config");
 setLoggerPreset("cli");
 
 // Extract the esbuild binary before importing feature modules that may load esbuild.

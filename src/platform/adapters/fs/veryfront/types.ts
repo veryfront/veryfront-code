@@ -62,6 +62,7 @@ export interface FSAdapter {
    */
   readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
   /**
    * Stable name for the source context the snapshot currently targets. See
    * `FileSystemAdapter.getSourceSnapshotIdentity` in

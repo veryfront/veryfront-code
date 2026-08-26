@@ -31,6 +31,7 @@ import {
   RENDER_ACQUIRE_TIMEOUT_MS,
   RENDER_MAX_CONCURRENT,
   RENDER_PER_PROJECT_LIMIT,
+  RENDER_SINGLEFLIGHT_MAX_FOLLOWERS,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import {
@@ -2341,6 +2342,73 @@ describe("Renderer release asset cache isolation", () => {
     assertEquals(results.length, 11);
     assertEquals(renderCalls, 1);
     assertEquals(projectRenderCounts.get(ctx.projectId) ?? 0, 0);
+  });
+
+  it("bounds callers waiting on an identical cacheable render", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const renderGate = Promise.withResolvers<void>();
+    let renderCalls = 0;
+
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (slug: string) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (slug) => {
+          renderCalls++;
+          await renderGate.promise;
+          return {
+            html: `<html>${slug}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          };
+        },
+      },
+    });
+
+    const ctx = makeRenderContext();
+    const totalRenders = RENDER_SINGLEFLIGHT_MAX_FOLLOWERS + 2;
+    const renders = Array.from(
+      { length: totalRenders },
+      () =>
+        renderer.renderPage("/bounded-burst", ctx, {
+          environment: "production",
+          releaseId: "rel-1",
+          releaseAssetManifest: null,
+        }),
+    );
+
+    try {
+      await assertRejects(
+        () => renders.at(-1)!,
+        Error,
+        "Render request capacity exhausted",
+      );
+      assertEquals(renderCalls, 1);
+    } finally {
+      renderGate.resolve();
+    }
+
+    const results = await Promise.allSettled(renders);
+    assertEquals(
+      results.filter((result) => result.status === "fulfilled").length,
+      RENDER_SINGLEFLIGHT_MAX_FOLLOWERS + 1,
+    );
+    assertEquals(
+      results.filter((result) => result.status === "rejected").length,
+      1,
+    );
   });
 
   it("detaches a cancelled caller without aborting a shared cacheable render", async () => {

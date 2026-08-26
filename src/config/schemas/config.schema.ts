@@ -90,6 +90,7 @@ const MAX_AUTH_MODE_COUNT = 4;
 const OIDC_SCOPE_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 const NON_CONTROL_CLAIM_WHITESPACE_PATTERN =
   /[ \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]/u;
+const ObjectEntries = Object.entries;
 const OIDC_SIGNING_ALGORITHMS = [
   "RS256",
   "RS384",
@@ -105,15 +106,19 @@ const OIDC_SIGNING_ALGORITHMS = [
 function isBoundedSourceIntegrationAllowlist(
   allow: Readonly<Record<string, SourceIntegrationRestriction>>,
 ): boolean {
-  const entries = Object.entries(allow);
+  const entries = ObjectEntries(allow);
   if (entries.length > MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS) return false;
 
   let totalToolIds = 0;
-  for (const [integration, restriction] of entries) {
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+    const entry = entries[entryIndex]!;
+    const integration = entry[0];
+    const restriction = entry[1];
     const allowedTools = restriction.allowedTools;
     if (!allowedTools) continue;
     if (allowedTools.length > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS) return false;
-    for (const toolId of allowedTools) {
+    for (let toolIndex = 0; toolIndex < allowedTools.length; toolIndex++) {
+      const toolId = allowedTools[toolIndex]!;
       if (
         ++totalToolIds > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS ||
         integration.length + 2 + toolId.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH

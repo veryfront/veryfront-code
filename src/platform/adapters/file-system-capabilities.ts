@@ -172,7 +172,7 @@ function captureDataProperties(
   const resolved = createObject(null) as Record<CapabilityKey, boolean>;
   let remaining = keys.length;
   let owner: object | null = value;
-  const seen = new Set<object>();
+  const seen: object[] = [];
 
   for (let depth = 0; owner !== null && depth < 64; depth++) {
     if (owner === universalObjectPrototype) {
@@ -182,10 +182,12 @@ function captureDataProperties(
     if (isProxyWithoutHooks(owner)) {
       throw invalidCapability(label, "capabilities must not use a Proxy");
     }
-    if (seen.has(owner)) {
-      throw invalidCapability(label, "capabilities have an invalid prototype chain");
+    for (let index = 0; index < seen.length; index++) {
+      if (seen[index] === owner) {
+        throw invalidCapability(label, "capabilities have an invalid prototype chain");
+      }
     }
-    seen.add(owner);
+    seen[seen.length] = owner;
 
     let parent: object | null;
     try {

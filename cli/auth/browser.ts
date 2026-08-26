@@ -1,4 +1,5 @@
-import { getOsType, runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
+import { getOsType } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 
 function getOpenCommand(): { cmd: string; args: string[] } {

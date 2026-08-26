@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
-import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
+import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { detectProjectInstallTarget } from "#veryfront/extensions/install-command.ts";
 import { LOCKFILE_CLIENTS } from "#veryfront/utils/package-client.ts";
 import {

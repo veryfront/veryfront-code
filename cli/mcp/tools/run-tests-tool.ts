@@ -8,7 +8,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
-import { runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import { parseTestOutput, type TestResult } from "../../commands/test/command.ts";
 
 const getRunTestsInput = defineSchema((v) =>

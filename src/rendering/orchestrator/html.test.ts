@@ -35,6 +35,11 @@ import {
   managedHeadDescriptorToTransportEntry,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
+import {
+  getCSSImportReferences,
+  registerCSSImport,
+  runWithCSSCollector,
+} from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import {
@@ -1606,6 +1611,78 @@ describe("HTMLGenerator helpers", () => {
       );
       assertEquals(merged?.includes(".a_root__"), true);
       assertEquals(merged?.indexOf(".a_root__")! > merged?.indexOf(".b { color: blue; }")!, true);
+    });
+
+    it("sorts concurrently discovered imports while deduplicating repeats", async () => {
+      const readPaths: string[] = [];
+      const merged = await mergeImportedCSS({
+        fs: {
+          readFile: async (path: string) => {
+            readPaths.push(path);
+            if (path === "/project/z.css") return ".z { color: red; }";
+            if (path === "/project/a.css") return ".a { color: blue; }";
+            return "";
+          },
+        },
+        logger: { debug: () => {} },
+        projectDir: "/project",
+        globalCSS: undefined,
+        cssImports: ["/project/z.css", "/project/a.css", "/project/z.css"],
+        stylesheetPath: "globals.css",
+      });
+
+      assertEquals(
+        readPaths,
+        ["/project/a.css", "/project/z.css"],
+        "each import is read once in deterministic path order",
+      );
+      assertEquals(
+        merged,
+        ".a { color: blue; }\n.z { color: red; }",
+        "concurrent discovery timing must not change the cascade",
+      );
+    });
+
+    it("reads canonical CSS bytes with the authored module key", async () => {
+      const readPaths: string[] = [];
+      const { result: merged } = await runWithCSSCollector(async () => {
+        registerCSSImport("/project/generated-theme", "/project/theme.module.css");
+        return await mergeImportedCSS({
+          fs: {
+            readFile: (path: string) => {
+              readPaths.push(path);
+              return Promise.resolve(".root { color: red; }");
+            },
+          },
+          logger: { debug: () => {} },
+          projectDir: "/project",
+          globalCSS: undefined,
+          cssImports: getCSSImportReferences(),
+          stylesheetPath: "globals.css",
+        });
+      });
+
+      assertEquals(readPaths, ["/project/generated-theme"]);
+      assertEquals(merged?.includes(".theme_root__"), true);
+    });
+
+    it("preserves distinct authored CSS identities for one canonical target", async () => {
+      const { result: merged } = await runWithCSSCollector(async () => {
+        const read = () => Promise.resolve(".root { color: red; }");
+        registerCSSImport("/project/generated-theme", "/project/first.module.css", read);
+        registerCSSImport("/project/generated-theme", "/project/second.module.css", read);
+        return await mergeImportedCSS({
+          fs: { readFile: () => Promise.reject(new Error("bound read must be used")) },
+          logger: { debug: () => {} },
+          projectDir: "/project",
+          globalCSS: undefined,
+          cssImports: getCSSImportReferences(),
+          stylesheetPath: "globals.css",
+        });
+      });
+
+      assertEquals(merged?.includes(".first_root__"), true);
+      assertEquals(merged?.includes(".second_root__"), true);
     });
   });
 });

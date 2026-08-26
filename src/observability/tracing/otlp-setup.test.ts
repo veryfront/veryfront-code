@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertNotStrictEquals,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -401,6 +402,7 @@ describe("observability/tracing/otlp-setup", () => {
     // With the api-shim, extractContext always returns a context object (noop when no provider).
     const ctx = extractContext(new Headers());
     assertExists(ctx);
+    assertEquals(Object.isFrozen(ctx), true);
   });
 
   it("injectContext should leave headers unchanged when APIs are unavailable", async () => {
@@ -468,7 +470,9 @@ describe("observability/tracing/otlp-setup", () => {
   });
 
   it("span helpers reuse the resolved tracer until the provider changes", async () => {
-    const { startServerSpan, withSpan, withSpanSync } = await import("./otlp-setup.ts");
+    const { startServerSpan, withContext, withSpan, withSpanSync } = await import(
+      "./otlp-setup.ts"
+    );
 
     let getTracerCalls = 0;
     const spanContext: SpanContext = {
@@ -476,7 +480,8 @@ describe("observability/tracing/otlp-setup", () => {
       spanId: "0000000000000001",
       traceFlags: 1,
     };
-    const span: Span = {
+    const providerSpanPrototype = { providerSpanMethod(): void {} };
+    const span: Span = Object.assign(Object.create(providerSpanPrototype), {
       setAttribute() {
         return span;
       },
@@ -495,7 +500,7 @@ describe("observability/tracing/otlp-setup", () => {
         return spanContext;
       },
       updateName() {},
-    };
+    });
     const tracer: Tracer = {
       startSpan() {
         return span;
@@ -524,11 +529,23 @@ describe("observability/tracing/otlp-setup", () => {
       },
     });
 
-    await withSpan("test.async", async () => "ok");
+    let publicSpan: Span | undefined;
+    await withSpan("test.async", async (callbackSpan) => {
+      publicSpan = callbackSpan;
+      return "ok";
+    });
     withSpanSync("test.sync", () => "ok");
     const serverSpan = startServerSpan("GET", "/cache");
 
+    assertExists(publicSpan);
+    assertNotStrictEquals(publicSpan, span);
+    assertNotStrictEquals(Object.getPrototypeOf(publicSpan), providerSpanPrototype);
+    assertEquals(Object.isFrozen(publicSpan), true);
     assertExists(serverSpan);
+    assertNotStrictEquals(serverSpan.span, span);
+    assertEquals(Object.isFrozen(serverSpan.span), true);
+    assertEquals(Object.isFrozen(serverSpan.context), true);
+    assertEquals(await withContext(serverSpan.context, async () => "scoped"), "scoped");
     assertEquals(getTracerCalls, 1);
 
     setGlobalTracerProvider({

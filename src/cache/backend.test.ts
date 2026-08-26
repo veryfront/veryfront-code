@@ -26,6 +26,7 @@ import {
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
 import { buildQueryAwareCacheKey, isValidCacheKey } from "./keys.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 const API_CACHE_KEY_MAX_LENGTH = 512;
 const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
@@ -36,7 +37,55 @@ type RecordedSpan = {
 };
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
-  return await import("./backend.ts");
+  const backend = await import("./backend.ts");
+  class ModeledApiCacheBackend extends backend.ApiCacheBackend {
+    constructor(...args: ConstructorParameters<typeof backend.ApiCacheBackend>) {
+      super(...args);
+      return new Proxy(this, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target) as unknown;
+          if (typeof value !== "function") return value;
+          return (...methodArgs: unknown[]) => {
+            const adapter = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
+            const getContext = typeof adapter === "object" && adapter !== null &&
+                "getCurrentRequestContext" in adapter &&
+                typeof adapter.getCurrentRequestContext === "function"
+              ? adapter.getCurrentRequestContext
+              : undefined;
+            const context = getContext?.();
+            if (typeof context !== "object" || context === null) {
+              return Reflect.apply(value, target, methodArgs);
+            }
+            const requestContext = context as Record<string, unknown>;
+            return runWithRequestContext(
+              {
+                projectSlug: typeof requestContext.projectSlug === "string"
+                  ? requestContext.projectSlug
+                  : "",
+                projectId: typeof requestContext.projectId === "string"
+                  ? requestContext.projectId
+                  : undefined,
+                token: typeof requestContext.token === "string" ? requestContext.token : "",
+                productionMode: requestContext.productionMode === true,
+                releaseId: typeof requestContext.releaseId === "string"
+                  ? requestContext.releaseId
+                  : null,
+                branch: typeof requestContext.branch === "string" ? requestContext.branch : null,
+                environmentName: typeof requestContext.environmentName === "string"
+                  ? requestContext.environmentName
+                  : null,
+              },
+              () => Reflect.apply(value, target, methodArgs) as Promise<unknown>,
+            );
+          };
+        },
+      });
+    }
+  }
+  return {
+    ...backend,
+    ApiCacheBackend: ModeledApiCacheBackend,
+  } as typeof backend;
 }
 
 async function createVerifiedCacheClaims(options: {
@@ -875,6 +924,83 @@ Deno.test("ApiCacheBackend propagates attempted delete failures", async () => {
     } else {
       Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
     }
+  }
+});
+
+Deno.test("ApiCacheBackend prefers the request runtime token over the host fallback", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let authorization = "";
+
+  Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "project-runtime-token",
+      projectId: "project-123",
+    }),
+  };
+  installMockFetch(
+    ((_input: RequestInfo | URL, init?: RequestInit) => {
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return Promise.resolve(Response.json({ deleted: 1 }));
+    }) as typeof fetch,
+  );
+
+  try {
+    const cache = new ApiCacheBackend({
+      circuitBreakerName: "api-cache-request-runtime-token-test",
+    });
+    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(authorization, "Bearer project-runtime-token");
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+    if (originalBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", originalBaseUrl);
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend refuses host fallback for an uncredentialed tenant context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let fetchCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      projectId: "attacker-selected-project",
+    }),
+  };
+  installMockFetch(() => {
+    fetchCalls += 1;
+    return Promise.resolve(Response.json({ deleted: 1 }));
+  });
+
+  try {
+    const cache = new ApiCacheBackend({
+      circuitBreakerName: "api-cache-uncredentialed-context-test",
+    });
+    assertEquals(await cache.delByPattern("agent:*"), 0);
+    assertEquals(fetchCalls, 0);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+    if (originalBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", originalBaseUrl);
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
   }
 });
 
@@ -1882,11 +2008,8 @@ Deno.test({
       const cache = new ApiCacheBackend({
         circuitBreakerName: "api-cache-tenant-endpoint-isolation-test",
       });
-      assertEquals(await cache.delByPattern("agent:*"), 1);
-      assertEquals(
-        capturedUrls,
-        ["https://93.184.216.34/projects/project-123/cache/del-pattern"],
-      );
+      assertEquals(await cache.delByPattern("agent:*"), 0);
+      assertEquals(capturedUrls, []);
     } finally {
       if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
       else globals.__vf_multi_project_adapter = originalAdapter;

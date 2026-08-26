@@ -8,7 +8,8 @@
  * Uses cross-runtime platform abstractions for terminal I/O.
  */
 
-import { exit, isInteractive, isStdoutTTY, writeStdout } from "veryfront/platform";
+import { exit } from "#cli/process-lifecycle";
+import { isInteractive, isStdoutTTY, writeStdout } from "veryfront/platform";
 import { createEscapeBuffer, getStdinReader, setRawMode } from "veryfront/platform";
 import { cursor, screen } from "../ui/ansi.ts";
 import { dim } from "../ui/colors.ts";

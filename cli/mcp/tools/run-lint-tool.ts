@@ -7,7 +7,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { runCommand } from "veryfront/platform";
+import { runCommand } from "#cli/process-command";
 import type { MCPTool } from "../tools.ts";
 import { type LintResult, parseLintJsonOutput } from "../../commands/lint/command.ts";
 

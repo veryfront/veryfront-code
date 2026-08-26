@@ -8,7 +8,7 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { isSentryEnabled } from "#veryfront/observability/sentry.ts";
 import type { LogEntry, LogRecordEmitter } from "#veryfront/utils/logger/index.ts";
-import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 
 /** Environment used by node agent service application-error reporting. */

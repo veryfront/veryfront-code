@@ -17,7 +17,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
