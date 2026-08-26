@@ -83,7 +83,7 @@ it("keeps host environment controls outside public platform exports", async () =
   const exports = denoConfig.exports as Record<string, string>;
   const imports = denoConfig.imports as Record<string, string>;
   const paths = tsconfig.compilerOptions.paths as Record<string, string[]>;
-  const publicEnvModule = "./src/platform/compat/process/env-public.ts";
+  const publicEnvModule = "./src/platform/env.ts";
 
   assertEquals(exports["./platform/env"], publicEnvModule);
   assertEquals(imports["veryfront/platform/env"], publicEnvModule);

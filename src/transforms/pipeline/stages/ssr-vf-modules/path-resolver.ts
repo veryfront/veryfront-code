@@ -9,6 +9,7 @@ import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
+  isPublicFrameworkSourceKey,
   isSafeFrameworkSourceKey,
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -54,6 +55,7 @@ export async function resolveFrameworkFile(
   vfModulePath: string,
   fs: ReturnType<typeof createFileSystem>,
   existsFn: (path: string) => Promise<boolean> = exists,
+  options: { trustedFrameworkParent?: boolean } = {},
 ): Promise<{ sourcePath: string; content: string } | null> {
   const normalizedVfModulePath = vfModulePath.replace(/^file:\/\/(?=\/_vf_modules\/)/, "");
 
@@ -66,7 +68,13 @@ export async function resolveFrameworkFile(
     ? pathWithoutPrefix.slice("_veryfront/".length)
     : pathWithoutPrefix;
   if (!isSafeFrameworkSourceKey(frameworkRelativePath)) return null;
-
+  if (!options.trustedFrameworkParent && !isPublicFrameworkSourceKey(frameworkRelativePath)) {
+    logger.warn(`${LOG_PREFIX} Refusing non-public framework module for tenant import`, {
+      vfModulePath,
+      frameworkRelativePath,
+    });
+    return null;
+  }
   logger.debug(`${LOG_PREFIX} resolveFrameworkFile`, {
     input: vfModulePath,
     normalizedVfModulePath,

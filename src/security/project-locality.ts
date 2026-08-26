@@ -95,16 +95,25 @@ export function isExplicitlyLocalProject(value: unknown): boolean {
 }
 
 /**
- * Host-realm project-code execution requires an explicit runtime capability.
+ * Host-realm project-code execution requires a dedicated runtime capability.
  *
  * An explicitly local development project retains the historical capability.
- * Standalone production runtimes can grant the narrower capability without
+ * A standalone production runtime can grant the narrower capability without
  * enabling development-only rendering, caching, diagnostics, or HTTP policy.
- * Every ambiguous value fails closed.
+ * A shared runtime cannot grant it because ambient runtime channels can expose
+ * host state outside the scoped environment facade. Every ambiguous value
+ * fails closed.
  */
 export function isHostProjectCodeExecutionAllowed(value: unknown): boolean {
+  return isHostProjectCodeExecutionAllowedForTopology(value, isSharedProjectRuntime(value));
+}
+
+function isHostProjectCodeExecutionAllowedForTopology(
+  value: unknown,
+  sharedRuntime: boolean,
+): boolean {
   return isExplicitlyLocalProject(value) ||
-    isExplicitHostProjectCodeExecutionAllowed(value);
+    (!sharedRuntime && isExplicitHostProjectCodeExecutionAllowed(value));
 }
 
 /**
@@ -121,16 +130,16 @@ export function isExplicitHostProjectCodeExecutionAllowed(
 /**
  * Decide whether a surface must refuse to execute tenant project code.
  *
- * Execution is denied only when the runtime is shared *and* its host-owned
- * entrypoint did not grant the host-execution capability. Local development,
- * dedicated single-project runtimes, and operator-granted shared executors all
- * carry the capability. Every ambiguous value fails closed.
+ * Execution is denied when the runtime is shared and the project is not an
+ * explicit local-development project. Dedicated single-project runtimes can
+ * use the host-owned capability. Every ambiguous value fails closed.
  *
  * Every execution surface shares this single predicate so their boundaries
  * cannot drift apart.
  */
 export function requiresIsolatedProjectRuntime(value: unknown): boolean {
-  return !isHostProjectCodeExecutionAllowed(value) && isSharedProjectRuntime(value);
+  const sharedRuntime = isSharedProjectRuntime(value);
+  return !isHostProjectCodeExecutionAllowedForTopology(value, sharedRuntime) && sharedRuntime;
 }
 
 /**

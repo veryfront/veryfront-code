@@ -5,6 +5,7 @@ import { isCompiledBinary } from "#veryfront/utils/platform.ts";
 import { createFileSystem, isNotFoundError } from "./fs.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "./published-runtime-helpers.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
+import denoConfig from "#deno-config" with { type: "json" };
 
 /**
  * Reject candidate paths that contain traversal indicators — plain `..`,
@@ -31,6 +32,53 @@ function hasDangerousSegments(candidate: string): boolean {
 /** Return whether an untrusted framework-relative source key is safe to probe. */
 export function isSafeFrameworkSourceKey(candidate: string): boolean {
   return !hasDangerousSegments(candidate);
+}
+
+const FRAMEWORK_SOURCE_KEY_EXT_RE = /\.(?:src|tsx|ts|jsx|js|mjs|cjs|mdx|md|json)$/;
+
+function normalizeFrameworkSourceKey(candidate: string): string {
+  let normalized = candidate.replace(/\?.*$/, "").replace(/^\.\/src\//, "").replace(/\/+$/, "");
+  while (FRAMEWORK_SOURCE_KEY_EXT_RE.test(normalized)) {
+    normalized = normalized.replace(FRAMEWORK_SOURCE_KEY_EXT_RE, "");
+  }
+  return normalized;
+}
+
+const publicConfig = denoConfig as {
+  exports?: Record<string, string>;
+  imports?: Record<string, string>;
+};
+const publicExportSpecifiers = new Set(
+  Object.keys(publicConfig.exports ?? {}).map((specifier) =>
+    specifier === "." ? "veryfront" : `veryfront/${specifier.replace(/^\.\//, "")}`
+  ),
+);
+const supportedFrameworkOverrideTargetSpecifiers = [
+  "veryfront/index.client",
+  "veryfront/workflow/react",
+] as const;
+const PUBLIC_FRAMEWORK_SOURCE_KEYS = new Set(
+  [
+    ...Object.values(publicConfig.exports ?? {}),
+    ...Object.entries(publicConfig.imports ?? {})
+      .filter(([specifier]) => publicExportSpecifiers.has(specifier))
+      .map(([, target]) => target),
+    ...supportedFrameworkOverrideTargetSpecifiers
+      .flatMap((targetSpecifier) => {
+        const target = publicConfig.imports?.[targetSpecifier];
+        return target === undefined ? [] : [target];
+      }),
+    // The SSR import map intentionally serves the browser-safe React barrel
+    // instead of the server-capable internal import target.
+    "./src/react/public.ts",
+  ]
+    .filter((target) => target.startsWith("./src/"))
+    .map(normalizeFrameworkSourceKey),
+);
+
+/** Return whether a framework source key is the target of a public export. */
+export function isPublicFrameworkSourceKey(candidate: string): boolean {
+  return PUBLIC_FRAMEWORK_SOURCE_KEYS.has(normalizeFrameworkSourceKey(candidate));
 }
 
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);

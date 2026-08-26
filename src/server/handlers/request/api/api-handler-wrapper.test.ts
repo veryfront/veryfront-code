@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
@@ -70,6 +70,7 @@ describe("ApiHandlerWrapper", () => {
 
   it("propagates strict source freshness failures before downstream handlers run", async () => {
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
@@ -103,6 +104,7 @@ describe("ApiHandlerWrapper", () => {
     let sourceSnapshotRefreshes = 0;
     let pageReads = 0;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     const fs = ctx.adapter.fs as unknown as {
       runWithContext: (
@@ -192,6 +194,7 @@ describe("ApiHandlerWrapper", () => {
   it("checks preview source freshness before resolving page ownership", async () => {
     const events: string[] = [];
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
@@ -258,6 +261,7 @@ describe("ApiHandlerWrapper", () => {
 
   it("refreshes page ownership before SSR can shed for memory pressure", async () => {
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
@@ -332,6 +336,7 @@ describe("ApiHandlerWrapper", () => {
     // outage for API routes that never render anything.
     let refreshes = 0;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "pressured-api-project";
     ctx.config = { router: "pages" };
@@ -381,6 +386,7 @@ describe("ApiHandlerWrapper", () => {
     const events: string[] = [];
     let routeIsCurrent = false;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "pressured-route-transition";
     ctx.config = { router: "pages" };
@@ -451,6 +457,7 @@ describe("ApiHandlerWrapper", () => {
     // it even during overload, so the SSR shedding shortcut must not leave it
     // without a current source snapshot.
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.requestContext!.mode = "preview";
     ctx.releaseId = undefined;
@@ -488,6 +495,7 @@ describe("ApiHandlerWrapper", () => {
   it("preserves fresh API discovery when no page owns a non-API path", async () => {
     let sourceSnapshotRefreshes = 0;
     const ctx = createCtx({});
+    ctx.isLocalProject = true;
     ctx.allowHostProjectCodeExecution = true;
     ctx.projectSlug = "unmatched-preview-project";
     ctx.config = { router: "pages" };
@@ -656,9 +664,7 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
-  it("starts shared-runtime API discovery once the host grants execution", async () => {
-    // The granted counterpart of the fail-closed case above. Without this,
-    // nothing pins that the operator grant actually reaches this surface.
+  it("keeps shared-runtime API discovery denied despite a host grant", async () => {
     let projectContextEntries = 0;
     let filesystemReads = 0;
     const ctx = createCtx({});
@@ -691,17 +697,9 @@ describe("ApiHandlerWrapper", () => {
       ctx,
     );
 
-    assertNotEquals(
-      result.response?.status,
-      503,
-      "a granted shared executor must not return project-execution-unavailable",
-    );
+    assertEquals(result.response?.status, 503);
     assertEquals(projectContextEntries, 1);
-    assertEquals(
-      filesystemReads > 0,
-      true,
-      "the request must reach source resolution instead of failing at the guard",
-    );
+    assertEquals(filesystemReads, 0);
   });
 
   it("rejects a shared contextual adapter before mutating or reading it", async () => {
