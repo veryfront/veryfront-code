@@ -125,7 +125,7 @@ function createHostedConfigAdapter(source: string): RuntimeAdapter {
   const adapter = createMockAdapter({
     [configPath]: { isDirectory: false, isFile: true },
   });
-  adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+  (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
   adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
   adapter.fs.getSourceSnapshotIdentity = () => "branch:hosted-config-test:main";
   adapter.fs.getSourceSnapshotVersion = () => 1;
@@ -1058,7 +1058,7 @@ describe("resolveProjectRuntimeContext", () => {
           }));
         `)
         : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
-    adapter.fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     adapter.fs.ensureSourceSnapshotFresh = () => Promise.resolve();
     adapter.fs.getSourceSnapshotIdentity = () => "branch:remote-project:main";
     adapter.fs.getSourceSnapshotVersion = () => 1;
