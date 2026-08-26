@@ -1641,6 +1641,11 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// A CSI introducer immediately followed by a path start. Removed before the
+// full CSI pass so that pass cannot consume the path's first characters; see
+// summarizeConfigLoadCause for why the path itself is not redacted here.
+// deno-lint-ignore no-control-regex
+const CSI_GLUED_PATH = /(?:\u001B\[|\u009B)(?=[\\/]|[A-Za-z]:[\\/])/g;
 // A remote config URL is redacted whole rather than picked apart: AGENTS.md
 // counts private hostnames among the values user-facing output must not carry,
 // and the caller cannot tell an internal registry from a public CDN by looking
@@ -1692,10 +1697,15 @@ const SCHEME_URL =
 // folded in as an alternation: two plain patterns read more clearly than one
 // branching expression, and each stays independently checkable.
 //
-// The scheme needs at least two characters here, which is what keeps a genuine
-// `C:/Users/...` out -- a drive letter is always exactly one.
+// Restricted to the WHATWG special schemes, like the zero-slash form below and
+// for a sharper version of the same reason. A generic `[A-Za-z][...]{1,31}:`
+// shape claimed `atC` in `Failed atC:/Users/alice/x` -- reporting `Failed [url]`,
+// which both mislabels a local path and eats the word `at`. A two-character
+// minimum is not enough to separate a scheme from prose glued to a drive letter.
+// A glued *URL* still redacts: the match simply starts later in the token, so
+// `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
 const MALFORMED_SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
 // the two-slash form, but neither pattern above matches it -- both require at
@@ -1772,6 +1782,11 @@ function replaceMatchesWithCapturedExec(
  * before it sanitises credentials. Colorized text leaves `[31m` style residue
  * directly in front of a path once the escape itself is gone, which defeats the
  * boundary lookbehind step 5 relies on.
+ *
+ * That caller also removes a CSI introducer glued to a path start beforehand
+ * (`CSI_GLUED_PATH`), because the CSI grammar would otherwise consume the path's
+ * own first characters. It removes only the introducer, so this function still
+ * runs exactly once and still runs after de-colorization.
  */
 function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
@@ -1805,17 +1820,22 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   // consume the first character of a key such as API_KEY. Either ordering alone
   // can therefore expose a usable value after the transformation.
   const initiallyRedacted = sanitizeUrlCredentials(message);
-  // Redact paths on both sides of de-colorization too, and for the same reason.
-  // A CSI introducer sitting directly against an absolute path consumes the
-  // start of it: `/` is a valid intermediate byte and `h` a valid final, so
-  // `ESC[/home/alice/x` loses `ESC[/h` and leaves `ome/alice/x`, which no later
-  // path pattern recognises. `ESC[C:\\Users\\alice` loses the drive letter the
-  // same way. Both are legal CSI sequences, so no tightening of the grammar can
-  // tell them apart from a path -- the only fix is to match the path while it is
-  // still intact.
-  const pathsPreRedacted = redactMachinePaths(initiallyRedacted);
+  // Drop a CSI introducer that is glued to the start of a path, before the CSI
+  // pass can eat into the path itself. `/` is a valid intermediate byte and `h`
+  // a valid final, so `ESC[/home/alice/x` would lose `ESC[/h` and leave
+  // `ome/alice/x`, which no later path pattern recognises; `ESC[C:\\Users` would
+  // lose the drive letter the same way. Both are legal CSI sequences, so no
+  // tightening of the grammar separates them from a path.
+  //
+  // Only the introducer is removed, not the path: redacting here instead would
+  // produce `ESC[[path]`, and `[` is itself a valid CSI final byte, so the pass
+  // below would eat the marker's opening bracket and emit `path]`. Removing just
+  // the introducer leaves the path intact for the single redaction pass at the
+  // end, which keeps `redactMachinePaths` running exactly once and after
+  // de-colorization -- the precondition its own docstring states.
+  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, "");
   const deColorized = replaceMatchesWithCapturedExec(
-    pathsPreRedacted,
+    unglued,
     ANSI_CSI_SEQUENCE,
     "",
   );

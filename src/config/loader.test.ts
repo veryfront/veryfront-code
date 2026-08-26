@@ -1222,6 +1222,11 @@ export default config as const;
         // tell them from a path -- the path has to be matched while still intact.
         assertEquals(posix.message.includes("alice"), false);
         assertEquals(posix.message.includes("ome/alice"), false);
+        // Assert the marker, not only the absence of the secret. Redacting the
+        // path before the CSI pass instead of removing just the introducer
+        // produced `ESC[[path]`, and `[` is a valid CSI final byte, so the pass
+        // ate the marker's own bracket and emitted `path]`.
+        assertStringIncludes(posix.message, "[path]");
 
         const drive = await loadFailure(
           "vf-config-csi-glued-drive-",
@@ -1232,6 +1237,30 @@ export default config as const;
         // and `:\Users\alice` no longer matches WINDOWS_ABSOLUTE_PATH.
         assertEquals(drive.message.includes("alice"), false);
         assertEquals(drive.message.includes("Users"), false);
+        assertStringIncludes(drive.message, "[path]");
+      });
+
+      it("classifies a drive path glued to diagnostic text as a path, not a URL", async () => {
+        const drive = await loadFailure(
+          "vf-config-glued-fwd-drive-",
+          `throw new Error("Failed at" + String.fromCharCode(67) + ":/Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // A generic scheme shape claimed `atC` here, reporting `Failed [url]` --
+        // mislabelling a local path and eating the word `at`. The single-slash
+        // form is restricted to the special schemes for exactly this reason.
+        assertStringIncludes(drive.message, "Failed at[path]");
+        assertEquals(drive.message.includes("alice"), false);
+
+        const url = await loadFailure(
+          "vf-config-glued-single-slash-url-",
+          `throw new Error("Failed athttps:/registry.internal/veryfront.config.ts");\n`,
+        );
+
+        // The glued URL still redacts; the match just starts later in the token,
+        // so the diagnostic keeps `at` instead of losing it.
+        assertStringIncludes(url.message, "Failed at[url]");
+        assertEquals(url.message.includes("registry.internal"), false);
       });
 
       it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
