@@ -1244,6 +1244,15 @@ const UNVALIDATED_WORKER_LOADER_MODULES = new Set([
 ]);
 
 /**
+ * Child-process modules can launch another JavaScript runtime with broader
+ * arguments than this module graph was validated for.
+ */
+const UNVALIDATED_SUBPROCESS_LOADER_MODULES = new Set([
+  "node:child_process",
+  "child_process",
+]);
+
+/**
  * Why importing `specifier` cannot be checked against the allow-list, or null
  * when the module is not restricted. URL schemes are case-insensitive, so the
  * comparison is too.
@@ -1258,6 +1267,9 @@ export function restrictedRuntimeModuleReason(specifier: string): string | null 
   }
   if (UNVALIDATED_WORKER_LOADER_MODULES.has(normalized)) {
     return `importing "${specifier}" enables Worker module loading that cannot be checked against the remote import allow-list`;
+  }
+  if (UNVALIDATED_SUBPROCESS_LOADER_MODULES.has(normalized)) {
+    return `importing "${specifier}" enables subprocess module loading that cannot be checked against the remote import allow-list`;
   }
   return null;
 }

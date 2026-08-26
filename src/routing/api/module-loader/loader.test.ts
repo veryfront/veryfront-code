@@ -2574,6 +2574,30 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("rejects an import-map alias that renames a subprocess module loader", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "deno.json"),
+      `{ "imports": { "subprocess": "node:child_process" } }\n`,
+    );
+
+    const modulePath = join(tmpDir, "aliased-child-process-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { spawn } from "subprocess";`,
+        `export const GET = () => new Response(String(spawn));`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "subprocess module loading",
+      "an import-map rename must not expose the node:child_process loader",
+    );
+  });
+
   it("keeps validating helpers when the entry file must bundle", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(
