@@ -1192,8 +1192,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   async ensureSourceSnapshotFresh(
     reason = "freshness-check",
     options?: SourceSnapshotFreshnessOptions,
+    initializedByManager = false,
   ): Promise<void> {
-    const initializedNow = await this.ensureInitialized();
+    const initializedNow = initializedByManager || await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
 
     // The snapshot identity only names the branch, so an edit to a draft file

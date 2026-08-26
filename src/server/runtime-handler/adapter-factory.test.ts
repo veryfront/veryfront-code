@@ -166,6 +166,36 @@ function createMockAdapter(
   };
 }
 
+async function resolveMutablePreviewAdapter(
+  adapter: RuntimeAdapter,
+  pathname: string,
+): Promise<Awaited<ReturnType<typeof resolveAdapter>>> {
+  return await resolveAdapter({
+    projectDir: "/base/project",
+    adapter,
+    config: undefined,
+    projectSlug: "mutable-config-project",
+    projectId: "proj_mutable_config",
+    proxyToken: "tok-123",
+    releaseId: undefined,
+    proxyEnv: "preview",
+    branch: "main",
+    environmentName: undefined,
+    parsedDomain: {
+      slug: null,
+      branch: null,
+      environment: null,
+      isVeryfrontDomain: false,
+      isDraft: false,
+      allowIframeEmbed: false,
+    },
+    req: await makeReq(),
+    pathname,
+    isProxyMode: true,
+    prepareHostedConfigContext: preparePreviewHostedConfigContext,
+  });
+}
+
 describe("adapter-factory", () => {
   afterEach(() => {
     localProjectCache.clear();
@@ -906,11 +936,10 @@ describe("adapter-factory", () => {
       assertEquals(deniedResult.previewDocumentSourceSnapshot, undefined);
     });
 
-    it("keeps subresource and public asset config loads on the normal freshness lease", async () => {
+    it("keeps subresource and ordinary asset config loads on the normal freshness lease", async () => {
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
-        "/base/project/public/robots": { isDirectory: false, isFile: true },
       });
       const extendedFs = {
         ...base.fs,
@@ -944,7 +973,7 @@ describe("adapter-factory", () => {
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
 
       const results = await Promise.all(
-        ["/_vf_modules/app/page.js", "/favicon.ico", "/robots"].map(async (pathname) =>
+        ["/_vf_modules/app/page.js", "/favicon.ico"].map(async (pathname) =>
           resolveAdapter({
             projectDir: "/base/project",
             adapter,
@@ -975,13 +1004,86 @@ describe("adapter-factory", () => {
       assertEquals(freshnessCalls, [
         { reason: "config-load", maxAgeMs: undefined },
         { reason: "config-load", maxAgeMs: undefined },
-        { reason: "config-load", maxAgeMs: undefined },
       ]);
-      assertEquals(results.map((result) => result.config?.router), ["pages", "pages", "pages"]);
+      assertEquals(results.map((result) => result.config?.router), ["pages", "pages"]);
       assertEquals(
         results.map((result) => result.previewDocumentSourceSnapshot),
-        [undefined, undefined, undefined],
+        [undefined, undefined],
       );
+    });
+
+    it("fails closed for markerless remote static ownership", async () => {
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/public/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        refreshSourceSnapshot: () => Promise.resolve(),
+        readFile: (path: string) =>
+          path === "/veryfront.config.ts"
+            ? Promise.resolve(`export default { router: "pages" };`)
+            : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const rejection = await assertRejects(() => resolveMutablePreviewAdapter(adapter, "/robots"));
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
+    it("probes the configured build output before selecting strict freshness", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 3,
+        readFile: (path: string) =>
+          path === "/veryfront.config.ts"
+            ? Promise.resolve(
+              `export default { router: "pages", build: { outDir: "custom-output" } };`,
+            )
+            : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`)),
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveMutablePreviewAdapter(adapter, "/robots");
+
+      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 3,
+      });
     });
 
     it("keeps extensionless build-output files on the normal freshness lease", async () => {

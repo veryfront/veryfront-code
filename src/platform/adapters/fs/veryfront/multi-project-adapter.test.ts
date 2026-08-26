@@ -370,6 +370,65 @@ describe("MultiProjectFSAdapter", () => {
       });
     });
 
+    it("reuses manager initialization for the first strict freshness check", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let authorityListings = 1;
+        let selections = 0;
+        const selectedAdapter = {
+          ensureSourceSnapshotFresh(
+            _reason?: string,
+            _options?: { maxAgeMs?: number },
+            initializedByManager = false,
+          ) {
+            if (!initializedByManager) authorityListings++;
+            return Promise.resolve();
+          },
+          getSourceSnapshotVersion: () => 1,
+        };
+
+        (adapter as any).manager = {
+          getAdapter(
+            _projectSlug: string,
+            _token: string,
+            _projectId?: string,
+            _productionMode?: boolean,
+            _releaseId?: string | null,
+            _environmentName?: string | null,
+            _branch?: string | null,
+            onResolved?: (initializedNow: boolean) => void,
+          ) {
+            onResolved?.(selections++ === 0);
+            return Promise.resolve(selectedAdapter);
+          },
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          await adapter.runWithContext(
+            "project-a",
+            "token-a",
+            async () => {
+              await adapter.ensureSourceSnapshotFresh("first-document", { maxAgeMs: 0 });
+              assertEquals(
+                authorityListings,
+                1,
+                "materialization already fetched the first document's complete listing",
+              );
+
+              await adapter.ensureSourceSnapshotFresh("later-document", { maxAgeMs: 0 });
+              assertEquals(authorityListings, 2, "later zero-age checks must refresh normally");
+            },
+            "project-id-a",
+            { branch: "main" },
+          );
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
     it("forwards strict freshness only to each selected project adapter", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;

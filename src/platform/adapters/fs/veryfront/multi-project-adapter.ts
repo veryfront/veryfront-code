@@ -128,7 +128,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
   }
 
-  private async getAdapter(): Promise<VeryfrontFSAdapter> {
+  private async getAdapter(
+    onResolved?: (initializedNow: boolean) => void,
+  ): Promise<VeryfrontFSAdapter> {
     const startTime = performance.now();
     const context = asyncLocalStorage.getStore();
 
@@ -166,6 +168,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId,
       environmentName,
       context.branch,
+      onResolved,
     );
 
     logger.debug("getAdapter DONE", {
@@ -266,11 +269,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
     reason?: string,
     options?: SourceSnapshotFreshnessOptions,
   ): Promise<void> {
-    const adapter = await this.getAdapter();
+    let initializedByManager = false;
+    const adapter = await this.getAdapter((initializedNow) => {
+      initializedByManager = initializedNow;
+    });
     if (typeof adapter.ensureSourceSnapshotFresh !== "function") return;
 
     const previousVersion = await adapter.getSourceSnapshotVersion?.();
-    await adapter.ensureSourceSnapshotFresh(reason, options);
+    await adapter.ensureSourceSnapshotFresh(reason, options, initializedByManager);
     const currentVersion = await adapter.getSourceSnapshotVersion?.();
     const sourceMayHaveChanged = previousVersion === undefined ||
       currentVersion === undefined ||

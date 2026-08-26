@@ -16,6 +16,7 @@ import {
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
 import {
   getConfig,
   getHostedConfig,
@@ -191,12 +192,20 @@ async function hasPublishedStaticFile(
   projectDir: string,
   adapter: RuntimeAdapter,
   pathname: string,
+  buildOutDir = "dist",
 ): Promise<boolean> {
   if (!mayServePublicPath(pathname)) return false;
 
   // StaticFileService checks preview build output before public. Keep this
   // ownership probe in the same order for extensionless document candidates.
-  const roots = [joinPath(projectDir, "dist"), joinPath(projectDir, "public")];
+  const roots = new Set<string>();
+  if (!isAbsolute(buildOutDir)) {
+    const buildRoot = joinPath(projectDir, buildOutDir);
+    if (buildRoot !== projectDir && isWithinDirectory(projectDir, buildRoot)) {
+      roots.add(buildRoot);
+    }
+  }
+  roots.add(joinPath(projectDir, "public"));
   const relativePath = pathname.replace(/^\/+/, "");
   const candidates = relativePath.length === 0
     ? ["index.html"]
@@ -217,7 +226,7 @@ async function hasPublishedStaticFile(
   return false;
 }
 
-type PreviewConfigFreshness = "normal" | "normal-prepared" | "strict";
+type PreviewConfigFreshness = "config-dependent" | "normal" | "normal-prepared" | "strict";
 
 interface PreviewConfigFreshnessResolution {
   freshness: PreviewConfigFreshness;
@@ -239,6 +248,21 @@ async function renewPreviewConfigSourceSnapshot(adapter: RuntimeAdapter): Promis
   await adapter.fs.refreshSourceSnapshot?.("config-load");
 }
 
+async function validatePreviewConfigSourceSnapshot(
+  adapter: RuntimeAdapter,
+  projectSlug: string,
+  expected: PreviewSourceSnapshotMarker,
+): Promise<PreviewSourceSnapshotMarker> {
+  const current = await captureRequiredPreviewSourceSnapshotMarker(adapter.fs, projectSlug);
+  if (!previewSourceSnapshotMarkersEqual(expected, current)) {
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail:
+        `The mutable source snapshot serving "${projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
+    });
+  }
+  return current;
+}
+
 async function resolvePreviewConfigFreshness(
   opts: AdapterResolutionOptions,
   projectDir: string,
@@ -255,9 +279,9 @@ async function resolvePreviewConfigFreshness(
   if (pathname === "/api" || pathname.startsWith("/api/")) return { freshness: "normal" };
   // StaticHandler precedes API discovery and document rendering. Ordinary
   // extension paths are already excluded by the document predicates; probe
-  // the public candidates for extensionless and Markdown paths that would
-  // otherwise reach SSR or MarkdownPreviewHandler. This keeps serving public
-  // files compatible with adapters that do not expose strict snapshot markers.
+  // the default static candidates for extensionless and Markdown paths that
+  // would otherwise reach SSR or MarkdownPreviewHandler. A configured build
+  // root is discovered from one provisional config read below.
   const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
     (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
   if (!documentCandidate) return { freshness: "normal" };
@@ -269,11 +293,6 @@ async function resolvePreviewConfigFreshness(
   const beforeProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
   const staticOwned = await hasPublishedStaticFile(projectDir, adapter, pathname);
   const afterProbe = await capturePreviewSourceSnapshotMarker(adapter.fs);
-  if (!staticOwned) return { freshness: "strict" };
-
-  // A capability-free adapter reads a live local source and keeps the legacy
-  // static path. Versioned mutable adapters must prove the ownership probe was
-  // made from one generation so configuration and dispatch can retain it.
   if (
     isCompleteSourceSnapshotMarker(beforeProbe) &&
     isCompleteSourceSnapshotMarker(afterProbe)
@@ -281,9 +300,16 @@ async function resolvePreviewConfigFreshness(
     if (!previewSourceSnapshotMarkersEqual(beforeProbe, afterProbe)) {
       return { freshness: "strict" };
     }
-    return { freshness: "normal-prepared", sourceSnapshot: afterProbe };
+    return staticOwned
+      ? { freshness: "normal-prepared", sourceSnapshot: afterProbe }
+      : { freshness: "config-dependent", sourceSnapshot: afterProbe };
   }
-  return { freshness: "normal-prepared" };
+
+  // Mutable remote static ownership cannot be carried safely through config
+  // loading and handler dispatch without a concrete generation. A miss still
+  // gets one provisional config read so a configured build output can be
+  // discovered, but any static match will fail closed below.
+  return staticOwned ? { freshness: "strict" } : { freshness: "config-dependent" };
 }
 
 async function prepareProxyConfigLoad(
@@ -436,9 +462,49 @@ export async function resolveAdapter(
             effectiveAdapter,
           );
           const previewConfigFreshness = previewConfigResolution.freshness;
-          const strictDocumentConfig = previewConfigFreshness === "strict";
           let configSourceSnapshot = previewConfigResolution.sourceSnapshot;
-          if (strictDocumentConfig) {
+          const readConfig = () =>
+            getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+              ...hosted,
+              signal: opts.req.signal,
+            });
+
+          if (previewConfigFreshness === "config-dependent") {
+            let provisionalConfig: VeryfrontConfig | undefined;
+            try {
+              provisionalConfig = await readConfig();
+            } catch (error: unknown) {
+              if (!hasNotFoundStatus(error)) throw error;
+            }
+
+            if (
+              provisionalConfig !== undefined &&
+              await hasPublishedStaticFile(
+                effectiveProjectDir,
+                effectiveAdapter,
+                opts.pathname ?? new URL(opts.req.url).pathname,
+                provisionalConfig.build?.outDir,
+              )
+            ) {
+              if (configSourceSnapshot === undefined) {
+                configSourceSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
+                  effectiveAdapter.fs,
+                  opts.projectSlug!,
+                );
+              }
+              previewDocumentSourceSnapshot = await validatePreviewConfigSourceSnapshot(
+                effectiveAdapter,
+                opts.projectSlug!,
+                configSourceSnapshot,
+              );
+              return provisionalConfig;
+            }
+          }
+
+          if (
+            previewConfigFreshness === "strict" ||
+            previewConfigFreshness === "config-dependent"
+          ) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(
               effectiveAdapter.fs,
               opts.projectSlug!,
@@ -452,38 +518,23 @@ export async function resolveAdapter(
           }
 
           try {
-            const config = await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
-              ...hosted,
-              signal: opts.req.signal,
-            });
+            const config = await readConfig();
             if (configSourceSnapshot !== undefined) {
-              const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
-                effectiveAdapter.fs,
+              previewDocumentSourceSnapshot = await validatePreviewConfigSourceSnapshot(
+                effectiveAdapter,
                 opts.projectSlug!,
+                configSourceSnapshot,
               );
-              if (!previewSourceSnapshotMarkersEqual(configSourceSnapshot!, currentSnapshot)) {
-                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                  detail:
-                    `The mutable source snapshot serving "${opts.projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
-                });
-              }
-              previewDocumentSourceSnapshot = currentSnapshot;
             }
             return config;
           } catch (error: unknown) {
             const configAbsent = hasNotFoundStatus(error);
             if (configSourceSnapshot !== undefined && configAbsent) {
-              const currentSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
-                effectiveAdapter.fs,
+              previewDocumentSourceSnapshot = await validatePreviewConfigSourceSnapshot(
+                effectiveAdapter,
                 opts.projectSlug!,
+                configSourceSnapshot,
               );
-              if (!previewSourceSnapshotMarkersEqual(configSourceSnapshot!, currentSnapshot)) {
-                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                  detail:
-                    `The mutable source snapshot serving "${opts.projectSlug}" changed while request configuration was derived, so this document request must be retried against one generation.`,
-                });
-              }
-              previewDocumentSourceSnapshot = currentSnapshot;
             }
             if (configAbsent) hostedConfigAbsent = true;
             throw error;

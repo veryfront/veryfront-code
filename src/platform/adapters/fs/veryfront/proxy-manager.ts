@@ -119,6 +119,7 @@ export class ProxyFSAdapterManager {
     releaseId?: string | null,
     environmentName?: string | null,
     branch?: string | null,
+    onResolved?: (initializedNow: boolean) => void,
   ): Promise<VeryfrontFSAdapter> {
     const getAdapterStartTime = performance.now();
 
@@ -228,6 +229,7 @@ export class ProxyFSAdapterManager {
         throw error;
       }
 
+      onResolved?.(false);
       return existing.adapter;
     }
 
@@ -266,6 +268,7 @@ export class ProxyFSAdapterManager {
         totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
 
+      onResolved?.(true);
       return adapter;
     }
 
@@ -289,7 +292,7 @@ export class ProxyFSAdapterManager {
       elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
     });
 
-    return this.createAdapter(
+    const adapter = await this.createAdapter(
       cacheKey,
       diagnosticCacheKey,
       projectSlug,
@@ -301,6 +304,8 @@ export class ProxyFSAdapterManager {
       effectiveBranch,
       identity,
     );
+    onResolved?.(true);
+    return adapter;
   }
 
   private assertContextMatches(
