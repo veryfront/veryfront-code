@@ -1250,6 +1250,8 @@ const UNVALIDATED_WORKER_LOADER_MODULES = new Set([
 const UNVALIDATED_SUBPROCESS_LOADER_MODULES = new Set([
   "node:child_process",
   "child_process",
+  "node:cluster",
+  "cluster",
 ]);
 
 /**
