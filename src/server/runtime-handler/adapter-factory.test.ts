@@ -1208,9 +1208,11 @@ describe("adapter-factory", () => {
     });
 
     it("retains the generation used to classify public static ownership", async () => {
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
         "/base/project/public/robots": { isDirectory: false, isFile: true },
+        "/base/project/public/index.html": { isDirectory: false, isFile: true },
       });
       const extendedFs = {
         ...base.fs,
@@ -1230,7 +1232,10 @@ describe("adapter-factory", () => {
             environmentName?: string | null;
           },
         ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
-        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          return Promise.resolve();
+        },
         getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
         getSourceSnapshotVersion: () => 7,
         readFile: (path: string) => {
@@ -1241,36 +1246,46 @@ describe("adapter-factory", () => {
         },
       };
       const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+      const resolvePathname = async (pathname: string) =>
+        await resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "mutable-config-project",
+          projectId: "proj_mutable_config",
+          proxyToken: "tok-123",
+          releaseId: undefined,
+          proxyEnv: "preview",
+          branch: "main",
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req: await makeReq(),
+          pathname,
+          isProxyMode: true,
+          prepareHostedConfigContext: preparePreviewHostedConfigContext,
+        });
 
-      const result = await resolveAdapter({
-        projectDir: "/base/project",
-        adapter,
-        config: undefined,
-        projectSlug: "mutable-config-project",
-        projectId: "proj_mutable_config",
-        proxyToken: "tok-123",
-        releaseId: undefined,
-        proxyEnv: "preview",
-        branch: "main",
-        environmentName: undefined,
-        parsedDomain: {
-          slug: null,
-          branch: null,
-          environment: null,
-          isVeryfrontDomain: false,
-          isDraft: false,
-          allowIframeEmbed: false,
-        },
-        req: await makeReq(),
-        pathname: "/robots",
-        isProxyMode: true,
-        prepareHostedConfigContext: preparePreviewHostedConfigContext,
-      });
+      const result = await resolvePathname("/robots");
 
       assertEquals(result.previewDocumentSourceSnapshot, {
         identity: "branch:mutable-config-project:main",
         version: 7,
       });
+      assertEquals(freshnessCalls, [{ reason: "config-load", maxAgeMs: undefined }]);
+
+      freshnessCalls.length = 0;
+      await resolvePathname("/");
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
     });
 
     it("classifies public ownership after renewing the normal source lease", async () => {

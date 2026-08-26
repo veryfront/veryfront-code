@@ -194,6 +194,10 @@ async function hasPublishedStaticFile(
   pathname: string,
   buildOutDir = "dist",
 ): Promise<boolean> {
+  // StaticHandler's prefix route deliberately excludes the bare root, so an
+  // index file cannot establish ownership for GET /. Leave that document on
+  // strict API/SSR freshness instead of carrying a normal static lease into it.
+  if (pathname === "/") return false;
   if (!mayServePublicPath(pathname)) return false;
 
   // StaticFileService checks preview build output before public. Keep this
