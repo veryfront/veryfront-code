@@ -74,6 +74,18 @@ describe("hasEventWaitSupport", () => {
     );
   });
 
+  it("requires renewable distributed locking for cross-instance resumes", () => {
+    for (const missing of ["acquireLock", "releaseLock", "extendLock"] as const) {
+      const unserialized = new MemoryBackend() as unknown as Record<string, unknown>;
+      unserialized[missing] = undefined;
+      assertEquals(
+        hasEventWaitSupport(unserialized as unknown as WorkflowBackend),
+        false,
+        `a backend without ${missing} cannot serialize concurrent event resumes`,
+      );
+    }
+  });
+
   it("requires the worker-owned save when the backend supports execution ownership", () => {
     // A worker-capable backend assigns every run a workerId, and persisting a
     // wait for an owned run goes through the owner-fenced append. Without it,
@@ -111,8 +123,9 @@ describe("hasEventWaitSupport", () => {
       "execution ownership without the fenced wait append is unsupported even without a queue",
     );
 
-    // A backend with no execution ownership at all never assigns a workerId,
-    // so the plain append suffices and the owned variant stays optional.
+    // A locked backend with no execution ownership at all never assigns a
+    // workerId, so the plain append suffices and the owned variant stays
+    // optional.
     const ownerless = new MemoryBackend() as unknown as Record<string, unknown>;
     ownerless["savePendingEventWaitIfStatusAndWorker"] = undefined;
     for (
@@ -120,8 +133,6 @@ describe("hasEventWaitSupport", () => {
         "enqueue",
         "dequeue",
         "acknowledge",
-        "acquireLock",
-        "releaseLock",
         "findStalledRuns",
         "claimStalledRun",
         "updateRunIfStatusAndWorker",

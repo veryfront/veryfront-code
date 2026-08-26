@@ -706,6 +706,10 @@ type WithEventWaitSupport =
       | "restoreRunEventDelivery"
       | "finalizeRunEventDelivery"
       | "hasRunEventDeliveryReceipt"
+      | "updateRunIfStatus"
+      | "acquireLock"
+      | "releaseLock"
+      | "extendLock"
     >
   >;
 
@@ -737,12 +741,14 @@ export function hasExecutionOwnershipSupport(
  * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
  * `restoreRunEvent`, `restoreRunEventDelivery`, `finalizeRunEventDelivery`,
  * exact delivery receipts, recoverable delivery claims, recoverable timeout
- * claims, and key-merge run patches are part of the group for the same reason:
+ * claims, key-merge run patches, and renewable execution locks are part of the
+ * group for the same reason:
  * without them a delivery that fails halfway leaves the run parked on a wait
  * already marked delivered, re-orders its mailbox, loses the event outright
  * when a crash lands between the two separate restores, misattributes a
  * cross-process delivery, reverts a concurrent node outcome, or scans an
- * already-committed timeout claim forever.
+ * already-committed timeout claim forever, or resumes the same run concurrently
+ * when independent waits are delivered by separate processes.
  *
  * A backend that also supports worker execution ownership must implement
  * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
@@ -772,6 +778,9 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.finalizeRunEventDelivery === "function" &&
     typeof backend.hasRunEventDeliveryReceipt === "function" &&
     typeof backend.updateRunIfStatus === "function" &&
+    typeof backend.acquireLock === "function" &&
+    typeof backend.releaseLock === "function" &&
+    typeof backend.extendLock === "function" &&
     hasRunPatchKeyMergeSupport(backend) &&
     (!hasExecutionOwnershipSupport(backend) ||
       typeof backend.savePendingEventWaitIfStatusAndWorker === "function")

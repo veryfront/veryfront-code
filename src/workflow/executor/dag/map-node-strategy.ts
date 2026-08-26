@@ -11,6 +11,7 @@ import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
+import { rebaseCompositeDescendants } from "../../dsl/validation.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -48,7 +49,12 @@ function createMapChildNodes(
       };
     }
 
-    const processorConfig = (config.processor as WorkflowNode).config;
+    const processor = config.processor as WorkflowNode;
+    const processorConfig = rebaseCompositeDescendants(
+      processor.config,
+      processor.id,
+      childId,
+    );
 
     if (processorConfig.type === "step") {
       return {

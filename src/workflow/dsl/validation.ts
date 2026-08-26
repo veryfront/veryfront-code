@@ -72,7 +72,7 @@ function rebaseWorkflowNodes(
   });
 }
 
-function rebaseCompositeDescendants(
+export function rebaseCompositeDescendants(
   config: WorkflowNodeConfig,
   oldId: string,
   newId: string,
