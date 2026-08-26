@@ -360,6 +360,111 @@ describe("ProjectMiddlewareRuntime", () => {
     );
   });
 
+  it("retains the config marker until a streamed response body closes", async () => {
+    let sourceVersion = 1;
+    let releaseBody!: () => void;
+    const bodyGate = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const response = await execute(
+      runtime,
+      context,
+      undefined,
+      () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              async pull(controller) {
+                await bodyGate;
+                sourceVersion++;
+                controller.enqueue(new TextEncoder().encode("new-generation body"));
+                controller.close();
+              },
+            }),
+          ),
+        ),
+    );
+
+    releaseBody();
+    const rejection = await assertRejects(() => response!.text());
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
+  });
+
+  it("validates the config marker when a streamed response body is canceled", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    const response = await execute(
+      runtime,
+      context,
+      undefined,
+      () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              pull() {
+                return new Promise<void>(() => {});
+              },
+            }),
+          ),
+        ),
+    );
+
+    sourceVersion++;
+    const rejection = await assertRejects(() => response!.body!.cancel());
+    assertInstanceOf(rejection, Error);
+    assertEquals(
+      rejection.message.includes("changed after request configuration was derived"),
+      true,
+    );
+  });
+
   it("finalizes host-token snapshots inside the effective tenant context", async () => {
     const storage = new AsyncLocalStorage<ActiveFsContext>();
     const adapter = createAdapter(storage);
@@ -420,16 +525,17 @@ describe("ProjectMiddlewareRuntime", () => {
       loadMiddleware: () => Promise.resolve([]),
     });
 
-    const rejection = await assertRejects(() =>
-      execute(runtime, context, undefined, async () => {
+    const rejection = await assertRejects(async () => {
+      const response = await execute(runtime, context, undefined, async () => {
         await preparePreviewDocumentSourceSnapshot(
           context,
           () => Promise.resolve({ response: new Response("reclassified") }),
         );
         sourceVersion++;
         return new Response("stale");
-      })
-    );
+      });
+      await response!.text();
+    });
 
     assertInstanceOf(rejection, Error);
     assertEquals(rejection.message.includes("changed during handler dispatch"), true);

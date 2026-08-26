@@ -135,7 +135,10 @@ export class SSRHandler extends BaseHandler {
     // guards above would survive on every hidden-route or fail-closed request.
     startRequest(requestId);
 
-    return this.setupContextAndRender(req, ctx, slug, requestId, url);
+    return this.setupContextAndRender(req, ctx, slug, requestId, url).catch((error) => {
+      endRequest(requestId);
+      throw error;
+    });
   }
 
   private setupContextAndRender(

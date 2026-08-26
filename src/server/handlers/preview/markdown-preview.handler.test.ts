@@ -57,7 +57,7 @@ describe("MarkdownPreviewHandler.metadata.enabled", () => {
   });
 });
 
-Deno.test("MarkdownPreviewHandler admits the resolver result before reading", async () => {
+it("MarkdownPreviewHandler admits the resolver result before reading", async () => {
   let reads = 0;
   const handler = new MarkdownPreviewHandler();
   const ctx = {
@@ -79,7 +79,7 @@ Deno.test("MarkdownPreviewHandler admits the resolver result before reading", as
   assertEquals(reads, 0);
 });
 
-Deno.test("MarkdownPreviewHandler fails closed before shared source reads", async () => {
+it("MarkdownPreviewHandler fails closed before shared source reads", async () => {
   let reads = 0;
   const ctx = {
     projectDir: "/project",
@@ -177,7 +177,7 @@ describe("MarkdownPreviewHandler host-execution capability", () => {
   });
 });
 
-Deno.test("MarkdownPreviewHandler rejects a generation newer than its bound config", async () => {
+it("MarkdownPreviewHandler rejects a generation newer than its bound config", async () => {
   let sourceVersion = 1;
   let sourceReads = 0;
   const ctx = {
@@ -227,7 +227,7 @@ Deno.test("MarkdownPreviewHandler rejects a generation newer than its bound conf
   assertEquals(sourceReads, 0, "Markdown must reject before reading the newer generation");
 });
 
-Deno.test("MarkdownPreviewHandler rejects a generation that changes during rendering", async () => {
+it("MarkdownPreviewHandler rejects a generation that changes during rendering", async () => {
   let sourceVersion = 1;
   let sourceReads = 0;
   const ctx = {
@@ -288,7 +288,7 @@ Deno.test("MarkdownPreviewHandler rejects a generation that changes during rende
   assertEquals(sourceReads, 1, "the post-render check must observe the generation that was read");
 });
 
-Deno.test("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {
+it("MarkdownPreviewHandler admits and reads through a real wrapped GitHub adapter", async () => {
   const originalFetch = globalThis.fetch;
   let contentReads = 0;
   globalThis.fetch = (input) => {

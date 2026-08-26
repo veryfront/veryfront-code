@@ -123,22 +123,85 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
     if (beforeOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
   }
 
-  let operationCompleted = false;
+  let finalization: Promise<void> | undefined;
+  const finalize = (): Promise<void> => {
+    finalization ??= (async () => {
+      if (
+        retained?.configBound === true &&
+        !(await preparedDocumentSnapshotMatches(ctx, retained))
+      ) {
+        throwConfigSnapshotChanged(ctx);
+      }
+      const afterOperation = await finishPreviewDocumentSourceSnapshot(ctx);
+      if (afterOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
+    })();
+    return finalization;
+  };
+  let finalizationTransferredToBody = false;
   try {
     const result = await operation();
-    operationCompleted = true;
     if (
       retained?.configBound === true &&
       !(await preparedDocumentSnapshotMatches(ctx, retained))
     ) {
       throwConfigSnapshotChanged(ctx);
     }
-    const afterOperation = await finishPreviewDocumentSourceSnapshot(ctx);
-    if (afterOperation !== undefined) throwSnapshotReclassificationRequired(ctx);
+    if (
+      result instanceof Response && result.body !== null &&
+      (retained !== undefined || preparedDocumentSnapshots.has(ctx))
+    ) {
+      const response = retainPreviewSnapshotThroughResponseBody(result, finalize);
+      finalizationTransferredToBody = true;
+      return response as T;
+    }
+    await finalize();
     return result;
   } finally {
-    if (!operationCompleted) await finishPreviewDocumentSourceSnapshot(ctx);
+    if (!finalizationTransferredToBody) await finalize();
   }
+}
+
+function retainPreviewSnapshotThroughResponseBody(
+  response: Response,
+  finalize: () => Promise<void>,
+): Response {
+  const reader = response.body!.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (!chunk.done) {
+          controller.enqueue(chunk.value);
+          return;
+        }
+        await finalize();
+        controller.close();
+      } catch (error) {
+        try {
+          await finalize();
+        } catch (finalizationError) {
+          controller.error(finalizationError);
+          return;
+        }
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      let cancellationError: unknown;
+      try {
+        await reader.cancel(reason);
+      } catch (error) {
+        cancellationError = error;
+      }
+      await finalize();
+      if (cancellationError !== undefined) throw cancellationError;
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 function throwConfigSnapshotChanged(ctx: HandlerContext): never {
@@ -201,6 +264,10 @@ export async function preparePreviewDocumentSourceSnapshot(
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
   const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
+  if (identity === undefined && version === undefined && !liveSource) {
+    preparedDocumentSnapshots.delete(ctx);
+    return;
+  }
   const fixedContext = hasFixedProjectContext(ctx.adapter.fs);
   preparedDocumentSnapshots.set(ctx, {
     identity,

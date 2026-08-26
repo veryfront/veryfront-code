@@ -288,6 +288,27 @@ it("never reuses a prepared snapshot from an adapter that cannot name its contex
   );
 });
 
+it("does not reclassify an unmatchable refresh-only preparation", async () => {
+  let refreshes = 0;
+  let reclassifications = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.refreshSourceSnapshot = () => {
+    refreshes++;
+    return Promise.resolve();
+  };
+  const ctx = makePreviewCtx(adapter);
+
+  await preparePreviewDocumentSourceSnapshot(ctx, () => {
+    reclassifications++;
+    return Promise.resolve({ continue: true });
+  });
+
+  assertEquals(await ensurePreviewDocumentSourceSnapshot(ctx), undefined);
+  assertEquals(await finishPreviewDocumentSourceSnapshot(ctx), undefined);
+  assertEquals(refreshes, 2, "classification and rendering each establish fresh source");
+  assertEquals(reclassifications, 0, "an empty marker must not force ownership retries");
+});
+
 it("treats a capability-free live adapter as stable across the classifier handoff", async () => {
   const adapter = createMockAdapter();
   const ctx = makePreviewCtx(adapter);

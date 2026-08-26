@@ -1002,6 +1002,40 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       }
     });
 
+    it("releases performance timing state when fallback response construction rejects", async () => {
+      __resetPerfTimerForTests(true);
+      try {
+        const handler = new SSRHandler(createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 302,
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              failure: {
+                kind: "redirect" as const,
+                location: "/login\r\nx-forged: value",
+                permanent: false,
+              },
+              slug: "invalid-redirect",
+            }),
+        }));
+
+        await assertRejects(() =>
+          handler.handle(
+            new Request("http://localhost/invalid-redirect"),
+            makeCtx(),
+          )
+        );
+        assertEquals(
+          __trackedRequestIdsForTests(),
+          [],
+          "a rejected fallback must end its performance timing entry",
+        );
+      } finally {
+        __resetPerfTimerForTests(undefined);
+      }
+    });
+
     it("returns 404 for not-found error type", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
