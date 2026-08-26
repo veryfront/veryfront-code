@@ -11,6 +11,11 @@ interface ModuleSpecifierMatch {
   readonly end: number;
 }
 
+interface ModuleSpecifierOwner {
+  readonly name: string;
+  readonly start: number;
+}
+
 function maskRange(characters: string[], start: number, end: number): void {
   for (let index = start; index < end; index++) {
     if (characters[index] !== "\n" && characters[index] !== "\r") characters[index] = " ";
@@ -572,20 +577,30 @@ function findMdxExpressionCharacters(code: string, jsxTagCharacters?: boolean[])
     scanMdxExpressionLine(
       code.slice(lineStart, lineEnd),
       state,
-      (index) => expressionCharacters[lineStart + index] = true,
-      jsxTagCharacters ? (index) => jsxTagCharacters[lineStart + index] = true : undefined,
+      (index) => {
+        expressionCharacters[lineStart + index] = true;
+      },
+      jsxTagCharacters
+        ? (index) => {
+          jsxTagCharacters[lineStart + index] = true;
+        }
+        : undefined,
     );
     lineStart = lineEnd < code.length ? lineEnd + 1 : code.length;
   }
   return expressionCharacters;
 }
 
+const MARKDOWN_CONTAINER_PREFIX = /^(?: {0,3}>[ \t]?| {0,3}(?:[*+-]|\d{1,9}[.)])[ \t])/;
+const MARKDOWN_BLOCKQUOTE_PREFIX = /^ {0,3}>[ \t]?/;
+const MARKDOWN_LIST_PREFIX = /^ {0,3}(?:[*+-]|\d{1,9}[.)])(?: {1,4}(?=\S|$)|\t)/;
+const MARKDOWN_FENCE_OPEN_PREFIX = /^ {0,3}(`{3,}|~{3,})/;
+const MARKDOWN_FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*$/;
+
 function markdownContainerContent(line: string): { content: string; offset: number } {
   let offset = 0;
   while (offset < line.length) {
-    const prefix = line.slice(offset).match(
-      /^(?: {0,3}>[ \t]?| {0,3}(?:[*+-]|\d{1,9}[.)])[ \t])/,
-    )?.[0];
+    const prefix = MARKDOWN_CONTAINER_PREFIX.exec(line.slice(offset))?.[0];
     if (!prefix) break;
     offset += prefix.length;
   }
@@ -598,7 +613,7 @@ function markdownBlockquoteContent(
   let offset = 0;
   let depth = 0;
   while (offset < line.length) {
-    const prefix = line.slice(offset).match(/^ {0,3}>[ \t]?/)?.[0];
+    const prefix = MARKDOWN_BLOCKQUOTE_PREFIX.exec(line.slice(offset))?.[0];
     if (!prefix) break;
     offset += prefix.length;
     depth++;
@@ -611,9 +626,7 @@ function markdownListContinuationIndent(line: string): number | undefined {
   let columns = 0;
   let continuationIndent: number | undefined;
   while (offset < line.length) {
-    const prefix = line.slice(offset).match(
-      /^ {0,3}(?:[*+-]|\d{1,9}[.)])(?: {1,4}(?=\S|$)|\t)/,
-    )?.[0];
+    const prefix = MARKDOWN_LIST_PREFIX.exec(line.slice(offset))?.[0];
     if (!prefix) break;
     offset += prefix.length;
     for (const character of prefix) {
@@ -678,6 +691,16 @@ function trackedMarkdownContainerContent(
   return directContent;
 }
 
+function adjustTemplateExpressionDepth(
+  depths: number[],
+  index: number,
+  delta: number,
+): number {
+  const nextDepth = depths[index]! + delta;
+  depths[index] = nextDepth;
+  return nextDepth;
+}
+
 function isMarkdownParagraphContent(
   content: string,
   previousLineWasParagraph: boolean,
@@ -723,7 +746,7 @@ function maskMarkdownCode(
     ) {
       activeFence = undefined;
     }
-    const candidate = containerContent.content.match(/^ {0,3}(`{3,}|~{3,})/);
+    const candidate = MARKDOWN_FENCE_OPEN_PREFIX.exec(containerContent.content);
     const candidateInfo = candidate ? containerContent.content.slice(candidate[0].length) : "";
     const validCandidate = candidate?.[1]?.startsWith("~") || !candidateInfo.includes("`");
     const candidateStart = candidate?.[1]
@@ -743,7 +766,7 @@ function maskMarkdownCode(
       maskRange(characters, lineStart, contentEnd);
     } else if (activeFence) {
       maskRange(characters, lineStart, contentEnd);
-      const closing = containerContent.content.match(/^ {0,3}(`+|~+)[ \t]*$/)?.[1];
+      const closing = MARKDOWN_FENCE_CLOSE.exec(containerContent.content)?.[1];
       if (
         closing?.[0] === activeFence.marker && closing.length >= activeFence.length
       ) {
@@ -848,10 +871,39 @@ function hasControlFlowKeywordBefore(value: ArrayLike<string>, before: number): 
 }
 
 function isModuleSpecifierQuote(code: ArrayLike<string>, quoteIndex: number): boolean {
+  const owner = moduleSpecifierOwner(code, quoteIndex);
+  return owner.name === "from" || owner.name === "import";
+}
+
+function moduleSpecifierOwner(code: ArrayLike<string>, quoteIndex: number): ModuleSpecifierOwner {
   let previousIndex = previousSignificantIndex(code, quoteIndex);
   if (code[previousIndex] === "(") previousIndex = previousSignificantIndex(code, previousIndex);
-  const owner = precedingIdentifier(code, previousIndex);
-  return owner === "from" || owner === "import";
+  const name = precedingIdentifier(code, previousIndex);
+  return { name, start: previousIndex - name.length + 1 };
+}
+
+function findStringLiteralEnd(code: ArrayLike<string>, quoteIndex: number): number {
+  const quote = code[quoteIndex];
+  for (let index = quoteIndex + 1; index < code.length; index++) {
+    const current = code[index];
+    if (current === "\\") {
+      index++;
+      continue;
+    }
+    if (current === "\n" || current === "\r") return -1;
+    if (current === quote) return index;
+  }
+  return -1;
+}
+
+function mdxAllowsSpecifierOwner(
+  owner: ModuleSpecifierOwner,
+  mdxExpressionCharacters: readonly boolean[] | undefined,
+  mdxEsmLineCharacters: readonly boolean[] | undefined,
+): boolean {
+  if (!mdxExpressionCharacters || !mdxEsmLineCharacters) return true;
+  if (mdxEsmLineCharacters[owner.start] === true) return true;
+  return owner.name === "import" && mdxExpressionCharacters[owner.start] === true;
 }
 
 function maskJavaScriptComments(line: string): string {
@@ -1169,13 +1221,17 @@ function maskComments(code: string, markdownCode: boolean): string {
     const blockComment = inJavaScript && code.startsWith("/*", index);
     const htmlComment = code.startsWith("<!--", index);
     if (lineComment || blockComment || htmlComment) {
-      const terminator = lineComment ? "\n" : blockComment ? "*/" : "-->";
+      let terminator = "-->";
+      if (lineComment) {
+        terminator = "\n";
+      } else if (blockComment) {
+        terminator = "*/";
+      }
       const terminatorIndex = code.indexOf(terminator, index + (htmlComment ? 4 : 2));
-      const end = terminatorIndex < 0
-        ? code.length
-        : lineComment
-        ? terminatorIndex
-        : terminatorIndex + terminator.length;
+      let end = code.length;
+      if (terminatorIndex >= 0) {
+        end = lineComment ? terminatorIndex : terminatorIndex + terminator.length;
+      }
       maskRange(characters, index, end);
       index = end - 1;
       continue;
@@ -1205,7 +1261,7 @@ function maskComments(code: string, markdownCode: boolean): string {
       lastDivisionSlashIndex = index;
     }
     if (templateDepthIndex >= 0 && current === "{") {
-      templateExpressionDepths[templateDepthIndex]!++;
+      adjustTemplateExpressionDepth(templateExpressionDepths, templateDepthIndex, 1);
       const lineStart = code.lastIndexOf("\n", index - 1) + 1;
       const previousIndex = previousSignificantIndex(characters, index);
       statementBlocks.push(
@@ -1221,8 +1277,7 @@ function maskComments(code: string, markdownCode: boolean): string {
     }
     if (templateDepthIndex >= 0 && current === "}") {
       if (statementBlocks.pop()?.closeStartsRegex) lastStatementBlockCloseIndex = index;
-      templateExpressionDepths[templateDepthIndex]!--;
-      if (templateExpressionDepths[templateDepthIndex] === 0) {
+      if (adjustTemplateExpressionDepth(templateExpressionDepths, templateDepthIndex, -1) === 0) {
         templateExpressionDepths.pop();
         quote = "`";
       }
@@ -1285,44 +1340,25 @@ function findModuleSpecifiers(
     maskMarkdownCode(code, markdownCode, markdownCode),
     markdownCode,
   );
-  const staticImportExpression =
-    /\bimport\s+(?:(?:\{(?:[^}"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*\}|\*\s+as\s+[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*(?:\s*,\s*(?:\{(?:[^}"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*\}|\*\s+as\s+[A-Za-z_$][\w$]*))?)\s+from\s+)?(['"])([^'"]+)\1/g;
-  const reExportExpression =
-    /\bexport\s+(?:\{(?:[^}"']|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')*\}|\*(?:\s+as\s+[A-Za-z_$][\w$]*)?)\s+from\s+(['"])([^'"]+)\1/g;
-  const patterns: Array<{
-    expression: RegExp;
-    pathGroup: number;
-    requiresMdxExpression?: boolean;
-    requiresMdxEsm?: boolean;
-  }> = [
-    { expression: staticImportExpression, pathGroup: 2, requiresMdxEsm: markdownCode },
-    {
-      expression: /import\s*\(\s*(['"])([^'"]+)\1(?=\s*(?:,|\)))/g,
-      pathGroup: 2,
-      requiresMdxExpression: markdownCode,
-    },
-    { expression: reExportExpression, pathGroup: 2, requiresMdxEsm: markdownCode },
-  ];
   const mdxExpressionCharacters = markdownCode ? findMdxExpressionCharacters(code) : undefined;
   const mdxEsmLineCharacters = markdownCode ? findMdxEsmLineCharacters(code) : undefined;
   const matches: ModuleSpecifierMatch[] = [];
-  for (const { expression, pathGroup, requiresMdxExpression, requiresMdxEsm } of patterns) {
-    let match: RegExpExecArray | null;
-    while ((match = expression.exec(searchable)) !== null) {
-      if (
-        requiresMdxExpression && mdxExpressionCharacters?.[match.index] !== true &&
-        mdxEsmLineCharacters?.[match.index] !== true
-      ) continue;
-      if (requiresMdxEsm && mdxEsmLineCharacters?.[match.index] !== true) continue;
-      const path = match[pathGroup];
-      if (!path) continue;
-      const relativeStart = match[0].lastIndexOf(path);
-      const start = match.index + relativeStart;
-      matches.push({ path, start, end: start + path.length });
-    }
+  for (let quoteIndex = 0; quoteIndex < searchable.length; quoteIndex++) {
+    const quote = searchable[quoteIndex];
+    if (quote !== '"' && quote !== "'") continue;
+    const owner = moduleSpecifierOwner(searchable, quoteIndex);
+    if (owner.name !== "from" && owner.name !== "import") continue;
+    if (!mdxAllowsSpecifierOwner(owner, mdxExpressionCharacters, mdxEsmLineCharacters)) continue;
+    const end = findStringLiteralEnd(searchable, quoteIndex);
+    if (end <= quoteIndex + 1) continue;
+    matches.push({
+      path: code.slice(quoteIndex + 1, end),
+      start: quoteIndex + 1,
+      end,
+    });
+    quoteIndex = end;
   }
-  matches.sort((left, right) => left.start - right.start);
-  return matches.filter((match, index) => index === 0 || match.start !== matches[index - 1]!.start);
+  return matches;
 }
 
 /**
