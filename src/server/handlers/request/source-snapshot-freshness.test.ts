@@ -239,6 +239,37 @@ it("preserves the operation failure when final snapshot validation also fails", 
   assertEquals(rejection, operationFailure);
 });
 
+it("retains a validated config marker for the next request phase", async () => {
+  let version = 1;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => version;
+  const ctx = makePreviewCtx(adapter);
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:preview-project:main",
+    version,
+  });
+
+  assertEquals(
+    await runWithRetainedPreviewDocumentSourceSnapshot(
+      ctx,
+      () => Promise.resolve("admitted"),
+      { retainAfterOperation: () => true },
+    ),
+    "admitted",
+  );
+  version++;
+
+  const rejection = await assertRejects(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(
+      ctx,
+      () => Promise.resolve("route"),
+    )
+  );
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+});
+
 it("reclassifies when the source generation changes without changing identity", async () => {
   let refreshes = 0;
   let version = 1;

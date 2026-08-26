@@ -103,6 +103,11 @@ export function seedPreviewDocumentSourceSnapshot(
   preparedDocumentSnapshots.set(ctx, { ...marker, configBound: true });
 }
 
+interface RetainedPreviewDocumentSourceSnapshotOptions<T> {
+  /** Keep the validated marker available for a later request phase. */
+  readonly retainAfterOperation?: (result: T) => boolean;
+}
+
 /**
  * Keep a config-bound marker alive across an upstream operation and validate
  * both sides of it. A downstream document handler may release its WeakMap
@@ -112,6 +117,7 @@ export function seedPreviewDocumentSourceSnapshot(
 export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
   ctx: HandlerContext,
   operation: () => Promise<T>,
+  options: RetainedPreviewDocumentSourceSnapshotOptions<T> = {},
 ): Promise<T> {
   const retained = preparedDocumentSnapshots.get(ctx);
   if (retained?.configBound === true) {
@@ -145,6 +151,7 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
     return finalization;
   };
   let finalizationTransferredToBody = false;
+  let retentionContinues = false;
   let primaryFailure = false;
   try {
     const result = await operation();
@@ -153,6 +160,11 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
       !(await preparedDocumentSnapshotMatches(ctx, retained))
     ) {
       throwConfigSnapshotChanged(ctx);
+    }
+    if (options.retainAfterOperation?.(result) === true) {
+      await validate();
+      retentionContinues = true;
+      return result;
     }
     if (
       result instanceof Response && result.body !== null &&
@@ -168,7 +180,7 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
     primaryFailure = true;
     throw error;
   } finally {
-    if (!finalizationTransferredToBody) {
+    if (!finalizationTransferredToBody && !retentionContinues) {
       if (primaryFailure) await finalizeAfterPrimaryFailure(finalize);
       else await finalize();
     }
