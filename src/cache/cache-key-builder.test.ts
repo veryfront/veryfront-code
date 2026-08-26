@@ -11,11 +11,13 @@ import {
   getProjectScopedKeyAlways,
   isRegistryScopeForProject,
   runWithCacheKeyContext,
+  runWithoutCacheKeyContext,
   tryGetCacheKeyContext,
   tryGetRegistryScopeContext,
   tryGetRegistryScopeId,
 } from "./cache-key-builder.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 describe("cache-key-builder", () => {
   describe("getContentHashKey", () => {
@@ -55,6 +57,49 @@ describe("cache-key-builder", () => {
       };
 
       assertThrows(() => runWithCacheKeyContext(invalidCtx, () => {}), Error);
+    });
+
+    it("uses captured async-context operations after project prototype mutation", () => {
+      const originalGetStore = Object.getOwnPropertyDescriptor(
+        AsyncLocalStorage.prototype,
+        "getStore",
+      )!;
+      const originalRun = Object.getOwnPropertyDescriptor(
+        AsyncLocalStorage.prototype,
+        "run",
+      )!;
+      let poisonedCalls = 0;
+      const poison = () => {
+        poisonedCalls += 1;
+        throw new Error("project AsyncLocalStorage hook must not run");
+      };
+      Object.defineProperty(AsyncLocalStorage.prototype, "getStore", {
+        configurable: true,
+        value: poison,
+      });
+      Object.defineProperty(AsyncLocalStorage.prototype, "run", {
+        configurable: true,
+        value: poison,
+      });
+
+      try {
+        const ctx: CacheKeyContext = {
+          projectId: "test-project",
+          mode: "production",
+          versionId: "rel_123",
+        };
+        const result = runWithCacheKeyContext(ctx, () => ({
+          active: tryGetCacheKeyContext(),
+          suppressed: runWithoutCacheKeyContext(tryGetCacheKeyContext),
+        }));
+
+        assertEquals(result.active, ctx);
+        assertEquals(result.suppressed, null);
+        assertEquals(poisonedCalls, 0);
+      } finally {
+        Object.defineProperty(AsyncLocalStorage.prototype, "getStore", originalGetStore);
+        Object.defineProperty(AsyncLocalStorage.prototype, "run", originalRun);
+      }
     });
   });
 

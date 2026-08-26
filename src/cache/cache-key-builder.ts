@@ -84,6 +84,33 @@ export function buildVersionedRegistryScopeId(
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(cacheKeyContextStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
+
+function runWithCacheKeyStore<T>(store: CacheKeyContext | null, fn: () => T): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, cacheKeyContextStorage, [store, fn]) as T;
+}
+
+function getCacheKeyStore(): CacheKeyContext | null | undefined {
+  return IntrinsicReflectApply(
+    AsyncLocalStorageGetStore,
+    cacheKeyContextStorage,
+    [],
+  ) as CacheKeyContext | null | undefined;
+}
 
 function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
   return CacheKeyContextSchema.parse(ctx);
@@ -99,7 +126,7 @@ export function getContentHashKey(
 }
 
 export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {
-  return cacheKeyContextStorage.run(validateCacheKeyContext(ctx), fn);
+  return runWithCacheKeyStore(validateCacheKeyContext(ctx), fn);
 }
 
 /**
@@ -110,11 +137,11 @@ export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T 
  * isolation.
  */
 export function runWithoutCacheKeyContext<T>(fn: () => T): T {
-  return cacheKeyContextStorage.run(null, fn);
+  return runWithCacheKeyStore(null, fn);
 }
 
 export function getCurrentCacheKeyContext(): CacheKeyContext {
-  const ctx = cacheKeyContextStorage.getStore();
+  const ctx = getCacheKeyStore();
   if (ctx) return ctx;
 
   throw CACHE_INVARIANT_VIOLATION.create({
@@ -169,7 +196,7 @@ function extractCacheKeyContextFromMultiProjectContext(
 }
 
 export function tryGetCacheKeyContext(): CacheKeyContext | null {
-  const explicitCtx = cacheKeyContextStorage.getStore();
+  const explicitCtx = getCacheKeyStore();
   if (explicitCtx) return explicitCtx;
 
   const reqCtx = getRequestContextFn()?.();
@@ -196,7 +223,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
 export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   // Explicit contexts are authoritative for workflows and other callers that
   // intentionally override ambient filesystem tenancy.
-  const cacheCtx = cacheKeyContextStorage.getStore();
+  const cacheCtx = getCacheKeyStore();
   if (cacheCtx) {
     return {
       scopeId: buildVersionedRegistryScopeId(

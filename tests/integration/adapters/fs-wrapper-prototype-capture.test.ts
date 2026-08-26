@@ -276,7 +276,6 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
   });
 
   it("keeps credential-bearing adapter lookup independent of mutable timing hooks", async () => {
-    const adapter = new MultiProjectFSAdapter(baseConfig);
     const manager = new ProxyFSAdapterManager({
       baseConfig,
       adapterFactory: (config) => {
@@ -285,11 +284,7 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
         return selectedAdapter;
       },
     });
-    const internals = adapter as unknown as {
-      manager: ProxyFSAdapterManager;
-    };
-    const originalManager = internals.manager;
-    internals.manager = manager;
+    const adapter = new MultiProjectFSAdapter(baseConfig, manager);
     const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
     let poisonedCalls = 0;
 
@@ -309,8 +304,6 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     } finally {
       if (originalNow) Object.defineProperty(performance, "now", originalNow);
       else Reflect.deleteProperty(performance, "now");
-      internals.manager = originalManager;
-      manager.dispose();
       adapter.dispose();
     }
 

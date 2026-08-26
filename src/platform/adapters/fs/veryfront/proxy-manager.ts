@@ -49,6 +49,7 @@ const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeTrim = String.prototype.trim;
 type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
 type GetAdapterParamsValidationResult = ReturnType<
   GetAdapterParamsSchema["safeParse"]
@@ -65,6 +66,10 @@ function captureGetAdapterParamsValidator(): void {
 
 function performanceNow(): number {
   return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function trimString(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
 }
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
@@ -162,9 +167,10 @@ export class ProxyFSAdapterManager {
     const effectiveEnvironmentName = environmentName || null;
     const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
 
+    const canonicalProjectId = projectId === undefined ? undefined : trimString(projectId);
     if (
       this.baseConfig.veryfront?.proxyMode === true &&
-      (!projectId?.trim() || projectId !== projectId.trim())
+      (!canonicalProjectId || projectId !== canonicalProjectId)
     ) {
       throw INVALID_ARGUMENT.create({
         detail: "[ProxyFSAdapterManager] Hosted proxy adapters require a canonical project ID",

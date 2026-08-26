@@ -105,6 +105,47 @@ describe("ProxyFSAdapterManager", () => {
     }
   });
 
+  it("canonicalizes hosted project IDs without a mutable trim hook", async () => {
+    const manager = createManager({
+      baseConfig: {
+        veryfront: {
+          ...baseConfig.veryfront,
+          proxyMode: true,
+        },
+      },
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        return adapter;
+      },
+    });
+    await manager.getAdapter(
+      "my-project",
+      "signed-user-token",
+      "canonical-project-id",
+      false,
+    );
+    const originalTrim = String.prototype.trim;
+    let poisonedCalls = 0;
+    String.prototype.trim = function () {
+      poisonedCalls += 1;
+      throw new Error("project trim hook must not run");
+    };
+
+    try {
+      await manager.getAdapter(
+        "my-project",
+        "signed-user-token",
+        "canonical-project-id",
+        false,
+      );
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      String.prototype.trim = originalTrim;
+      manager.dispose();
+    }
+  });
+
   describe("exact preview source", () => {
     it("propagates a missing push branch without loading main", async () => {
       const branch = "push-20260324t121046";
