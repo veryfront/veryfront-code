@@ -21,8 +21,8 @@ const CACHE_PRODUCER_JOB = "tests";
 const CHROMIUM_STEP_MINUTES = 20;
 const CHROMIUM_OVERHEAD_MARGIN_SECONDS = 120;
 /**
- * How long an upstream outage on the two REQUIRED Deno downloads must be
- * survivable. Neither has a fallback, so the retry budget is the only thing
+ * How long an upstream outage on the REQUIRED Deno archive download must be
+ * survivable. It has no fallback, so the retry budget is the only thing
  * between a blip and a red job — and setup-deno runs in ~30 jobs per
  * merge_group, so a per-job failure chance compounds into an ejected batch.
  */
@@ -127,21 +127,20 @@ async function workflowPathsUsingSetupDeno(): Promise<string[]> {
 }
 
 /**
- * Runs the real "Install pinned Deno" script from the action, unmodified, with
- * `curl` and `unzip` replaced by stubs on PATH. Nothing touches the network, so
+ * Runs the real "Install pinned Deno" script from the action with `curl` and
+ * `unzip` replaced by stubs on PATH, and with one surgical substitution: the
+ * in-repo pinned archive digests are rewritten to the digest of the stub
+ * payload, because no stub can produce a preimage of the real pins. Everything
+ * else — the single-download contract, the retry flags, the fail-closed
+ * comparison — runs exactly as committed. Nothing touches the network, so
  * every upstream response — including the transport failures that redden CI —
  * is reproducible locally.
  */
-type ManifestMode =
-  | "http-200-bad-hash"
-  | "http-404"
-  | "http-503"
-  | "transport-failure";
 type ArchiveMode = "ok" | "corrupt";
 /** How an upstream fails while it is degraded. */
 type FaultKind = "http-503" | "transport";
 /**
- * An upstream outage on one of the two REQUIRED downloads: it fails with
+ * An upstream outage on the REQUIRED archive download: it fails with
  * `kind` until `seconds` of retry backoff have elapsed, then serves normally.
  * `seconds: "forever"` is a resource that is genuinely unavailable — the case
  * that must still fail the job.
@@ -176,7 +175,7 @@ async function installerScript(): Promise<string> {
  *   - a 5xx under `--fail` is a *transient* error, so plain `--retry` retries it;
  *   - a dead connection (exit 56) is not, so it is only retried when
  *     `--retry-all-errors` is passed. This is exactly why merge-queue run
- *     31625521721 gave up on the required `.sha256sum` after 2.0s with four
+ *     31625521721 gave up on a required download after 2.0s with four
  *     fifths of its `--retry 5` budget unspent.
  *
  * Backoff is simulated, never slept: the clock advances by `--retry-delay` per
@@ -185,14 +184,6 @@ async function installerScript(): Promise<string> {
  */
 const CURL_STUB = `#!/usr/bin/env bash
 set -uo pipefail
-
-sha_of_stdin() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | awk '{print $1}'
-  else
-    shasum -a 256 | awk '{print $1}'
-  fi
-}
 
 url=""
 output=""
@@ -214,44 +205,23 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "\${url}" in
-  */checksums.txt)
-    # The manifest is optional and 404s for every real release, so it is scripted
-    # directly rather than through the outage model.
-    case "\${VF_TEST_MANIFEST_MODE}" in
-      http-200-bad-hash)
-        # A manifest that downloads cleanly but is not the pinned artifact.
-        printf 'tampered-checksums-manifest\\n' > "\${output}"
-        printf '200'
-        exit 0
-        ;;
-      http-404) printf '404'; exit 22 ;;
-      http-503) printf '503'; exit 22 ;;
-      transport-failure) printf '000'; exit 56 ;;
-    esac
-    printf '000'
+  *.zip) fault="\${VF_TEST_ZIP_FAULT}"; fault_seconds="\${VF_TEST_ZIP_FAULT_SECONDS}" ;;
+  *)
+    # The pinned digests live in the repository, so the installer has exactly
+    # one legitimate download: the archive. Any other fetch — the unpublished
+    # checksums.txt manifest, the unpinned same-origin .sha256sum — is a
+    # regression to trusting the release origin, and fails the run here.
+    echo "curl stub: unexpected download of \${url}" >&2
     exit 1
     ;;
-  *.sha256sum) fault="\${VF_TEST_CHECKSUM_FAULT}"; fault_seconds="\${VF_TEST_CHECKSUM_FAULT_SECONDS}" ;;
-  *.zip) fault="\${VF_TEST_ZIP_FAULT}"; fault_seconds="\${VF_TEST_ZIP_FAULT_SECONDS}" ;;
-  *) printf '000'; exit 1 ;;
 esac
 
 serve() {
-  case "\${url}" in
-    *.sha256sum)
-      archive_name="\$(basename "\${url}" .sha256sum)"
-      printf '%s  %s\\n' \\
-        "\$(printf '%s' "\${VF_TEST_ARCHIVE_BODY}" | sha_of_stdin)" \\
-        "\${archive_name}" > "\${output}"
-      ;;
-    *.zip)
-      if [ "\${VF_TEST_ARCHIVE_MODE}" = "corrupt" ]; then
-        printf 'tampered-archive-bytes' > "\${output}"
-      else
-        printf '%s' "\${VF_TEST_ARCHIVE_BODY}" > "\${output}"
-      fi
-      ;;
-  esac
+  if [ "\${VF_TEST_ARCHIVE_MODE}" = "corrupt" ]; then
+    printf 'tampered-archive-bytes' > "\${output}"
+  else
+    printf '%s' "\${VF_TEST_ARCHIVE_BODY}" > "\${output}"
+  fi
 }
 
 elapsed=0
@@ -298,13 +268,44 @@ printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno"
 printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno.exe"
 `;
 
+const STUB_ARCHIVE_BODY = "stub-deno-archive-payload";
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * The committed installer with exactly one substitution: every pinned archive
+ * digest is rewritten to the digest of the stub payload. The pins are the one
+ * part of the script a stubbed upstream cannot satisfy — serving bytes that
+ * hash to a real pin would require a SHA-256 preimage — and rewriting them
+ * (rather than the comparison) keeps the fail-closed comparison itself, and
+ * everything around it, exactly as committed.
+ */
+async function stubPinnedInstallerScript(): Promise<string> {
+  const install = await installerScript();
+  const pins = install.match(/archive_sha256="[0-9a-f]{64}"/g) ?? [];
+  assert(
+    pins.length > 0,
+    "the installer must pin archive digests in the repository",
+  );
+  return install.replaceAll(
+    /archive_sha256="[0-9a-f]{64}"/g,
+    `archive_sha256="${await sha256Hex(STUB_ARCHIVE_BODY)}"`,
+  );
+}
+
 async function runInstaller(
-  { manifest, archive = "ok", checksumOutage, archiveOutage }: {
-    manifest: ManifestMode;
+  { archive = "ok", archiveOutage }: {
     archive?: ArchiveMode;
-    checksumOutage?: Outage;
     archiveOutage?: Outage;
-  },
+  } = {},
 ): Promise<InstallerResult> {
   const root = await Deno.makeTempDir({ prefix: "setup-deno-installer-" });
   try {
@@ -313,7 +314,10 @@ async function runInstaller(
     await Deno.mkdir(`${root}/runner-temp`);
     await Deno.writeTextFile(`${bin}/curl`, CURL_STUB, { mode: 0o755 });
     await Deno.writeTextFile(`${bin}/unzip`, UNZIP_STUB, { mode: 0o755 });
-    await Deno.writeTextFile(`${root}/install.sh`, await installerScript());
+    await Deno.writeTextFile(
+      `${root}/install.sh`,
+      await stubPinnedInstallerScript(),
+    );
     await Deno.writeTextFile(`${root}/github-path`, "");
     // Exporting inside the wrapper keeps the test free of --allow-env.
     await Deno.writeTextFile(
@@ -323,13 +327,8 @@ async function runInstaller(
         `export PATH="${bin}:\${PATH}"`,
         `export RUNNER_TEMP="${root}/runner-temp"`,
         `export GITHUB_PATH="${root}/github-path"`,
-        `export VF_TEST_MANIFEST_MODE="${manifest}"`,
         `export VF_TEST_ARCHIVE_MODE="${archive}"`,
-        'export VF_TEST_ARCHIVE_BODY="stub-deno-archive-payload"',
-        `export VF_TEST_CHECKSUM_FAULT="${checksumOutage?.kind ?? "none"}"`,
-        `export VF_TEST_CHECKSUM_FAULT_SECONDS="${
-          checksumOutage?.seconds ?? 0
-        }"`,
+        `export VF_TEST_ARCHIVE_BODY="${STUB_ARCHIVE_BODY}"`,
         `export VF_TEST_ZIP_FAULT="${archiveOutage?.kind ?? "none"}"`,
         `export VF_TEST_ZIP_FAULT_SECONDS="${archiveOutage?.seconds ?? 0}"`,
         `exec bash "${root}/install.sh"`,
@@ -353,115 +352,89 @@ async function runInstaller(
 }
 
 describe("setup-deno installer resilience", () => {
-  // The pinned manifest is not published by any Deno release, so every real run
-  // takes the "manifest unavailable" path. A transport blip on a URL that is
-  // guaranteed to 404 must not be able to redden a job.
-  for (
-    const [label, manifest] of [
-      ["a 503 from the manifest URL", "http-503"],
-      ["a died connection (HTTP 000)", "transport-failure"],
-      ["a 404 from the manifest URL", "http-404"],
-    ] as const satisfies readonly (readonly [string, ManifestMode])[]
-  ) {
-    it(`falls back to the archive checksum file on ${label}`, async () => {
-      const result = await runInstaller({ manifest });
+  // The happy path doubles as the single-download contract: the curl stub
+  // hard-fails any URL other than the archive, so this passing proves the
+  // installer no longer fetches the unpublished checksums.txt manifest or the
+  // unpinned same-origin .sha256sum file.
+  it("installs a Deno whose archive matches its pinned checksum", async () => {
+    const result = await runInstaller();
 
-      assertEquals(
-        result.code,
-        0,
-        `installer must not fail on ${label}\n${result.stderr}`,
-      );
-      assertStringIncludes(result.stderr, "falling back to archive checksum");
-      assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
-    });
-  }
-
-  // The guard that must survive the fix: a manifest that really does download
-  // but does not match its pin is an integrity signal, not a transport blip.
-  it("still fails when a downloaded manifest does not match its pinned hash", async () => {
-    const result = await runInstaller({ manifest: "http-200-bad-hash" });
-
-    assert(result.code !== 0, "a mismatched manifest must fail the job");
-    assertStringIncludes(result.stderr, "Checksums manifest checksum mismatch");
+    assertEquals(
+      result.code,
+      0,
+      `installer must succeed with only the archive download\n${result.stderr}`,
+    );
+    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
   });
 
-  // Falling back must never mean skipping verification: the archive is still
-  // checked against ${archive}.sha256sum on the fallback path.
-  it("still verifies the archive against its checksum file on the fallback path", async () => {
-    const result = await runInstaller({
-      manifest: "http-503",
-      archive: "corrupt",
-    });
+  // The point of pinning in-repo: a tampered archive fails no matter what the
+  // release origin says about it, because nothing downloaded from that origin
+  // can vouch for it.
+  it("fails closed when the archive does not match its pinned checksum", async () => {
+    const result = await runInstaller({ archive: "corrupt" });
 
     assert(result.code !== 0, "a tampered archive must fail the job");
     assertStringIncludes(result.stderr, "Deno archive checksum mismatch");
+    assertEquals(
+      result.stdout.includes("deno 2.7.7 (stub)"),
+      false,
+      "no Deno may be installed from an unverified archive",
+    );
   });
 
-  // The two REQUIRED downloads. Unlike the manifest these have no fallback, so
-  // the only lever is the retry budget -- and it has to cover what upstream
-  // actually does. Merge-queue run 31625521721 died here: the `.sha256sum` got
-  // one 503, waited its 2s, then hit a dead connection and quit, 2.0s in.
-  for (
-    const [role, outages] of [
-      ["archive checksum", (o: Outage) => ({ checksumOutage: o })],
-      ["archive", (o: Outage) => ({ archiveOutage: o })],
-    ] as const
-  ) {
-    it(`retries the required ${role} download through a died connection`, async () => {
-      const result = await runInstaller({
-        manifest: "http-404",
-        ...outages({ kind: "transport", seconds: 1 }),
-      });
-
-      assertEquals(
-        result.code,
-        0,
-        `a dead connection on the ${role} must be retried, not fatal\n${result.stderr}`,
-      );
-      assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+  // The one REQUIRED download. It has no fallback, so the only lever is the
+  // retry budget -- and it has to cover what upstream actually does.
+  // Merge-queue run 31625521721 died on a required download that got one 503,
+  // waited its 2s, then hit a dead connection and quit, 2.0s in.
+  it("retries the required archive download through a died connection", async () => {
+    const result = await runInstaller({
+      archiveOutage: { kind: "transport", seconds: 1 },
     });
 
-    it(`retries the required ${role} download across a ${SURVIVABLE_OUTAGE_SECONDS}s upstream outage`, async () => {
-      const result = await runInstaller({
-        manifest: "http-404",
-        ...outages({ kind: "http-503", seconds: SURVIVABLE_OUTAGE_SECONDS }),
-      });
+    assertEquals(
+      result.code,
+      0,
+      `a dead connection on the archive must be retried, not fatal\n${result.stderr}`,
+    );
+    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+  });
 
-      assertEquals(
-        result.code,
-        0,
-        `the ${role} retry window must outlast a ${SURVIVABLE_OUTAGE_SECONDS}s outage\n${result.stderr}`,
-      );
-      assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+  it(`retries the required archive download across a ${SURVIVABLE_OUTAGE_SECONDS}s upstream outage`, async () => {
+    const result = await runInstaller({
+      archiveOutage: { kind: "http-503", seconds: SURVIVABLE_OUTAGE_SECONDS },
     });
 
-    // The guard that keeps this from becoming "make CI never fail". Neither
-    // required download has a fallback, so a resource that truly cannot be
-    // obtained must still stop the job rather than install an unverified Deno.
-    for (const kind of ["http-503", "transport"] as const) {
-      it(`still fails when the required ${role} is never obtainable (${kind})`, async () => {
-        const result = await runInstaller({
-          manifest: "http-404",
-          ...outages({ kind, seconds: "forever" }),
-        });
+    assertEquals(
+      result.code,
+      0,
+      `the archive retry window must outlast a ${SURVIVABLE_OUTAGE_SECONDS}s outage\n${result.stderr}`,
+    );
+    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+  });
 
-        assert(
-          result.code !== 0,
-          `an unobtainable ${role} must fail the job`,
-        );
-        assertStringIncludes(
-          result.stderr,
-          role === "archive"
-            ? "Failed to download Deno archive for"
-            : "Failed to download Deno archive checksum for",
-        );
-        assertEquals(
-          result.stdout.includes("deno 2.7.7 (stub)"),
-          false,
-          "no Deno may be installed when verification inputs are missing",
-        );
+  // The guard that keeps this from becoming "make CI never fail". The
+  // required download has no fallback, so an archive that truly cannot be
+  // obtained must still stop the job rather than install an unverified Deno.
+  for (const kind of ["http-503", "transport"] as const) {
+    it(`still fails when the required archive is never obtainable (${kind})`, async () => {
+      const result = await runInstaller({
+        archiveOutage: { kind, seconds: "forever" },
       });
-    }
+
+      assert(
+        result.code !== 0,
+        "an unobtainable archive must fail the job",
+      );
+      assertStringIncludes(
+        result.stderr,
+        "Failed to download Deno archive for",
+      );
+      assertEquals(
+        result.stdout.includes("deno 2.7.7 (stub)"),
+        false,
+        "no Deno may be installed when verification inputs are missing",
+      );
+    });
   }
 });
 
@@ -568,15 +541,47 @@ describe("setup-deno CI contract", () => {
     assertStringIncludes(install, "--remove-on-error");
     assertStringIncludes(
       install,
-      "https://github.com/denoland/deno/releases/download/v${version}/${archive}.sha256sum",
+      "https://github.com/denoland/deno/releases/download/v${version}/${archive}",
     );
+    // Fail closed: the expected archive digests are pinned in the repository,
+    // so the release origin is never trusted to vouch for its own bytes. No
+    // checksum may be downloaded at all — Deno publishes no checksums.txt
+    // manifest (the URL 404s on every real release), and the per-archive
+    // .sha256sum assets ship from the same origin as the archives themselves,
+    // so fetching either would add no integrity. The archive is the one and
+    // only URL the installer may touch.
+    assertEquals(
+      install.match(/https:\/\/[^\s"']+/g),
+      ["https://github.com/denoland/deno/releases/download/v${version}/${archive}"],
+      "the installer must download exactly one URL: the pinned-version archive",
+    );
+    assertEquals(
+      install.includes("falling back"),
+      false,
+      "checksum verification must have no fallback path",
+    );
+    for (
+      const target of [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+      ]
+    ) {
+      assertMatch(
+        install,
+        new RegExp(
+          `deno-${target}\\.zip\\)\\s*\\n\\s*archive_sha256="[0-9a-f]{64}"`,
+        ),
+        `the installer must pin a digest for deno-${target}.zip`,
+      );
+    }
     assertStringIncludes(
       install,
-      "https://github.com/denoland/deno/releases/download/v${version}/checksums.txt",
-    );
-    assertStringIncludes(
-      install,
-      'checksum_parse_path="${checksums_manifest_path}"',
+      "No pinned checksum for ${archive}",
+      "an archive without a pinned digest must fail closed",
     );
     // Every checksum backend must read the file on stdin. Passing the path as an
     // argument makes GNU sha256sum/shasum escape filenames containing a backslash
@@ -606,52 +611,7 @@ describe("setup-deno CI contract", () => {
     }
     assertStringIncludes(
       install,
-      'checksums_manifest_actual_sha256="$(compute_sha256 "${checksums_manifest_path}")"',
-    );
-    assertStringIncludes(
-      install,
       'actual_sha256="$(compute_sha256 "${zip_path}")"',
-    );
-    assertStringIncludes(
-      install,
-      'if [ "${checksums_manifest_actual_sha256}" != "${checksums_manifest_sha256}" ]',
-    );
-    assertStringIncludes(
-      install,
-      'checksums_manifest_http_code="$(curl --fail --location --show-error --retry 5 --retry-delay 2 \\',
-    );
-    assertStringIncludes(
-      install,
-      '  if [ "${checksums_manifest_http_code}" != "200" ]; then',
-    );
-    // Any non-200 must fall back to the archive checksum file. Singling out 404
-    // turned every upstream blip on a URL that always 404s into a red job, and
-    // because setup-deno runs in every job, one blip reddened many at once.
-    assertEquals(
-      install.includes('!= "404"'),
-      false,
-      "an unavailable manifest must fall back regardless of why it was unavailable",
-    );
-    assertEquals(
-      install.includes("Failed to download checksums manifest"),
-      false,
-      "failing to reach an unpublished manifest must not fail the job",
-    );
-    assertStringIncludes(
-      install,
-      "Checksums manifest unavailable for v${version} (HTTP ${checksums_manifest_http_code}); falling back to archive checksum file",
-    );
-    assertStringIncludes(
-      install,
-      "Failed to download Deno archive checksum for ${archive}",
-    );
-    assertStringIncludes(
-      install,
-      'archive_sha256="$(awk \'BEGIN {IGNORECASE = 1} /^Hash[[:space:]]*:/ { print tolower($3) }\' "${checksum_parse_path}")"',
-    );
-    assertStringIncludes(
-      install,
-      'archive_sha256="$(awk -v target="${archive}" \'$2 == target || $2 == "*" target { print tolower($1) }\' "${checksum_parse_path}")"',
     );
     assertStringIncludes(
       install,
@@ -659,7 +619,7 @@ describe("setup-deno CI contract", () => {
     );
     assertStringIncludes(
       install,
-      'if [ -z "${archive_sha256}" ]; then',
+      "Failed to download Deno archive for ${archive}",
     );
     assertEquals(
       /\bnpm\b/.test(install),
@@ -716,66 +676,62 @@ describe("setup-deno CI contract", () => {
     }
   });
 
-  it("budgets the required Deno downloads for a real upstream outage", async () => {
+  it("budgets the required Deno download for a real upstream outage", async () => {
     const install = await installerScript();
-    const manifest = curlInvocation(install, "/checksums.txt");
-    const required = {
-      "archive checksum": curlInvocation(install, "${archive}.sha256sum"),
-      archive: curlInvocation(install, '${archive}"'),
-    };
+    const invocation = curlInvocation(install, '${archive}"');
 
-    let worstCaseSeconds = 0;
-    for (const [role, invocation] of Object.entries(required)) {
-      // curl only treats 5xx and timeouts as transient. A dead connection is
-      // exit 56 and a rate-limited 403 is exit 22, and plain --retry abandons
-      // both immediately -- which is how run 31625521721 gave up on the
-      // required .sha256sum after 2.0s with 4 of its 5 retries unspent.
-      assertStringIncludes(
-        invocation,
-        "--retry-all-errors",
-        `the ${role} download must retry transport failures, not only 5xx`,
-      );
-      // Without this a failed transfer leaves a partial file that the next
-      // step would happily read as a checksum or an archive.
-      assertStringIncludes(
-        invocation,
-        "--remove-on-error",
-        `the ${role} download must not leave a partial file behind`,
-      );
+    // curl only treats 5xx and timeouts as transient. A dead connection is
+    // exit 56 and a rate-limited 403 is exit 22, and plain --retry abandons
+    // both immediately -- which is how run 31625521721 gave up on a required
+    // download after 2.0s with 4 of its 5 retries unspent.
+    assertStringIncludes(
+      invocation,
+      "--retry-all-errors",
+      "the archive download must retry transport failures, not only 5xx",
+    );
+    // Without this a failed transfer leaves a partial file that the next
+    // step would happily read as an archive.
+    assertStringIncludes(
+      invocation,
+      "--remove-on-error",
+      "the archive download must not leave a partial file behind",
+    );
+    // The release URL redirects; --location must never be allowed to follow
+    // that redirect onto an insecure protocol.
+    assertStringIncludes(
+      invocation,
+      '--proto "=https"',
+      "the archive download must be pinned to HTTPS",
+    );
+    assertStringIncludes(
+      invocation,
+      '--proto-redir "=https"',
+      "the archive download must only follow HTTPS redirects",
+    );
 
-      const retries = curlNumber(invocation, "--retry");
-      const retryDelay = curlNumber(invocation, "--retry-delay");
-      const retryWindow = curlNumber(invocation, "--retry-max-time");
-      const maxTime = curlNumber(invocation, "--max-time");
+    const retries = curlNumber(invocation, "--retry");
+    const retryDelay = curlNumber(invocation, "--retry-delay");
+    const retryWindow = curlNumber(invocation, "--retry-max-time");
+    const maxTime = curlNumber(invocation, "--max-time");
 
-      assert(
-        retryWindow > SURVIVABLE_OUTAGE_SECONDS,
-        `the ${role} retry window (${retryWindow}s) must outlast a ${SURVIVABLE_OUTAGE_SECONDS}s outage`,
-      );
-      // The window is only real if the retry count can reach the end of it;
-      // otherwise the count silently becomes the binding constraint again.
-      assert(
-        retries * retryDelay >= retryWindow,
-        `the ${role} retry count (${retries} x ${retryDelay}s) must be able to fill its ${retryWindow}s window`,
-      );
-      // A new retry may start at the very end of the window and then run for a
-      // full per-transfer deadline.
-      worstCaseSeconds += retryWindow + maxTime;
-    }
+    assert(
+      retryWindow > SURVIVABLE_OUTAGE_SECONDS,
+      `the archive retry window (${retryWindow}s) must outlast a ${SURVIVABLE_OUTAGE_SECONDS}s outage`,
+    );
+    // The window is only real if the retry count can reach the end of it;
+    // otherwise the count silently becomes the binding constraint again.
+    assert(
+      retries * retryDelay >= retryWindow,
+      `the archive retry count (${retries} x ${retryDelay}s) must be able to fill its ${retryWindow}s window`,
+    );
+    // A new retry may start at the very end of the window and then run for a
+    // full per-transfer deadline.
+    const worstCaseSeconds = retryWindow + maxTime;
 
     assert(
       worstCaseSeconds <=
         TIGHTEST_SETUP_JOB_MINUTES * 60 - DOWNLOAD_FAILURE_MARGIN_SECONDS,
       `an unreachable upstream must fail inside the tightest setup-deno job with ${DOWNLOAD_FAILURE_MARGIN_SECONDS}s to spare; budget is ${worstCaseSeconds}s`,
-    );
-
-    // The manifest is the opposite case: it 404s on every real release, and
-    // --retry-all-errors retries 4xx too, so adding it there would make every
-    // job in the repo pay the full retry budget for a guaranteed miss.
-    assertEquals(
-      manifest.includes("--retry-all-errors"),
-      false,
-      "the optional manifest fetch must not retry its guaranteed 404",
     );
   });
 

@@ -17,10 +17,14 @@ import {
   reconcileActiveMergeGroupReviewStatuses,
   requestAutomatedReview,
   reviewBaseBinding,
+  selectMergeGroupFailureStatusBoundary,
+  shouldPreserveLaterMergeGroupSuccess,
 } from "./automated-review-gate.mjs";
 
 const HEAD = "a4804e5b9a0c9c45da7c4866d9eb317c878b029c";
 const OTHER_HEAD = "d258d506fede01c84b61bc40488059447d755a5a";
+const BASE_HEAD = "e724246c0e05c8dcf0db41f024f4592128222937";
+const NEW_HEAD = "b8459394dd5bac3a6736ee4c7723d7f291abb382";
 const BASE_REPOSITORY_ID = 1_101_259_327;
 const BASE_REF = "main";
 const OTHER_BASE_REF = "release";
@@ -91,6 +95,9 @@ function codexComment(
   ref = HEAD.slice(0, 10),
   overrides: Record<string, unknown> = {},
 ) {
+  const createdAt = typeof overrides.created_at === "string"
+    ? overrides.created_at
+    : "2026-08-25T08:00:00Z";
   return {
     user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
     body: [
@@ -98,6 +105,8 @@ function codexComment(
       `**Reviewed commit:** \`${ref}\``,
     ].join("\n\n"),
     html_url: "https://example.test/comment",
+    created_at: createdAt,
+    updated_at: createdAt,
     ...overrides,
   };
 }
@@ -125,6 +134,25 @@ function associatedPull(overrides: Record<string, unknown> = {}) {
     head: { sha: HEAD },
     base: { ref: BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
     ...overrides,
+  };
+}
+
+function activeQueueBinding(overrides: Record<string, unknown> = {}) {
+  return {
+    repository: {
+      pullRequest: {
+        number: 1,
+        state: "OPEN",
+        headRefOid: HEAD,
+        baseRefName: BASE_REF,
+        mergeQueueEntry: {
+          state: "AWAITING_CHECKS",
+          baseCommit: { oid: BASE_HEAD },
+          headCommit: { oid: OTHER_HEAD },
+        },
+        ...overrides,
+      },
+    },
   };
 }
 
@@ -211,12 +239,250 @@ describe("automated review evidence", () => {
     );
   });
 
+  it("lets a later exact-head no-findings comment supersede a Codex finding", async () => {
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "COMMENTED",
+            body: "P1: An earlier exact-head review reported a false positive.",
+            submitted_at: "2026-08-25T08:00:00Z",
+          })],
+          comments: [codexComment(HEAD.slice(0, 10), {
+            created_at: "2026-08-25T08:00:01Z",
+          })],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({
+            id: 101,
+            state: "COMMENTED",
+            body: "P1: An earlier exact-head review reported a false positive.",
+            submitted_at: "2026-08-25T08:00:00Z",
+          })],
+          comments: [codexComment(HEAD.slice(0, 10), {
+            id: 102,
+            created_at: "2026-08-25T08:00:00Z",
+          })],
+          timeline: [
+            { event: "reviewed", id: 101 },
+            { event: "commented", id: 102 },
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+  });
+
   it("lets an exact-head Codex finding comment supersede an earlier no-findings comment", async () => {
     assertEquals(
       await findAutomatedReview(
         {
           reviews: [],
           comments: [codexComment(), codexFindingComment()],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("treats an edited Codex finding comment as newer than a later-created clean verdict", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:02Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:01Z",
+              updated_at: "2026-08-25T08:00:01Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("treats a same-second verdict after an edited finding as ambiguous", async () => {
+    const findingId = 100;
+    const verdictId = 101;
+    const finding = codexFindingComment(HEAD.slice(0, 10), {
+      id: findingId,
+      created_at: "2026-08-25T08:00:00Z",
+      updated_at: "2026-08-25T08:00:02Z",
+    });
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: verdictId,
+      created_at: "2026-08-25T08:00:02Z",
+      updated_at: "2026-08-25T08:00:02Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [finding, verdict],
+          timeline: [
+            { event: "commented", id: findingId },
+            { event: "commented", id: verdictId },
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("does not let an edited clean verdict grant success", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:03Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("requires clean verdicts to have a valid creation timestamp", async () => {
+    for (const createdAt of [undefined, "", "not-a-date"]) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [
+              codexComment(HEAD.slice(0, 10), {
+                created_at: createdAt,
+                updated_at: "2026-08-25T08:00:00Z",
+              }),
+            ],
+          },
+          HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+        `created_at ${createdAt}`,
+      );
+    }
+  });
+
+  it("requires clean verdicts to have a matching valid update timestamp", async () => {
+    for (const updatedAt of [undefined, "", "not-a-date"]) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [
+              codexComment(HEAD.slice(0, 10), {
+                created_at: "2026-08-25T08:00:00Z",
+                updated_at: updatedAt,
+              }),
+            ],
+          },
+          HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+        `updated_at ${updatedAt}`,
+      );
+    }
+  });
+
+  it("does not let an edited clean verdict supersede a finding after a base boundary", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:03Z",
+            }),
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:02Z",
+              updated_at: "2026-08-25T08:00:02Z",
+            }),
+          ],
+          events: [{
+            event: "base_ref_changed",
+            created_at: "2026-08-25T08:00:01Z",
+          }],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ),
+      undefined,
+    );
+  });
+
+  it("lets only a provably later unedited clean verdict supersede an earlier finding", async () => {
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:00Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:01Z",
+              updated_at: "2026-08-25T08:00:01Z",
+            }),
+          ],
+        },
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codexFindingComment(HEAD.slice(0, 10), {
+              id: 100,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:00Z",
+            }),
+            codexComment(HEAD.slice(0, 10), {
+              id: 101,
+              created_at: "2026-08-25T08:00:00Z",
+              updated_at: "2026-08-25T08:00:00Z",
+            }),
+          ],
         },
         HEAD,
         () => Promise.resolve(HEAD),
@@ -750,6 +1016,7 @@ function githubFixture(options: {
   headResponses?: string[];
   pullResponses?: Record<string, unknown>[];
   commit?: string | undefined;
+  commitResponses?: (string | undefined)[];
   commitError?: Error;
   failAfterFirstPage?: string;
   pullError?: Error;
@@ -757,6 +1024,11 @@ function githubFixture(options: {
   permissionError?: Error;
   pullAuthor?: string;
   draft?: boolean;
+  queueBindings?: Record<string, unknown>[];
+  queueBindingError?: Error;
+  queueRefHeads?: (string | undefined)[];
+  queueRefError?: Error;
+  statusIds?: unknown[];
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -767,9 +1039,26 @@ function githubFixture(options: {
     timeline: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const refReads: Record<string, unknown>[] = [];
+  const graphqlReads: { query: unknown; variables: unknown }[] = [];
   const pageReads = new Map<string, number>();
   let pullRead = 0;
+  let commitRead = 0;
+  let queueBindingRead = 0;
+  let queueRefRead = 0;
+  let statusWrite = 0;
   const github = {
+    graphql: (query: unknown, variables: unknown) => {
+      graphqlReads.push({ query, variables });
+      if (options.queueBindingError) {
+        return Promise.reject(options.queueBindingError);
+      }
+      const responses = options.queueBindings ?? [activeQueueBinding()];
+      const data = responses[
+        Math.min(queueBindingRead++, responses.length - 1)
+      ];
+      return Promise.resolve(data);
+    },
     paginate: {
       async *iterator(endpoint: unknown) {
         const name = Object.entries(endpoints).find(([, value]) =>
@@ -815,13 +1104,26 @@ function githubFixture(options: {
         listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
       },
-      git: { listMatchingRefs: endpoints.refs },
+      git: {
+        listMatchingRefs: endpoints.refs,
+        getRef: (parameters: Record<string, unknown>) => {
+          refReads.push(parameters);
+          if (options.queueRefError) {
+            return Promise.reject(options.queueRefError);
+          }
+          const heads = options.queueRefHeads ?? [OTHER_HEAD];
+          const sha = heads[Math.min(queueRefRead++, heads.length - 1)];
+          return Promise.resolve({ data: { object: { sha } } });
+        },
+      },
       repos: {
         listCommitStatusesForRef: endpoints.statuses,
-        getCommit: () =>
-          options.commitError
-            ? Promise.reject(options.commitError)
-            : Promise.resolve({ data: { sha: options.commit } }),
+        getCommit: () => {
+          if (options.commitError) return Promise.reject(options.commitError);
+          const commits = options.commitResponses ?? [options.commit];
+          const sha = commits[Math.min(commitRead++, commits.length - 1)];
+          return Promise.resolve({ data: { sha } });
+        },
         getCollaboratorPermissionLevel: () =>
           options.permissionError
             ? Promise.reject(options.permissionError)
@@ -833,12 +1135,17 @@ function githubFixture(options: {
             }),
         createCommitStatus: (value: Record<string, unknown>) => {
           published.push(value);
-          return Promise.resolve({ data: value });
+          const statusIds = options.statusIds ??
+            [1000 + published.length];
+          const id = statusIds[Math.min(statusWrite++, statusIds.length - 1)];
+          return Promise.resolve({
+            data: id === undefined ? { ...value } : { ...value, id },
+          });
         },
       },
     },
   };
-  return { github, published };
+  return { github, published, refReads, graphqlReads };
 }
 
 describe("automated review publication", () => {
@@ -861,12 +1168,269 @@ describe("automated review publication", () => {
       pullUrl: "https://example.test/pr/1",
     });
     assertEquals(result.state, "success");
+    assertEquals(result.statusId, 1001);
     assertEquals(fixture.published[0]?.sha, HEAD);
     assertEquals(
       fixture.published[0]?.description,
       `PR#1 base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
       } by:chatgpt-codex-connector[bot]`,
+    );
+  });
+
+  it("fails a source success whose status id is missing", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[]],
+        comments: [[codexComment()]],
+        events: [[]],
+      },
+      headResponses: [HEAD],
+      commit: HEAD,
+      statusIds: [undefined, 1002],
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.statusId, 1002);
+    assertEquals(fixture.published[0]?.state, "success");
+    assertEquals(fixture.published[1]?.state, "failure");
+  });
+
+  it("fails a source success whose status id is invalid or non-positive", async () => {
+    for (const statusId of [0, -1, 1.5, "1001"]) {
+      const fixture = githubFixture({
+        pages: {
+          reviews: [[]],
+          comments: [[codexComment()]],
+          events: [[]],
+        },
+        headResponses: [HEAD],
+        commit: HEAD,
+        statusIds: [statusId, 1002],
+      });
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+      });
+
+      assertEquals(result.state, "failure", `status id ${statusId}`);
+      assertEquals(result.statusId, 1002, `status id ${statusId}`);
+      assertEquals(fixture.published[0]?.state, "success");
+      assertEquals(fixture.published[1]?.state, "failure");
+    }
+  });
+
+  it("attempts a failure status before rejecting a malformed fallback id", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[]],
+        comments: [[codexComment()]],
+        events: [[]],
+      },
+      headResponses: [HEAD],
+      commit: HEAD,
+      statusIds: [undefined, undefined],
+    });
+
+    await assertRejects(
+      () =>
+        publishAutomatedReviewStatus({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          pullUrl: "https://example.test/pr/1",
+        }),
+      Error,
+      "Published review status identity is malformed",
+    );
+    assertEquals(fixture.published[0]?.state, "success");
+    assertEquals(fixture.published[1]?.state, "failure");
+  });
+
+  it("does not let an old-head failure close a newer queued commit", async () => {
+    const fixture = githubFixture({
+      commit: OTHER_HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: BASE_HEAD },
+        }]],
+      },
+    });
+    const result = await publishReviewResolutionFailure({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+    });
+    assertEquals(result, { queueFailures: 0, skipped: true });
+    assertEquals(fixture.published, []);
+  });
+
+  it("does not cross queue ownership when the head changes after failure begins", async () => {
+    const fixture = githubFixture({
+      commitResponses: [HEAD, HEAD, NEW_HEAD],
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindings: [activeQueueBinding({ headRefOid: NEW_HEAD })],
+    });
+    const result = await publishReviewResolutionFailure({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+    });
+    assertEquals(result, { queueFailures: 0, skipped: false });
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
+    );
+  });
+
+  it("propagates operational queue ownership lookup failures", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref unavailable"), {
+        status: 503,
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "queue ref unavailable",
+    );
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
+      "an ownership outage must fail the job instead of reporting queue invalidation complete",
+    );
+  });
+
+  it("skips only a confirmed missing queue ref", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref not found"), {
+        status: 404,
+      }),
+    });
+
+    assertEquals(
+      await publishReviewResolutionFailure({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+      }),
+      { queueFailures: 0, skipped: false },
+    );
+  });
+
+  it("rejects a malformed successful queue ref lookup", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefHeads: [undefined],
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "Merge queue ref response has a malformed commit",
+    );
+  });
+
+  it("rejects a malformed final source ownership lookup", async () => {
+    const fixture = githubFixture({
+      commitResponses: [HEAD, HEAD, undefined],
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+    });
+
+    await assertRejects(
+      () =>
+        publishReviewResolutionFailure({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+        }),
+      Error,
+      "Commit ref response has a malformed commit",
+    );
+    assertEquals(
+      fixture.published.map((status) => [status.sha, status.state]),
+      [[HEAD, "failure"]],
+      "a malformed final source response must not leave queue invalidation looking complete",
     );
   });
 
@@ -1363,7 +1927,7 @@ describe("merge queue review propagation", () => {
       parseMergeQueuePullNumber(
         `refs/heads/gh-readonly-queue/main/pr-4135-${OTHER_HEAD}`,
       ),
-      { pullNumber: 4135, sourceHeadSha: OTHER_HEAD },
+      { pullNumber: 4135, baseHeadSha: OTHER_HEAD },
     );
     for (
       const ref of [
@@ -1376,26 +1940,118 @@ describe("merge queue review propagation", () => {
     ) assertEquals(parseMergeQueuePullNumber(ref), undefined);
   });
 
-  it("fails the source and active queue refs without a pull lookup", async () => {
-    const secondQueueHead = "e724246c0e05c8dcf0db41f024f4592128222937";
+  it("preserves only a pinned success published after the captured boundary", () => {
+    const later = {
+      id: 101,
+      context: "Automated review",
+      state: "success",
+      creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      description: "Reused exact-head review for PR #1",
+    };
+    const shouldPreserve = (status: Record<string, unknown>, boundary = 100) =>
+      shouldPreserveLaterMergeGroupSuccess({
+        latestStatus: status,
+        reconciliationStatusId: boundary,
+        pullNumber: 1,
+      });
+
+    assertEquals(shouldPreserve(later), true);
+    assertEquals(shouldPreserve({ ...later, id: 100 }), false);
+    assertEquals(
+      shouldPreserve({ ...later, id: 99 }),
+      true,
+      "the API's reverse-chronological order, not numeric ID order, proves recency",
+    );
+    assertEquals(shouldPreserve({ ...later, state: "failure" }), false);
+    assertEquals(
+      shouldPreserve({
+        ...later,
+        creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID + 1),
+      }),
+      false,
+    );
+    assertEquals(
+      shouldPreserve({
+        ...later,
+        description: "Reused exact-head review for PR #2",
+      }),
+      false,
+    );
+  });
+
+  it("uses the boundary captured by the publisher that failed", () => {
+    const boundary = (targetResult: string, publisherStatusId?: number) =>
+      selectMergeGroupFailureStatusBoundary({
+        targetResult,
+        targetStatusId: 100,
+        publisherStatusId,
+      });
+    const success = {
+      id: 101,
+      context: "Automated review",
+      state: "success",
+      creator: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      description: "Reused exact-head review for PR #1",
+    };
+
+    assertEquals(boundary("failure", undefined), 100);
+    assertEquals(boundary("success", 101), 101);
+    assertEquals(
+      boundary("success", undefined),
+      100,
+      "a publisher without an output falls back to the resolver boundary",
+    );
+    assertEquals(
+      shouldPreserveLaterMergeGroupSuccess({
+        latestStatus: success,
+        reconciliationStatusId: boundary("success", 101),
+        pullNumber: 1,
+      }),
+      false,
+      "a success published before the locked publisher starts is not later",
+    );
+    assertEquals(
+      shouldPreserveLaterMergeGroupSuccess({
+        latestStatus: success,
+        reconciliationStatusId: boundary("success", undefined),
+        pullNumber: 1,
+      }),
+      true,
+      "a newer success survives when the older publisher produced no boundary",
+    );
+    assertEquals(
+      shouldPreserveLaterMergeGroupSuccess({
+        latestStatus: { ...success, id: 102 },
+        reconciliationStatusId: boundary("success", 101),
+        pullNumber: 1,
+      }),
+      true,
+      "a success published after the locked publisher starts is preserved",
+    );
+  });
+
+  it("fails every exact queue ref still owned by the current source", async () => {
+    const secondQueueHead = BASE_HEAD;
     const fixture = githubFixture({
+      commit: HEAD,
       pages: {
         refs: [[
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
             object: { sha: OTHER_HEAD },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/release/pr-1-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/release/pr-1-${OTHER_HEAD}`,
             object: { sha: secondQueueHead },
           },
           {
-            ref: `refs/heads/gh-readonly-queue/main/pr-2-${HEAD}`,
+            ref: `refs/heads/gh-readonly-queue/main/pr-2-${BASE_HEAD}`,
             object: { sha: secondQueueHead },
           },
         ]],
       },
       pullError: new Error("pull lookup unavailable"),
+      queueRefHeads: [OTHER_HEAD, secondQueueHead],
     });
     const result = await publishReviewResolutionFailure({
       github: fixture.github,
@@ -1429,6 +2085,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1441,6 +2098,127 @@ describe("merge queue review propagation", () => {
       description: "Reused exact-head review for PR #1",
       target_url: "https://example.test/review-proof",
     }]);
+    assertEquals(fixture.refReads, [
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+      },
+      {
+        owner: "veryfront",
+        repo: "veryfront-code",
+        ref: `heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+      },
+    ]);
+    assertEquals(
+      fixture.graphqlReads.map(({ variables }) => variables),
+      [
+        { owner: "veryfront", repo: "veryfront-code", number: 1 },
+        { owner: "veryfront", repo: "veryfront-code", number: 1 },
+      ],
+    );
+    assert(
+      fixture.graphqlReads.every(({ query }) =>
+        typeof query === "string" &&
+        query.includes("query ActiveMergeQueueBinding") &&
+        query.includes("mergeQueueEntry")
+      ),
+      "binding checks must use the expected GraphQL operation and fields",
+    );
+  });
+
+  it("fails closed when the live merge-queue binding does not match", async () => {
+    const staleBindings = [
+      ["source", activeQueueBinding({ headRefOid: OTHER_HEAD })],
+      [
+        "base",
+        activeQueueBinding({
+          mergeQueueEntry: {
+            state: "AWAITING_CHECKS",
+            baseCommit: { oid: HEAD },
+            headCommit: { oid: OTHER_HEAD },
+          },
+        }),
+      ],
+      [
+        "synthetic head",
+        activeQueueBinding({
+          mergeQueueEntry: {
+            state: "AWAITING_CHECKS",
+            baseCommit: { oid: BASE_HEAD },
+            headCommit: { oid: HEAD },
+          },
+        }),
+      ],
+      ["missing entry", activeQueueBinding({ mergeQueueEntry: null })],
+    ] as const;
+    for (const [label, binding] of staleBindings) {
+      const fixture = githubFixture({
+        pages: {
+          reviews: [[review({ state: "APPROVED" })]],
+          statuses: [[automatedReviewStatus()]],
+        },
+        queueBindings: [binding],
+      });
+      const result = await publishMergeGroupReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+        baseHeadSha: BASE_HEAD,
+        mergeGroupSha: OTHER_HEAD,
+      });
+      assertEquals(result.state, "failure", label);
+      assertEquals(
+        fixture.published,
+        [],
+        `${label}: an unbound synthetic commit must not receive a status`,
+      );
+    }
+
+    const replacedRef = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueRefHeads: [HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: replacedRef.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(replacedRef.published, []);
+  });
+
+  it("rechecks the live merge-queue binding before publishing success", async () => {
+    const fixture = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        statuses: [[automatedReviewStatus()]],
+      },
+      queueBindings: [
+        activeQueueBinding(),
+        activeQueueBinding({ headRefOid: OTHER_HEAD }),
+      ],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published, []);
   });
 
   it("does not reuse proof that predates a base-ref issue event", async () => {
@@ -1469,6 +2247,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
 
@@ -1504,6 +2283,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1517,6 +2297,7 @@ describe("merge queue review propagation", () => {
         reviews: [[review({ state: "APPROVED" })]],
         statuses: [[automatedReviewStatus()]],
       },
+      queueBindings: [activeQueueBinding({ number: 2 })],
       pullResponses: [
         associatedPull({ number: 2 }),
         associatedPull({ number: 2 }),
@@ -1528,6 +2309,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 2,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1555,6 +2337,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "success");
@@ -1605,6 +2388,7 @@ describe("merge queue review propagation", () => {
         repo: "veryfront-code",
         pullNumber: 1,
         sourceHeadSha: HEAD,
+        baseHeadSha: BASE_HEAD,
         mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, "failure");
@@ -1625,6 +2409,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1642,6 +2427,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(sourceDriftResult.state, "failure");
@@ -1652,7 +2438,7 @@ describe("merge queue review propagation", () => {
       pages: {
         reviews: [[review({ state: "APPROVED" })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
         statuses: [[automatedReviewStatus({ state: "pending" })]],
@@ -1673,6 +2459,133 @@ describe("merge queue review propagation", () => {
     assertEquals(fixture.published[0]?.state, "failure");
   });
 
+  it("surfaces an unpublished queue failure to the workflow", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+    });
+
+    await assertRejects(
+      () =>
+        reconcileActiveMergeGroupReviewStatuses({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+          baseRef: BASE_REF,
+        }),
+      Error,
+      "queue binding unavailable",
+    );
+    assertEquals(
+      fixture.published,
+      [],
+      "the workflow fallback must handle a failure that could not be published safely",
+    );
+  });
+
+  it("fails closed when a queue failure cannot reach a live entry", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+        statuses: [[automatedReviewStatus({ state: "pending" })]],
+      },
+      headResponses: [HEAD, HEAD],
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+    });
+    await assertRejects(
+      () =>
+        reconcileActiveMergeGroupReviewStatuses({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+          baseRef: BASE_REF,
+        }),
+      Error,
+      "Review proof was not replaced on 1 active merge queue commit",
+    );
+    assertEquals(fixture.published, []);
+  });
+
+  it("skips an unverifiable entry whose ref no longer targets it", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+        statuses: [[automatedReviewStatus({ state: "pending" })]],
+      },
+      headResponses: [HEAD, HEAD],
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefHeads: [NEW_HEAD],
+    });
+    const results = await reconcileActiveMergeGroupReviewStatuses({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseRef: BASE_REF,
+    });
+    assertEquals(results, []);
+    assertEquals(fixture.published, []);
+  });
+
+  it("propagates an operational ref lookup during the unpublished recheck", async () => {
+    const fixture = githubFixture({
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+        statuses: [[automatedReviewStatus({ state: "pending" })]],
+      },
+      headResponses: [HEAD, HEAD],
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref unavailable"), {
+        status: 503,
+      }),
+    });
+    await assertRejects(
+      () =>
+        reconcileActiveMergeGroupReviewStatuses({
+          github: fixture.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          sourceHeadSha: HEAD,
+          baseRef: BASE_REF,
+        }),
+      Error,
+      "queue ref unavailable",
+    );
+    assertEquals(fixture.published, []);
+  });
+
   it("rechecks source proof immediately before publishing queue success", async () => {
     const fixture = githubFixture({
       pageResponses: {
@@ -1690,6 +2603,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1721,6 +2635,7 @@ describe("merge queue review propagation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(result.state, "failure");
@@ -1760,6 +2675,7 @@ describe("merge queue review propagation", () => {
         repo: "veryfront-code",
         pullNumber: 1,
         sourceHeadSha: HEAD,
+        baseHeadSha: BASE_HEAD,
         mergeGroupSha: OTHER_HEAD,
       });
       assertEquals(result.state, candidate.state);
@@ -1946,6 +2862,27 @@ describe("automated review request", () => {
 });
 
 describe("review proof invalidation", () => {
+  it("invalidates this run's source success after an unreplaced queue result", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      headResponses: [HEAD],
+      pages: {
+        statuses: [[automatedReviewStatus({ id: 101 })]],
+        refs: [[]],
+      },
+    });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+    });
+
+    assertEquals(result.skipped, false);
+    assertEquals(fixture.published[0]?.sha, HEAD);
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
   it("does not overwrite a same-second success published after reconciliation began", async () => {
     const fixture = githubFixture({
       headResponses: [HEAD],
@@ -1955,7 +2892,7 @@ describe("review proof invalidation", () => {
           created_at: "2026-08-25T08:00:00Z",
         })]],
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -1979,6 +2916,7 @@ describe("review proof invalidation", () => {
 
   it("invalidates a same-second success that existed when reconciliation began", async () => {
     const fixture = githubFixture({
+      commit: HEAD,
       headResponses: [HEAD],
       pages: {
         statuses: [[automatedReviewStatus({
@@ -2002,10 +2940,11 @@ describe("review proof invalidation", () => {
 
   it("closes source and queued gates a dropped reconciliation left behind", async () => {
     const fixture = githubFixture({
+      commit: HEAD,
       headResponses: [HEAD],
       pages: {
         refs: [[{
-          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${HEAD}`,
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
           object: { sha: OTHER_HEAD },
         }]],
       },
@@ -2087,6 +3026,7 @@ describe("review proof invalidation", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
       mergeGroupSha: OTHER_HEAD,
     });
     assertEquals(
@@ -2361,12 +3301,20 @@ describe("automated review workflow", () => {
       "${{ steps.resolve.outputs.key }}",
     );
     assertEquals(
+      record(targetJob.outputs, "target outputs").head_sha,
+      "${{ steps.resolve.outputs.head-sha }}",
+    );
+    assertEquals(
       record(targetJob.outputs, "target outputs").pull_number,
       "${{ steps.resolve.outputs.pull-number }}",
     );
     assertEquals(
       record(targetJob.outputs, "target outputs").status_id,
       "${{ steps.resolve.outputs.status-id }}",
+    );
+    assertEquals(
+      record(targetJob.outputs, "target outputs").merge_group_status_id,
+      "${{ steps.resolve.outputs.merge-group-status-id }}",
     );
     const targetSteps = targetJob.steps;
     assert(Array.isArray(targetSteps));
@@ -2390,14 +3338,43 @@ describe("automated review workflow", () => {
         'context.eventName === "workflow_run"',
         "Number.isSafeInteger",
         'core.setOutput("key"',
+        'core.setOutput("head-sha"',
         'core.setOutput("pull-number"',
         'core.setOutput("status-id"',
+        '"merge-group-status-id"',
         "github.rest.git.getRef",
         "fallbackResponse = await github.rest.pulls.get",
         "context.payload.pull_request?.head?.sha",
         "Could not resolve a valid review target commit",
+        "context.payload.merge_group?.base_sha",
+        "queueEntry.baseHeadSha",
       ]
     ) assert(targetScript.includes(required));
+    assert(
+      targetScript.includes('core.setOutput("key", `pr-${pullNumber}`)'),
+      "all publishers for one pull request must share a lock across force-pushes",
+    );
+    const earlyMergeGroupLock =
+      'core.setOutput("key", `pr-${queueEntry.pullNumber}`)';
+    assert(
+      targetScript.includes(earlyMergeGroupLock) &&
+        targetScript.indexOf(earlyMergeGroupLock) <
+          targetScript.indexOf("Merge queue base does not match"),
+      "a parsed merge group must publish its per-pull lock before later resolver failures",
+    );
+    assert(
+      targetScript.indexOf('"merge-group-status-id"') <
+        targetScript.indexOf("Merge queue base does not match"),
+      "the emergency publisher boundary must be captured before later target work",
+    );
+    assert(
+      !targetScript.includes("if (!headSha)"),
+      "the resolver must not wrap its unconditional head lookup in a dead guard",
+    );
+    assert(
+      !targetScript.includes("let headSha = queueEntry?.sourceHeadSha"),
+      "the queue ref suffix is the base commit, not the source pull request head",
+    );
     assert(
       targetScript.replaceAll(/\s+/g, " ").includes(
         'context.eventName === "workflow_run" && workflowRun?.conclusion !== "success"',
@@ -2447,7 +3424,25 @@ describe("automated review workflow", () => {
         mergeGroupFailureJob.permissions,
         "merge group target failure permissions",
       ),
-      { statuses: "write" },
+      { contents: "read", statuses: "write" },
+    );
+    assertEquals(record(mergeGroupFailureJob.env, "merge group failure env"), {
+      TARGET_RESULT: "${{ needs.target.result }}",
+      TARGET_STATUS_ID:
+        "${{ needs.target.outputs.merge_group_status_id }}",
+      PUBLISHER_STATUS_ID: "${{ needs.merge_group.outputs.status_id }}",
+    });
+    assertEquals(
+      record(
+        mergeGroupFailureJob.concurrency,
+        "merge group target failure concurrency",
+      ),
+      {
+        group:
+          "automated-review-${{ needs.target.outputs.key || format('merge-group-{0}', github.event.merge_group.head_ref) }}",
+        queue: "max",
+      },
+      "the emergency publisher must serialize with the normal per-pull publisher",
     );
     const mergeGroupFailureSteps = mergeGroupFailureJob.steps;
     assert(Array.isArray(mergeGroupFailureSteps));
@@ -2460,6 +3455,22 @@ describe("automated review workflow", () => {
     for (
       const required of [
         "context.payload.merge_group?.head_sha",
+        "context.payload.merge_group?.head_ref",
+        "github.rest.repos.listCommitStatusesForRef",
+        "process.env.TARGET_RESULT",
+        "process.env.TARGET_STATUS_ID",
+        "process.env.PUBLISHER_STATUS_ID",
+        "selectMergeGroupFailureStatusBoundary",
+        "reconciliationStatusId",
+        "latestStatus",
+        "shouldPreserveLaterMergeGroupSuccess",
+        "latestStatus.id !== reconciliationStatusId",
+        "automated-review-gate.mjs",
+        "latestStatus?.creator?.login",
+        "latestStatus?.creator?.id",
+        '"github-actions[bot]"',
+        "41898282",
+        "`Reused exact-head review for PR #${pullNumber}`",
         "github.rest.repos.createCommitStatus",
         'context: "Automated review"',
         'state: "failure"',
@@ -2470,6 +3481,12 @@ describe("automated review workflow", () => {
         "a merge-group resolver failure must close the gate on the synthetic commit",
       );
     }
+    assert(
+      mergeGroupFailureScript.indexOf(
+        "shouldPreserveLaterMergeGroupSuccess",
+      ) < mergeGroupFailureScript.indexOf("createCommitStatus"),
+      "an older emergency publisher must preserve a success written after its status boundary",
+    );
 
     const job = record(jobs.review, "review job");
     assertEquals(record(job.permissions, "review permissions"), {
@@ -2483,6 +3500,10 @@ describe("automated review workflow", () => {
       queue: "max",
     };
     assertEquals(job.needs, "target");
+    assertEquals(record(job.outputs, "review outputs"), {
+      force_invalidate: "${{ steps.publish.outputs.force-invalidate }}",
+      source_status_id: "${{ steps.publish.outputs.source-status-id }}",
+    });
     assertEquals(record(job.concurrency, "review concurrency"), {
       ...publisherConcurrency,
     });
@@ -2498,7 +3519,7 @@ describe("automated review workflow", () => {
     assertTrustedGateLoad(script);
     assertEquals(
       record(gate.env, "gate environment").TARGET_SHA,
-      "${{ needs.target.outputs.key }}",
+      "${{ needs.target.outputs.head_sha }}",
     );
     assertEquals(
       record(gate.env, "gate environment").PULL_NUMBER,
@@ -2512,6 +3533,37 @@ describe("automated review workflow", () => {
     assert(script.includes("process.env.PULL_NUMBER"));
     assert(script.includes("Number.isSafeInteger"));
     assert(script.includes("result.baseRef"));
+    assert(
+      script.includes(
+        'entry?.state === "failure" && entry?.published !== true',
+      ) && script.includes("Review proof was not replaced"),
+      "an unreplaced merge queue failure must fail the run so the fallback invalidation job fires",
+    );
+    assert(
+      script.includes('core.setOutput("force-invalidate", "true")'),
+      "an unreplaced queue failure must tell fallback invalidation to ignore this run's source success",
+    );
+    assert(
+      script.includes('core.setOutput("source-status-id"') &&
+        script.includes("result.statusId"),
+      "fallback invalidation must receive the source status written by this failed run",
+    );
+    assert(
+      script.includes(
+        'result.state === "success"',
+      ) &&
+        script.includes(
+          "Automated review success did not return a source status identity.",
+        ),
+      "a source success without an identity must not be treated as usable review proof",
+    );
+    assert(
+      script.includes("forceInvalidateCurrentSource") &&
+        script.includes(
+          "Cannot force invalidation without the source status identity.",
+        ),
+      "forced invalidation must require the exact source status boundary",
+    );
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(!script.includes("allowPullRequestReviews"));
     assert(
@@ -2623,19 +3675,35 @@ describe("automated review workflow", () => {
     assertEquals(
       record(invalidateJob.env, "invalidate environment"),
       {
-        TARGET_SHA: "${{ needs.target.outputs.key }}",
+        TARGET_SHA: "${{ needs.target.outputs.head_sha }}",
         PULL_NUMBER: "${{ needs.target.outputs.pull_number }}",
-        RECONCILIATION_STATUS_ID:
-          "${{ needs.target.outputs.status_id }}",
+        RECONCILIATION_STATUS_ID: "${{ needs.target.outputs.status_id }}",
+        SOURCE_STATUS_ID: "${{ needs.review.outputs.source_status_id }}",
+        FORCE_INVALIDATE: "${{ needs.review.outputs.force_invalidate }}",
       },
     );
     for (
       const required of [
         "invalidateReviewProof",
         "reconciliationStatusId",
+        "process.env.FORCE_INVALIDATE",
+        "process.env.SOURCE_STATUS_ID",
+        "forceInvalidate",
         "publishIndependentFailure",
         "listMatchingRefs",
         "createCommitStatus",
+        "parseMergeQueuePullNumber",
+        "github.graphql",
+        "mergeQueueEntry",
+        "baseCommit",
+        "headCommit",
+        "github.rest.git.getRef",
+        "resolveQueueRefTarget",
+        "error?.status === 404",
+        "Merge queue ref response has a malformed commit",
+        "Pull request head response has a malformed commit",
+        "finalPull",
+        'ref: "heads/gh-readonly-queue/"',
         "process.env.TARGET_SHA",
         "process.env.PULL_NUMBER",
         "Number.isSafeInteger",
@@ -2647,10 +3715,21 @@ describe("automated review workflow", () => {
         "the invalidator must resolve its pull request the way the resolver does",
       );
     }
+    assert(
+      !invalidateScript.includes("pr-${pullNumber}-${headSha}"),
+      "the independent fallback must not treat the queue-ref base suffix as a source head",
+    );
+    assert(
+      !invalidateScript.includes('forceInvalidate || statusIdText === ""'),
+      "forced invalidation must not bypass later-success detection",
+    );
 
     const mergeGroupJob = record(jobs.merge_group, "merge group job");
     assertEquals(mergeGroupJob.if, "github.event_name == 'merge_group'");
     assertEquals(mergeGroupJob.needs, "target");
+    assertEquals(record(mergeGroupJob.outputs, "merge group outputs"), {
+      status_id: "${{ steps.reuse.outputs.merge-group-status-id }}",
+    });
     assertEquals(
       record(mergeGroupJob.permissions, "merge group permissions"),
       {
@@ -2672,13 +3751,47 @@ describe("automated review workflow", () => {
       ).script,
     );
     assertTrustedGateLoad(mergeGroupScript);
+    assertEquals(
+      record(
+        record(mergeGroupSteps[0], "merge group gate").env,
+        "merge group environment",
+      ).SOURCE_HEAD_SHA,
+      "${{ needs.target.outputs.head_sha }}",
+    );
     assert(mergeGroupScript.includes("parseMergeQueuePullNumber"));
     assert(mergeGroupScript.includes("publishMergeGroupReviewStatus"));
     assert(mergeGroupScript.includes("process.env.SOURCE_HEAD_SHA"));
     assert(mergeGroupScript.includes("process.env.PULL_NUMBER"));
+    assert(mergeGroupScript.includes('"merge-group-status-id"'));
+    assert(mergeGroupScript.includes("listCommitStatusesForRef"));
     assert(mergeGroupScript.includes("sourceHeadSha"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_ref"));
     assert(mergeGroupScript.includes("context.payload.merge_group.head_sha"));
+    assert(mergeGroupScript.includes("context.payload.merge_group.base_sha"));
+    assert(mergeGroupScript.includes("queueEntry.baseHeadSha"));
+    assert(
+      mergeGroupScript.indexOf("listCommitStatusesForRef") <
+        mergeGroupScript.indexOf("getContent"),
+      "the publisher must capture its status boundary immediately after acquiring the lock",
+    );
+    assert(
+      mergeGroupScript.includes("queueEntry.sourceHeadSha"),
+      "the merge-group job must remain compatible with the trusted pre-fix parser until this PR merges",
+    );
+    for (
+      const required of [
+        "github.graphql",
+        "mergeQueueEntry",
+        "baseCommit",
+        "headCommit",
+        "github.rest.git.getRef",
+      ]
+    ) {
+      assert(
+        mergeGroupScript.includes(required),
+        "the merge-group job must bind the event to the live queue entry",
+      );
+    }
     assert(
       !mergeGroupScript.includes("requestAutomatedReview"),
       "merge groups must reuse source proof without rerunning Codex",

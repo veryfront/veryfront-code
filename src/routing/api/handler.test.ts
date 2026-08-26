@@ -425,7 +425,7 @@ describe("APIRouteHandler", () => {
         Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
       });
 
-      it("serves through the host realm when the operator has granted host execution", async () => {
+      it("fails closed when API isolation conflicts with a host execution grant", async () => {
         const adapter = createMockAdapter();
         adapter.fs.files.set(
           "/test/project/pages/api/hosted.ts",
@@ -463,10 +463,13 @@ describe("APIRouteHandler", () => {
           },
         );
 
-        assertEquals(response?.status, 200);
-        assertEquals(await response?.text(), "hosted");
-        // Must reach route execution too, not just the handler.
-        assertEquals(hostLoads, 1);
+        assertEquals(response?.status, 503);
+        assert(
+          response?.headers.get("content-type")?.includes("application/problem+json"),
+        );
+        const body = await response?.json();
+        assert(String(body.detail).includes("WORKER_ISOLATION_API"));
+        assertEquals(hostLoads, 0);
         assertEquals(preparations, 0);
       });
 
