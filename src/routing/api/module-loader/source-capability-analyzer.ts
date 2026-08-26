@@ -9,6 +9,10 @@ interface ParentLink {
 interface Binding {
   readonly scope: Scope;
   readonly initializers: ASTNode[];
+  readonly memberInitializers: Array<{
+    readonly objectInitializer: ASTNode;
+    readonly propertyName: string | null;
+  }>;
   readonly workerObjectInitializers: ASTNode[];
   prototypeMutated: boolean;
   enumerableProtoPropertyDefined: boolean;
@@ -147,6 +151,7 @@ function ensureBinding(scope: Scope, name: string): Binding {
   const binding: Binding = {
     scope,
     initializers: [],
+    memberInitializers: [],
     workerObjectInitializers: [],
     prototypeMutated: false,
     enumerableProtoPropertyDefined: false,
@@ -232,7 +237,7 @@ function expressionBranches(expression: ASTNode): readonly [ASTNode, ASTNode] | 
   return null;
 }
 
-function registerWorkerDestructuringAliases(
+function registerDestructuringAliases(
   scope: Scope,
   pattern: ASTNode,
   objectInitializer: ASTNode,
@@ -240,11 +245,35 @@ function registerWorkerDestructuringAliases(
   if (pattern.type !== "ObjectPattern" || !Array.isArray(pattern.properties)) return;
   for (const property of pattern.properties) {
     if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.key)) continue;
-    if (staticPropertyKey(property) !== "Worker" || !isNode(property.value)) continue;
+    const propertyName = staticPropertyKey(property);
+    if (!isNode(property.value)) continue;
     let value = property.value;
     if (value.type === "AssignmentPattern" && isNode(value.left)) value = value.left;
     if (value.type !== "Identifier" || typeof value.name !== "string") continue;
-    ensureBinding(scope, value.name).workerObjectInitializers.push(objectInitializer);
+    const binding = ensureBinding(scope, value.name);
+    binding.memberInitializers.push({ objectInitializer, propertyName });
+    if (propertyName === "Worker") binding.workerObjectInitializers.push(objectInitializer);
+  }
+}
+
+function collectDestructuringAliasAssignments(
+  scope: Scope,
+  pattern: ASTNode,
+  objectInitializer: ASTNode,
+): void {
+  if (pattern.type !== "ObjectPattern" || !Array.isArray(pattern.properties)) return;
+  for (const property of pattern.properties) {
+    if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
+      continue;
+    }
+    let value = property.value;
+    if (value.type === "AssignmentPattern" && isNode(value.left)) value = value.left;
+    if (value.type !== "Identifier" || typeof value.name !== "string") continue;
+    const binding = resolveBinding(scope, value.name);
+    if (binding === null) continue;
+    const propertyName = staticPropertyKey(property);
+    binding.memberInitializers.push({ objectInitializer, propertyName });
+    if (propertyName === "Worker") binding.workerObjectInitializers.push(objectInitializer);
   }
 }
 
@@ -349,7 +378,7 @@ function registerVariableBinding(
   if (id?.type === "Identifier" && typeof id.name === "string" && isNode(node.init)) {
     ensureBinding(bindingScope, id.name).initializers.push(node.init);
   } else if (id?.type === "ObjectPattern" && isNode(node.init)) {
-    registerWorkerDestructuringAliases(bindingScope, id, node.init);
+    registerDestructuringAliases(bindingScope, id, node.init);
   }
   return false;
 }
@@ -425,10 +454,13 @@ function collectAssignments(program: ASTNode, nodeScopes: WeakMap<ASTNode, Scope
     if (
       node.type === "AssignmentExpression" &&
       ALIAS_ASSIGNMENT_OPERATORS.has(String(node.operator)) &&
-      isNode(node.left) && node.left.type === "Identifier" &&
-      typeof node.left.name === "string" && isNode(node.right)
+      isNode(node.left) && isNode(node.right)
     ) {
-      resolveBinding(scope, node.left.name)?.initializers.push(node.right);
+      if (node.left.type === "Identifier" && typeof node.left.name === "string") {
+        resolveBinding(scope, node.left.name)?.initializers.push(node.right);
+      } else if (node.left.type === "ObjectPattern") {
+        collectDestructuringAliasAssignments(scope, node.left, node.right);
+      }
     }
     forEachChild(node, collectAliasAssignments);
   };
@@ -509,10 +541,11 @@ function protoCallMutationTarget(
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
 ): ASTNode | undefined {
-  if (node.type !== "CallExpression" || !isNode(node.callee)) return undefined;
+  if (!isCallExpression(node) || !isNode(node.callee)) return undefined;
   const callee = unwrapExpression(node.callee);
-  if (!isMemberExpressionWithObject(callee)) return undefined;
   const args = callArguments(node);
+  if (resolvesToPrototypeMutator(callee, scope, nodeScopes)) return args[0];
+  if (!isMemberExpressionWithObject(callee)) return undefined;
   const property = memberPropertyName(callee);
   const mutationTarget = prototypeMutatorTarget(
     property,
@@ -547,7 +580,7 @@ function borrowedPrototypeMutatorCallTargets(
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
 ): ASTNode[] {
-  if (node.type !== "CallExpression" || !isNode(node.callee)) return [];
+  if (!isCallExpression(node) || !isNode(node.callee)) return [];
   const callee = unwrapExpression(node.callee);
   if (!isMemberExpressionWithObject(callee)) return [];
   const property = memberPropertyName(callee);
@@ -587,7 +620,18 @@ function resolvesToPrototypeMutator(
     const binding = resolveBinding(scope, expression.name);
     if (binding === null || seen.has(binding)) return false;
     seen.add(binding);
-    return binding.initializers.some((initializer) =>
+    return binding.memberInitializers.some((initializer) =>
+      (initializer.propertyName === null || initializer.propertyName === "setPrototypeOf") &&
+      (["Object", "Reflect"] as const).some((name) =>
+        resolvesToGlobalIntrinsic(
+          initializer.objectInitializer,
+          name,
+          nodeScopes.get(initializer.objectInitializer) ?? binding.scope,
+          nodeScopes,
+          new Set(seen),
+        )
+      )
+    ) || binding.initializers.some((initializer) =>
       resolvesToPrototypeMutator(
         initializer,
         nodeScopes.get(initializer) ?? binding.scope,
@@ -828,7 +872,15 @@ function resolvesToGlobalIntrinsic(
     if (binding === null) return expression.name === name;
     if (seen.has(binding)) return false;
     seen.add(binding);
-    return binding.initializers.some((initializer) =>
+    return binding.memberInitializers.some((initializer) =>
+      (initializer.propertyName === null || initializer.propertyName === name) &&
+      isGlobalObject(
+        initializer.objectInitializer,
+        nodeScopes.get(initializer.objectInitializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    ) || binding.initializers.some((initializer) =>
       resolvesToGlobalIntrinsic(
         initializer,
         name,
@@ -876,11 +928,203 @@ function callArguments(node: ASTNode): ASTNode[] {
   return Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
 }
 
+function isCallExpression(node: ASTNode): boolean {
+  return node.type === "CallExpression" || node.type === "OptionalCallExpression";
+}
+
 function isMemberExpressionWithObject(
   node: ASTNode,
 ): node is ASTNode & { object: ASTNode } {
   return (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
     isNode(node.object);
+}
+
+function resolvesToGlobalIntrinsicMember(
+  node: ASTNode,
+  objectName: string,
+  propertyName: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.memberInitializers.some((initializer) =>
+      (initializer.propertyName === null || initializer.propertyName === propertyName) &&
+      resolvesToGlobalIntrinsic(
+        initializer.objectInitializer,
+        objectName,
+        nodeScopes.get(initializer.objectInitializer) ?? binding.scope,
+        nodeScopes,
+        new Set(seen),
+      )
+    ) || binding.initializers.some((initializer) =>
+      resolvesToGlobalIntrinsicMember(
+        initializer,
+        objectName,
+        propertyName,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        seen,
+      )
+    );
+  }
+  if (
+    isMemberExpressionWithObject(expression) &&
+    memberPropertyName(expression) === propertyName
+  ) {
+    return resolvesToGlobalIntrinsic(expression.object, objectName, scope, nodeScopes);
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return resolvesToGlobalIntrinsicMember(
+      expression.right,
+      objectName,
+      propertyName,
+      scope,
+      nodeScopes,
+      seen,
+    );
+  }
+  const branches = expressionBranches(expression);
+  if (branches !== null) {
+    return resolvesToGlobalIntrinsicMember(
+      branches[0],
+      objectName,
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) || resolvesToGlobalIntrinsicMember(
+      branches[1],
+      objectName,
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+  }
+  return false;
+}
+
+function resolvesToMemberNamed(
+  node: ASTNode,
+  propertyName: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null || seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.memberInitializers.some((initializer) =>
+      initializer.propertyName === null || initializer.propertyName === propertyName
+    ) || binding.initializers.some((initializer) =>
+      resolvesToMemberNamed(
+        initializer,
+        propertyName,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        seen,
+      )
+    );
+  }
+  if (isMemberExpressionWithObject(expression)) {
+    return memberPropertyName(expression) === propertyName;
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return resolvesToMemberNamed(expression.right, propertyName, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  if (branches !== null) {
+    return resolvesToMemberNamed(
+      branches[0],
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) || resolvesToMemberNamed(
+      branches[1],
+      propertyName,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+  }
+  return false;
+}
+
+function resolvesToUnboundIdentifier(
+  node: ASTNode,
+  name: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen = new Set<Binding>(),
+): boolean {
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (binding === null) return expression.name === name;
+    if (seen.has(binding)) return false;
+    seen.add(binding);
+    return binding.initializers.some((initializer) =>
+      resolvesToUnboundIdentifier(
+        initializer,
+        name,
+        nodeScopes.get(initializer) ?? binding.scope,
+        nodeScopes,
+        seen,
+      )
+    );
+  }
+  if (isAliasAssignmentExpression(expression)) {
+    return resolvesToUnboundIdentifier(expression.right, name, scope, nodeScopes, seen);
+  }
+  const branches = expressionBranches(expression);
+  if (branches !== null) {
+    return resolvesToUnboundIdentifier(
+      branches[0],
+      name,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    ) || resolvesToUnboundIdentifier(
+      branches[1],
+      name,
+      scope,
+      nodeScopes,
+      new Set(seen),
+    );
+  }
+  return false;
+}
+
+type ResolvedCallArguments = ASTNode[] | null | undefined;
+
+function argumentsForResolvedCall(
+  node: ASTNode,
+  resolvesCallee: (callee: ASTNode) => boolean,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): ResolvedCallArguments {
+  if (!isCallExpression(node) || !isNode(node.callee)) return undefined;
+  const callee = unwrapExpression(node.callee);
+  const args = callArguments(node);
+  if (resolvesCallee(callee)) return args;
+  if (isMemberExpressionWithObject(callee) && resolvesCallee(callee.object)) {
+    const invocation = memberPropertyName(callee);
+    if (invocation === "call") return args.slice(1);
+    if (invocation === "apply") return null;
+  }
+  if (
+    resolvesToGlobalIntrinsicMember(callee, "Reflect", "apply", scope, nodeScopes) &&
+    args[0] !== undefined && resolvesCallee(args[0])
+  ) return null;
+  return undefined;
 }
 
 function staticString(node: ASTNode | undefined): string | null {
@@ -1188,7 +1432,16 @@ function identifierResolvesToGlobalObject(
   if (binding === null) return GLOBAL_OBJECT_NAMES.has(name);
   if (seen.has(binding)) return false;
   seen.add(binding);
-  return binding.initializers.some((initializer) =>
+  return binding.memberInitializers.some((initializer) =>
+    (initializer.propertyName === null ||
+      GLOBAL_OBJECT_NAMES.has(initializer.propertyName)) &&
+    isGlobalObject(
+      initializer.objectInitializer,
+      nodeScopes.get(initializer.objectInitializer) ?? binding.scope,
+      nodeScopes,
+      new Set(seen),
+    )
+  ) || binding.initializers.some((initializer) =>
     isGlobalObject(initializer, nodeScopes.get(initializer) ?? binding.scope, nodeScopes, seen)
   );
 }
@@ -1759,30 +2012,38 @@ function applyCallCapability(
   nodeScopes: WeakMap<ASTNode, Scope>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
-  if (node.type !== "CallExpression" || !isNode(node.callee)) return;
+  if (!isCallExpression(node) || !isNode(node.callee)) return;
   if (readsFunctionConstructorDescriptor(node, scope, nodeScopes)) {
     analysis.hasDynamicCodeGeneration = true;
   }
   const callee = unwrapExpression(node.callee);
-  if (!isMemberExpressionWithObject(callee)) return;
   applyReflectGetCapability(node, callee, scope, nodeScopes, analysis);
-  applyDescriptorReadCapability(node, callee, scope, nodeScopes, analysis);
+  applyDynamicRequireCapability(node, callee, scope, nodeScopes, analysis);
+  applyGetBuiltinModuleCapability(node, scope, nodeScopes, analysis);
+  applyDenoRunCapability(node, scope, nodeScopes, analysis);
+  if (isMemberExpressionWithObject(callee)) {
+    applyDescriptorReadCapability(node, callee, scope, nodeScopes, analysis);
+  }
 }
 
 function applyReflectGetCapability(
   node: ASTNode,
-  callee: ASTNode & { object: ASTNode },
+  _callee: ASTNode,
   scope: Scope,
   nodeScopes: WeakMap<ASTNode, Scope>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
-  if (memberPropertyName(callee) !== "get") return;
-  const object = unwrapExpression(callee.object);
-  if (
-    object.type !== "Identifier" || object.name !== "Reflect" ||
-    resolveBinding(scope, "Reflect") !== null
-  ) return;
-  const args = callArguments(node);
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) => resolvesToGlobalIntrinsicMember(candidate, "Reflect", "get", scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args === undefined) return;
+  if (args === null) {
+    analysis.hasDynamicCodeGeneration = true;
+    return;
+  }
   const property = staticString(args[1]);
   if (property === null || property === "constructor") analysis.hasDynamicCodeGeneration = true;
   if (
@@ -1791,6 +2052,80 @@ function applyReflectGetCapability(
   ) {
     analysis.hasDynamicCodeGeneration = true;
   }
+}
+
+function applyDynamicRequireCapability(
+  node: ASTNode,
+  callee: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) => resolvesToUnboundIdentifier(candidate, "require", scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args === undefined) return;
+  const directRequire = callee.type === "Identifier" && callee.name === "require" &&
+    resolveBinding(scope, "require") === null;
+  if (args === null || !directRequire || staticString(args[0]) === null) {
+    analysis.hasUnconstrainedDynamicImport = true;
+  }
+}
+
+const RESTRICTED_BUILTIN_MODULES = new Set([
+  "module",
+  "node:module",
+  "node:vm",
+  "node:worker_threads",
+  "vm",
+  "worker_threads",
+]);
+
+function applyGetBuiltinModuleCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) => resolvesToMemberNamed(candidate, "getBuiltinModule", scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args === undefined) return;
+  const moduleName = args === null ? null : staticString(args[0]);
+  if (moduleName === null || RESTRICTED_BUILTIN_MODULES.has(moduleName.toLowerCase())) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
+function resolvesToDenoCommand(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  return resolvesToGlobalIntrinsicMember(node, "Deno", "Command", scope, nodeScopes);
+}
+
+function applyDenoRunCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  const args = argumentsForResolvedCall(
+    node,
+    (candidate) =>
+      resolvesToGlobalIntrinsicMember(candidate, "Deno", "run", scope, nodeScopes) ||
+      resolvesToDenoCommand(candidate, scope, nodeScopes),
+    scope,
+    nodeScopes,
+  );
+  if (args !== undefined) analysis.hasDynamicCodeGeneration = true;
 }
 
 function applyDescriptorReadCapability(
@@ -1870,6 +2205,63 @@ function applyWorkerConstructionCapability(
   analysis.workers.push(classifyWorkerArgument(args[0], node.callee, scope, nodeScopes));
 }
 
+function applySubprocessConstructionCapability(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (
+    node.type === "NewExpression" && isNode(node.callee) &&
+    resolvesToDenoCommand(node.callee, scope, nodeScopes)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
+function isCrossModuleCapabilityAlias(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  return isGlobalObject(node, scope, nodeScopes) ||
+    isGlobalWorkerConstructor(node, scope, nodeScopes) ||
+    resolvesToPrototypeMutator(node, scope, nodeScopes) ||
+    resolvesToGlobalIntrinsicMember(node, "Reflect", "get", scope, nodeScopes) ||
+    resolvesToMemberNamed(node, "getBuiltinModule", scope, nodeScopes) ||
+    resolvesToDenoCommand(node, scope, nodeScopes) ||
+    resolvesToUnboundIdentifier(node, "require", scope, nodeScopes) ||
+    ["Deno", "Object", "Reflect", "process"].some((name) =>
+      resolvesToGlobalIntrinsic(node, name, scope, nodeScopes)
+    );
+}
+
+function applyExportedCapabilityAlias(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
+  if (node.type !== "ExportNamedDeclaration") return;
+  const candidates: ASTNode[] = [];
+  if (isNode(node.declaration) && node.declaration.type === "VariableDeclaration") {
+    const declarations = Array.isArray(node.declaration.declarations)
+      ? node.declaration.declarations
+      : [];
+    for (const declaration of declarations) {
+      if (isNode(declaration) && isNode(declaration.init)) candidates.push(declaration.init);
+    }
+  }
+  if (!isNode(node.source) && Array.isArray(node.specifiers)) {
+    for (const specifier of node.specifiers) {
+      if (isNode(specifier) && isNode(specifier.local)) candidates.push(specifier.local);
+    }
+  }
+  if (candidates.some((candidate) => isCrossModuleCapabilityAlias(candidate, scope, nodeScopes))) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+}
+
 /**
  * Parse executable JavaScript/TypeScript and classify capabilities that a raw
  * text scan cannot distinguish from inert strings, comments, types, or local
@@ -1902,6 +2294,8 @@ export async function analyzeSourceCapabilities(
     applyCallCapability(node, scope, nodeScopes, analysis);
     applyObjectPatternCapability(node, scope, nodeScopes, parents, analysis);
     applyWorkerConstructionCapability(node, scope, nodeScopes, analysis);
+    applySubprocessConstructionCapability(node, scope, nodeScopes, analysis);
+    applyExportedCapabilityAlias(node, scope, nodeScopes, analysis);
 
     forEachChild(node, visit);
   };

@@ -314,6 +314,22 @@ describe("readDenoImportMap", () => {
     );
   });
 
+  it("preserves encoded delimiters while matching a scope to its filesystem referrer", async () => {
+    const projectDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(projectDir, "deno.json"),
+      `{ "scopes": { "./dir%3Fx/": { "dep": "https://blocked.example/mod.js" } } }\n`,
+    );
+
+    const importMap = await readDenoImportMap(fs, projectDir);
+    assertNotEquals(importMap, null);
+    assertEquals(
+      lookupImportMapEntry(importMap!, "dep", join(projectDir, "dir?x", "route.ts")),
+      "https://blocked.example/mod.js",
+      "a literal question mark in a filename must not become a module URL query delimiter",
+    );
+  });
+
   it("normalizes file URL import-map targets to filesystem paths", async () => {
     const projectDir = await makeTempDir();
     const helperPath = join(projectDir, "helper.ts");
@@ -3003,6 +3019,31 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("validates an uppercase JSON extension with the loader that will execute it", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "helper.JSON"),
+      `new Worker("https://blocked.example/worker.js"); export const value = "unsafe";`,
+    );
+
+    const modulePath = join(tmpDir, "uppercase-json-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "./helper.JSON";`,
+        `const marker = /x/;`,
+        `export const GET = () => new Response(value + marker.source);`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "Worker",
+      "the js loader makes an uppercase .JSON file executable, so it must be scanned",
+    );
+  });
+
   denoIt("preserves import.meta.url when parser-valid slash syntax requires bundling", async () => {
     const tmpDir = await makeTempDir();
     await fs.writeTextFile(join(tmpDir, "adjacent.txt"), "beside-route");
@@ -4061,6 +4102,40 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       Error,
       "Worker import cannot be validated",
       "an undecidable import map must not let a Worker resolve an unchecked bare import",
+    );
+  });
+
+  it("rejects relative imports in bundled Worker graphs when the import map is undecidable", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "base.json"),
+      `{ "imports": { "./helper.ts": "https://blocked.example/mod.js" } }\n`,
+    );
+    await fs.writeTextFile(join(tmpDir, "deno.json"), `{ "extends": "./base.json" }\n`);
+    await fs.writeTextFile(
+      join(tmpDir, "worker.ts"),
+      `import "./helper.ts"; self.postMessage("unreachable");`,
+    );
+    await fs.writeTextFile(join(tmpDir, "helper.ts"), `export {};`);
+
+    const modulePath = join(tmpDir, "route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `const marker = /x/;`,
+        `export function GET() {`,
+        `  const worker = new Worker("./worker.ts", { type: "module" });`,
+        `  worker.terminate();`,
+        `  return new Response("ok-" + marker.source);`,
+        `}`,
+      ].join("\n"),
+    );
+
+    await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+      "Worker import cannot be validated",
+      "an inherited map may remap a relative Worker edge outside the validated graph",
     );
   });
 
