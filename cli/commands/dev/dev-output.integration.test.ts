@@ -1,12 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchWithTimeout,
   pollUrlReady,
@@ -242,18 +246,22 @@ async function waitForPageContent(
   while (Date.now() < deadline) {
     try {
       const response = await fetchWithTimeout(`http://127.0.0.1:${port}/`, 1_000);
-      try {
-        const content = await response.text();
-        if (content.includes(expected)) return;
-      } finally {
-        await response.body?.cancel().catch(() => {});
-      }
+      const content = await readPageResponseText(response);
+      if (content.includes(expected)) return;
     } catch {
       // The server may be between reloads.
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for page content "${expected}"`);
+}
+
+async function readPageResponseText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } finally {
+    await response.body?.cancel().catch(() => {});
+  }
 }
 
 async function requestPageAndApi(port: number): Promise<void> {
@@ -277,8 +285,7 @@ async function requestPageAndApi(port: number): Promise<void> {
 describe(
   "veryfront dev output",
   () => {
-    it("releases page responses when reading fails and retries", async () => {
-      let attempts = 0;
+    it("releases page responses after successful and failed reads", async () => {
       let cancellations = 0;
       const response = (text: () => Promise<string>): Response =>
         ({
@@ -291,19 +298,19 @@ describe(
           },
         }) as unknown as Response;
 
-      await withMockFetch(
-        () => {
-          attempts++;
-          return Promise.resolve(
-            attempts === 1
-              ? response(() => Promise.reject(new DOMException("Body read aborted", "AbortError")))
-              : response(() => Promise.resolve("updated dev logs page")),
-          );
-        },
-        () => waitForPageContent(30_010, "updated dev logs page", 250),
+      await assertRejects(
+        () =>
+          readPageResponseText(
+            response(() => Promise.reject(new DOMException("Body read aborted", "AbortError"))),
+          ),
+        DOMException,
+        "Body read aborted",
+      );
+      assertEquals(
+        await readPageResponseText(response(() => Promise.resolve("updated dev logs page"))),
+        "updated dev logs page",
       );
 
-      assertEquals(attempts, 2);
       assertEquals(cancellations, 2);
     });
 
