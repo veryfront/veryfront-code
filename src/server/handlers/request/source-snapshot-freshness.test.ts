@@ -274,6 +274,59 @@ it("cancels the response body when stream snapshot validation fails", async () =
   );
 });
 
+it("does not retain source markers for immutable production streams", async () => {
+  let markerReads = 0;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => {
+    markerReads++;
+    return "release:preview-project:release-a";
+  };
+  adapter.fs.getSourceSnapshotVersion = () => {
+    markerReads++;
+    return 1;
+  };
+  const ctx = makeCtx({
+    adapter,
+    projectSlug: "preview-project",
+    releaseId: "release-a",
+    requestContext: {
+      token: "",
+      slug: "preview-project",
+      branch: null,
+      mode: "production",
+    },
+  });
+
+  await preparePreviewDocumentSourceSnapshot(ctx);
+  const response = await runWithRetainedPreviewDocumentSourceSnapshot(
+    ctx,
+    () => Promise.resolve(new Response("immutable release")),
+  );
+
+  assertEquals(await response.text(), "immutable release");
+  assertEquals(markerReads, 0);
+});
+
+it("validates markers prepared during an operation before returning a stream", async () => {
+  let version = 1;
+  const adapter = createMockAdapter();
+  adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => version;
+  const ctx = makePreviewCtx(adapter);
+
+  const rejection = await assertRejects(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(ctx, async () => {
+      await preparePreviewDocumentSourceSnapshot(ctx);
+      version++;
+      return new Response("mixed generation");
+    })
+  );
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+});
+
 it("retains a validated config marker for the next request phase", async () => {
   let version = 1;
   const adapter = createMockAdapter();

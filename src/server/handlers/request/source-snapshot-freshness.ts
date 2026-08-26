@@ -172,6 +172,9 @@ export async function runWithRetainedPreviewDocumentSourceSnapshot<T>(
       result instanceof Response && result.body !== null &&
       (retained !== undefined || preparedDocumentSnapshots.has(ctx))
     ) {
+      // A handler may prepare its marker during the operation. Validate it
+      // before status and headers escape, then keep validating deferred bytes.
+      await validate();
       const response = retainPreviewSnapshotThroughResponseBody(
         result,
         validate,
@@ -305,6 +308,10 @@ export async function preparePreviewDocumentSourceSnapshot(
   ctx: HandlerContext,
   reclassify?: PreviewDocumentSnapshotReclassifier,
 ): Promise<void> {
+  if (!hasMutablePreviewSource(ctx)) {
+    preparedDocumentSnapshots.delete(ctx);
+    return;
+  }
   const configSnapshot = preparedDocumentSnapshots.get(ctx);
   if (configSnapshot?.configBound === true) {
     if (!(await preparedDocumentSnapshotMatches(ctx, configSnapshot))) {
