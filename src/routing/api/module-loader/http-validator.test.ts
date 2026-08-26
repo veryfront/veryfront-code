@@ -1200,6 +1200,30 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should allow inert feature detection of prototype mutators", async () => {
+      await validateHTTPImports(
+        `const objectSupport = typeof Object.setPrototypeOf === "function";` +
+          ` const reflectSupport = Reflect.setPrototypeOf !== undefined;` +
+          ` const sameImplementation = Object.setPrototypeOf === Reflect.setPrototypeOf;` +
+          ` export const GET = () => Response.json({` +
+          ` objectSupport, reflectSupport, sameImplementation });`,
+        [],
+      );
+      for (
+        const inspection of [
+          `Object.setPrototypeOf == Reflect.setPrototypeOf`,
+          `Object.setPrototypeOf < Reflect.setPrototypeOf`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(`export const result = ${inspection};`, []),
+          Error,
+          "dynamic code generation",
+          "coercing comparisons can invoke hooks on a prototype mutator",
+        );
+      }
+    });
+
     it("should reject unresolved constructor keys after prototype mutation", async () => {
       const mutations = [
         `const holder = {}; Object.setPrototypeOf(holder, () => {});`,

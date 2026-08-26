@@ -3247,6 +3247,29 @@ function isCallExpressionCallee(
   return link !== undefined && isCallExpression(link.parent) && link.key === "callee";
 }
 
+function isInertCapabilityInspection(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  let link = parents.get(current);
+  while (
+    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+    link.key === "expression"
+  ) {
+    current = link.parent;
+    link = parents.get(current);
+  }
+  if (!link) return false;
+  if (
+    link.parent.type === "UnaryExpression" && link.parent.operator === "typeof" &&
+    link.key === "argument"
+  ) return true;
+  return link.parent.type === "BinaryExpression" &&
+    (link.parent.operator === "===" || link.parent.operator === "!==") &&
+    (link.key === "left" || link.key === "right");
+}
+
 function isMemberObjectUse(node: ASTNode, parents: WeakMap<ASTNode, ParentLink>): boolean {
   const link = parents.get(node);
   return (link?.parent.type === "MemberExpression" ||
@@ -4152,6 +4175,7 @@ function applyPrototypeMutatorReferenceCapability(
   if (
     resolvesToPrototypeMutator(node, scope, nodeScopes) &&
     !isCallExpressionCallee(node, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
     !isAliasInitializerUse(node, parents) &&
     !isBindingIdentifier(node, parents) &&
     !isMutationTarget(node, parents)
