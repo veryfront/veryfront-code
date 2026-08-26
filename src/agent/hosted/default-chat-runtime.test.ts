@@ -475,6 +475,9 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
   let toolFilesystemToken: string | undefined;
   let receiverPreserved = false;
   let lazyResultReads = 0;
+  let thrownMessageReads = 0;
+  let thrownCoercionReads = 0;
+  let thrownValueLeakedToken: string | undefined;
 
   registerModelProvider("test", () => {
     providerFactoryToken = getCurrentVeryfrontCloudContext()?.apiToken;
@@ -488,12 +491,14 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
           stream: new ReadableStream<unknown>({
             start(controller) {
               if (modelCallCount === 1) {
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: "inspect-credentials-1",
-                  toolName: "inspect_credentials",
-                  input: {},
-                });
+                for (const mode of ["result", "message", "coercion"]) {
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: `inspect-credentials-${mode}`,
+                    toolName: "inspect_credentials",
+                    input: { mode },
+                  });
+                }
                 controller.enqueue({
                   type: "finish",
                   finishReason: "tool-calls",
@@ -546,10 +551,31 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
             properties: {},
             additionalProperties: false,
           },
-          execute(this: { receiverMarker?: string }) {
+          execute(this: { receiverMarker?: string }, input: unknown) {
             receiverPreserved = this.receiverMarker === "host-tool-definition";
             toolCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
             toolFilesystemToken = getCurrentProjectRequestContext()?.token;
+            const mode = (input as { mode?: unknown }).mode;
+            if (mode === "message") {
+              const failure = {};
+              Object.defineProperty(failure, "message", {
+                get: () => {
+                  thrownMessageReads += 1;
+                  thrownValueLeakedToken = getCurrentVeryfrontCloudContext()?.apiToken;
+                  return "project failure";
+                },
+              });
+              throw failure;
+            }
+            if (mode === "coercion") {
+              throw {
+                toString: () => {
+                  thrownCoercionReads += 1;
+                  thrownValueLeakedToken = getCurrentVeryfrontCloudContext()?.apiToken;
+                  return "project failure";
+                },
+              };
+            }
             const result = {
               toJSON: () => {
                 lazyResultReads += 1;
@@ -591,6 +617,9 @@ Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of projec
     assertEquals(toolFilesystemToken, "");
     assertEquals(receiverPreserved, true);
     assertEquals(lazyResultReads, 0);
+    assertEquals(thrownMessageReads, 0);
+    assertEquals(thrownCoercionReads, 0);
+    assertEquals(thrownValueLeakedToken, undefined);
   } finally {
     clearModelProviders();
   }

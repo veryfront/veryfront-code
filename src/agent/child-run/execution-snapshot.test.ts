@@ -51,6 +51,21 @@ describe("agent/child-run-execution-snapshot", () => {
     });
   });
 
+  it("omits unavailable optional usage metadata from results and snapshots", () => {
+    const withoutUsage = { ...COMMON, usage: undefined };
+
+    for (
+      const value of [
+        buildChildRunSuccessResult(withoutUsage, { text: "Done!" }),
+        buildChildRunFailureResult(withoutUsage, "failed"),
+        buildChildRunSuccessSnapshot(withoutUsage, "Done!"),
+        buildChildRunFailureSnapshot(withoutUsage, "failed"),
+      ]
+    ) {
+      assertEquals(Object.hasOwn(value, "usage"), false);
+    }
+  });
+
   it("converts success and failure results to snapshots", () => {
     const success = buildChildRunExecutionSnapshot(
       buildChildRunSuccessResult(COMMON, { text: "full text" }),

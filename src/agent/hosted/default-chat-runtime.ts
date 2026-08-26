@@ -61,6 +61,7 @@ import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 
 const apply = Reflect.apply;
+const TypeErrorConstructor = TypeError;
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -419,10 +420,15 @@ function scopeHostedRuntimeTools(input: {
             withoutHostedCredentials({
               taskContext: input.taskContext,
               cloudContext: input.cloudContext,
-              operation: async () =>
-                snapshotHostedToolResult(
-                  await apply(execute, tool, [toolInput, context]),
-                ),
+              operation: async () => {
+                try {
+                  return snapshotHostedToolResult(
+                    await apply(execute, tool, [toolInput, context]),
+                  );
+                } catch {
+                  throw new TypeErrorConstructor("Hosted project tool execution failed");
+                }
+              },
             }),
         },
       ];
