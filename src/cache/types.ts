@@ -37,13 +37,13 @@ export interface CacheReadOptions {
   /**
    * Invoked with the authority the backend resolved at the moment it performed
    * an underlying network read serving this call: the credential and project
-   * the value was actually fetched under, as opposed to whatever the caller
+   * the backend used to fetch the value, rather than whatever the caller
    * resolved before awaiting. A failed batch request falls back to individual
    * reads that resolve authority again, so one logical read can report more
    * than once; a caller holding a returned value in front of the backend's
-   * authority gate must treat every reported authority as one the value may
-   * have been fetched under. Backends that do not gate reads on a per-request
-   * authority never invoke it.
+   * authority gate must treat every reported authority as one the backend may
+   * have used to fetch the value. Backends that do not gate reads on a
+   * per-request authority never invoke it.
    */
   onAuthority?: (authority: ResolvedCacheAuthority) => void;
 }
