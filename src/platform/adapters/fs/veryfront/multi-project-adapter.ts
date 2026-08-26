@@ -298,7 +298,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async getSourceSnapshotIdentity(): Promise<string | undefined> {
     const adapter = await this.getAdapter();
     if (typeof adapter.getSourceSnapshotIdentity !== "function") return undefined;
-    const sourceIdentity = await adapter.getSourceSnapshotIdentity();
+    const sourceIdentity = adapter.getSourceSnapshotIdentity();
     if (sourceIdentity === undefined) return undefined;
 
     // The manager selects concrete adapters by project, source context, and a

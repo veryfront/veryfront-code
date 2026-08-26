@@ -32,7 +32,10 @@ import {
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
-import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSource,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import {
@@ -52,6 +55,7 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
   ensurePreviewDocumentSourceSnapshot,
+  type PreviewDocumentSnapshotReclassifier,
   reclassifyPreviewDocumentSourceSnapshotIfChanged,
 } from "../source-snapshot-freshness.ts";
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
@@ -229,58 +233,12 @@ export class SSRHandler extends BaseHandler {
         const memoryStatus = this.ssrService.checkMemoryPressure();
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         if (memoryStatus.shouldReject) {
-          // A page can become an API route after the wrapper classified it.
-          // API routes must not inherit renderer load shedding, so re-run a
-          // stale prepared classifier before returning the SSR 503. Unprepared
-          // direct SSR requests still take the cheap shed path without refresh.
-          try {
-            for (
-              let attempts = 0;
-              attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
-              attempts++
-            ) {
-              const reclassify = await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
-              if (reclassify === undefined) break;
-              if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
-                throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                  detail:
-                    `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
-                });
-              }
-              const reclassified = await reclassify();
-              if (reclassified.response || !reclassified.continue) {
-                endRequest(requestId);
-                return reclassified;
-              }
-            }
-          } catch (error) {
-            endRequest(requestId);
-            throw error;
-          }
-
-          // The shed response still carries the snapshot key that its dependent
-          // requests must use, but it must not spend memory refreshing source
-          // that it will not render.
-          const resolution = await resolveSnapshotForRequest(
-            dependencySource,
-            readSnapshotHeader(req.headers),
-            { unpinnedRequest: "adopt" },
-          );
-          if (resolution.kind === "conflict") {
-            endRequest(requestId);
-            return this.handleDependencySnapshotConflict(req, ctx);
-          }
-          this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
-          // The abandoned request must release its timing state: leaving it
-          // current keeps later timers attached to it for as long as the
-          // overload lasts.
-          endRequest(requestId);
-          const result = this.ssrService.createMemoryPressureResult(slug);
-          return this.buildResponse(
+          return this.rejectBeforeSourceRefresh(
             req,
             ctx,
-            { ...result, dependencyPinningCacheKey: resolution.snapshot.cacheKey },
-            generateNonce(),
+            slug,
+            requestId,
+            dependencySource,
           );
         }
 
@@ -293,56 +251,21 @@ export class SSRHandler extends BaseHandler {
         // one source round trip of exposure, but not the whole 30s lease.
         // Sub-resource requests within this page load keep the default lease,
         // so the strict listing happens once per document.
-        try {
-          for (
-            let attempts = 0;
-            attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
-            attempts++
-          ) {
-            const reclassify = await ensurePreviewDocumentSourceSnapshot(ctx);
-            if (reclassify === undefined) break;
-            if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
-              throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-                detail:
-                  `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
-              });
-            }
-
-            const reclassified = await reclassify();
-            if (reclassified.response || !reclassified.continue) {
-              endRequest(requestId);
-              return reclassified;
-            }
-          }
-        } catch (error) {
-          endRequest(requestId);
-          throw error;
-        }
+        const reclassified = await this.reclassifyPreviewDocumentUntilStable(
+          ctx,
+          requestId,
+          () => ensurePreviewDocumentSourceSnapshot(ctx),
+        );
+        if (reclassified) return reclassified;
 
         const postRefreshMemoryStatus = this.ssrService.checkMemoryPressure();
         if (postRefreshMemoryStatus.shouldReject) {
-          const refreshedResolution = await resolveSnapshotForRequest(
-            dependencySource,
-            readSnapshotHeader(req.headers),
-            { unpinnedRequest: "adopt" },
-          );
-          if (refreshedResolution.kind === "conflict") {
-            endRequest(requestId);
-            return this.handleDependencySnapshotConflict(req, ctx);
-          }
-          this.logDebug("Rejecting after source refresh due to memory pressure", { slug }, ctx);
-          // As above: the shed request is finished, so close out its timing
-          // state before returning the 503.
-          endRequest(requestId);
-          const result = this.ssrService.createMemoryPressureResult(slug);
-          return this.buildResponse(
+          return this.rejectAfterSourceRefresh(
             req,
             ctx,
-            {
-              ...result,
-              dependencyPinningCacheKey: refreshedResolution.snapshot.cacheKey,
-            },
-            generateNonce(),
+            slug,
+            requestId,
+            dependencySource,
           );
         }
 
@@ -403,45 +326,169 @@ export class SSRHandler extends BaseHandler {
 
         endRequest(requestId);
 
-        const failure = rendered.failure;
-        switch (failure?.kind) {
-          case "redirect":
-            return this.handleRedirect(req, ctx, rendered, failure.location, nonce);
-          case "not-found":
-            return this.handleNotFound(
-              applicationRequest,
-              ctx,
-              slug,
-              nonce,
-              dependencySnapshot,
-              rendered,
-            );
-          case "overloaded":
-          case "runtime":
-          case "server-error": {
-            // Project error pages should beat the dev overlay for runtime
-            // errors. Build/import errors stay visible because their overlay is
-            // actionable, and only a runtime failure raises one.
-            const overlayWins = failure.kind === "runtime" && isSSRBuildFailure(failure.error);
-            if (!overlayWins) {
-              const customResponse = await this.tryCustomErrorFallback(
-                applicationRequest,
-                ctx,
-                rendered,
-                failure.error,
-                nonce,
-                dependencySnapshot,
-              );
-              if (customResponse) return customResponse;
-            }
-            break;
-          }
-        }
+        const failureResponse = await this.handleRenderedFailure(
+          req,
+          applicationRequest,
+          ctx,
+          slug,
+          nonce,
+          dependencySnapshot,
+          rendered,
+        );
+        if (failureResponse) return failureResponse;
 
         return this.buildResponse(req, ctx, rendered, nonce);
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
+  }
+
+  private async reclassifyPreviewDocumentUntilStable(
+    ctx: HandlerContext,
+    requestId: string,
+    getReclassifier: () => Promise<PreviewDocumentSnapshotReclassifier | undefined>,
+  ): Promise<HandlerResult | undefined> {
+    try {
+      for (
+        let attempts = 0;
+        attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
+        attempts++
+      ) {
+        const reclassify = await getReclassifier();
+        if (reclassify === undefined) return;
+        if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
+          throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+            detail:
+              `The source snapshot for "${ctx.projectSlug}" changed during document ownership classification ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely choose between API and page routing.`,
+          });
+        }
+        const reclassified = await reclassify();
+        if (reclassified.response || !reclassified.continue) {
+          endRequest(requestId);
+          return reclassified;
+        }
+      }
+    } catch (error) {
+      endRequest(requestId);
+      throw error;
+    }
+  }
+
+  private async rejectBeforeSourceRefresh(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    requestId: string,
+    dependencySource: DependencyPinningSource,
+  ): Promise<HandlerResult> {
+    // A page can become an API route after the wrapper classified it. API
+    // routes must not inherit renderer load shedding, so re-run a stale
+    // prepared classifier before returning the SSR 503. Unprepared direct SSR
+    // requests still take the cheap shed path without refreshing source.
+    const reclassified = await this.reclassifyPreviewDocumentUntilStable(
+      ctx,
+      requestId,
+      () => reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx),
+    );
+    if (reclassified) return reclassified;
+
+    // The shed response still carries the snapshot key that its dependent
+    // requests must use, but it must not spend memory refreshing source that it
+    // will not render.
+    const resolution = await resolveSnapshotForRequest(
+      dependencySource,
+      readSnapshotHeader(req.headers),
+      { unpinnedRequest: "adopt" },
+    );
+    if (resolution.kind === "conflict") {
+      endRequest(requestId);
+      return this.handleDependencySnapshotConflict(req, ctx);
+    }
+    this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
+    // The abandoned request must release its timing state: leaving it current
+    // keeps later timers attached to it for as long as the overload lasts.
+    endRequest(requestId);
+    const result = this.ssrService.createMemoryPressureResult(slug);
+    return this.buildResponse(
+      req,
+      ctx,
+      { ...result, dependencyPinningCacheKey: resolution.snapshot.cacheKey },
+      generateNonce(),
+    );
+  }
+
+  private async rejectAfterSourceRefresh(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    requestId: string,
+    dependencySource: DependencyPinningSource,
+  ): Promise<HandlerResult> {
+    const refreshedResolution = await resolveSnapshotForRequest(
+      dependencySource,
+      readSnapshotHeader(req.headers),
+      { unpinnedRequest: "adopt" },
+    );
+    if (refreshedResolution.kind === "conflict") {
+      endRequest(requestId);
+      return this.handleDependencySnapshotConflict(req, ctx);
+    }
+    this.logDebug("Rejecting after source refresh due to memory pressure", { slug }, ctx);
+    // As above: the shed request is finished, so close out its timing state
+    // before returning the 503.
+    endRequest(requestId);
+    const result = this.ssrService.createMemoryPressureResult(slug);
+    return this.buildResponse(
+      req,
+      ctx,
+      {
+        ...result,
+        dependencyPinningCacheKey: refreshedResolution.snapshot.cacheKey,
+      },
+      generateNonce(),
+    );
+  }
+
+  private async handleRenderedFailure(
+    req: Request,
+    applicationRequest: Request,
+    ctx: HandlerContext,
+    slug: string,
+    nonce: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    rendered: SSRRenderResult,
+  ): Promise<HandlerResult | undefined> {
+    const failure = rendered.failure;
+    switch (failure?.kind) {
+      case "redirect":
+        return this.handleRedirect(req, ctx, rendered, failure.location, nonce);
+      case "not-found":
+        return this.handleNotFound(
+          applicationRequest,
+          ctx,
+          slug,
+          nonce,
+          dependencySnapshot,
+          rendered,
+        );
+      case "overloaded":
+      case "runtime":
+      case "server-error": {
+        // Project error pages should beat the dev overlay for runtime errors.
+        // Build/import errors stay visible because their overlay is actionable,
+        // and only a runtime failure raises one.
+        const overlayWins = failure.kind === "runtime" && isSSRBuildFailure(failure.error);
+        if (overlayWins) return;
+        return (await this.tryCustomErrorFallback(
+          applicationRequest,
+          ctx,
+          rendered,
+          failure.error,
+          nonce,
+          dependencySnapshot,
+        )) ?? undefined;
+      }
+    }
   }
 
   private handleRedirect(
