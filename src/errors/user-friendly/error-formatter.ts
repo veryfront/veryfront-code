@@ -147,6 +147,8 @@ const SOURCE_FILE_BASENAME_LOCATION =
 const HOSTNAME_SHAPED_CALLABLE_LABEL =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z](?:[a-z0-9-]*[a-z0-9])?|\d{1,3})\.?$/i;
 const INTERNATIONALIZED_HOSTNAME_SEPARATOR = /[.\u3002\uff0e\uff61]/;
+const SINGLE_LABEL_IPV4_CANDIDATE = /^(?:0x[0-9a-f]+|\d+)$/i;
+const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
 /**
  * Report labels that WHATWG host parsing recognizes as internationalized DNS.
@@ -175,9 +177,30 @@ function isInternationalizedHostnameShapedCallableLabel(label: string): boolean 
   }
 }
 
+/**
+ * Report single-label integer, hexadecimal, and octal IPv4 spellings.
+ *
+ * WHATWG host parsing accepts forms such as `2130706433`, `0x7f000001`, and
+ * `017700000001` as `127.0.0.1`. Limit parsing to numeric candidates and then
+ * require the canonical result to be dotted IPv4, so an ordinary single-label
+ * callable name is not mistaken for a host.
+ */
+function isSingleLabelIpv4CallableLabel(label: string): boolean {
+  if (!urlHostnameGetter || !testRegExp(SINGLE_LABEL_IPV4_CANDIDATE, label)) return false;
+
+  try {
+    const url = new urlConstructor(`http://${label}/`);
+    const hostname = reflectApply(urlHostnameGetter, url, []);
+    return typeof hostname === "string" && testRegExp(CANONICAL_IPV4_HOSTNAME, hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isHostnameShapedCallableLabel(label: string): boolean {
   return testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
-    isInternationalizedHostnameShapedCallableLabel(label);
+    isInternationalizedHostnameShapedCallableLabel(label) ||
+    isSingleLabelIpv4CallableLabel(label);
 }
 
 /** A bracketed IPv6 literal can be emitted as a custom callable label. */

@@ -260,6 +260,37 @@ describe("formatUserError environment gating", () => {
     });
   });
 
+  it("withholds single-label IPv4 callable labels", async () => {
+    await withEnv({ VERYFRONT_ENV: "development" }, () => {
+      for (const label of ["2130706433", "0x7f000001", "017700000001"]) {
+        const error = new Error("unknown error single_label_ipv4_callable_dev");
+        error.stack = [
+          "Error: unknown error single_label_ipv4_callable_dev",
+          `    at ${label} (file:///app/a.ts:1:1)`,
+        ].join("\n");
+        const result = formatUserError(error);
+
+        assert(result.includes("at <anonymous>"), "an IPv4-shaped label is withheld");
+        assertEquals(
+          result.includes(label),
+          false,
+          "an integer, hexadecimal, or octal IPv4 label must not reach user-facing output",
+        );
+      }
+
+      const safe = new Error("unknown error out_of_range_numeric_callable_dev");
+      safe.stack = [
+        "Error: unknown error out_of_range_numeric_callable_dev",
+        "    at 4294967296 (file:///app/a.ts:1:1)",
+      ].join("\n");
+      assert(
+        formatUserError(safe).includes("at 4294967296"),
+        "an out-of-range integer that WHATWG rejects remains a callable label",
+      );
+      return Promise.resolve();
+    });
+  });
+
   it("does not call a live URL hostname hook while classifying IDN labels", async () => {
     const error = new Error("unknown error mutated_url_hostname_hook");
     error.stack = [
