@@ -58,7 +58,7 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
         const response = await fetch(options.url, {
           method: "POST",
           // CSRF is enforced in every environment, local development included,
-          // so this POST has to echo the `__Host-vf_csrf` cookie the document
+          // so this POST has to echo the configured CSRF cookie the document
           // response issued or the server answers 403.
           headers: csrfMutationHeaders(options.url, {
             headers: { "Content-Type": "application/json" },

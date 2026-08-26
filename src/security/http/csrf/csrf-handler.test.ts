@@ -863,12 +863,23 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.continue, true);
     });
 
-    it("should treat a root exclusion as the whole route tree", async () => {
+    it("should treat a root exclusion as only the root path", async () => {
       const ctx = createCtx({ excludePaths: ["/"] });
-      for (const path of ["/", "/api/cases", "/nested/path"]) {
+
+      const rootResult = await handler.handle(
+        new Request("http://localhost/", { method: "POST" }),
+        ctx,
+      );
+      assertEquals(rootResult.continue, true);
+
+      for (const path of ["/api/cases", "/nested/path"]) {
         const req = new Request(`http://localhost${path}`, { method: "POST" });
         const result = await handler.handle(req, ctx);
-        assertEquals(result.continue, true, `${path} must be beneath the root exclusion`);
+        assertEquals(
+          result.response?.status,
+          403,
+          `${path} is not the root path and must stay CSRF gated`,
+        );
       }
     });
 

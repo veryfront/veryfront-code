@@ -1,6 +1,6 @@
 ---
 title: "Security headers and CSP"
-description: "Veryfront applies a Content-Security-Policy and a CSRF check by default. Use this guide to allow the third-party origins your site needs and to send the token every mutating request must carry."
+description: "Veryfront applies a Content-Security-Policy and a CSRF check by default. Use this guide to allow the third-party origins your site needs and to send the token every protected mutating request must carry."
 order: 11
 ---
 
@@ -166,7 +166,7 @@ Preview deployments serve the same policy as production, so a CSP problem shows 
 
 ## Cross-site request forgery
 
-Veryfront checks CSRF on every request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header. HTTPS and loopback origins use `__Host-vf_csrf`; plain-HTTP LAN development uses `vf_csrf`. A request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
+Veryfront checks CSRF on every protected request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header. HTTPS and loopback origins use `__Host-vf_csrf`; plain-HTTP LAN development uses `vf_csrf`. A protected request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
 
 `veryfront dev` runs the same check as your deployed build. Earlier releases skipped it locally, so a mutating `fetch` you wrote by hand worked for as long as you were building the feature and then failed on the first deploy. It now fails on your machine instead, and the local `403` body names the cookie and the header your project expects.
 
@@ -223,7 +223,7 @@ const headers = csrfMutationHeaders("/api/cases", {
 });
 ```
 
-`excludePaths` takes canonical absolute paths. A listed path and everything under it skips the check, which is what a third-party webhook receiver needs, because the sender holds no cookie of yours.
+`excludePaths` takes canonical absolute paths. A listed path and everything under it skips the check, except `/`, which matches only the root path. This is what a third-party webhook receiver needs, because the sender holds no cookie of yours.
 
 On plain-HTTP LAN development origins, Veryfront uses the non-prefixed
 `vf_csrf` cookie because browsers reject `Secure` `__Host-` cookies there. The

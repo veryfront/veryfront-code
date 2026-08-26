@@ -72,7 +72,7 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
         const response = await fetch(options.api, {
           method: "POST",
           // CSRF is enforced in every environment, local development included,
-          // so this POST has to echo the `__Host-vf_csrf` cookie the document
+          // so this POST has to echo the configured CSRF cookie the document
           // response issued or the server answers 403. A caller that set the
           // header itself through `options.headers` keeps its own value.
           headers: csrfMutationHeaders(options.api, {

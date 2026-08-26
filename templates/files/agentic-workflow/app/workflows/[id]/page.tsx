@@ -32,7 +32,7 @@ export default function WorkflowDetail(): React.JSX.Element {
       await fetch(endpoint, {
         method: 'POST',
         // CSRF is enforced in every environment, so this POST has to echo the
-        // __Host-vf_csrf cookie back or the server answers 403.
+        // configured CSRF cookie back or the server answers 403.
         headers: csrfMutationHeaders(endpoint, {
           headers: { 'Content-Type': 'application/json' },
         }),

@@ -70,7 +70,7 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
         const response = await fetch(endpoint, {
           method: "POST",
           // CSRF is enforced in every environment, local development included,
-          // so this POST has to echo the `__Host-vf_csrf` cookie the document
+          // so this POST has to echo the configured CSRF cookie the document
           // response issued or the server answers 403.
           headers: csrfMutationHeaders(endpoint, {
             headers: { "Content-Type": "application/json" },
