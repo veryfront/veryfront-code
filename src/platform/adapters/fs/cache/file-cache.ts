@@ -369,10 +369,21 @@ export class FileCache {
                 ? l1Scope
                 : immutableL1ReadScope(backend.type, readAuthorities);
               if (admissionScope !== null) {
-                // The backend entry's timestamp starts the public cache TTL.
-                // Re-reading an older entry must not stamp a fresh full L1
-                // lifetime that continues after the backend would expire it.
-                const backendRemainingTtl = entry.timestamp + this.options.ttl -
+                // The backend entry's timestamp starts the WRITER's backend
+                // TTL, which the writer records in the entry. Re-reading an
+                // older entry must not stamp a fresh full L1 lifetime that
+                // continues after the backend would expire it, and instances
+                // configure their TTLs independently, so this reader's own
+                // `ttl` is not that bound: a value written with a short TTL
+                // and read by a long-TTL instance would outlive its backend
+                // entry. Entries serialized before the field existed carry no
+                // record, so this reader's `ttl` is the only bound available
+                // for them.
+                const writerTtlMs = typeof entry.backendTtlMs === "number" &&
+                    Number.isFinite(entry.backendTtlMs)
+                  ? entry.backendTtlMs
+                  : this.options.ttl;
+                const backendRemainingTtl = entry.timestamp + writerTtlMs -
                   readToken.startedAtMs;
                 l1.admit(
                   admissionScope,
@@ -409,7 +420,16 @@ export class FileCache {
     if (!this.options.enabled) return;
 
     const size = estimateSize(value);
-    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    // `backendTtlMs` records the lifetime the backend write below will use, so
+    // a reader with a different configured ttl can bound L1 admission by this
+    // entry's actual backend expiry. Harmless on the fallback path, which
+    // never serializes the entry.
+    const entry: CacheEntry<T> = {
+      value,
+      timestamp: Date.now(),
+      size,
+      backendTtlMs: this.backendTtlSeconds * 1000,
+    };
     // A write invalidates any held entry whichever storage path is taken below,
     // including the fallback one that never reaches the request cache. The
     // barrier for a write landing mid-read is a separate concern and lives in
@@ -453,7 +473,16 @@ export class FileCache {
     if (!this.options.enabled) return Promise.resolve();
 
     const size = estimateSize(value);
-    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    // `backendTtlMs` records the lifetime the backend write below will use, so
+    // a reader with a different configured ttl can bound L1 admission by this
+    // entry's actual backend expiry. Harmless on the fallback path, which
+    // never serializes the entry.
+    const entry: CacheEntry<T> = {
+      value,
+      timestamp: Date.now(),
+      size,
+      backendTtlMs: this.backendTtlSeconds * 1000,
+    };
     // A write invalidates any held entry whichever storage path is taken below,
     // including the fallback one that never reaches the request cache. The
     // barrier for a write landing mid-read is a separate concern and lives in

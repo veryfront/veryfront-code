@@ -36,7 +36,7 @@ export type CacheRevisionMutation =
 export interface CacheReadOptions {
   /**
    * Invoked with the authority the backend resolved at the moment it performed
-   * an underlying network read serving this call — the credential and project
+   * an underlying network read serving this call: the credential and project
    * the value was actually fetched under, as opposed to whatever the caller
    * resolved before awaiting. A failed batch request falls back to individual
    * reads that resolve authority again, so one logical read can report more

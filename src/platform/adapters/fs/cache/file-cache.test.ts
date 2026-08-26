@@ -1144,6 +1144,43 @@ describe("Distributed cache functions", () => {
       );
     });
 
+    it("bounds admission by the writer's recorded backend lifetime, not the reader's ttl", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-writer-ttl");
+      // Instances configure their TTLs independently, and the backend entry
+      // expires on the TTL the WRITING instance stored it with. The writer
+      // records that lifetime in the entry, so a reader configured with a
+      // longer ttl must not admit the value for longer than the backend
+      // entry has left.
+      const harness = await useCountingDistributedBackend(distributedModule);
+      const writer = new distributedModule.FileCache({ ttl: 1_000 });
+      await writer.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+
+      using time = new FakeTime();
+      // Warm the tier through the default reader (60s ttl) half way into the
+      // backend entry's one-second lifetime.
+      await time.tickAsync(500);
+      const warming = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await time.tickAsync(5);
+      assertEquals(await warming, "page-source", "the warming read still returns the value");
+
+      // Past the writer's backend expiry the tier must refetch, even though
+      // the reader's own ttl and the tier lifetime both have plenty left.
+      await time.tickAsync(800);
+      harness.resetBackendGets();
+      const pastWriterExpiry = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await time.tickAsync(5);
+      assertEquals(
+        await pastWriterExpiry,
+        "page-source",
+        "the value itself must still be readable through the fake backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "admission must be bounded by the writer's recorded backend lifetime, not this reader's ttl",
+      );
+    });
+
     it("reports the process-local tier to the memory profiler", async () => {
       const distributedModule = await import("./file-cache.ts?issue-602-l1-profiler");
       const harness = await useCountingDistributedBackend(distributedModule);
