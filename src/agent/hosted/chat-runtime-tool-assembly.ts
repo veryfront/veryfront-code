@@ -483,6 +483,12 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
       requiredToolNames: localToolNames,
     });
   const compatibleToolNames = new Set(availableToolNames);
+  const compatibleLocalHostTools = toolLoadingMode === "deferred"
+    ? localHostTools
+    : Object.fromEntries(
+      Object.entries(localHostTools).filter(([toolName]) => compatibleToolNames.has(toolName)),
+    );
+  const compatibleLocalToolNames = Object.keys(compatibleLocalHostTools);
   const compatibleRemoteToolNames = toolLoadingMode === "deferred"
     ? remoteToolNames
     : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
@@ -522,9 +528,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
 
   return {
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-    runtimeTools: createToolsFromHostDefinitions(localHostTools),
+    runtimeTools: createToolsFromHostDefinitions(compatibleLocalHostTools),
     remoteToolSources,
-    localToolNames,
+    localToolNames: compatibleLocalToolNames,
     remoteToolNames,
     providerToolNames,
     availableToolNames,

@@ -889,6 +889,37 @@ Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to prov
   assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly caps eager local runtime schemas", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.4-nano",
+  };
+  const localTools = Object.fromEntries(
+    Array.from({ length: 129 }, (_, index) => [
+      `local_tool_${String(index).padStart(3, "0")}`,
+      localTool(`Local tool ${index}`),
+    ]),
+  );
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools,
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    deniedToolNames: ["tool_search"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "eager");
+  assertEquals(Object.keys(toolAssembly.runtimeTools), toolAssembly.availableToolNames);
+  assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",

@@ -152,6 +152,41 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(serviceAgent?.config.providerTools, ["web_fetch"]);
   });
 
+  it("warns when an unrestricted selector with denials fails closed", () => {
+    const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+    createAgentServiceRuntime({
+      serviceName: "test-agent-service",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "Use every tool except denied tools.",
+        tools: true,
+        deniedTools: ["load_skill"],
+      }),
+      logger: {
+        ...createLogger(),
+        warn(message, metadata) {
+          warnings.push({ message, metadata });
+        },
+      },
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(warnings, [{
+      message: "Agent tool selection failed closed",
+      metadata: { agent_id: "assistant", denied_tool_count: 1 },
+    }]);
+  });
+
   it("starts the node agent service server from the assembled runtime", async () => {
     const service = await startNodeAgentService({
       serviceName: "node-test-agent-service",

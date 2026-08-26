@@ -78,6 +78,8 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
      * Tool names an agent author explicitly switched off with `false`. The
      * positive `tools` selector cannot express a denial, so hosted preparation
      * would otherwise re-add runtime-essential skill tools the author denied.
+     * Combining this field with `tools: true` fails closed and disables all
+     * project tools. List the allowed tools explicitly when denials are needed.
      */
     deniedTools: v.array(v.string().min(1)).optional(),
     delegates: v.array(v.string().min(1)).optional(),
@@ -212,6 +214,16 @@ export function parseRuntimeAgentMarkdownDefinition(
   const tools = Object.hasOwn(attrs, "tools")
     ? parseCapabilitySelector(attrs.tools, "tools")
     : undefined;
+  if (Object.hasOwn(attrs, "denied-tools") && Object.hasOwn(attrs, "deniedTools")) {
+    throw CONFIG_INVALID.create({
+      detail: 'Agent frontmatter must use only one of "denied-tools" or "deniedTools".',
+    });
+  }
+  const deniedTools = Object.hasOwn(attrs, "denied-tools")
+    ? parseStringArray(attrs["denied-tools"], "denied-tools")
+    : Object.hasOwn(attrs, "deniedTools")
+    ? parseStringArray(attrs.deniedTools, "deniedTools")
+    : undefined;
   const delegates = normalizeAgentDelegateIds(
     parsedInput.id,
     Object.hasOwn(attrs, "delegates") ? parseDelegates(attrs.delegates) : undefined,
@@ -247,6 +259,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(providerTools ? { providerTools } : {}),
     ...(skills === undefined ? {} : { skills }),
     ...(tools === undefined ? {} : { tools }),
+    ...(deniedTools === undefined ? {} : { deniedTools }),
     ...(delegates === undefined ? {} : { delegates }),
     ...(mcpServers === undefined ? {} : { mcpServers }),
   });

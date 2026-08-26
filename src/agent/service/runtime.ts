@@ -279,6 +279,12 @@ export function createAgentServiceRuntime<
     logger: options.logger,
   });
   const agentConfig = options.getAgentConfig();
+  if (agentConfig.tools === true && agentConfig.deniedTools?.length) {
+    options.logger.warn?.("Agent tool selection failed closed", {
+      agent_id: agentConfig.id,
+      denied_tool_count: agentConfig.deniedTools.length,
+    });
+  }
   const service = defineAgentService({
     serviceName: options.serviceName,
     agent: agent({

@@ -138,6 +138,40 @@ Use only the authored instructions.
   );
 });
 
+it("parseRuntimeAgentMarkdownDefinition parses denied tool aliases", () => {
+  for (const field of ["denied-tools", "deniedTools"]) {
+    const result = parseRuntimeAgentMarkdownDefinition({
+      id: `locked-${field}`,
+      content: `---
+${field}:
+  - load_skill
+  - web_search
+---
+Keep denied tools unavailable.
+`,
+    });
+
+    assertEquals(result.deniedTools, ["load_skill", "web_search"]);
+  }
+});
+
+it("parseRuntimeAgentMarkdownDefinition rejects duplicate denied tool aliases", () => {
+  assertThrows(
+    () =>
+      parseRuntimeAgentMarkdownDefinition({
+        id: "locked",
+        content: `---
+denied-tools: [load_skill]
+deniedTools: [web_search]
+---
+Keep denied tools unavailable.
+`,
+      }),
+    Error,
+    'Agent frontmatter must use only one of "denied-tools" or "deniedTools".',
+  );
+});
+
 it("parseRuntimeAgentMarkdownDefinition rejects malformed capability selectors", () => {
   assertThrows(
     () =>
