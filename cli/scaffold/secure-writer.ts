@@ -8,6 +8,7 @@
  */
 
 import { lstat, open, stat } from "node:fs/promises";
+import { relative, resolve } from "node:path";
 
 type FileIdentity = {
   dev: number | string;
@@ -52,6 +53,11 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 interface CreatedDirectory {
   parts: string[];
   identity: FileIdentity;
+}
+
+interface EnteredParent {
+  directories: CreatedDirectory[];
+  expectedRealPath: string;
 }
 
 interface NativeFileInfo {
@@ -128,17 +134,18 @@ async function validatePinnedDirectory(guard: RootGuard): Promise<void> {
   const current = await stat(".", { bigint: true });
   if (!current.isDirectory()) throw new TypeError("unsafe-directory");
   const currentIdentity = identity(current);
-  if (guard.identity !== null) {
-    if (!sameIdentity(currentIdentity, guard.identity)) throw new TypeError("unsafe-directory");
-    return;
+  if (guard.identity !== null && !sameIdentity(currentIdentity, guard.identity)) {
+    throw new TypeError("unsafe-directory");
   }
-  if (await Deno.realPath(".") !== guard.realPath) throw new TypeError("unsafe-directory");
+  await validateEnteredPath(guard.realPath);
 }
 
 async function enterPinnedParent(
   parts: unknown,
   createMissing: boolean,
-): Promise<CreatedDirectory[]> {
+  rootRealPath: string,
+  beforeEnterForTesting?: () => Promise<void>,
+): Promise<EnteredParent> {
   if (!Array.isArray(parts) || parts.length > 64) throw new TypeError("unsafe-directory");
   const created: CreatedDirectory[] = [];
   const traversed: string[] = [];
@@ -158,19 +165,45 @@ async function enterPinnedParent(
       throw new TypeError("unsafe-directory");
     }
     const beforeIdentity = identity(before);
-    const beforeRealPath = beforeIdentity === null ? await Deno.realPath(part) : null;
+    const expectedRealPath = resolve(rootRealPath, ...traversed, part);
+    await beforeEnterForTesting?.();
     Deno.chdir(part);
     const after = await stat(".", { bigint: true });
     if (!after.isDirectory()) throw new TypeError("unsafe-directory");
-    if (beforeIdentity !== null) {
-      if (!sameIdentity(identity(after), beforeIdentity)) throw new TypeError("unsafe-directory");
-    } else if (await Deno.realPath(".") !== beforeRealPath) {
+    if (beforeIdentity !== null && !sameIdentity(identity(after), beforeIdentity)) {
       throw new TypeError("unsafe-directory");
     }
+    await validateEnteredPath(expectedRealPath);
     traversed.push(part);
     if (createdCurrent) created.push({ parts: [...traversed], identity: beforeIdentity });
   }
-  return created;
+  return {
+    directories: created,
+    expectedRealPath: resolve(rootRealPath, ...traversed),
+  };
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  return relative(left, right) === "" && relative(right, left) === "";
+}
+
+async function validateEnteredPath(expectedRealPath: string): Promise<void> {
+  if (!sameResolvedPath(await Deno.realPath("."), expectedRealPath)) {
+    throw new TypeError("unsafe-directory");
+  }
+}
+
+/** @internal Test seam for a parent replacement between lstat and chdir. */
+export async function testEnterPinnedParent(options: {
+  parts: string[];
+  beforeEnter: () => Promise<void>;
+}): Promise<void> {
+  await enterPinnedParent(
+    options.parts,
+    false,
+    await Deno.realPath("."),
+    options.beforeEnter,
+  );
 }
 
 async function removeOwnedFile(name: string, expected: FileIdentity): Promise<void> {
@@ -237,17 +270,25 @@ export async function runSecureScaffoldWriterProcess(): Promise<number> {
   try {
     const request = await readRequest();
     await validatePinnedDirectory(request.rootGuard);
-    const directories = await enterPinnedParent(
+    const entered = await enterPinnedParent(
       request.parentParts,
       request.operation === "ensure-parents",
+      request.rootGuard.realPath,
     );
+    await validateEnteredPath(entered.expectedRealPath);
     if (request.operation === "ensure-parents") {
-      console.log(JSON.stringify({ ok: true, directories }));
+      console.log(JSON.stringify({ ok: true, directories: entered.directories }));
       return 0;
     }
     validateName(request.name);
     if (request.operation === "create") {
       const createdIdentity = await createFile(request);
+      try {
+        await validateEnteredPath(entered.expectedRealPath);
+      } catch (error) {
+        await removeOwnedFile(request.name, createdIdentity);
+        throw error;
+      }
       console.log(JSON.stringify({ ok: true, identity: createdIdentity }));
       return 0;
     }

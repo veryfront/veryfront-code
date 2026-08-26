@@ -347,6 +347,7 @@ async function writeGuardedMultiFilePlan(
 
   const conflicts: string[] = [];
   let rootGuard: RootGuard;
+  let secureRootRealPath: string;
   try {
     const rootStat = await Deno.lstat(root);
     if (!rootStat.isDirectory || rootStat.isSymlink) {
@@ -356,6 +357,7 @@ async function writeGuardedMultiFilePlan(
       identity: await nativeIdentity(root),
       realPath: await realPath(root),
     };
+    secureRootRealPath = await Deno.realPath(root);
 
     for (const file of normalizedFiles.files) {
       const unsafe = await findUnsafeExistingPrefix(root, file.path);
@@ -379,7 +381,11 @@ async function writeGuardedMultiFilePlan(
     };
   }
 
-  const secureRootGuard: SecureRootGuard = { path: root, ...rootGuard };
+  const secureRootGuard: SecureRootGuard = {
+    path: root,
+    identity: rootGuard.identity,
+    realPath: secureRootRealPath,
+  };
   const createdFiles: OwnedPath[] = [];
   const createdDirs: OwnedPath[] = [];
   const defaultWriter = async (file: ScaffoldFilePlan) => {
