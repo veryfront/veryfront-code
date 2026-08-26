@@ -10,6 +10,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -602,6 +603,53 @@ describe("createLocalIntegrationToolSource", () => {
       "https://shop.example.com/api/oauth/token",
       "https://shop.example.com/api/search/product",
     ]);
+  });
+
+  it("revalidates a cached environment host for each binding", async () => {
+    let hostReads = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["shopware__search_products"],
+        credentialProvider: (name) => {
+          if (name === "SHOPWARE_SHOP_DOMAIN") {
+            hostReads += 1;
+            return "shop.example.com/prefix";
+          }
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => Promise.resolve(Response.json({})),
+    );
+
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-config-invalid");
+    assertStringIncludes(error.message, "SHOPWARE_SHOP_DOMAIN");
+    assertEquals(hostReads, 1);
+  });
+
+  it("rejects environment-host tool arguments before reading the host", async () => {
+    let credentialProviderCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["qdrant__list_collections"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => Promise.resolve(Response.json({})),
+    );
+
+    const error = await assertRejects(
+      () => source.executeTool("qdrant__list_collections", { unknown: true }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
   });
 
   it("accepts the scaffolded HTTPS origin for PostHog", async () => {

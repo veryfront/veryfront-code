@@ -192,7 +192,7 @@
       {
         "step": 1,
         "title": "Locate your Metabase instance",
-        "description": "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain, and set it as METABASE_HOST in your .env. For local testing you can run Metabase with 'docker run -p 3000:3000 metabase/metabase'."
+        "description": "Note your instance hostname, e.g. acme.metabaseapp.com (Metabase Cloud) or your self-hosted domain, and set it as METABASE_HOST in your .env. Veryfront connects with HTTPS. The default Docker container serves HTTP only, so put it behind an HTTPS reverse proxy or configure native HTTPS before using this connector."
       },
       {
         "step": 2,

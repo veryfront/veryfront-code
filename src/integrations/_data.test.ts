@@ -10,6 +10,8 @@ import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors, icons } from "./_data.ts";
 import { historicalToolSummaries } from "./_tool_summaries.ts";
 import { filterVisibleIntegrations } from "./feature-flags.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
@@ -1443,13 +1445,15 @@ describe("integration endpoint specs", () => {
   });
 
   it("shows the QuickBooks sandbox host in scaffolded setup guidance", async () => {
-    const setupMarkdown = await Deno.readTextFile(
-      new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url),
+    const setupMarkdown = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url)),
     );
-    const setupHelpers = await Deno.readTextFile(
-      new URL(
-        "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
-        import.meta.url,
+    const setupHelpers = await readTextFile(
+      fromFileUrl(
+        new URL(
+          "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
+          import.meta.url,
+        ),
       ),
     );
 
@@ -1462,6 +1466,39 @@ describe("integration endpoint specs", () => {
       );
       assertEquals(configuredHosts.has("sandbox-quickbooks.api.intuit.com"), true);
     }
+  });
+
+  it("shows regional Mixpanel hosts in scaffolded setup guidance", async () => {
+    const setupMarkdown = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/_base/files/SETUP.md", import.meta.url)),
+    );
+    const setupHelpers = await readTextFile(
+      fromFileUrl(
+        new URL(
+          "../../templates/integrations/_base/files/app/setup/page-helpers.tsx",
+          import.meta.url,
+        ),
+      ),
+    );
+
+    for (const setupSurface of [setupMarkdown, setupHelpers]) {
+      assertStringIncludes(setupSurface, "MIXPANEL_HOST");
+      assertStringIncludes(setupSurface, "MIXPANEL_EXPORT_HOST");
+    }
+    assertStringIncludes(setupMarkdown, "eu.mixpanel.com");
+    assertStringIncludes(setupMarkdown, "data-eu.mixpanel.com");
+  });
+
+  it("requires HTTPS termination for self-hosted Metabase and Qdrant", async () => {
+    const metabaseGuide = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/metabase/connector.json", import.meta.url)),
+    );
+    const qdrantGuide = await readTextFile(
+      fromFileUrl(new URL("../../templates/integrations/qdrant/connector.json", import.meta.url)),
+    );
+
+    assertStringIncludes(metabaseGuide, "HTTPS reverse proxy");
+    assertStringIncludes(qdrantGuide, "native TLS or an HTTPS reverse proxy");
   });
 
   it("routes Pinecone data-plane tools through per-call hosts pinned to pinecone.io", () => {

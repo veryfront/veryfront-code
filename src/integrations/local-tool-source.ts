@@ -16,7 +16,8 @@ import {
 import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
-  snapshotLocalIntegrationEndpointArguments,
+  resolveLocalIntegrationEndpointOrigin,
+  snapshotLocalIntegrationEndpointInput,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
@@ -489,22 +490,29 @@ function environmentHostBinding(
  * Existing scaffold values may include an HTTPS scheme. Strip only that exact
  * scheme before applying the same authority and optional path-prefix checks.
  */
-async function resolveEnvironmentHost(
-  binding: EnvironmentHostBinding,
+async function readEnvironmentHost(
+  variableName: string,
   credentialProvider: LocalIntegrationCredentialProvider,
-): Promise<string> {
+): Promise<unknown> {
   let provided: unknown;
   try {
-    provided = await apply(credentialProvider, undefined, [binding.variableName]);
+    provided = await apply(credentialProvider, undefined, [variableName]);
   } catch {
     // A provider failure is not evidence the variable is unset: falling back
     // to the catalog default here could silently route a credentialed request
     // to the wrong environment (for example a configured US host failing over
     // to the default EU host).
     throw LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE.create({
-      detail: `The credential provider could not read ${binding.variableName}`,
+      detail: `The credential provider could not read ${variableName}`,
     });
   }
+  return provided;
+}
+
+function validateEnvironmentHost(
+  binding: EnvironmentHostBinding,
+  provided: unknown,
+): string {
   let value = typeof provided === "string" && provided.length > 0 ? provided : undefined;
   value ??= binding.defaultValue;
   if (value === undefined) {
@@ -731,19 +739,22 @@ function createResolvedAuthPlan(
 async function resolveEnvironmentHostCached(
   binding: EnvironmentHostBinding,
   credentialProvider: LocalIntegrationCredentialProvider,
-  resolvedHosts: Map<string, string>,
+  resolvedHosts: Map<string, unknown>,
 ): Promise<string> {
-  const existing = mapValue(resolvedHosts, binding.variableName);
-  if (existing !== undefined) return existing;
-  const resolved = await resolveEnvironmentHost(binding, credentialProvider);
-  apply(mapSet, resolvedHosts, [binding.variableName, resolved]);
-  return resolved;
+  let provided: unknown;
+  if (apply(mapHas, resolvedHosts, [binding.variableName])) {
+    provided = mapValue(resolvedHosts, binding.variableName);
+  } else {
+    provided = await readEnvironmentHost(binding.variableName, credentialProvider);
+    apply(mapSet, resolvedHosts, [binding.variableName, provided]);
+  }
+  return validateEnvironmentHost(binding, provided);
 }
 
 async function resolveAdmittedAuthPlan(
   tool: AdmittedLocalIntegrationTool,
   credentialProvider: LocalIntegrationCredentialProvider,
-  resolvedHosts: Map<string, string>,
+  resolvedHosts: Map<string, unknown>,
 ): Promise<LocalCredentialAuthPlan> {
   if (!tool.authEnvironmentHost) return tool.authPlan;
   const host = await resolveEnvironmentHostCached(
@@ -980,7 +991,7 @@ function createLocalIntegrationToolSourceInternal(
     async listTools(): Promise<ToolDefinition[]> {
       const validatedConnectors = new SetConstructor<string>();
       const validatedHostVariables = new SetConstructor<string>();
-      const resolvedHosts = new MapConstructor<string, string>();
+      const resolvedHosts = new MapConstructor<string, unknown>();
       for (let index = 0; index < snapshot.tools.length; index++) {
         const toolId = snapshot.tools[index]!;
         const tool = mapValue(admitted, toolId)!;
@@ -1022,7 +1033,8 @@ function createLocalIntegrationToolSourceInternal(
           }" is not granted by this source`,
         );
       }
-      const resolvedHosts = new MapConstructor<string, string>();
+      const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
+      const resolvedHosts = new MapConstructor<string, unknown>();
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;
       if (tool.environmentHost) {
@@ -1043,8 +1055,7 @@ function createLocalIntegrationToolSourceInternal(
         );
         endpoint = freeze({ ...endpoint, url: resolvedUrl });
       }
-      const validated = snapshotLocalIntegrationEndpointArguments(endpoint, args);
-      allowedOrigin ??= validated.endpointOrigin;
+      allowedOrigin ??= resolveLocalIntegrationEndpointOrigin(endpoint, validated.args);
       if (tool.tenantHost) {
         // Validated and pinned before any credential is minted so a hostile
         // argument is rejected without a token request ever being sent.

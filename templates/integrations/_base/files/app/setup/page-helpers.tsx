@@ -310,7 +310,15 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Add credentials to .env",
     ],
     link: "https://mixpanel.com/settings/project",
-    envVars: ["MIXPANEL_TOKEN", "MIXPANEL_API_SECRET"],
+    envVars: [
+      "MIXPANEL_SERVICE_ACCOUNT_USERNAME",
+      "MIXPANEL_SERVICE_ACCOUNT_SECRET",
+      "MIXPANEL_PROJECT_ID",
+      "MIXPANEL_PROJECT_TOKEN",
+      "MIXPANEL_API_SECRET",
+      "MIXPANEL_HOST",
+      "MIXPANEL_EXPORT_HOST",
+    ],
   },
   notion: {
     title: "Notion Integration Setup",
