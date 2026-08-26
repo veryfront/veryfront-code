@@ -85,6 +85,15 @@ describe("guide content contracts", () => {
           }`,
       );
     }
+
+    const mutatingCurlBlocks = [...guide.matchAll(/```bash\n([\s\S]*?)```/g)]
+      .map((match) => match[1] ?? "")
+      .filter((block) => block.includes("curl ") && block.includes(" -d "));
+    assert(mutatingCurlBlocks.length > 0, "expected the guide to show a mutating curl call");
+    for (const block of mutatingCurlBlocks) {
+      assertStringIncludes(block, "Cookie: __Host-vf_csrf=local-check");
+      assertStringIncludes(block, "x-csrf-token: local-check");
+    }
   });
 
   it("keeps the workflow EventSource example terminal-safe and wire-accurate", async () => {
