@@ -363,10 +363,11 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(importParserInternals.isFileUrlSpecifier(shadowed), true);
   });
 
-  it("normalizes Windows file URL paths to portable separators", () => {
+  it("preserves backslashes in POSIX file URL paths", () => {
+    if (Deno.build.os === "windows") return;
     assertEquals(
-      importParserInternals.fileUrlToPath("file:///C:%5Cproject%5CChild.tsx"),
-      "/C:/project/Child.tsx",
+      importParserInternals.fileUrlToPath("file:///project/a%5Cb.tsx"),
+      "/project/a\\b.tsx",
     );
   });
 

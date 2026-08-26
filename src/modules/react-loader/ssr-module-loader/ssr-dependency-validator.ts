@@ -60,6 +60,20 @@ function startsWithString(value: string, prefix: string): boolean {
   return reflectApply(stringStartsWith, value, [prefix]) as boolean;
 }
 
+function mapBatch<T, U>(
+  values: readonly T[],
+  start: number,
+  end: number,
+  callback: (value: T, index: number) => U,
+): U[] {
+  const mapped: U[] = [];
+  const limit = end < values.length ? end : values.length;
+  for (let index = start; index < limit; index++) {
+    mapped[index - start] = callback(values[index]!, index);
+  }
+  return mapped;
+}
+
 function allSettled<T>(
   values: readonly (T | PromiseLike<T>)[],
 ): Promise<PromiseSettledResult<Awaited<T>>[]> {
@@ -153,11 +167,14 @@ function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontErr
 function selectPropagatedFailure(
   results: PromiseSettledResult<unknown>[],
 ): PromiseRejectedResult | undefined {
-  const rejections = results.filter((result): result is PromiseRejectedResult =>
-    result.status === "rejected"
-  );
-  return rejections.find((rejection) => isTerminalHttpModuleFetchFailure(rejection.reason)) ??
-    rejections[0];
+  let firstRejection: PromiseRejectedResult | undefined;
+  for (let index = 0; index < results.length; index++) {
+    const result = results[index]!;
+    if (result.status !== "rejected") continue;
+    firstRejection ??= result;
+    if (isTerminalHttpModuleFetchFailure(result.reason)) return result;
+  }
+  return firstRejection;
 }
 
 /**
@@ -312,9 +329,8 @@ export class SSRDependencyValidator {
     const crossProjectPaths = new Map<string, string>();
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
       const results = await allSettled(
-        batch.map(async (crossImport) => {
+        mapBatch(crossProjectImports, i, i + TRANSFORM_BATCH_SIZE, async (crossImport) => {
           try {
             const tempPath = await this.transformCrossProjectImport(crossImport, signal);
             crossProjectPaths.set(crossImport.specifier, tempPath);
@@ -356,9 +372,8 @@ export class SSRDependencyValidator {
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
       const results = await allSettled(
-        batch.map(async (imp) => {
+        mapBatch(imports, i, i + TRANSFORM_BATCH_SIZE, async (imp) => {
           try {
             const depSource = await this.readLocalImportSource(imp, localFs);
 

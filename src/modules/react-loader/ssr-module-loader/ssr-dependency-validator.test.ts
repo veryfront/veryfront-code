@@ -198,6 +198,40 @@ describe("SSRDependencyValidator", () => {
     }
   });
 
+  it("does not dispatch local dependency batches through mutable array methods", async () => {
+    const transformedPaths: string[] = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "none",
+        readFile: () => Promise.resolve("export const child = true;"),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (path) => {
+        transformedPaths.push(path);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+    const imports = [{ absolutePath: "/project/child.ts", specifier: "./child.ts" }];
+    Object.defineProperties(imports, {
+      map: { value: () => [] },
+      slice: { value: () => [] },
+    });
+
+    const importPaths = await validator.processLocalImports(
+      imports,
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+    assertEquals(transformedPaths, ["/project/child.ts"]);
+    assertEquals(importPaths.get("./child.ts"), "/tmp/child.js");
+  });
+
   // Regression: import containment approves a canonical pathname, but the
   // later read followed whatever the path named by then, so a symlink placed
   // at the approved path after validation escaped the project. The read must

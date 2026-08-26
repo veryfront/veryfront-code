@@ -14,6 +14,7 @@ import { parseImports } from "./lexer.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { isWindowsPlatform } from "#veryfront/platform/compat/process/runtime-process.ts";
 
 export interface LocalImport {
   specifier: string;
@@ -64,6 +65,7 @@ const universalObjectPrototype = Object.prototype;
 const StringEndsWith = String.prototype.endsWith;
 const StringReplaceAll = String.prototype.replaceAll;
 const StringStartsWith = String.prototype.startsWith;
+const windowsHost = isWindowsPlatform();
 
 function stringEndsWith(value: string, search: string): boolean {
   return ReflectApply(StringEndsWith, value, [search]) as boolean;
@@ -461,7 +463,8 @@ function fileUrlToPath(specifier: string): string | null {
     // `fromFileUrl()` returns native backslashes on Windows, and retaining
     // those in requestedPath makes recursive relative imports resolve from
     // the filesystem root instead of the dependency's directory.
-    return stringReplaceAll(fromFileUrl(url), "\\", "/");
+    const path = fromFileUrl(url);
+    return windowsHost ? stringReplaceAll(path, "\\", "/") : path;
   } catch (_) {
     /* expected: not a well-formed URL */
     return null;
