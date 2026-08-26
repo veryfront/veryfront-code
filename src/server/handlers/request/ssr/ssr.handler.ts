@@ -54,10 +54,9 @@ import {
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
-  capturePreviewDocumentRenderSourceSnapshot,
   ensurePreviewDocumentSourceSnapshot,
+  finishPreviewDocumentSourceSnapshot,
   type PreviewDocumentSnapshotReclassifier,
-  previewSourceSnapshotMarkersEqual,
   reclassifyPreviewDocumentSourceSnapshotIfChanged,
 } from "../source-snapshot-freshness.ts";
 import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
@@ -307,7 +306,6 @@ export class SSRHandler extends BaseHandler {
           applicationUrl.searchParams.get("forceProductionScripts") === "1" ||
           applicationUrl.searchParams.get("force_production_scripts") === "1";
         const useNoCache = shouldUseNoCacheHeadersFromHandler(ctx);
-        const renderSourceSnapshot = await capturePreviewDocumentRenderSourceSnapshot(ctx);
 
         const result = await this.ssrService.renderPage(ctx, {
           request: applicationRequest,
@@ -329,6 +327,12 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         };
 
+        const postRenderReclassified = await this.reclassifyPreviewDocumentAfterRender(
+          ctx,
+          requestId,
+        );
+        if (postRenderReclassified) return postRenderReclassified;
+
         endRequest(requestId);
 
         const failureResponse = await this.handleRenderedFailure(
@@ -340,18 +344,6 @@ export class SSRHandler extends BaseHandler {
           dependencySnapshot,
           rendered,
         );
-        if (renderSourceSnapshot !== undefined) {
-          const completedSourceSnapshot = await capturePreviewDocumentRenderSourceSnapshot(ctx);
-          if (
-            completedSourceSnapshot === undefined ||
-            !previewSourceSnapshotMarkersEqual(renderSourceSnapshot, completedSourceSnapshot)
-          ) {
-            throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-              detail:
-                `The source snapshot for "${ctx.projectSlug}" changed during server rendering, so this document request must be retried against one generation.`,
-            });
-          }
-        }
         if (failureResponse) return failureResponse;
 
         return this.buildResponse(req, ctx, rendered, nonce);
@@ -385,6 +377,30 @@ export class SSRHandler extends BaseHandler {
           return reclassified;
         }
       }
+    } catch (error) {
+      endRequest(requestId);
+      throw error;
+    }
+  }
+
+  private async reclassifyPreviewDocumentAfterRender(
+    ctx: HandlerContext,
+    requestId: string,
+  ): Promise<HandlerResult | undefined> {
+    try {
+      const reclassify = await finishPreviewDocumentSourceSnapshot(ctx);
+      if (reclassify === undefined) return;
+
+      const reclassified = await reclassify();
+      if (reclassified.response || !reclassified.continue) {
+        endRequest(requestId);
+        return reclassified;
+      }
+
+      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+        detail:
+          `The source snapshot for "${ctx.projectSlug}" changed during SSR rendering, so this page request must be retried against one generation.`,
+      });
     } catch (error) {
       endRequest(requestId);
       throw error;

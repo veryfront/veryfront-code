@@ -783,6 +783,15 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("contextual operations", () => {
+    it("publishes an explicit fixed project context on the wrapped adapter", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        projectContextSemantics: "fixed",
+      }));
+
+      assertEquals(wrapper.projectContextSemantics, "fixed");
+      assertEquals(wrapper.isFixedProjectMode(), true);
+    });
+
     it("isMultiProjectMode should return true when runWithContext available", () => {
       const fsAdapter = createMockContextualAdapter({
         runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),

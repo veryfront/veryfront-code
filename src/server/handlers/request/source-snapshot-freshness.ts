@@ -126,6 +126,11 @@ async function preparedDocumentSnapshotMatches(
   return identityMatches && versionMatches;
 }
 
+function hasFixedProjectContext(fs: FileSystemAdapter): boolean {
+  if (readOwnDataProperty(fs, "projectContextSemantics") === "fixed") return true;
+  return !isExtendedFSAdapter(fs) || fs.isFixedProjectMode?.() === true;
+}
+
 /** Establish strict freshness before API/page ownership is classified. */
 export async function preparePreviewDocumentSourceSnapshot(
   ctx: HandlerContext,
@@ -151,30 +156,13 @@ export async function preparePreviewDocumentSourceSnapshot(
   const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
   const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
   const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
-  const fixedContext = !isExtendedFSAdapter(ctx.adapter.fs) ||
-    ctx.adapter.fs.isFixedProjectMode?.() === true;
+  const fixedContext = hasFixedProjectContext(ctx.adapter.fs);
   preparedDocumentSnapshots.set(ctx, {
     identity,
     version,
     reclassify,
     liveSource,
     fixedContext,
-  });
-}
-
-/** Capture the generation that one preview document render must retain. */
-export async function capturePreviewDocumentRenderSourceSnapshot(
-  ctx: HandlerContext,
-): Promise<PreviewSourceSnapshotMarker | undefined> {
-  if (!hasMutablePreviewSource(ctx)) return;
-  const fs = ctx.adapter.fs;
-  const hasMarkerCapability = typeof fs.getSourceSnapshotIdentity === "function" ||
-    typeof fs.getSourceSnapshotVersion === "function";
-  const marker = await capturePreviewSourceSnapshotMarker(fs);
-  if (marker !== undefined || !hasMarkerCapability) return marker;
-  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
-    detail:
-      `The mutable source snapshot serving "${ctx.projectSlug}" changed while its render generation was being captured.`,
   });
 }
 
@@ -195,11 +183,26 @@ export async function reclassifyPreviewDocumentSourceSnapshotIfChanged(
   ctx: HandlerContext,
 ): Promise<PreviewDocumentSnapshotReclassifier | undefined> {
   const prepared = preparedDocumentSnapshots.get(ctx);
-  if (prepared?.reclassify === undefined) return;
+  if (prepared === undefined) return;
   if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
   if (prepared.configBound === true) throwConfigSnapshotChanged(ctx);
   preparedDocumentSnapshots.delete(ctx);
+  if (prepared.reclassify === undefined) {
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail:
+        `The mutable source snapshot serving "${ctx.projectSlug}" changed during document rendering, so this request must be retried against one generation.`,
+    });
+  }
   return prepared.reclassify;
+}
+
+/** Validate and release the marker retained across one document render. */
+export async function finishPreviewDocumentSourceSnapshot(
+  ctx: HandlerContext,
+): Promise<PreviewDocumentSnapshotReclassifier | undefined> {
+  const reclassify = await reclassifyPreviewDocumentSourceSnapshotIfChanged(ctx);
+  if (reclassify === undefined) preparedDocumentSnapshots.delete(ctx);
+  return reclassify;
 }
 
 /**
@@ -211,12 +214,12 @@ export async function ensurePreviewDocumentSourceSnapshot(
 ): Promise<PreviewDocumentSnapshotReclassifier | undefined> {
   const prepared = preparedDocumentSnapshots.get(ctx);
   if (prepared !== undefined) {
-    preparedDocumentSnapshots.delete(ctx);
     // Freshness established by the classifier only carries over when this
     // render context still targets the identity the preparation refreshed. A
     // branch switch on a reused contextual adapter between the two points
     // must re-establish, or the render serves the previous branch's snapshot.
     if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
+    preparedDocumentSnapshots.delete(ctx);
     if (prepared.configBound === true) throwConfigSnapshotChanged(ctx);
 
     // A same-branch source replacement preserves identity but increments the
@@ -226,6 +229,19 @@ export async function ensurePreviewDocumentSourceSnapshot(
     if (prepared.reclassify !== undefined) return prepared.reclassify;
   }
   await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
+  const identity = await ctx.adapter.fs.getSourceSnapshotIdentity?.();
+  const version = await ctx.adapter.fs.getSourceSnapshotVersion?.();
+  const liveSource = isLiveSourceWithoutSnapshotCapabilities(ctx.adapter.fs);
+  if (
+    hasMutablePreviewSource(ctx) && (identity !== undefined || version !== undefined || liveSource)
+  ) {
+    preparedDocumentSnapshots.set(ctx, {
+      identity,
+      version,
+      fixedContext: hasFixedProjectContext(ctx.adapter.fs),
+      liveSource,
+    });
+  }
 }
 
 /**

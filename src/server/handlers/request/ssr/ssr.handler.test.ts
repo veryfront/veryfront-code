@@ -369,6 +369,53 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
     });
 
+    it("reclassifies an SSR result when its source generation changes during rendering", async () => {
+      let version = 1;
+      let renderCalls = 0;
+      let reclassificationCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = () => Promise.resolve();
+      adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+      adapter.fs.getSourceSnapshotVersion = () => version;
+      const ctx = makeCtx({
+        adapter,
+        projectSlug: "preview-project",
+        requestContext: {
+          token: "",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+
+      await preparePreviewDocumentSourceSnapshot(ctx, () => {
+        reclassificationCalls++;
+        return Promise.resolve({
+          response: new Response("current API response", { status: 202 }),
+          continue: false,
+        });
+      });
+
+      const result = await new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          version++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>mixed-generation page</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "review",
+          });
+        },
+      })).handle(new Request("http://localhost/review"), ctx);
+
+      assertEquals(result.response?.status, 202);
+      assertEquals(await result.response?.text(), "current API response");
+      assertEquals(renderCalls, 1);
+      assertEquals(reclassificationCalls, 1);
+    });
+
     it("rejects a legacy ensure-only adapter for a preview document", async () => {
       let ensureCalls = 0;
       let renderCalls = 0;

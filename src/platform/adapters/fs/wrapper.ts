@@ -162,6 +162,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _wholeFileReader?: CapturedWholeFileReader;
   private readonly _fixedProjectMode: boolean;
   readonly symlinkSemantics: "none" | undefined;
+  readonly projectContextSemantics: "fixed" | undefined;
   readonly maxWholeFileReadBytes?: number;
   readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
   readonly readFileBytesWithinLimit?: (path: string, byteLimit: number) => Promise<Uint8Array>;
@@ -187,10 +188,11 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       ? "none"
       : undefined;
     const projectContext = Object.getOwnPropertyDescriptor(fsAdapter, "projectContextSemantics");
-    this._fixedProjectMode = projectContext && "value" in projectContext &&
+    this.projectContextSemantics = projectContext && "value" in projectContext &&
         projectContext.value === "fixed"
-      ? true
-      : false;
+      ? "fixed"
+      : undefined;
+    this._fixedProjectMode = this.projectContextSemantics === "fixed";
 
     const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter", true);
     let byteReaders: CapturedByteReaders;
@@ -260,6 +262,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     for (
       const key of [
         "symlinkSemantics",
+        "projectContextSemantics",
         "maxWholeFileReadBytes",
         "readFileBytesBounded",
         "readFileBytesWithinLimit",

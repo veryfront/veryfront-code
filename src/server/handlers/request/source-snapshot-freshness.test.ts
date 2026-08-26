@@ -178,11 +178,16 @@ it("reuses a prepared version-only snapshot on a fixed adapter", async () => {
   };
   adapter.fs.getSourceSnapshotVersion = () => 1;
   const ctx = makePreviewCtx(adapter);
+  const reclassify = () => Promise.resolve({ continue: true });
 
-  await preparePreviewDocumentSourceSnapshot(ctx);
-  await ensurePreviewDocumentSourceSnapshot(ctx);
+  await preparePreviewDocumentSourceSnapshot(ctx, reclassify);
 
-  assertEquals(refreshes, 1, "a stable fixed generation must reuse the classifier refresh");
+  assertEquals(
+    await ensurePreviewDocumentSourceSnapshot(ctx),
+    undefined,
+    "a fixed adapter does not need an identity to prove that its stable generation still matches",
+  );
+  assertEquals(refreshes, 1, "the classifier's strict refresh must carry into SSR");
 });
 
 it("fails closed when config and routing would observe different generations", async () => {

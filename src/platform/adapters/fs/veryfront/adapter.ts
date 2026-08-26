@@ -1173,20 +1173,26 @@ export class VeryfrontFSAdapter implements FSAdapter {
     reason = "freshness-check",
     options?: SourceSnapshotFreshnessOptions,
   ): Promise<void> {
-    const initializedAtEntry = this.initialized;
-    await this.ensureInitialized();
+    const initializedNow = await this.ensureInitialized();
     if (this.contentContext?.sourceType !== "branch") return;
-
-    // Initialization fetched and installed the complete current listing. A
-    // first strict caller can use that same authority response; only an
-    // adapter that was already initialized needs another zero-age refresh.
-    if (!initializedAtEntry) return;
 
     // The snapshot identity only names the branch, so an edit to a draft file
     // never changes it. The lease age is therefore the only thing that can
     // detect a content change, and a caller that cannot tolerate a stale render
     // asks for maxAgeMs: 0 to bypass it.
     const maxAgeMs = options?.maxAgeMs ?? BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS;
+
+    // Cold initialization just fetched and installed the complete listing for
+    // this branch. That authority check happened inside this call, so it also
+    // satisfies a zero-age caller without immediately listing the same source
+    // tree a second time.
+    if (
+      initializedNow &&
+      this.sourceSnapshotIdentity === this.getCurrentSourceSnapshotIdentity() &&
+      this.sourceSnapshotCheckedAt > 0
+    ) {
+      return;
+    }
 
     // A non-positive budget bypasses the lease unconditionally. Comparing the
     // age against it would not: a backward wall-clock step makes the age
@@ -1563,9 +1569,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.client;
   }
 
-  private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return;
+  private async ensureInitialized(): Promise<boolean> {
+    if (this.initialized) return false;
     await this.initialize();
+    return true;
   }
 
   private async ensureExactReadInitialized(): Promise<void> {
