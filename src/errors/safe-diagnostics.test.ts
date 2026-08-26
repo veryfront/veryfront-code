@@ -224,6 +224,10 @@ describe("safe-diagnostics", () => {
           "ENOENT: no such file or directory, open 'c:\\definitely-private-marker\\nope'",
         ],
         [
+          "file:///c%7C/definitely-private-marker/nope",
+          "ENOENT: no such file or directory, open '/c|/definitely-private-marker/nope'",
+        ],
+        [
           "file://server/definitely-private-marker/nope",
           "ENOENT: no such file or directory, open '\\\\server\\definitely-private-marker\\nope'",
         ],

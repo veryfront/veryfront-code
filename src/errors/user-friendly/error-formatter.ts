@@ -146,6 +146,9 @@ const SOURCE_FILE_BASENAME_LOCATION =
 /** A dot-separated callable label can be indistinguishable from a hostname. */
 const HOSTNAME_SHAPED_CALLABLE_LABEL =
   /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z](?:[a-z0-9-]*[a-z0-9])?|\d{1,3})\.?$/i;
+/** A private single-label hostname is indistinguishable from a callable name. */
+const SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL =
+  /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
 const INTERNATIONALIZED_HOSTNAME_SEPARATOR = /[.\u3002\uff0e\uff61]/;
 const SINGLE_LABEL_IPV4_CANDIDATE = /^(?:0x[0-9a-f]+|\d+)$/i;
 const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
@@ -199,6 +202,7 @@ function isSingleLabelIpv4CallableLabel(label: string): boolean {
 
 function isHostnameShapedCallableLabel(label: string): boolean {
   return testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+    testRegExp(SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
     isInternationalizedHostnameShapedCallableLabel(label) ||
     isSingleLabelIpv4CallableLabel(label);
 }

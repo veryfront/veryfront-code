@@ -171,6 +171,33 @@ describe("formatUserError", () => {
     assertEquals(output.includes("file:///home/user"), false);
   });
 
+  it("should withhold single-label private hostnames used as callable labels", () => {
+    const environmentKeys = ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const;
+    const previousEnvironment = environmentKeys.map((key) => [key, Deno.env.get(key)] as const);
+    for (const key of environmentKeys) Deno.env.delete(key);
+    Deno.env.set("NODE_ENV", "development");
+    const error = new Error("unknown error private_callable_host");
+    error.stack = [
+      "Error: unknown error private_callable_host",
+      "    at private-control-plane (node:internal/process/task_queues:1:1)",
+      "    at intranet (node:internal/process/task_queues:2:2)",
+    ].join("\n");
+
+    let output: string;
+    try {
+      output = formatUserError(error);
+    } finally {
+      for (const [key, value] of previousEnvironment) {
+        if (value === undefined) Deno.env.delete(key);
+        else Deno.env.set(key, value);
+      }
+    }
+
+    assertEquals(output.includes("private-control-plane"), false);
+    assertEquals(output.includes("intranet"), false);
+    assertEquals(output.includes("at <anonymous>"), true);
+  });
+
   it("should not invoke proxy traps in plain output", () => {
     let messageReads = 0;
     const stateful = new Proxy(new Error("unused"), {
