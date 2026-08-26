@@ -419,10 +419,10 @@ indefinitely. `delay(id, duration)` uses the same machinery and completes its
 node once the duration elapses. Cancelling a run resolves its pending event
 waits, so a cancelled run no longer reports itself as parked.
 
-Durable event waits require a backend that implements them. Both built-in
-backends, `MemoryBackend` and `RedisBackend`, do. Use
-`hasEventWaitSupport(backend)` to check a custom backend before relying on
-`waitForEvent` or `delay`.
+Durable event waits require a backend that implements them. The built-in
+`MemoryBackend` does; `RedisBackend` does not currently implement the durable
+event-wait method group. Use `hasEventWaitSupport(backend)` to check a custom
+backend before relying on `waitForEvent` or `delay`.
 
 `publishEvent` is run-scoped. There is no broadcast by workflow id.
 

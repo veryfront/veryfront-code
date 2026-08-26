@@ -260,6 +260,20 @@ class RejectSecondRetryDecisionBackend extends MemoryBackend {
   }
 }
 
+class RejectSecondDecisionFinalizationBackend extends MemoryBackend {
+  secondFinalizationAttempts = 0;
+
+  override finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+    if (approvalId === "apr-second") {
+      this.secondFinalizationAttempts++;
+      if (this.secondFinalizationAttempts === 1) {
+        return Promise.reject(new Error("second decision finalization unavailable"));
+      }
+    }
+    return super.finalizeApprovalDecision(runId, approvalId);
+  }
+}
+
 class RejectFirstCancelledWaitReadBackend extends MemoryBackend {
   private rejectNextWaitRead = true;
   readonly cleanupCompleted = Promise.withResolvers<void>();
@@ -1197,6 +1211,65 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(restored?.error, run.error);
     assertEquals(restored?.completedAt, run.completedAt);
     assertEquals((await backend.listApprovalDecisionClaims(run.id)).length, 2);
+  });
+
+  it("keeps reconciled retry state when later decision finalization fails", async () => {
+    const backend = new RejectSecondDecisionFinalizationBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "retry-decision-finalization-failure",
+        steps: [waitForApproval("first"), waitForApproval("second")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("retry-decision-finalization-failure"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+
+    await executor.retry(run.id);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await backend.getRun(run.id))?.status === "completed") break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.nodeStates.first?.status, "completed");
+    assertEquals(completed?.nodeStates.second?.status, "completed");
+    assertEquals(
+      (await backend.listApprovalDecisionClaims(run.id)).map(({ approval }) => approval.id),
+      ["apr-second"],
+    );
+    await backend.finalizeApprovalDecision(run.id, "apr-second");
+    assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
   });
 
   it("fences a started execution after stalled ownership is replaced", async () => {

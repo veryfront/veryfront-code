@@ -107,11 +107,22 @@ export async function reconcileApprovalDecisionClaimsBeforeRetry(
     finalizedApprovalIds.push(approval.id);
   }
 
-  // A later claim can still fail after an earlier node was reconciled. Keep
-  // every claim durable until the whole batch succeeds so retry rollback can
-  // restore the run snapshot without discarding an already-consumed decision.
+  // Every node outcome has committed before cleanup starts. A cleanup failure
+  // must not make retry restore the old failed snapshot: claims already cleaned
+  // up could no longer replay their now-reverted node outcome. Leave only the
+  // failed cleanup durable for the normal decision-claim recovery pass instead.
+  const finalizeDecision = backend.finalizeApprovalDecision;
+  if (!finalizeDecision) return;
   for (const approvalId of finalizedApprovalIds) {
-    await backend.finalizeApprovalDecision?.(runId, approvalId);
+    try {
+      await finalizeDecision.call(backend, runId, approvalId);
+    } catch (error) {
+      logger.error(
+        "Failed to finalize a reconciled approval decision during retry",
+        { approvalId, runId },
+        error,
+      );
+    }
   }
 }
 
