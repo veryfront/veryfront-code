@@ -70,6 +70,10 @@ function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
 }
 
+function isFileUrlSpecifier(value: string): boolean {
+  return stringStartsWith(value, "file://");
+}
+
 function promiseAll<T>(values: readonly (T | PromiseLike<T>)[]): Promise<T[]> {
   return ReflectApply(PromiseAll, PromiseConstructor, [values]) as Promise<T[]>;
 }
@@ -162,7 +166,7 @@ export async function parseLocalImports(
     // sees it. Without this branch those dependencies match none of the shapes
     // below and are dropped without even being reported as missing, so an MDX
     // file's sibling components are never recursively transformed.
-    if (specifier.startsWith("file://")) {
+    if (isFileUrlSpecifier(specifier)) {
       const targetPath = fileUrlToPath(specifier);
       // A rewritten specifier carries a server path the author never wrote, and
       // this record is read back verbatim in the "Component has missing
@@ -194,7 +198,7 @@ export async function parseLocalImports(
       continue;
     }
 
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+    if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
       const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
       if (resolved) {
         if (resolved.endsWith(".css")) {
@@ -213,7 +217,7 @@ export async function parseLocalImports(
       continue;
     }
 
-    if (specifier.startsWith("@/")) {
+    if (stringStartsWith(specifier, "@/")) {
       const aliasPath = specifier.slice(2);
       const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
@@ -268,7 +272,11 @@ function isPathWithinProject(path: string, projectDir: string): boolean {
 }
 
 /** @internal Test seams for portable containment rules. */
-export const importParserInternals = Object.freeze({ isPathWithinProject, fileUrlToPath });
+export const importParserInternals = Object.freeze({
+  isFileUrlSpecifier,
+  isPathWithinProject,
+  fileUrlToPath,
+});
 
 /**
  * Everything one parse needs to decide containment, captured once per parse:
@@ -423,7 +431,7 @@ function toAuthoredSpecifier(
   if (!targetPath) return `./${specifier.slice(specifier.lastIndexOf("/") + 1)}`;
 
   const relativePath = relative(dirname(fromFile), targetPath);
-  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+  return stringStartsWith(relativePath, ".") ? relativePath : `./${relativePath}`;
 }
 
 /** Filesystem path behind a `file://` specifier, or null when it is not one. */
@@ -431,7 +439,11 @@ function fileUrlToPath(specifier: string): string | null {
   try {
     const url = new URL(specifier);
     if (url.protocol !== "file:") return null;
-    return fromFileUrl(url);
+    // The rest of the transform graph uses portable slash-separated paths.
+    // `fromFileUrl()` returns native backslashes on Windows, and retaining
+    // those in requestedPath makes recursive relative imports resolve from
+    // the filesystem root instead of the dependency's directory.
+    return stringReplaceAll(fromFileUrl(url), "\\", "/");
   } catch (_) {
     /* expected: not a well-formed URL */
     return null;

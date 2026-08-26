@@ -354,6 +354,22 @@ describe("transforms/esm/import-parser", () => {
     assertEquals(importParserInternals.fileUrlToPath("file:///project/a%2Fb.tsx"), null);
   });
 
+  it("dispatches file URLs through the captured string intrinsic", () => {
+    const shadowed = new String("file:///project/Child.tsx") as unknown as string;
+    Object.defineProperty(shadowed, "startsWith", {
+      value: () => false,
+    });
+
+    assertEquals(importParserInternals.isFileUrlSpecifier(shadowed), true);
+  });
+
+  it("normalizes Windows file URL paths to portable separators", () => {
+    assertEquals(
+      importParserInternals.fileUrlToPath("file:///C:%5Cproject%5CChild.tsx"),
+      "/C:/project/Child.tsx",
+    );
+  });
+
   // Regression: symlinkSemantics was read as an inherited property, so a
   // marker inherited through the prototype chain (for example Object.prototype
   // pollution with "none") switched realPath() off and an in-project symlink

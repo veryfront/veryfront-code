@@ -37,11 +37,13 @@ const MAX_LOCAL_IMPORT_SOURCE_BYTES = 16 * 1024 * 1024;
 
 const reflectApply = Reflect.apply;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+// Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
+// turning an otherwise present dependency into a missing import.
+const utf8Decoder = new TextDecoder("utf-8");
 const decodeUtf8 = TextDecoder.prototype.decode;
 
 function decodeDependencySource(bytes: Uint8Array): string {
-  return reflectApply(decodeUtf8, strictUtf8Decoder, [bytes]) as string;
+  return reflectApply(decodeUtf8, utf8Decoder, [bytes]) as string;
 }
 
 export interface ResolvedCachedDependencies {

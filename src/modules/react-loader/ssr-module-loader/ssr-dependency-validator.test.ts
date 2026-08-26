@@ -362,6 +362,52 @@ describe("SSRDependencyValidator", () => {
     assertEquals(validator.missingDependencies.length, 1);
   });
 
+  it("decodes malformed contained source bytes like ordinary text reads", async () => {
+    const malformedSource = new Uint8Array([
+      0x65,
+      0x78,
+      0x70,
+      0x6f,
+      0x72,
+      0x74,
+      0x20,
+      0xc3,
+      0x28,
+    ]);
+    const transformedSources: Array<string | undefined> = [];
+    const adapter = {
+      fs: {
+        symlinkSemantics: "native",
+        readFileSnapshotWithinLimit: () => Promise.resolve(malformedSource),
+      },
+    } as unknown as RuntimeAdapter;
+    const validator = new SSRDependencyValidator(
+      (_path, source) => {
+        transformedSources.push(source);
+        return Promise.resolve({ tempPath: "/tmp/child.js", contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      adapter,
+      "/project",
+    );
+
+    await validator.processLocalImports(
+      [{
+        absolutePath: "/project/child.ts",
+        requestedPath: "/project/child.ts",
+        projectContained: true,
+        specifier: "./child.ts",
+      }],
+      "/project/page.ts",
+      0,
+      createFileSystem(),
+      createDependencyHashCache(),
+    );
+
+    assertEquals(validator.missingDependencies, []);
+    assertEquals(transformedSources, [new TextDecoder().decode(malformedSource)]);
+  });
+
   it("reads canonical project paths but transforms with the authored path", async () => {
     const snapshotCalls: Array<{ path: string; root: string }> = [];
     const transformedPaths: string[] = [];
