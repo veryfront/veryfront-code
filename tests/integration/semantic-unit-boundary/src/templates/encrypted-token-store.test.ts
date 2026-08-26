@@ -82,11 +82,16 @@ describe("generated encrypted OAuth token store", () => {
         accessToken: "explicit-full-drive-token",
         scope: "https://www.googleapis.com/auth/drive",
         scopeSource: "explicit",
+        requestedScope: "https://www.googleapis.com/auth/drive",
         expiresAt: Date.now() + 60_000,
       });
 
       assertEquals((await store.consumeState("oauth-state"))?.scopeSource, "explicit");
       assertEquals((await store.getTokens("drive", "alice"))?.scopeSource, "explicit");
+      assertEquals(
+        (await store.getTokens("drive", "alice"))?.requestedScope,
+        "https://www.googleapis.com/auth/drive",
+      );
     });
   });
 
@@ -146,13 +151,24 @@ describe("generated encrypted OAuth token store", () => {
       });
       let refreshCalls = 0;
 
-      assertEquals(await store.isConnected("alice", "drive"), false);
+      assertEquals(
+        await store.isConnected("alice", "drive", [
+          "https://www.googleapis.com/auth/drive.readonly",
+        ]),
+        false,
+      );
       assertEquals(await encryptedStore.getTokens("drive", "alice"), null);
       assertEquals(
-        await getRefreshableAccessToken(store, "outlook", "alice", () => {
-          refreshCalls++;
-          return Promise.resolve({ accessToken: "unexpected" });
-        }),
+        await getRefreshableAccessToken(
+          store,
+          "outlook",
+          "alice",
+          ["Mail.Read", "offline_access"],
+          () => {
+            refreshCalls++;
+            return Promise.resolve({ accessToken: "unexpected" });
+          },
+        ),
         null,
       );
       assertEquals(refreshCalls, 0);

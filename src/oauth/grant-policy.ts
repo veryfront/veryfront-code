@@ -14,22 +14,36 @@ function scopeEntries(tokens: OAuthTokens): string[] {
 }
 
 /**
- * Whether a stored OAuth token carries a default broad grant that a current
- * service narrowed. Explicit caller-requested grants stay valid.
+ * Whether a stored OAuth token carries a broad built-in grant that the active
+ * config no longer requests. Explicit grants remain valid only when the exact
+ * broad scope appears in the persisted request snapshot.
  */
-export function isSupersededOAuthGrant(serviceId: string, tokens: OAuthTokens): boolean {
-  if (ownDataValue(tokens, "scopeSource") === "explicit") return false;
-  const scopes = scopeEntries(tokens);
-  if (serviceId === DRIVE_SERVICE_ID) {
-    return scopes.includes(SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE);
+export function isSupersededOAuthGrant(
+  serviceId: string,
+  tokens: OAuthTokens,
+  currentDefaultScopes: readonly string[],
+): boolean {
+  const candidateScopes = new Set(scopeEntries(tokens));
+  const configuredDefaults = new Set(currentDefaultScopes);
+  const supersededScopes = serviceId === DRIVE_SERVICE_ID
+    ? [SUPERSEDED_DRIVE_FULL_ACCESS_SCOPE]
+    : serviceId === OUTLOOK_SERVICE_ID
+    ? [...SUPERSEDED_OUTLOOK_GROUP_SCOPES]
+    : [];
+  const broadScopes = supersededScopes.filter((scope) => candidateScopes.has(scope));
+  if (broadScopes.length === 0) return false;
+
+  if (ownDataValue(tokens, "scopeSource") === "explicit") {
+    const requestedScopes = new Set(stringScopeEntries(ownDataValue(tokens, "requestedScope")));
+    return broadScopes.some((scope) => !requestedScopes.has(scope));
   }
-  if (serviceId === OUTLOOK_SERVICE_ID) {
-    return scopes.some((scope) => SUPERSEDED_OUTLOOK_GROUP_SCOPES.has(scope));
-  }
-  return false;
+  return broadScopes.some((scope) => !configuredDefaults.has(scope));
 }
 
-function ownDataValue(record: object, key: string): unknown {
+function ownDataValue(
+  record: OAuthTokens,
+  key: "scope" | "scopeSource" | "requestedScope",
+): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }

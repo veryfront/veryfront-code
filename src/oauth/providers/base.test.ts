@@ -1762,10 +1762,31 @@ it("OAuthService preserves an explicitly authorized full-Drive grant", async () 
     accessToken: "explicit-full-drive-token",
     scope: "https://www.googleapis.com/auth/drive",
     scopeSource: authorization.state.scopeSource,
+    requestedScope: authorization.state.scopes.join(" "),
     expiresAt: Date.now() + 60_000_000,
   });
 
   assertEquals(await service.getAccessToken("alice"), "explicit-full-drive-token");
+});
+
+it("OAuthService does not reserve the Drive service ID for a custom broad config", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "custom-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    {
+      ...TEST_CONFIG,
+      serviceId: "drive",
+      defaultScopes: ["https://www.googleapis.com/auth/drive"],
+    },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "custom-drive-token");
 });
 
 it("OAuthService does not classify a URL containing the Drive scope as that scope", async () => {

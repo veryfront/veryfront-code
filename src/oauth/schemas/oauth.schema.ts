@@ -194,6 +194,10 @@ export const getOAuthTokensSchema = defineSchema((v) =>
       "Must be trimmed, nonblank, and contain no control characters",
     ).optional(),
     scopeSource: v.enum(["default", "explicit"]).optional(),
+    requestedScope: v.string().max(MAX_OAUTH_SCOPE_WIRE_LENGTH).refine(
+      isSafeTokenString,
+      "Must be trimmed, nonblank, and contain no control characters",
+    ).optional(),
     idToken: v.string().max(MAX_OAUTH_TOKEN_VALUE_LENGTH).refine(
       isSafeTokenString,
       "Must be trimmed, nonblank, and contain no control characters",

@@ -527,6 +527,11 @@ function requireTokenRow(value: unknown): OAuthTokens {
   const tokenType = requireOptionalTokenString(value, "tokenType", MAX_TOKEN_TYPE_LENGTH);
   const scopeValue = ownDataValue(value, "scope");
   const scopeSource = ownDataValue(value, "scopeSource");
+  const requestedScope = requireOptionalTokenString(
+    value,
+    "requestedScope",
+    MAX_SCOPE_WIRE_LENGTH,
+  );
   let scope: string | undefined;
   if (scopeValue !== undefined) {
     if (
@@ -560,6 +565,7 @@ function requireTokenRow(value: unknown): OAuthTokens {
     ...(tokenType === undefined ? {} : { tokenType }),
     ...(scope === undefined ? {} : { scope }),
     ...(scopeSource === undefined ? {} : { scopeSource: scopeSource as OAuthScopeSource }),
+    ...(requestedScope === undefined ? {} : { requestedScope }),
     ...(idToken === undefined ? {} : { idToken }),
   };
 }

@@ -334,7 +334,17 @@ function createOAuthCallbackRuntime(
           ? { scope: storedState.scopes.join(" ") }
           : {}),
         ...(storedState.scopeSource === undefined ? {} : { scopeSource: storedState.scopeSource }),
+        ...(storedState.scopeSource === "explicit"
+          ? { requestedScope: storedState.scopes.join(" ") }
+          : {}),
       };
+      if (service.isSupersededGrant(tokens)) {
+        return handleError(
+          "scope_mismatch",
+          serviceId,
+          "OAuth provider returned a permission that was not requested",
+        );
+      }
       await tokenStore.setTokens(serviceId, storedState.userId, { ...tokens });
 
       if (onSuccess) {

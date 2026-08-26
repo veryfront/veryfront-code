@@ -1108,9 +1108,9 @@ export class OAuthService extends OAuthProvider {
     };
   }
 
-  /** Whether a stored token is a superseded default Drive grant. */
+  /** Whether a stored token carries a built-in grant this config superseded. */
   isSupersededGrant(tokens: OAuthTokens): boolean {
-    return isSupersededOAuthGrant(this.serviceId, tokens);
+    return isSupersededOAuthGrant(this.serviceId, tokens, this.serviceConfig.defaultScopes);
   }
 
   /**
@@ -1228,6 +1228,7 @@ export class OAuthService extends OAuthProvider {
             ? { scope: tokens.scope }
             : {}),
           ...(tokens.scopeSource === undefined ? {} : { scopeSource: tokens.scopeSource }),
+          ...(tokens.requestedScope === undefined ? {} : { requestedScope: tokens.requestedScope }),
         };
         if (
           await this.isRejectedSupersededSnapshot(userId, {

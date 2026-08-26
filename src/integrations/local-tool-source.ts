@@ -39,10 +39,13 @@ const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectValues = Object.values;
+const RegExpConstructor = RegExp;
+const regexpExec = RegExp.prototype.exec;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
+const stringEndsWith = String.prototype.endsWith;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
 const stringStartsWith = String.prototype.startsWith;
@@ -368,12 +371,45 @@ function assertSupportedEndpoint(
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
     return undefined;
-  } else {
-    return assertHttpsCatalogUrl(
-      endpoint.url,
-      `Local integration tool "${toolId}" endpoint`,
-    );
   }
+
+  const authorityMatch = apply(
+    regexpExec,
+    new RegExpConstructor(
+      "^https://\\{([A-Za-z][A-Za-z0-9_]*)\\}(?=/|$)",
+    ),
+    [endpoint.url],
+  ) as RegExpExecArray | null;
+  if (authorityMatch) {
+    const parameterName = authorityMatch[1]!;
+    const field = endpoint.params?.[parameterName];
+    const patternDescriptor = field && getOwnPropertyDescriptor(field, "pattern");
+    const pattern = patternDescriptor && "value" in patternDescriptor
+      ? patternDescriptor.value
+      : undefined;
+    if (
+      !field || field.type !== "string" || field.in !== "path" ||
+      (field.required !== true && field.default === undefined) ||
+      typeof pattern !== "string" ||
+      !stringBoolean(stringStartsWith, pattern, "^") ||
+      !stringBoolean(stringEndsWith, pattern, "$")
+    ) {
+      configurationError(
+        `Local integration tool "${toolId}" authority must use a required patterned string parameter`,
+      );
+    }
+    try {
+      new RegExpConstructor(pattern);
+    } catch {
+      configurationError(`Local integration tool "${toolId}" authority pattern is invalid`);
+    }
+    return undefined;
+  }
+
+  return assertHttpsCatalogUrl(
+    endpoint.url,
+    `Local integration tool "${toolId}" endpoint`,
+  );
 }
 
 function inputPropertySchema(
@@ -546,14 +582,14 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      let endpoint = tool.endpoint;
+      let allowedOrigin = tool.endpointOrigin ?? validated.endpointOrigin;
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      let endpoint = tool.endpoint;
-      let allowedOrigin = tool.endpointOrigin;
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");

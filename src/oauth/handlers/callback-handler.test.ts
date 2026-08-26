@@ -772,6 +772,64 @@ it("callback-handler: detaches persisted tokens from post-commit hooks", async (
       );
       assertEquals((persistedTokens as OAuthTokens | null)?.accessToken, "provider-token");
       assertEquals((persistedTokens as OAuthTokens | null)?.scopeSource, "explicit");
+      assertEquals(
+        (persistedTokens as (OAuthTokens & { requestedScope?: string }) | null)?.requestedScope,
+        "read",
+      );
+    },
+  );
+});
+
+it("callback-handler: rejects a superseded broad grant returned for a narrow request", async () => {
+  const narrowedScopes = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+  ];
+  const config: OAuthServiceConfig = {
+    ...TEST_CONFIG,
+    serviceId: "drive",
+    defaultScopes: narrowedScopes,
+  };
+  const storedState: StoredOAuthState = {
+    userId: "alice",
+    serviceId: "drive",
+    codeVerifier: CODE_VERIFIER,
+    redirectUri: "http://localhost:3000/api/auth/drive/callback",
+    scopes: narrowedScopes,
+    scopeSource: "explicit",
+    createdAt: Date.now(),
+  };
+  let setTokenCalls = 0;
+  const tokenStore: TokenStore = {
+    getTokens: () => Promise.resolve(null),
+    setTokens: () => {
+      setTokenCalls += 1;
+      return Promise.resolve();
+    },
+    clearTokens: () => Promise.resolve(),
+    setState: () => Promise.resolve(),
+    consumeState: () => Promise.resolve(storedState),
+  };
+
+  await withTokenExchange(
+    () =>
+      Response.json({
+        access_token: "provider-token",
+        scope: "https://www.googleapis.com/auth/drive",
+      }),
+    async () => {
+      const handler = createOAuthCallbackHandler(config, {
+        tokenStore,
+        baseUrl: APP_URL,
+        envReader: (key) => ENV[key],
+      });
+      const response = await handler(makeRequest({ code: "code", state: "state" }));
+
+      assertEquals(
+        new URL(response.headers.get("location")!).searchParams.get("error"),
+        "scope_mismatch",
+      );
+      assertEquals(setTokenCalls, 0);
     },
   );
 });

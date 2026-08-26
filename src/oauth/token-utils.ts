@@ -58,9 +58,15 @@ export function normalizeStoredOAuthTokens(value: unknown): OAuthTokens | null {
     const tokenType = readOptionalTokenString(value, "tokenType", MAX_OAUTH_TOKEN_TYPE_LENGTH);
     const scope = readOptionalTokenString(value, "scope", MAX_OAUTH_SCOPE_WIRE_LENGTH);
     const scopeSource = ownDataValue(value, "scopeSource");
+    const requestedScope = readOptionalTokenString(
+      value,
+      "requestedScope",
+      MAX_OAUTH_SCOPE_WIRE_LENGTH,
+    );
     const idToken = readOptionalTokenString(value, "idToken", MAX_OAUTH_TOKEN_VALUE_LENGTH);
     if (
-      refreshToken === null || tokenType === null || scope === null || idToken === null
+      refreshToken === null || tokenType === null || scope === null || requestedScope === null ||
+      idToken === null
     ) {
       return null;
     }
@@ -83,6 +89,7 @@ export function normalizeStoredOAuthTokens(value: unknown): OAuthTokens | null {
       ...(tokenType === undefined ? {} : { tokenType }),
       ...(scope === undefined ? {} : { scope }),
       ...(scopeSource === undefined ? {} : { scopeSource }),
+      ...(requestedScope === undefined ? {} : { requestedScope }),
       ...(idToken === undefined ? {} : { idToken }),
     };
   } catch {

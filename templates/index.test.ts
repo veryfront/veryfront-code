@@ -710,9 +710,23 @@ describe("templates", () => {
       return Promise.resolve({ accessToken: "unexpected" });
     };
 
-    assertEquals(await store.isConnected("alice", "drive"), false);
+    assertEquals(
+      await store.isConnected("alice", "drive", [
+        "https://www.googleapis.com/auth/drive.readonly",
+      ]),
+      false,
+    );
     assertEquals(await backend.getTokens("drive", "alice"), null);
-    assertEquals(await getRefreshableAccessToken(store, "outlook", "alice", refresh), null);
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "outlook",
+        "alice",
+        ["Mail.Read", "offline_access"],
+        refresh,
+      ),
+      null,
+    );
     assertEquals(refreshCalls, 0);
     assertEquals(await backend.getTokens("outlook", "alice"), null);
   });

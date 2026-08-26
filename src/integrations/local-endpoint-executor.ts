@@ -395,7 +395,11 @@ function assertKnownArguments(
 export function snapshotLocalIntegrationEndpointArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
-): { args: Record<string, unknown>; body: string | undefined } {
+): {
+  args: Record<string, unknown>;
+  body: string | undefined;
+  endpointOrigin: string | undefined;
+} {
   const snapshot = snapshotAndValidateArguments(endpoint, args);
   // Assembled rather than checked field by field: an omitted field still
   // contributes its catalog default, so fields that each fit can still add up
@@ -407,7 +411,14 @@ export function snapshotLocalIntegrationEndpointArguments(
   // the ordinary nested objects a snapshot contains, so a second assembly can
   // produce a body that was never bounded -- or throw outright.
   const body = assembleBody(endpoint, snapshot);
-  return { args: snapshot, body };
+  const endpointOrigin = callStringBoolean(
+      stringIncludes,
+      endpoint.url,
+      "{{oauth.raw.instance_url}}",
+    )
+    ? undefined
+    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, snapshot));
+  return { args: snapshot, body, endpointOrigin };
 }
 
 /**
@@ -509,33 +520,9 @@ function buildRequest(
   preSerializedBody?: string | undefined,
 ): LocalIntegrationEndpointTransportRequest {
   assertKnownArguments(args, endpoint);
-  let endpointUrl = endpoint.url;
   const headers = new HeadersConstructor();
-
   const parameterNames = objectKeys(endpoint.params ?? {});
-  for (let index = 0; index < parameterNames.length; index++) {
-    const name = parameterNames[index]!;
-    const field = endpoint.params?.[name];
-    if (!field) continue;
-    const resolved = fieldValue(args, name, field);
-    if (!resolved.present) continue;
-    if (field.in === "path") {
-      endpointUrl = replaceAll(endpointUrl, `{${name}}`, pathSegment(resolved.value));
-    } else if (field.in === "header") {
-      setHeader(headers, field.headerName ?? name, scalarString(resolved.value));
-    }
-  }
-
-  if (callStringBoolean(stringIncludes, endpointUrl, "{")) {
-    requestInvalid("Local integration endpoint contains an unresolved path parameter");
-  }
-
-  let url: URL;
-  try {
-    url = new URLConstructor(endpointUrl);
-  } catch {
-    requestInvalid("Local integration endpoint URL is invalid");
-  }
+  const url = resolveEndpointUrl(endpoint, args);
   if (urlValue(urlOrigin, url) !== allowedOrigin) {
     requestInvalid("Local integration endpoint origin does not match its admitted origin");
   }
@@ -545,9 +532,13 @@ function buildRequest(
   for (let index = 0; index < parameterNames.length; index++) {
     const name = parameterNames[index]!;
     const field = endpoint.params?.[name];
-    if (!field || field.in !== "query") continue;
+    if (!field) continue;
     const resolved = fieldValue(args, name, field);
-    if (resolved.present) appendQueryValue(searchParams, name, resolved.value, field);
+    if (!resolved.present) continue;
+    if (field.in === "query") appendQueryValue(searchParams, name, resolved.value, field);
+    else if (field.in === "header") {
+      setHeader(headers, field.headerName ?? name, scalarString(resolved.value));
+    }
   }
 
   const authHeaderNames = objectKeys(authHeaders);
@@ -579,6 +570,31 @@ function buildRequest(
       signal,
     }),
   });
+}
+
+function resolveEndpointUrl(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): URL {
+  let endpointUrl = endpoint.url;
+  const parameterNames = objectKeys(endpoint.params ?? {});
+  for (let index = 0; index < parameterNames.length; index++) {
+    const name = parameterNames[index]!;
+    const field = endpoint.params?.[name];
+    if (!field || field.in !== "path") continue;
+    const resolved = fieldValue(args, name, field);
+    if (resolved.present) {
+      endpointUrl = replaceAll(endpointUrl, `{${name}}`, pathSegment(resolved.value));
+    }
+  }
+  if (callStringBoolean(stringIncludes, endpointUrl, "{")) {
+    requestInvalid("Local integration endpoint contains an unresolved path parameter");
+  }
+  try {
+    return new URLConstructor(endpointUrl);
+  } catch {
+    requestInvalid("Local integration endpoint URL is invalid");
+  }
 }
 
 function createRequestSignal(

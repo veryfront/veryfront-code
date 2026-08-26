@@ -28,7 +28,7 @@ describe("generated OAuth token store", () => {
     await store.setToken("alice", "github", initial);
     assertEquals(await store.getToken("alice", "github"), initial);
     assertEquals(await store.getTokens("github", "alice"), initial);
-    assertEquals(await store.isConnected("alice", "github"), true);
+    assertEquals(await store.isConnected("alice", "github", []), true);
 
     const snapshot = await store.getTokenSnapshot("github", "alice");
     if (!snapshot) throw new Error("Expected a revisioned token snapshot");
@@ -102,12 +102,18 @@ describe("generated OAuth token store", () => {
       store,
       "drive",
       "alice",
+      ["https://www.googleapis.com/auth/drive.readonly"],
       async () => {
         throw new Error("refresh must not be reached");
       },
     );
 
-    assertEquals(await store.isConnected("alice", "drive"), false);
+    assertEquals(
+      await store.isConnected("alice", "drive", [
+        "https://www.googleapis.com/auth/drive.readonly",
+      ]),
+      false,
+    );
     assertEquals(token, null);
     assertEquals((await memory.getTokens("drive", "alice"))?.accessToken, "legacy-drive-token");
   });
@@ -251,8 +257,8 @@ describe("generated OAuth token store", () => {
     };
 
     const tokens = await Promise.all([
-      getRefreshableAccessToken(store, "github", "alice", refresh),
-      getRefreshableAccessToken(store, "github", "alice", refresh),
+      getRefreshableAccessToken(store, "github", "alice", [], refresh),
+      getRefreshableAccessToken(store, "github", "alice", [], refresh),
     ]);
 
     assertEquals(tokens, ["refreshed", "refreshed"]);
@@ -273,6 +279,7 @@ describe("generated OAuth token store", () => {
         store,
         "github",
         "alice",
+        [],
         async () => ({
           accessToken: "refreshed",
           expiresAt: Date.now() + 10 * 60_000,
@@ -290,6 +297,7 @@ describe("generated OAuth token store", () => {
       refreshToken: "refresh-1",
       scope: "repo read:user",
       scopeSource: "explicit",
+      requestedScope: "repo read:user",
       expiresAt: Date.now() + 1_000,
     });
 
@@ -298,6 +306,7 @@ describe("generated OAuth token store", () => {
         store,
         "github",
         "alice",
+        [],
         async () => ({
           accessToken: "refreshed",
           expiresAt: Date.now() + 10 * 60_000,
@@ -309,6 +318,7 @@ describe("generated OAuth token store", () => {
     const refreshed = await store.getTokens("github", "alice");
     assertEquals(refreshed?.scope, "repo read:user");
     assertEquals(refreshed?.scopeSource, "explicit");
+    assertEquals(refreshed?.requestedScope, "repo read:user");
   });
 
   it("does not overwrite a concurrent reconnect when refresh loses CAS", async () => {
@@ -323,6 +333,7 @@ describe("generated OAuth token store", () => {
       store,
       "github",
       "alice",
+      [],
       async () => {
         await store.setTokens("github", "alice", {
           accessToken: "reauthorized",
@@ -351,6 +362,7 @@ describe("generated OAuth token store", () => {
       store,
       "drive",
       "alice",
+      ["https://www.googleapis.com/auth/drive.readonly"],
       async () => {
         await store.setTokens("drive", "alice", {
           accessToken: "legacy-drive-token",
@@ -379,6 +391,7 @@ describe("generated OAuth token store", () => {
         store,
         "github",
         "alice",
+        [],
         () => Promise.reject(new Error("provider unavailable")),
       ),
       null,

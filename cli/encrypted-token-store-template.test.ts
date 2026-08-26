@@ -1269,7 +1269,7 @@ describe("generated encrypted OAuth token store", () => {
 
     await adapter.setToken("alice", "github", tokens);
     assertEquals(await adapter.getToken("alice", "github"), tokens);
-    assertEquals(await adapter.isConnected("alice", "github"), true);
+    assertEquals(await adapter.isConnected("alice", "github", []), true);
     await adapter.revokeToken("alice", "github");
     assertEquals(await adapter.getToken("alice", "github"), null);
   });
