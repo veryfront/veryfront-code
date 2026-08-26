@@ -6,7 +6,7 @@ import { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
 import { validateVeryfrontConfig, type VeryfrontConfigInput } from "#veryfront/config";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { FilesystemCacheStore, KVCacheStore, MemoryCacheStore } from "../cache/stores/index.ts";
 import type { CacheStore } from "../cache/types.ts";

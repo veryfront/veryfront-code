@@ -1,7 +1,6 @@
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
-import { agentLogger } from "#veryfront/utils";
-import { __registerTraceContextGetter } from "#veryfront/utils/logger/logger.ts";
+import { __registerTraceContextGetter, agentLogger } from "#veryfront/utils";
 import {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,

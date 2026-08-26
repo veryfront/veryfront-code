@@ -7,8 +7,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { ReloadNotifier } from "veryfront/server";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getErrorCollector, getLogBuffer } from "veryfront/observability";
 import type { MCPTool } from "../tools.ts";
 import { formatError } from "./helpers.ts";
 

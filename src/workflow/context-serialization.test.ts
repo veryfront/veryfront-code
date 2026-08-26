@@ -13,7 +13,7 @@ import {
   type LogEntry,
   LogLevel,
   setLogLevel,
-} from "#veryfront/utils/logger/logger.ts";
+} from "#veryfront/utils/logger/index.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
   MAX_TRAVERSAL_DEPTH,

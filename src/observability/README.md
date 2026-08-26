@@ -11,7 +11,7 @@ request profiling, and development-diagnostics contracts.
 | `veryfront/observability/otlp-setup` | Lower-level shim-based tracing helpers used by framework integrations                             |
 
 ```ts
-import { recordHttpRequest, withSpan } from "veryfront/observability";
+import { initTracing, recordHttpRequest, withSpan } from "veryfront/observability";
 ```
 
 Core uses an OpenTelemetry-compatible shim. Without an observability extension,
@@ -23,7 +23,7 @@ extension and bootstrap lifecycle.
 
 ### Configuration
 
-The trusted host initializes tracing from a partial `TracingConfig`:
+`initTracing(config?, adapter?)` accepts a partial `TracingConfig`:
 
 | Field         | Type                                          | Default       |
 | ------------- | --------------------------------------------- | ------------- |
@@ -57,21 +57,23 @@ cannot reinstall tracing state.
 
 ### Functions
 
-| Function                                  | Contract                                                    |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| `isTracingEnabled()`                      | Returns whether the manager has a tracer                    |
-| `isTracingDegraded()`                     | Returns whether initialization failed                       |
-| `startSpan(name, options?)`               | Returns a `Span` or `null`                                  |
-| `endSpan(span, error?)`                   | Records status and ends a span; accepts `null`              |
-| `setSpanAttributes(span, attributes)`     | Adds string, number, or boolean attributes                  |
-| `addSpanEvent(span, name, attributes?)`   | Adds an event                                               |
-| `createChildSpan(parent, name, options?)` | Creates a child span or a root span when `parent` is `null` |
-| `extractContext(headers)`                 | Extracts a tracing context from headers                     |
-| `injectContext(context, headers)`         | Injects an explicit context into headers                    |
-| `getActiveContext()`                      | Returns the current context when available                  |
-| `withActiveSpan(span, asyncFn)`           | Runs an async callback with `span` active                   |
-| `withSpan(name, asyncFn, options?)`       | Runs an async callback and completes its span               |
-| `withSpanSync(name, fn, options?)`        | Synchronous form of `withSpan`                              |
+| Function                                  | Contract                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `initTracing(config?, adapter?)`          | Initializes the core tracing manager once                        |
+| `isTracingEnabled()`                      | Returns whether the manager has a tracer                         |
+| `isTracingDegraded()`                     | Returns whether initialization failed                            |
+| `shutdownTracing()`                       | Signals core shutdown; exporter teardown remains extension-owned |
+| `startSpan(name, options?)`               | Returns a `Span` or `null`                                       |
+| `endSpan(span, error?)`                   | Records status and ends a span; accepts `null`                   |
+| `setSpanAttributes(span, attributes)`     | Adds string, number, or boolean attributes                       |
+| `addSpanEvent(span, name, attributes?)`   | Adds an event                                                    |
+| `createChildSpan(parent, name, options?)` | Creates a child span or a root span when `parent` is `null`      |
+| `extractContext(headers)`                 | Extracts a tracing context from headers                          |
+| `injectContext(context, headers)`         | Injects an explicit context into headers                         |
+| `getActiveContext()`                      | Returns the current context when available                       |
+| `withActiveSpan(span, asyncFn)`           | Runs an async callback with `span` active                        |
+| `withSpan(name, asyncFn, options?)`       | Runs an async callback and completes its span                    |
+| `withSpanSync(name, fn, options?)`        | Synchronous form of `withSpan`                                   |
 
 `SpanOptions` supports `kind`, `attributes`, and `parent`. `kind` is one of
 `internal`, `server`, `client`, `producer`, or `consumer`. `parent` may be a
@@ -85,18 +87,20 @@ cannot reinstall tracing state.
 `withSpan` callback receives a non-null span, which is a no-op span when no real
 provider is installed.
 
-| Function                                         | Contract                                                               |
-| ------------------------------------------------ | ---------------------------------------------------------------------- |
-| `withSpan(name, asyncFn, attributes?, options?)` | Runs an async callback in an active span context                       |
-| `withSpanSync(name, fn, attributes?, options?)`  | Runs a synchronous callback in an active span context                  |
-| `startServerSpan(method, path, parentContext?)`  | Returns `{ span, context }`, or `null` when span startup fails         |
-| `endServerSpan(span, statusCode, error?)`        | Records HTTP status and ends the server span                           |
-| `extractContext(headers)`                        | Extracts from incoming headers                                         |
-| `injectContext(headers)`                         | Injects the active context into outgoing headers                       |
-| `withContext(context, asyncFn)`                  | Runs a callback in an explicit context                                 |
-| `getTraceContext()`                              | Returns active `traceId` and `spanId`, or `{}`                         |
-| `setActiveSpanAttributes(attributes)`            | Adds attributes to the active span                                     |
-| `isOTLPEnabled()`                                | Reports whether the trusted host initialized the compatibility wrapper |
+| Function                                         | Contract                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------- |
+| `withSpan(name, asyncFn, attributes?, options?)` | Runs an async callback in an active span context                      |
+| `withSpanSync(name, fn, attributes?, options?)`  | Runs a synchronous callback in an active span context                 |
+| `startServerSpan(method, path, parentContext?)`  | Returns `{ span, context }`, or `null` when span startup fails        |
+| `endServerSpan(span, statusCode, error?)`        | Records HTTP status and ends the server span                          |
+| `extractContext(headers)`                        | Extracts from incoming headers                                        |
+| `injectContext(headers)`                         | Injects the active context into outgoing headers                      |
+| `withContext(context, asyncFn)`                  | Runs a callback in an explicit context                                |
+| `getTraceContext()`                              | Returns active `traceId` and `spanId`, or `{}`                        |
+| `setActiveSpanAttributes(attributes)`            | Adds attributes to the active span                                    |
+| `initializeOTLP()`                               | Marks the compatibility wrapper initialized                           |
+| `shutdownOTLP()`                                 | Delegates shutdown to the extension lifecycle                         |
+| `isOTLPEnabled()`                                | Reports whether `initializeOTLP()` was called, not exporter readiness |
 
 `WithSpanOptions.kind` accepts the exported numeric `SpanKind` values.
 
@@ -104,7 +108,7 @@ provider is installed.
 
 ### Configuration
 
-The trusted host initializes metrics from a partial `MetricsConfig`:
+`initMetrics(config?, adapter?)` accepts a partial `MetricsConfig`:
 
 | Field             | Type                                  | Default              |
 | ----------------- | ------------------------------------- | -------------------- |
@@ -147,6 +151,7 @@ All duration arguments are milliseconds. Attributes are
 | `recordDataFetchError`, `recordCorsRejection`, `recordSecurityHeaders`, `recordErrorCount` | `(attributes?) => void`                                               |
 | `getMetricsState()`                                                                        | Returns initialization, cache-size, and active-request state          |
 | `isMetricsEnabled()`                                                                       | Returns whether a real meter is installed                             |
+| `shutdownMetrics()`                                                                        | Signals core shutdown; exporter teardown remains extension-owned      |
 
 Non-finite and negative measurements are normalized before recording. Active
 request and cache-size state is clamped at zero. Instrument failures are
@@ -154,9 +159,9 @@ isolated from application work.
 
 ## Instrumentation wrappers
 
-The trusted host initializes the tracing and metrics managers. Public code
-applies the exported wrappers explicitly and cannot mutate process-wide
-lifecycle state.
+`initAutoInstrumentation(config?, adapter?)` initializes the configured tracing
+and metrics managers. It does not replace global functions. Apply the exported
+wrappers explicitly.
 
 `AutoInstrumentConfig` contains optional `tracing`, `metrics`,
 `instrumentHttp`, `instrumentFetch`, `instrumentReact`, and `captureErrors`
@@ -233,13 +238,14 @@ counts in returned snapshots are safe for callers to mutate.
 
 ## Request profiling
 
-The root entry point exports request-scoped phase helpers:
+The root entry point exports:
 
 | Function                                     | Contract                                                              |
 | -------------------------------------------- | --------------------------------------------------------------------- |
 | `profilePhase(name, asyncFn)`                | Measures and accumulates an async phase in the active request profile |
 | `profileSyncPhase(name, fn)`                 | Synchronous phase measurement                                         |
 | `markRequestProfilePhase(name, durationMs?)` | Adds an explicit phase duration                                       |
+| `snapshotRequestProfiles()`                  | Returns retained profile records and the latest sequence              |
 
 Profiling uses async-local request state. The full internal profiler also uses
 `VERYFRONT_ENABLE_PERF_PROFILING`, `VERYFRONT_ENABLE_SERVER_TIMING`, and

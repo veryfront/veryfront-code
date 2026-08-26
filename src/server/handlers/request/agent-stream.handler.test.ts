@@ -5,7 +5,7 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
   refreshLoggerConfig,
-} from "#veryfront/utils/logger/logger.ts";
+} from "#veryfront/utils/logger/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { Agent, AgentMessage } from "#veryfront/agent";
 import type { AgentSystem } from "#veryfront/agent/types.ts";

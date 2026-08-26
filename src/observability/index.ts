@@ -19,10 +19,12 @@ export {
   endSpan,
   extractContext,
   getActiveContext,
+  initTracing,
   injectContext,
   isTracingDegraded,
   isTracingEnabled,
   setSpanAttributes,
+  shutdownTracing,
   SpanNames,
   type SpanOptions,
   startSpan,
@@ -34,6 +36,7 @@ export {
 
 export {
   getMetricsState,
+  initMetrics,
   isMetricsEnabled,
   type MetricsConfig,
   recordBuild,
@@ -55,10 +58,12 @@ export {
   recordRSCStream,
   recordSecurityHeaders,
   setCacheSize,
+  shutdownMetrics,
 } from "./metrics/index.ts";
 
 export {
   type AutoInstrumentConfig,
+  initAutoInstrumentation,
   instrument,
   instrumentBatch,
   instrumentErrorHandler,
@@ -71,9 +76,11 @@ export {
 
 export {
   getTraceContext,
+  initializeOTLP,
   isOTLPEnabled,
   type OTLPConfig,
   setActiveSpanAttributes,
+  shutdownOTLP,
 } from "./tracing/otlp-setup.ts";
 
 // OpenTelemetry API shim (spans, metrics, context primitives)
@@ -89,10 +96,18 @@ export type {
 } from "./tracing/api-shim.ts";
 
 // Shared-runtime telemetry environment helpers
-export { isReservedSharedRuntimeTelemetryEnvKey } from "./tracing/telemetry-env.ts";
+export {
+  getHostTelemetryEnv,
+  isReservedSharedRuntimeTelemetryEnvKey,
+} from "./tracing/telemetry-env.ts";
 
 // Per-request profiling
-export { markRequestProfilePhase, profilePhase, profileSyncPhase } from "./request-profiler.ts";
+export {
+  markRequestProfilePhase,
+  profilePhase,
+  profileSyncPhase,
+  snapshotRequestProfiles,
+} from "./request-profiler.ts";
 export type { RequestProfileRecord } from "./request-profiler.ts";
 
 // Simple in-process metrics
@@ -129,15 +144,20 @@ export {
   type ErrorFilter,
   type ErrorSubscriber,
   type ErrorType,
+  getErrorCollector,
   parseCompileError,
+  resetErrorCollector,
 } from "./error-collector.ts";
 
 export {
+  getLogBuffer,
+  interceptConsole,
   LogBuffer,
   type LogEntry,
   type LogFilter as LogBufferFilter,
   type LogLevel,
   type LogSubscriber,
+  resetLogBuffer,
 } from "./log-buffer.ts";
 
 export {

@@ -38,7 +38,7 @@ import {
   __subscribeLogRecordEmitter,
   type LogEntry,
   logger,
-} from "#veryfront/utils/logger/logger.ts";
+} from "#veryfront/utils/logger/index.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
 import type { NodeWebSocketServer } from "#veryfront/extensions/websocket";

@@ -25,8 +25,7 @@ import {
   runInRenderSession,
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { profilePhase } from "#veryfront/observability";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector, profilePhase } from "#veryfront/observability";
 // Not on the `#veryfront/observability` barrel: that surface is frozen by an
 // export-snapshot test, and the sibling in-process recorders sit here too.
 import { recordSSRSourceUnavailable } from "#veryfront/observability/simple-metrics/index.ts";

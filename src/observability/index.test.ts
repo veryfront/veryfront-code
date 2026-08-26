@@ -20,10 +20,17 @@ const expectedRuntimeExports = [
   "endSpan",
   "extractContext",
   "getActiveContext",
+  "getErrorCollector",
   "getGlobalMetricsAPI",
+  "getHostTelemetryEnv",
+  "getLogBuffer",
   "getMetricsState",
   "getTraceContext",
   "flushApplicationErrors",
+  "initAutoInstrumentation",
+  "initMetrics",
+  "initTracing",
+  "initializeOTLP",
   "injectContext",
   "instrument",
   "instrumentBatch",
@@ -32,6 +39,7 @@ const expectedRuntimeExports = [
   "instrumentHttpHandler",
   "instrumentReactRender",
   "instrumentSync",
+  "interceptConsole",
   "isAutoInstrumentEnabled",
   "isMetricsEnabled",
   "isOTLPEnabled",
@@ -66,9 +74,15 @@ const expectedRuntimeExports = [
   "recordRender",
   "recordRenderError",
   "recordSecurityHeaders",
+  "resetErrorCollector",
+  "resetLogBuffer",
   "setActiveSpanAttributes",
   "setCacheSize",
   "setSpanAttributes",
+  "shutdownMetrics",
+  "shutdownOTLP",
+  "shutdownTracing",
+  "snapshotRequestProfiles",
   "startSpan",
   "trace",
   "withActiveSpan",
@@ -85,31 +99,10 @@ describe("veryfront/observability public export surface", () => {
   });
 
   it("does not expose test resets or mutable metrics state", () => {
-    assertEquals("initializeApplicationErrorReporter" in observability, false);
-    assertEquals("interceptConsole" in observability, false);
     assertEquals("_resetShimForTests" in observability, false);
     assertEquals("resetMetrics" in observability, false);
     assertEquals("state" in observability, false);
     assertEquals("reset" in observability.metrics, false);
-    for (
-      const processGlobal of [
-        "getErrorCollector",
-        "getHostTelemetryEnv",
-        "getLogBuffer",
-        "initAutoInstrumentation",
-        "initMetrics",
-        "resetErrorCollector",
-        "resetLogBuffer",
-        "shutdownMetrics",
-        "shutdownOTLP",
-        "shutdownTracing",
-        "snapshotRequestProfiles",
-        "initTracing",
-        "initializeOTLP",
-      ]
-    ) {
-      assertEquals(processGlobal in observability, false);
-    }
   });
 
   it("does not expose process-wide error-reporter mutators", () => {

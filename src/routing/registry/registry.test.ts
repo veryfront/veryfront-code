@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildRouteRegistrySpanAttributes, RouteRegistry } from "./registry.ts";
 import type { Handler, HandlerContext, HandlerResult } from "./types.ts";
 import { CONFIG_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
-import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils/logger/logger.ts";
+import { __registerLogRecordEmitter, refreshLoggerConfig } from "#veryfront/utils";
 import {
   BasicTracerProvider,
   InMemorySpanExporter,

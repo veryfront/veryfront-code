@@ -58,7 +58,7 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { COMPILATION_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector } from "#veryfront/observability";
 import { getLoaderFromPath, isGeneratedContentOutput } from "../../esm/transform-utils.ts";
 import { isTypeScript } from "../context.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";

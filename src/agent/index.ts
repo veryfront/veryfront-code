@@ -468,7 +468,9 @@ export {
   loadHostedAgentServiceEnvFiles,
 } from "./service/env-files.ts";
 export {
+  initializeNodeAgentServiceOpenTelemetry,
   type InitializeNodeAgentServiceTelemetryOptions,
+  initializeNodeHostedAgentServiceOpenTelemetry,
   type InitializeNodeHostedAgentServiceTelemetryOptions,
   type NodeAgentServiceInstrumentationConfig,
   type NodeAgentServiceTelemetryConfig,
@@ -510,6 +512,7 @@ export {
   type AbortRejectionEventTarget,
   type AbortRejectionGuardLogger,
   type AbortRejectionProcessTarget,
+  installAbortRejectionGuard,
   type InstallAbortRejectionGuardOptions,
   type InstalledAbortRejectionGuard,
   isAbortRejectionReason,

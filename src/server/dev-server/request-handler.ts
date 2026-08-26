@@ -14,8 +14,7 @@ import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
 import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
-import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import { getErrorCollector, getLogBuffer } from "#veryfront/observability";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 
 const logger = serverLogger.component("dev");

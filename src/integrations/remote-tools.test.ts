@@ -13,7 +13,7 @@ import {
   LogLevel,
   refreshLoggerConfig,
   setLogLevel,
-} from "#veryfront/utils/logger/logger.ts";
+} from "#veryfront/utils/logger/index.ts";
 import {
   executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,

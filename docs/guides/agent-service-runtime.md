@@ -33,7 +33,10 @@ service runtime:
 
 ```ts
 // service.ts
-import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+} from "veryfront/agent";
 
 await loadAgentServiceEnvFiles();
 await startNodeVeryfrontCloudAgentService();
@@ -128,7 +131,10 @@ the service to deployment-owned immutable metadata when it accepts signed
 control-plane runtime invocations:
 
 ```ts
-import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+} from "veryfront/agent";
 
 await loadAgentServiceEnvFiles();
 
@@ -212,7 +218,10 @@ exact allowed endpoints once at startup. Use the host transport only for those
 immutable endpoints and preserve the guarded source for everything else:
 
 ```ts
-import { loadAgentServiceEnvFiles, startNodeVeryfrontCloudAgentService } from "veryfront/agent";
+import {
+  loadAgentServiceEnvFiles,
+  startNodeVeryfrontCloudAgentService,
+} from "veryfront/agent";
 import { createRemoteMCPToolSourceFactoryWithTransport } from "veryfront/tool";
 
 await loadAgentServiceEnvFiles();

@@ -18,8 +18,7 @@ import {
   IMPORT_RESOLUTION_ERROR,
   INVALID_ARGUMENT,
 } from "#veryfront/errors";
-import { SpanNames } from "#veryfront/observability";
-import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
+import { getErrorCollector, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureCacheNodeModules, getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";

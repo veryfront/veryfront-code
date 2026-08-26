@@ -11,7 +11,7 @@ import {
   __resetLogRecordEmitterForTests,
   __subscribeLogRecordEmitter,
   type LogEntry,
-} from "#veryfront/utils/logger/logger.ts";
+} from "#veryfront/utils/logger/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {

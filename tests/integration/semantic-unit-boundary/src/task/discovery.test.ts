@@ -9,7 +9,7 @@ import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { discoverAll } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { runTriggerTarget } from "#veryfront/trigger/local-runner.ts";
 import {
   discoverTasks as discoverTasksRaw,
