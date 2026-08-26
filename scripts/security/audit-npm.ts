@@ -12,20 +12,9 @@ export interface AuditPackageJson {
   version: string;
   private: boolean;
   dependencies: Record<string, string>;
-  overrides?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 }
-
-/**
- * Security-only transitive resolutions that upstream packages have not yet
- * adopted. Keep these at the temporary audit root, matching where npm applies
- * overrides in real applications.
- */
-export const AUDIT_NPM_OVERRIDES = {
-  "adm-zip": "0.6.0",
-  "sharp": "0.35.3",
-} as const;
 
 export interface ImportMapManifest {
   sourceLocation: string;
@@ -88,7 +77,6 @@ export function buildAuditPackageJson(
     version: "0.0.0",
     private: true,
     dependencies,
-    overrides: { ...AUDIT_NPM_OVERRIDES },
   };
 }
 

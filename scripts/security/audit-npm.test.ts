@@ -65,10 +65,7 @@ describe("buildAuditPackageJson", () => {
     assertEquals(pkg.dependencies, {
       "better-sqlite3": "12.4.6",
     });
-    assertEquals(pkg.overrides, {
-      "adm-zip": "0.6.0",
-      "sharp": "0.35.3",
-    });
+    assertEquals(pkg.overrides, undefined);
     assertEquals(pkg.peerDependencies, undefined);
     assertEquals(pkg.peerDependenciesMeta, undefined);
   });

@@ -21,7 +21,20 @@ const extOnnx: ExtensionFactory = () => {
       provides: ["LLMProvider:local"],
       requires: [LLMProviderRegistryName],
     },
-    capabilities: [],
+    capabilities: [
+      {
+        type: "env:read",
+        keys: [
+          "VERYFRONT_DISABLE_LOCAL_AI",
+          "VERYFRONT_LOCAL_AI_DEVICE",
+          "VERYFRONT_LOCAL_AI_THINKING",
+        ],
+      },
+      { type: "fs:read", paths: ["./.cache/models"] },
+      { type: "fs:write", paths: ["./.cache/models"] },
+      { type: "net:outbound", hosts: ["*"] },
+      { type: "native:ffi" },
+    ],
     setup(ctx) {
       registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registeredProvider = !registry.has(provider.id);

@@ -12,7 +12,20 @@
       "provides": ["LLMProvider:local"],
       "requires": ["LLMProviderRegistry"]
     },
-    "capabilities": []
+    "capabilities": [
+      {
+        "type": "env:read",
+        "keys": [
+          "VERYFRONT_DISABLE_LOCAL_AI",
+          "VERYFRONT_LOCAL_AI_DEVICE",
+          "VERYFRONT_LOCAL_AI_THINKING"
+        ]
+      },
+      { "type": "fs:read", "paths": ["./.cache/models"] },
+      { "type": "fs:write", "paths": ["./.cache/models"] },
+      { "type": "net:outbound", "hosts": ["*"] },
+      { "type": "native:ffi" }
+    ]
   },
   "imports": {
     "@huggingface/transformers": "npm:@huggingface/transformers@4.2.0",

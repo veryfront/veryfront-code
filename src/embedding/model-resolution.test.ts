@@ -8,6 +8,7 @@ import {
   resolveConfiguredEmbeddingModel,
 } from "./model-resolution.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -32,6 +33,7 @@ function clearEnv(): void {
 describe("embedding/model-resolution", () => {
   afterEach(() => {
     clearEnv();
+    ensureBuiltinLLMProviders().unregister("local");
   });
 
   describe("normalizeEmbeddingModelConfig", () => {
@@ -129,6 +131,32 @@ describe("embedding/model-resolution", () => {
         resolveConfiguredEmbeddingModel(undefined, { compiled: true }),
         "openai/text-embedding-3-small",
         "a compiled binary must fall back to the cloud key instead of the unavailable local ONNX model",
+      );
+    });
+
+    it("does not auto-select a registered local provider in a compiled binary", () => {
+      ensureBuiltinLLMProviders().register({
+        id: "local",
+        defaultEmbeddingModelId: "all-MiniLM-L6-v2",
+        createModel() {
+          throw new Error("unused");
+        },
+        createEmbedding() {
+          throw new Error("unused");
+        },
+      });
+
+      const error = assertThrows(() =>
+        resolveConfiguredEmbeddingModel(undefined, { compiled: true })
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "embedding-provider-unavailable");
+    });
+
+    it("keeps an explicit local model unchanged in a compiled binary", () => {
+      assertEquals(
+        resolveConfiguredEmbeddingModel("local/all-MiniLM-L6-v2", { compiled: true }),
+        "local/all-MiniLM-L6-v2",
       );
     });
 

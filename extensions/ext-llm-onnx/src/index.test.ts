@@ -7,11 +7,28 @@ import extOnnx, { OnnxProvider } from "./index.ts";
 import { TRANSFORMERS_VERSION } from "./local-engine.ts";
 
 describe("ext-llm-onnx", () => {
+  const capabilities = [
+    {
+      type: "env:read",
+      keys: [
+        "VERYFRONT_DISABLE_LOCAL_AI",
+        "VERYFRONT_LOCAL_AI_DEVICE",
+        "VERYFRONT_LOCAL_AI_THINKING",
+      ],
+    },
+    { type: "fs:read", paths: ["./.cache/models"] },
+    { type: "fs:write", paths: ["./.cache/models"] },
+    { type: "net:outbound", hosts: ["*"] },
+    { type: "native:ffi" },
+  ];
+
   it("declares and registers the local LLM provider contract", () => {
     const extension = extOnnx();
     assertEquals(extension.name, "ext-llm-onnx");
     assertEquals(extension.contracts?.provides, ["LLMProvider:local"]);
     assertEquals(extension.contracts?.requires, [LLMProviderRegistryName]);
+    assertEquals(extension.capabilities, capabilities);
+    assertEquals(manifest.veryfront.capabilities, capabilities);
 
     const registered: Record<string, unknown> = {};
     const registry: LLMProviderRegistry = {

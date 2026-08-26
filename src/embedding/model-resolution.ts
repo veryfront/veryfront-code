@@ -45,14 +45,16 @@ export function resolveConfiguredEmbeddingModel(
     return getDefaultVeryfrontCloudEmbeddingModel();
   }
 
+  const compiled = options.compiled ?? isDenoCompiled;
   // Local ONNX Runtime is unavailable in compiled binaries — fall back to
   // a cloud embedding provider when API keys are present.
-  if (options.compiled ?? isDenoCompiled) {
+  if (compiled) {
     const cloud = resolveCloudEmbeddingFallback();
     if (cloud) return cloud;
   }
 
   const provider = ensureBuiltinLLMProviders().list().find((candidate) =>
+    (!compiled || candidate.id !== "local") &&
     candidate.createEmbedding && candidate.defaultEmbeddingModelId
   );
   if (provider?.defaultEmbeddingModelId) {
