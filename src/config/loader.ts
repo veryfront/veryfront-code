@@ -4,6 +4,7 @@ import {
   basename,
   dirname,
   extname,
+  isAbsolute,
   join,
   resolve,
   toFileUrl,
@@ -23,7 +24,7 @@ import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/const
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT, DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
-import { createFileSystem, isNotFoundError, symlink } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
@@ -115,6 +116,15 @@ const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
+const bunDescriptor = ObjectGetOwnPropertyDescriptor(globalThis, "Bun");
+const CapturedBun = bunDescriptor && "value" in bunDescriptor ? bunDescriptor.value : undefined;
+const bunResolveSyncDescriptor = typeof CapturedBun === "object" && CapturedBun !== null
+  ? ObjectGetOwnPropertyDescriptor(CapturedBun, "resolveSync")
+  : undefined;
+const CapturedBunResolveSync = bunResolveSyncDescriptor && "value" in bunResolveSyncDescriptor &&
+    typeof bunResolveSyncDescriptor.value === "function"
+  ? bunResolveSyncDescriptor.value as (specifier: string, from: string) => string
+  : undefined;
 const abortControllerSignalGetter = ObjectGetOwnPropertyDescriptor(
   AbortController.prototype,
   "signal",
@@ -2322,6 +2332,7 @@ async function loadConfigFromTempFile(
   source: string,
   configPath: string,
   loadUrl: (tempFile: string) => string,
+  rewriteSource: (source: string) => Promise<string> = rewriteBareVeryfrontConfigImports,
 ): Promise<unknown> {
   const fs = createFileSystem();
   const originalExt = extname(configPath) || ".mjs";
@@ -2340,7 +2351,7 @@ async function loadConfigFromTempFile(
   try {
     await fs.writeTextFile(
       tempFile,
-      await rewriteBareVeryfrontConfigImports(processedSource),
+      await rewriteSource(processedSource),
     );
     const configModule = await import(loadUrl(tempFile));
     return selectConfigModuleValue(configModule);
@@ -2402,6 +2413,81 @@ export async function rewriteBareVeryfrontConfigImports(source: string): Promise
       rewritten.slice(specifier.e);
   }
   return rewritten;
+}
+
+type ProjectConfigImportResolver = (specifier: string) => string;
+
+function asResolvedConfigSpecifier(resolved: string): string {
+  return isAbsolute(resolved) ? toFileUrl(resolved).href : resolved;
+}
+
+async function createProjectConfigImportResolver(
+  configPath: string,
+): Promise<ProjectConfigImportResolver> {
+  if (isBun && CapturedBunResolveSync && CapturedBun) {
+    const from = dirname(configPath);
+    return (specifier) => {
+      const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [specifier, from]);
+      if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+      return asResolvedConfigSpecifier(resolved);
+    };
+  }
+
+  const { createRequire } = await import("node:module");
+  const projectRequire = createRequire(toFileUrl(configPath));
+  const resolveSpecifier = projectRequire.resolve;
+  return (specifier) => {
+    const resolved = ReflectApply(resolveSpecifier, projectRequire, [specifier]);
+    if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+    return asResolvedConfigSpecifier(resolved);
+  };
+}
+
+function keepsConfigImportSpecifier(specifier: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, specifier, ["data:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["file:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["http:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["https:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["jsr:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["node:"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
+}
+
+async function rewriteProjectConfigImports(
+  source: string,
+  resolveSpecifier: ProjectConfigImportResolver,
+): Promise<string> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+
+  const imports = lexer.parse(source);
+  let rewritten = source;
+  for (let index = imports.length - 1; index >= 0; index--) {
+    const imported = imports[index];
+    const specifier = imported?.n;
+    if (!imported || specifier === undefined || specifier === null) continue;
+    const replacement = specifier === "veryfront"
+      ? VERYFRONT_CONFIG_SHIM_URL
+      : keepsConfigImportSpecifier(specifier)
+      ? specifier
+      : resolveSpecifier(specifier);
+    if (replacement === specifier) continue;
+    const before = ReflectApply(StringPrototypeSlice, rewritten, [0, imported.s]) as string;
+    const after = ReflectApply(StringPrototypeSlice, rewritten, [imported.e]) as string;
+    rewritten = before + replacement + after;
+  }
+  return rewritten;
+}
+
+/** @internal Resolve staged config imports from the original project module root. */
+export async function rewriteProjectConfigImportsFromProject(
+  source: string,
+  configPath: string,
+): Promise<string> {
+  return await rewriteProjectConfigImports(
+    source,
+    await createProjectConfigImportResolver(configPath),
+  );
 }
 
 /** @internal */
@@ -2546,14 +2632,13 @@ function isBunAsyncModuleRequireError(error: unknown): boolean {
 
 async function importFreshBunAsyncConfig(absolutePath: string): Promise<object> {
   const fs = createFileSystem();
-  const aliasRoot = await fs.makeTempDir({ prefix: "vf-bun-config-import-" });
-  const projectAlias = join(aliasRoot, "project");
-  try {
-    await symlink(dirname(absolutePath), projectAlias);
-    return await import(toFileUrl(join(projectAlias, basename(absolutePath))).href);
-  } finally {
-    await fs.remove(aliasRoot, { recursive: true });
-  }
+  const source = await fs.readTextFile(absolutePath);
+  return await loadConfigFromTempFile(
+    source,
+    absolutePath,
+    (tempFile) => toFileUrl(tempFile).href,
+    (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
+  ) as object;
 }
 
 async function loadAndMergeConfig(
@@ -2613,11 +2698,13 @@ async function loadAndMergeConfig(
     });
     const fs = createFileSystem();
     const source = await fs.readTextFile(configPath);
+    const absolutePath = resolve(configPath);
 
     const userConfig = await loadConfigFromTempFile(
       source,
-      configPath,
+      absolutePath,
       (tempFile) => toFileUrl(tempFile).href,
+      (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
     );
     logger.debug("Successfully loaded config via temp file", {
       configPath,

@@ -133,6 +133,22 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps Bun-owned tests out of Deno integration plans", async () => {
+    for (
+      const suite of [
+        "integration:legacy-tests-root",
+        "coverage:integration",
+      ] as const
+    ) {
+      const plan = await planSuiteFiles({ suite });
+      assertEquals(
+        plan.files.some((path) => path.startsWith("tests/bun/")),
+        false,
+        `${suite} must leave tests/bun to runtime:bun`,
+      );
+    }
+  });
+
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
     const paths = Array.from(
       { length: 27 },
@@ -508,6 +524,7 @@ async function legacyUnitCoverageFiles(): Promise<string[]> {
 async function legacyIntegrationRootFiles(): Promise<string[]> {
   return sorted(
     (await collectLegacyTestFiles(["tests"], true))
+      .filter((path) => !path.startsWith("tests/bun/"))
       .filter((path) => !path.startsWith("tests/e2e/"))
       .filter((path) =>
         path !== "tests/integration/compiled-binary-e2e.test.ts"

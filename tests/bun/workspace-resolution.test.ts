@@ -104,18 +104,26 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-recovery-" });
   });
 
-  it("loads a project config that uses top-level await", async () => {
+  it("reloads a changed project config that uses top-level await", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
     const adapter = createMockAdapter();
     await withTempDir(async (projectDir) => {
       const configPath = `${projectDir}/veryfront.config.ts`;
-      const source =
-        'const title = await Promise.resolve("async-config");\nexport default { title };\n';
-      await writeTextFile(configPath, source);
-      adapter.fs.files.set(configPath, source);
+      const writeConfig = async (title: string): Promise<void> => {
+        const source = `const title = await Promise.resolve(${JSON.stringify(title)});\n` +
+          "export default { title };\n";
+        await writeTextFile(configPath, source);
+        adapter.fs.files.set(configPath, source);
+      };
 
-      assertEquals((await getConfig(projectDir, adapter)).title, "async-config");
+      await writeConfig("before");
+      assertEquals((await getConfig(projectDir, adapter)).title, "before");
+
+      await writeConfig("after");
+      clearConfigCache();
+
+      assertEquals((await getConfig(projectDir, adapter)).title, "after");
     }, { prefix: "vf-config-bun-top-level-await-" });
   });
 });
