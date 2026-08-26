@@ -38,6 +38,8 @@ type WorkflowRunScalarUpdate = Partial<
 export type WorkflowRunUpdate = WorkflowRunScalarUpdate & {
   nodeStates?: WorkflowRun["nodeStates"];
   context?: Partial<WorkflowRun["context"]>;
+  /** Top-level context keys removed by this patch. */
+  contextDeletes?: string[];
 };
 
 /**
@@ -56,6 +58,7 @@ const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "nodeStates",
   "currentNodes",
   "context",
+  "contextDeletes",
   "error",
   "startedAt",
   "heartbeatAt",
@@ -326,6 +329,8 @@ export interface WorkflowBackend {
    * the run, waits in the mailbox instead of being dropped.
    */
   appendRunEvent?(runId: string, event: RunEventEnvelope): Promise<void>;
+  /** Remove one exact buffered envelope without touching same-name mail. */
+  removeRunEvent?(runId: string, eventId: string): Promise<boolean>;
   /**
    * Atomically remove and return the oldest buffered event with this name, or
    * null when the mailbox holds none. Removing and returning must be one step
@@ -543,6 +548,7 @@ type WithEventWaitSupport =
       | "resolvePendingEventWait"
       | "restorePendingEventWait"
       | "appendRunEvent"
+      | "removeRunEvent"
       | "takeRunEvent"
       | "claimRunEventForWait"
       | "restoreRunEvent"
@@ -575,6 +581,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.resolvePendingEventWait === "function" &&
     typeof backend.restorePendingEventWait === "function" &&
     typeof backend.appendRunEvent === "function" &&
+    typeof backend.removeRunEvent === "function" &&
     typeof backend.takeRunEvent === "function" &&
     typeof backend.claimRunEventForWait === "function" &&
     typeof backend.restoreRunEvent === "function" &&

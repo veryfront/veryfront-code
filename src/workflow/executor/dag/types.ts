@@ -68,6 +68,7 @@ export interface DAGExecutorConfig {
     nodeStates: Record<string, NodeState>;
     currentNodes: string[];
     context: WorkflowContext;
+    contextPatch: ContextPatch;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */

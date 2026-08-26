@@ -154,7 +154,12 @@ local function decodePatchJson(value)
   return cjson.decode(value)
 end
 local function applyPatchField(field, value)
-  if field == 'nodeStates' or field == 'context' then
+  if field == 'contextDeletes' then
+    local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
+    local deleted = decodePatchJson(value)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    redis.call('hset', KEYS[1], 'context', cjson.encode(current))
+  elseif field == 'nodeStates' or field == 'context' then
     local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
     local patch = decodePatchJson(value)
     for key, changed in pairs(patch) do current[key] = changed end
@@ -213,7 +218,12 @@ local function decodePatchJson(value)
   return cjson.decode(value)
 end
 local function applyPatchField(field, value)
-  if not replaceMaps and (field == 'nodeStates' or field == 'context') then
+  if field == 'contextDeletes' then
+    local current = decodePatchJson(redis.call('hget', KEYS[1], 'context') or '{}')
+    local deleted = decodePatchJson(value)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    redis.call('hset', KEYS[1], 'context', cjson.encode(current))
+  elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
     local current = decodePatchJson(redis.call('hget', KEYS[1], field) or '{}')
     local patch = decodePatchJson(value)
     for key, changed in pairs(patch) do current[key] = changed end
@@ -901,6 +911,9 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (context !== undefined) fields.context = context;
+    if (patch.contextDeletes !== undefined) {
+      fields.contextDeletes = JSON.stringify(patch.contextDeletes);
+    }
     if (Object.hasOwn(patch, "error")) {
       fields.error = patch.error ? JSON.stringify(patch.error) : "";
     }

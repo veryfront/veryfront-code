@@ -295,6 +295,23 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
+    it("merges context sets while applying explicit top-level deletions", async () => {
+      await backend.createRun(createTestRun("run-context-delete", {
+        context: { input: {}, removed: "stale", concurrent: "preserve" },
+      }));
+
+      await backend.updateRun("run-context-delete", {
+        context: { kept: "updated" },
+        contextDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun("run-context-delete"))?.context, {
+        input: {},
+        concurrent: "preserve",
+        kept: "updated",
+      });
+    });
+
     it("should conditionally update only the expected worker owner", async () => {
       await backend.createRun(createTestRun("run-owned", {
         status: "running",
@@ -1104,6 +1121,59 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-claim",
         "the rolled-back event must be back at the head of the mailbox",
+      );
+    });
+
+    it("does not expose a restored wait before its claimed event is back in the mailbox", async () => {
+      class InterleavingRollbackBackend extends MemoryBackend {
+        racedClaim: string | undefined;
+
+        override async restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
+          const restored = await super.restorePendingEventWait(runId, waitId);
+          if (restored) {
+            await super.appendRunEvent(runId, {
+              id: "evt-newer",
+              eventName: "payment.confirmed",
+              payload: { seq: 2 },
+              publishedAt: new Date(),
+            });
+            this.racedClaim = (await super.claimRunEventForWait(
+              runId,
+              waitId,
+              "payment.confirmed",
+            ))?.id;
+          }
+          return restored;
+        }
+      }
+
+      const racing = new InterleavingRollbackBackend();
+      await racing.savePendingEventWait("run-events", createEventWait("evw-1"));
+      await racing.appendRunEvent("run-events", {
+        id: "evt-oldest",
+        eventName: "payment.confirmed",
+        payload: { seq: 1 },
+        publishedAt: new Date(),
+      });
+      const claimed = await racing.claimRunEventForWait(
+        "run-events",
+        "evw-1",
+        "payment.confirmed",
+      );
+      assertExists(claimed);
+
+      assertEquals(
+        await racing.restoreRunEventDelivery("run-events", "evw-1", claimed),
+        true,
+      );
+      assertEquals(
+        racing.racedClaim,
+        undefined,
+        "a concurrent drain must not observe the wait between the two rollback mutations",
+      );
+      assertEquals(
+        (await racing.claimRunEventForWait("run-events", "evw-1", "payment.confirmed"))?.id,
+        "evt-oldest",
       );
     });
 

@@ -892,6 +892,13 @@ export async function executeWorkflowRunControl(
         return { status: "waiting", run: pausedRun };
       }
 
+      if (pausedRun.nodeStates[stalledWaitNode]?.status === "completed") {
+        // A delivery can commit the node after the stale DAG snapshot but
+        // before this read. That delivery owns the resume; this execution must
+        // not fail the run or write its stale running node over the outcome.
+        return { status: "waiting", run: pausedRun };
+      }
+
       // No live record, but the node may not be stuck: a worker that died
       // between committing the parked status and persisting the record, or
       // between resolving a record and completing its node, leaves exactly

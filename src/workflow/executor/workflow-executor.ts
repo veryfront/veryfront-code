@@ -188,12 +188,24 @@ export class WorkflowExecutor {
           { nodeStates },
           ownership?.workerId,
         ),
-      onNodeStatesChanged: ({ runId, nodeStates, currentNodes, context, ownership }) =>
+      onNodeStatesChanged: ({
+        runId,
+        nodeStates,
+        currentNodes,
+        context,
+        contextPatch,
+        ownership,
+      }) =>
         updateRunIfStatus(
           this.config.backend,
           runId,
           ["running"],
-          { nodeStates, currentNodes, context: toPersistedWorkflowContext(context) },
+          {
+            nodeStates,
+            currentNodes,
+            context: toPersistedWorkflowContext(context),
+            contextDeletes: contextPatch.delete.filter((key) => key !== "_tenant"),
+          },
           ownership?.workerId,
         ),
     });

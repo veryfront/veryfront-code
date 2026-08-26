@@ -29,6 +29,7 @@ import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
 import type {
+  ContextPatch,
   DAGExecutionResult,
   DAGExecutorConfig,
   DAGExecutorInternalConfig,
@@ -290,7 +291,7 @@ export class DAGExecutor {
             });
           }
         }
-        await this.publishNodeStates(scope, nodeStates, context, batch);
+        await this.publishNodeStates(scope, nodeStates, context, contextPatch, batch);
         abortSignal?.throwIfAborted();
       }
 
@@ -445,7 +446,7 @@ export class DAGExecutor {
           const status = nodeStates[nodeId]?.status;
           return status === "running" || status === "failed";
         });
-        await this.publishNodeStates(scope, nodeStates, context, stillCurrent);
+        await this.publishNodeStates(scope, nodeStates, context, contextPatch, stillCurrent);
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -535,6 +536,7 @@ export class DAGExecutor {
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
     context: WorkflowContext,
+    contextPatch: ContextPatch,
     currentNodes: string[],
   ): Promise<void> {
     const published = await this.config.onNodeStatesChanged?.({
@@ -542,6 +544,7 @@ export class DAGExecutor {
       nodeStates: structuredClone(nodeStates),
       currentNodes: [...currentNodes],
       context: structuredClone(context),
+      contextPatch: cloneExecutionState(contextPatch, "Workflow context changes"),
       ownership: scope.ownership,
     });
     if (published === false) {

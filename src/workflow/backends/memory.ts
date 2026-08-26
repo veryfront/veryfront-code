@@ -186,11 +186,14 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
+    const { contextDeletes = [], ...storedPatch } = patch;
+    const context = { ...run.context, ...patch.context };
+    for (const key of contextDeletes) delete context[key];
     const updated: WorkflowRun = {
       ...run,
-      ...patch,
+      ...storedPatch,
       nodeStates: { ...run.nodeStates, ...patch.nodeStates },
-      context: { ...run.context, ...patch.context },
+      context,
     };
 
     this.runs.set(runId, updated);
@@ -765,6 +768,16 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
+  removeRunEvent(runId: string, eventId: string): Promise<boolean> {
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(false);
+    const index = mailbox.findIndex((event) => event.id === eventId);
+    if (index < 0) return Promise.resolve(false);
+    mailbox.splice(index, 1);
+    if (mailbox.length === 0) this.runEvents.delete(runId);
+    return Promise.resolve(true);
+  }
+
   /**
    * Drop the oldest mailboxes that no wait can ever claim from again, once the
    * mailbox count is over its bound. Publishing to a run id before the run
@@ -842,16 +855,20 @@ export class MemoryBackend implements WorkflowBackend {
    * round-trips to a durable backend can. A durable backend must implement
    * this as a single atomic operation (a transaction or script) instead.
    */
-  async restoreRunEventDelivery(
+  restoreRunEventDelivery(
     runId: string,
     waitId: string,
     event: RunEventEnvelope,
   ): Promise<boolean> {
-    const restored = await this.restorePendingEventWait(runId, waitId);
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
+    if (restored) wait.status = "pending";
     // The event goes back even when the wait belongs to another actor now: it
     // held its mailbox place before the claim.
-    await this.restoreRunEvent(runId, event);
-    return restored;
+    const mailbox = this.runEvents.get(runId) ?? [];
+    restoreRetainedRunEvent(mailbox, event);
+    this.runEvents.set(runId, mailbox);
+    return Promise.resolve(restored);
   }
 
   // =========================================================================

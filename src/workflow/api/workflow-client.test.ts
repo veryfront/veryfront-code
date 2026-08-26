@@ -1943,6 +1943,18 @@ class FailOneNodeDeliveryBackend extends MemoryBackend {
     this.deliveringFailingNode = false;
     return super.restorePendingEventWait(runId, waitId);
   }
+
+  override async restoreRunEventDelivery(
+    runId: string,
+    waitId: string,
+    event: RunEventEnvelope,
+  ): Promise<boolean> {
+    try {
+      return await super.restoreRunEventDelivery(runId, waitId, event);
+    } finally {
+      this.deliveringFailingNode = false;
+    }
+  }
 }
 
 /**
@@ -1979,6 +1991,33 @@ class TerminalDuringAppendBackend extends MemoryBackend {
       await super.updateRun(runId, { status: "cancelled", completedAt: new Date() });
     }
     await super.appendRunEvent(runId, event);
+  }
+}
+
+class RetryDuringTerminalCleanupBackend extends MemoryBackend {
+  private terminalReadCountdown = 0;
+
+  armTerminalReadAfterInitialCheck(): void {
+    this.terminalReadCountdown = 2;
+  }
+
+  override async getRun(runId: string): Promise<WorkflowRun | null> {
+    const run = await super.getRun(runId);
+    if (!run || this.terminalReadCountdown === 0) return run;
+    this.terminalReadCountdown--;
+    if (this.terminalReadCountdown !== 0) return run;
+
+    queueMicrotask(() => {
+      void super.updateRun(runId, { status: "waiting" }).then(() =>
+        super.appendRunEvent(runId, {
+          id: "evt-retry-publish",
+          eventName: "audit.recorded",
+          payload: { retry: true },
+          publishedAt: new Date(),
+        })
+      );
+    });
+    return { ...run, status: "failed" };
   }
 }
 
@@ -2758,6 +2797,46 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("clears the parking client's long deadline timer after another client resolves the wait", async () => {
+    const shared = new MemoryBackend();
+    const parked = createWorkflowClient({
+      backend: shared,
+      eventWait: { expirationCheckInterval: 3_600_000 },
+    });
+    const resolver = createWorkflowClient({ backend: shared });
+    try {
+      parked.register(workflow({
+        id: "cross-client-timer-workflow",
+        steps: [
+          waitForEvent("await-payment", {
+            eventName: "payment.confirmed",
+            timeout: "1h",
+          }),
+        ],
+      }));
+      const handle = await parked.start("cross-client-timer-workflow", {});
+      await handle.settled();
+      const [wait] = await parked.getPendingEventWaits(handle.runId);
+      assertExists(wait);
+      const parkingTimers = (parked.getEventWaitManager() as unknown as {
+        expiryTimers: Map<string, unknown>;
+      }).expiryTimers;
+      assertEquals(parkingTimers.has(wait.id), true);
+
+      await shared.resolvePendingEventWait(handle.runId, wait.id, "delivered");
+      resolver.getEventWaitManager().clearWaitExpiry(wait.id);
+
+      assertEquals(
+        parkingTimers.has(wait.id),
+        false,
+        "a cross-client resolution must not retain the parking manager's timer closure",
+      );
+    } finally {
+      await parked.destroy();
+      await resolver.destroy();
+    }
+  });
+
   it("keeps a committed event outcome when only the resume nudge fails", async () => {
     const writer = createWorkflowClient({ backend });
     try {
@@ -3403,6 +3482,29 @@ describe("WorkflowClient durable event waits", () => {
         await racing.takeRunEvent(handle.runId, "audit.recorded"),
         null,
         "the unconsumable envelope must be reclaimed rather than left buffered forever",
+      );
+    } finally {
+      await racingClient.destroy();
+    }
+  });
+
+  it("reclaims only its own terminal envelope when the run is retried concurrently", async () => {
+    const racing = new RetryDuringTerminalCleanupBackend();
+    const racingClient = createWorkflowClient({ backend: racing });
+    try {
+      racingClient.register(eventWorkflow);
+      const handle = await racingClient.start("event-workflow", {});
+      await handle.settled();
+      racing.armTerminalReadAfterInitialCheck();
+
+      assertEquals(
+        await racingClient.publishEvent(handle.runId, "audit.recorded", { original: true }),
+        "run-terminal",
+      );
+      assertEquals(
+        (await racing.takeRunEvent(handle.runId, "audit.recorded"))?.id,
+        "evt-retry-publish",
+        "terminal cleanup must not discard an envelope accepted after retry reactivated the run",
       );
     } finally {
       await racingClient.destroy();

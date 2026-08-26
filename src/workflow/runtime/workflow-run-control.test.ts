@@ -374,6 +374,30 @@ class ReconcileCancelOnPatchBackend extends MemoryBackend {
   }
 }
 
+class CompleteStalledWaitOnPauseBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    if (updated && patch.status === "waiting" && patch.nodeStates === undefined) {
+      await super.updateRun(runId, {
+        nodeStates: {
+          "await-payment": {
+            nodeId: "await-payment",
+            status: "completed",
+            output: { accepted: true },
+            attempt: 1,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+    return updated;
+  }
+}
+
 class ReconcileOwnerChangesBackend extends MemoryBackend {
   readonly attemptedOwners: string[] = [];
   readonly replacementOwners: string[];
@@ -820,6 +844,20 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       true,
       `the stalled-graph diagnostic must survive the gate, got: ${persisted?.error?.message}`,
     );
+  });
+
+  it("preserves a stalled wait node completed concurrently after the status-only pause", async () => {
+    const backend = new CompleteStalledWaitOnPauseBackend();
+    const run = { ...createRun("stalled-concurrent-completion"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(outcome.status, "waiting");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "waiting");
+    assertEquals(persisted?.nodeStates["await-payment"]?.status, "completed");
+    assertEquals(persisted?.error, undefined);
   });
 
   it("fails a stalled wait node that never had a durable record", async () => {

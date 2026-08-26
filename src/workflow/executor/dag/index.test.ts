@@ -477,11 +477,19 @@ describe("DAGExecutor", () => {
     });
 
     it("propagates top-level context deletions", async () => {
+      let persistedDeletes: string[] = [];
       const deletingExecutor = new MockStepExecutor(new Map(), (_node, context) => {
         delete context.removed;
         return { success: true, output: "deleted", executionTime: 1 };
       });
-      const exec = new DAGExecutor({ stepExecutor: deletingExecutor });
+      const exec = new DAGExecutor({
+        stepExecutor: deletingExecutor,
+        onNodeStatesChanged: (input) => {
+          persistedDeletes = (input as typeof input & {
+            contextPatch?: { delete: string[] };
+          }).contextPatch?.delete ?? [];
+        },
+      });
 
       const result = await exec.execute(
         [{ id: "delete", config: { type: "step" } as any }],
@@ -490,6 +498,7 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.completed, true);
       assertEquals(Object.hasOwn(result.context, "removed"), false);
+      assertEquals(persistedDeletes, ["removed"]);
     });
 
     it("propagates context deletions out of a branch", async () => {

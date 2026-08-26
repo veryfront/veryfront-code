@@ -26,6 +26,10 @@ const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
 const MIN_EXPIRY_RETRY_DELAY_MS = 1_000;
 const MAX_DELIVERY_RECONCILIATION_ATTEMPTS = 8;
 const ACTIVE_WAIT_STATUSES: WorkflowRun["status"][] = ["pending", "running", "waiting"];
+const expiryTimersByBackend = new WeakMap<
+  WorkflowBackend,
+  Map<string, Map<EventWaitManager, ReturnType<typeof setTimeout>>>
+>();
 
 export interface EventWaitManagerConfig {
   /** Backend for persistence */
@@ -292,9 +296,7 @@ export class EventWaitManager {
     // name has buffered rather than leaving it stranded.
     const latest = await backend.getRun(runId);
     if (latest && !ACTIVE_WAIT_STATUSES.includes(latest.status)) {
-      while (await backend.takeRunEvent(runId, eventName)) {
-        // Discard: no wait can ever claim mail addressed to a finished run.
-      }
+      await backend.removeRunEvent(runId, envelope.id);
       return "run-terminal";
     }
     if (outcome.terminal) return "run-terminal";
@@ -509,8 +511,9 @@ export class EventWaitManager {
    */
   private scheduleExpiry(wait: PersistedPendingEventWait, minimumDelayMs = 0): void {
     if (!wait.expiresAt || this.destroyed) return;
+    this.clearOwnedExpiry(wait.id);
     const timer = setTimeout(() => {
-      this.expiryTimers.delete(wait.id);
+      this.clearExpiry(wait.id);
       this.expire(wait).catch((error) => {
         logger.error("Failed to apply event wait timeout", { waitId: wait.id }, error);
       });
@@ -522,13 +525,40 @@ export class EventWaitManager {
     // still enforce the deadline.
     unrefTimer(timer);
     this.expiryTimers.set(wait.id, timer);
+    let waits = expiryTimersByBackend.get(this.config.backend);
+    if (!waits) {
+      waits = new Map();
+      expiryTimersByBackend.set(this.config.backend, waits);
+    }
+    const registrations = waits.get(wait.id) ?? new Map();
+    registrations.set(this, timer);
+    waits.set(wait.id, registrations);
   }
 
   private clearExpiry(waitId: string): void {
+    const waits = expiryTimersByBackend.get(this.config.backend);
+    const registrations = waits?.get(waitId);
+    if (!registrations) {
+      this.clearOwnedExpiry(waitId);
+      return;
+    }
+    for (const [manager, timer] of registrations) {
+      clearTimeout(timer);
+      manager.expiryTimers.delete(waitId);
+    }
+    waits!.delete(waitId);
+    if (waits!.size === 0) expiryTimersByBackend.delete(this.config.backend);
+  }
+
+  private clearOwnedExpiry(waitId: string): void {
     const timer = this.expiryTimers.get(waitId);
-    if (timer === undefined) return;
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
     this.expiryTimers.delete(waitId);
+    const waits = expiryTimersByBackend.get(this.config.backend);
+    const registrations = waits?.get(waitId);
+    registrations?.delete(this);
+    if (registrations?.size === 0) waits!.delete(waitId);
+    if (waits?.size === 0) expiryTimersByBackend.delete(this.config.backend);
   }
 
   /**
@@ -696,8 +726,7 @@ export class EventWaitManager {
   /** Stop the manager and drop every timer it owns. */
   stop(): void {
     this.destroyed = true;
-    for (const timer of this.expiryTimers.values()) clearTimeout(timer);
-    this.expiryTimers.clear();
+    for (const waitId of [...this.expiryTimers.keys()]) this.clearOwnedExpiry(waitId);
     if (this.expirationTimer === undefined) return;
     clearInterval(this.expirationTimer);
     this.expirationTimer = undefined;

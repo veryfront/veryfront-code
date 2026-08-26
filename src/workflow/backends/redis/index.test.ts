@@ -57,6 +57,12 @@ class MockRedisAdapter implements RedisAdapter {
     value: string,
     replaceMaps = false,
   ): void {
+    if (field === "contextDeletes") {
+      const context = JSON.parse(hash.get("context") ?? "{}") as Record<string, unknown>;
+      for (const key of JSON.parse(value) as string[]) delete context[key];
+      hash.set("context", JSON.stringify(context));
+      return;
+    }
     if (!replaceMaps && (field === "nodeStates" || field === "context")) {
       hash.set(
         field,
@@ -1876,6 +1882,32 @@ describe("RedisBackend", () => {
         mockRedis.lastScript,
         "cannot preserve empty arrays",
         "older Redis cjson runtimes must reject ambiguous empty-array patches instead of corrupting them",
+      );
+    });
+
+    it("applies explicit context deletions without replacing concurrent keys", async () => {
+      await backend.createRun(createTestRun("run-context-delete"));
+      await backend.updateRun("run-context-delete", {
+        context: { input: { topic: "test" }, removed: "stale", concurrent: "preserve" },
+      });
+
+      await backend.updateRun(
+        "run-context-delete",
+        {
+          context: { input: { topic: "test" }, kept: "updated" },
+          contextDeletes: ["removed"],
+        } as Parameters<typeof backend.updateRun>[1],
+      );
+
+      assertEquals((await backend.getRun("run-context-delete"))?.context, {
+        input: { topic: "test" },
+        concurrent: "preserve",
+        kept: "updated",
+      });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "field == 'contextDeletes'",
+        "the Lua patch must apply deletions atomically with context key merges",
       );
     });
 
