@@ -596,6 +596,60 @@ describe("error-context", () => {
       }
     });
 
+    it("fails closed for ellipsis-suffixed paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () => Promise.reject(new Error("read failed for /private-read-mar...")),
+            },
+          },
+          "/private-read-marker/secret",
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error("stat failed for c:/private-stat-mar...")),
+            },
+          },
+          "C:\\private-stat-marker\\secret",
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error("directory read failed for /private-directory-mar..."),
+                );
+              },
+            },
+          },
+          "file:///private-directory-marker/secret",
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertEquals(diagnostic.data.path, "<absolute-path>");
+        assertEquals(
+          diagnostic.data.errorMessage,
+          "Filesystem operation failed for <absolute-path>",
+        );
+        assertEquals(diagnostic.message.includes("private"), false);
+      }
+    });
+
     it("fails closed for first-segment truncation in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;

@@ -87,6 +87,7 @@ const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
 const MISSING_DATA_FIELD = Symbol("missing-data-field");
 const FORWARD_SLASH_CODE_UNIT = 47;
 const BACKSLASH_CODE_UNIT = 92;
+const PERIOD_CODE_UNIT = 46;
 const COLON_CODE_UNIT = 58;
 const VERTICAL_BAR_CODE_UNIT = 124;
 const ASCII_UPPERCASE_A_CODE_UNIT = 65;
@@ -618,6 +619,12 @@ function isPathContinuationCodeUnit(codeUnit: number): boolean {
     isPathSeparatorCodeUnit(codeUnit);
 }
 
+function hasAsciiEllipsisAt(input: string, index: number): boolean {
+  return charCodeAtString(input, index) === PERIOD_CODE_UNIT &&
+    charCodeAtString(input, index + 1) === PERIOD_CODE_UNIT &&
+    charCodeAtString(input, index + 2) === PERIOD_CODE_UNIT;
+}
+
 /** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
 function containsTruncatedFilesystemPathPrefix(input: string, path: string): boolean {
   const minimumPrefixLength = minimumAbsolutePathPrefixLength(path);
@@ -667,6 +674,7 @@ function containsTruncatedFilesystemPathPrefix(input: string, path: string): boo
     if (
       matched >= minimumPrefixLength &&
       (index + 1 === input.length ||
+        hasAsciiEllipsisAt(input, index + 1) ||
         !isPathContinuationCodeUnit(charCodeAtString(input, index + 1)))
     ) {
       return true;

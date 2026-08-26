@@ -307,6 +307,25 @@ describe("safe-diagnostics", () => {
     }
   });
 
+  it("should detect ellipsis-suffixed truncated absolute paths", () => {
+    for (
+      const [requestedPath, truncatedPath] of [
+        ["/definitely-private-marker/secret", "/definitely-private-mar..."],
+        ["C:\\private-marker\\secret", "c:/private-mar..."],
+        ["file:///definitely-private-marker/secret", "/definitely-private-mar..."],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(`open '${truncatedPath}'`),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
   it("should detect truncation inside the first segment of longer absolute paths", () => {
     for (
       const [requestedPath, truncatedPath] of [
