@@ -81,6 +81,7 @@ const arrayIncludes = Array.prototype.includes;
 const arraySlice = Array.prototype.slice;
 const arraySort = Array.prototype.sort;
 const stringReplaceAll = String.prototype.replaceAll;
+const stringSplit = String.prototype.split;
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -478,7 +479,7 @@ async function assertActiveSkillFileAvailable(
     );
   }
 
-  const referenceDirectory = input.path.split("/", 1)[0];
+  const referenceDirectory = (reflectApply(stringSplit, input.path, ["/", 1]) as string[])[0];
   const authoritative = input.kind === "reference"
     ? referenceDirectory === SKILL_REFERENCES_DIR ||
         referenceDirectory === SKILL_RESOURCES_DIR ||

@@ -2,7 +2,7 @@ import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.
 import { createLoadSkillReferenceTool } from "#veryfront/skill/tools.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
-import { assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 
 function createTestSkill(id: string): Skill {
@@ -50,6 +50,45 @@ describe("skill tool intrinsic isolation", () => {
       );
     } finally {
       Array.prototype.includes = originalIncludes;
+    }
+  });
+
+  it("authorizes a valid reference when String.prototype.split is poisoned", async () => {
+    const skill = createTestSkill("my-skill");
+    const baseAdapter = skill.fsAdapter!;
+    skill.fsAdapter = {
+      ...baseAdapter,
+      async *readDir(path) {
+        if (path === skill.rootPath) {
+          yield { name: "references", isFile: false, isDirectory: true, isSymlink: false };
+        } else if (path === `${skill.rootPath}/references`) {
+          yield { name: "guide.md", isFile: true, isDirectory: false, isSymlink: false };
+        }
+      },
+    };
+    registerSkill("my-skill", skill);
+    const tool = createLoadSkillReferenceTool();
+    const originalSplit = String.prototype.split;
+    String.prototype.split = function (separator, limit) {
+      if (separator === "/" && limit === 1) throw new Error("poisoned split");
+      return Reflect.apply(originalSplit, this, [separator, limit]);
+    };
+
+    try {
+      const result = await tool.execute({
+        skillId: "my-skill",
+        reference: "references/guide.md",
+      }, {
+        activeSkillId: "my-skill",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      });
+      assertEquals(result.content, "Guide");
+    } finally {
+      String.prototype.split = originalSplit;
     }
   });
 });
