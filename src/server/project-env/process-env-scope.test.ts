@@ -14,7 +14,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module server/project-env/process-env-scope.test
  */
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { env, getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { inspect } from "node:util";
@@ -196,6 +196,23 @@ describe("process.env under an active project env snapshot", () => {
       assertEquals(Object.getPrototypeOf(freshEnv()), Object.prototype);
       assertEquals(freshEnv() instanceof Object, true);
     });
+  });
+
+  it("keeps host-level prototype changes synchronized with the backing environment", () => {
+    const scope: { snapshot?: Readonly<Record<string, string>> } = {};
+    const hostEnv: Record<string, string | undefined> = {};
+    const view = createProjectScopedProcessEnvView(hostEnv, () => scope.snapshot);
+    const originalPrototype = Object.getPrototypeOf(hostEnv);
+    const inherited = { VF_SCOPE_PROBE_INHERITED: "inherited-value" };
+
+    Object.setPrototypeOf(view, inherited);
+    assertStrictEquals(Object.getPrototypeOf(view), inherited);
+    assertStrictEquals(Object.getPrototypeOf(hostEnv), inherited);
+    assertEquals(view.VF_SCOPE_PROBE_INHERITED, "inherited-value");
+
+    scope.snapshot = { PROJECT_VAR: "project-value" };
+    assertThrows(() => Object.setPrototypeOf(view, originalPrototype), TypeError);
+    assertStrictEquals(Object.getPrototypeOf(hostEnv), inherited);
   });
 
   it("rejects attempts to make the shared view non-extensible", () => {

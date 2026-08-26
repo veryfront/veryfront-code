@@ -57,6 +57,7 @@ const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const ReflectHas = Reflect.has;
 const ReflectOwnKeys = Reflect.ownKeys;
 const ReflectSet = Reflect.set;
+const ReflectSetPrototypeOf = Reflect.setPrototypeOf;
 const INSPECT_CUSTOM = Symbol.for("nodejs.util.inspect.custom");
 
 // Keyed by the snapshot object, which the scope owns for exactly its lifetime.
@@ -227,6 +228,20 @@ function createHostViewHandler(
       assertEnvDataDescriptor(descriptor);
       recordScopedWrite(snapshot, prop as string, String(descriptor.value));
       return true;
+    },
+    setPrototypeOf(target, prototype) {
+      // A prototype cannot be represented in the per-snapshot write log. Do
+      // not let project code mutate process-wide host state through this path.
+      if (getSnapshot()) return false;
+
+      const originalHostPrototype = ObjectGetPrototypeOf(hostEnv);
+      if (!ReflectSetPrototypeOf(hostEnv, prototype)) return false;
+      if (ReflectSetPrototypeOf(target, prototype)) return true;
+
+      // Keep the two records synchronized if the masking target rejects a
+      // prototype the backing environment accepted.
+      ReflectSetPrototypeOf(hostEnv, originalHostPrototype);
+      return false;
     },
     preventExtensions() {
       return false;
