@@ -1,7 +1,7 @@
 import denoConfig from "../../deno.json" with { type: "json" };
+import { exit } from "#cli/process-lifecycle";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import {
-  exit,
   getEnv,
   isStdoutTTY,
   onSignal,

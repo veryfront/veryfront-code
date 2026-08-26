@@ -79,7 +79,6 @@ export {
 // OpenTelemetry API shim (spans, metrics, context primitives). `trace` is the
 // read-only facade: the process-wide tracer-provider setter stays internal.
 export {
-  getGlobalMetricsAPI,
   publicTrace as trace,
   SpanKind,
   SpanStatusCode,

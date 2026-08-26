@@ -24,5 +24,6 @@ it("keeps process-wide env mutators outside veryfront/platform/env", () => {
 it("keeps process-wide env mutators outside veryfront/platform", () => {
   assertEquals("setEnv" in publicPlatform, false);
   assertEquals("deleteEnv" in publicPlatform, false);
+  assertEquals("exit" in publicPlatform, false);
   assertEquals("liveHostRuntime" in publicPlatform, false);
 });

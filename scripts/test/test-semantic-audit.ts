@@ -10573,6 +10573,7 @@ function isProcessSpecifier(source: string): boolean {
     source === "node:worker_threads" || source === "worker_threads" ||
     source === "node:process" || source === "process" ||
     source === CANONICAL_COMPAT_PROCESS_SOURCE ||
+    source === "#cli/process-env" || source === "#cli/process-lifecycle" ||
     source === "#veryfront/compat/process.ts" ||
     source === "#veryfront/platform/compat/process.ts";
 }

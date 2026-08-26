@@ -363,7 +363,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
             error: error instanceof Error ? error.message : String(error),
           });
           await releaseExtensions();
-          const { exit } = await import("veryfront/platform");
+          const { exit } = await import("#cli/process-lifecycle");
           exit(1);
           return;
         }

@@ -18,7 +18,6 @@ export {
   cwd,
   env,
   execPath,
-  exit,
   getArgs,
   getEnv,
   getOsType,

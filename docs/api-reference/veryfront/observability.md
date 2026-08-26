@@ -51,7 +51,6 @@ const result = await withSpan("load-data", async () => {
 | `extractContext`                         | Context for extract.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L88)                         |
 | `flushApplicationErrors`                 |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L294)                   |
 | `getActiveContext`                       | Context for get active.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L98)                         |
-| `getGlobalMetricsAPI`                    |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L701)                     |
 | `getMetricsState`                        | State for get metrics.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38)                         |
 | `getTraceContext`                        |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L651)                   |
 | `injectContext`                          | Context for inject.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L93)                         |
@@ -165,7 +164,7 @@ const result = await withSpan("load-data", async () => {
 
 | Name      | Description                                                                | Source                                                                                                     |
 | --------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/index.ts#L106)            |
+| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/index.ts#L105)            |
 | `trace`   | Read-only tracing facade for the public `veryfront/observability` surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L640) |
 
 ## Deep imports

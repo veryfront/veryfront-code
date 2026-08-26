@@ -1073,11 +1073,12 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry(
       "cli/utils/package-manager.test.ts",
-      ["filesystem-write"],
+      ["filesystem-write", "process"],
       {
         "disposition": "integration-relocation",
         "owner": "cli",
-        "rationale": "Exercises filesystem mutation outside the colocated unit boundary.",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
         "destination":
           "tests/integration/semantic-unit-boundary/cli/utils/package-manager.test.ts",
         "removalPr": "PR 4a",

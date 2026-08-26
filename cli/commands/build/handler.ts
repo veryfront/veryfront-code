@@ -220,7 +220,7 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
       success: false,
       error: error instanceof Error ? error.message : String(error),
     });
-    const { exit } = await import("veryfront/platform");
+    const { exit } = await import("#cli/process-lifecycle");
     exit(1);
   }
 }
