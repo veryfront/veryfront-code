@@ -726,7 +726,7 @@ Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for fail
   assertEquals(mutationCount, 0);
 });
 
-Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP servers for trusted Studio clients", async () => {
+Deno.test("createHostedProjectRemoteToolSources does not trust Studio metadata for default MCP servers", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -745,10 +745,9 @@ Deno.test("createHostedProjectRemoteToolSources defaults to first-party MCP serv
     },
   });
 
-  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
   assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
-    "https://studio.example/mcp",
   ]);
 });
 
@@ -935,7 +934,7 @@ Deno.test("createHostedProjectRemoteToolSources throws for explicit Studio MCP f
   assertEquals(error.slug, "permission-denied");
 });
 
-Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed Studio tools", async () => {
+Deno.test("createHostedProjectRemoteToolSources does not infer Studio MCP from allowed tools", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -961,15 +960,10 @@ Deno.test("createHostedProjectRemoteToolSources infers Studio MCP from allowed S
     },
   });
 
-  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
   assertEquals(await Promise.all(configs.map((config) => resolveTestEndpoint(config.endpoint))), [
     "https://api.example/projects/project-1/mcp",
-    "https://studio.example/mcp",
   ]);
-  assertEquals(
-    (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["studio_todo_write"],
-  );
 });
 
 it("does not infer Studio when explicit API-only MCP is set", async () => {
