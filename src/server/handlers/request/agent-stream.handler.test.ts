@@ -990,6 +990,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("loads and applies integration restrictions from the exact requested source", async () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
+    let observedNormalizationCredential:
+      | ReturnType<typeof getVerifiedCacheApiCredential>
+      | undefined;
+    let normalizationCalls = 0;
     const fetchUrls: string[] = [];
 
     const handler = createTestAgentStreamHandler({
@@ -1083,24 +1087,43 @@ describe("server/handlers/request/agent-stream.handler", () => {
       fs,
     };
 
-    const result = await withMockFetch(
-      (input) => {
-        fetchUrls.push(String(input));
-        return Promise.reject(new Error(`unexpected fetch: ${input}`));
-      },
-      () =>
-        handler.handle(
-          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-veryfront-control-plane-jws": jws,
-            },
-            body,
-          }),
-          ctx,
-        ),
-    );
+    const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+    const originalSigningKey = Deno.env.get(signingKeyEnv);
+    Deno.env.set(signingKeyEnv, publicKeyPem);
+    const originalEntries = Object.entries;
+    Object.entries = (value) => {
+      const entries = originalEntries(value);
+      if (new Error().stack?.includes("normalizeSourceIntegrationPolicy")) {
+        normalizationCalls++;
+        observedNormalizationCredential = getVerifiedCacheApiCredential();
+      }
+      return entries;
+    };
+    let result;
+    try {
+      result = await withMockFetch(
+        (input) => {
+          fetchUrls.push(String(input));
+          return Promise.reject(new Error(`unexpected fetch: ${input}`));
+        },
+        () =>
+          handler.handle(
+            new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-veryfront-control-plane-jws": jws,
+              },
+              body,
+            }),
+            ctx,
+          ),
+      );
+    } finally {
+      Object.entries = originalEntries;
+      if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
+      else Deno.env.set(signingKeyEnv, originalSigningKey);
+    }
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
@@ -1111,6 +1134,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryConfig?.integrations, {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
+    assertEquals(normalizationCalls, 1);
+    assertEquals(observedNormalizationCredential, undefined);
     assertEquals(capturedSourcePolicy, {
       schemaVersion: 1,
       mode: "allowlist",

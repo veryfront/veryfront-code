@@ -904,14 +904,13 @@ export class AgentStreamHandler extends BaseHandler {
                 ? { ...sourceScopedContext.requestContext, token: projectRuntimeToken }
                 : sourceScopedContext.requestContext,
             };
-            const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
-              sourceConfig.integrations,
-            );
-
             return await this.withAgentSourceContext(
               projectScopedContext,
               payload.agentSource,
               withoutVerifiedCacheApiCredential(async () => {
+                const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
+                  sourceConfig.integrations,
+                );
                 if (requestSourceFingerprint !== undefined) {
                   const runtimeSourceFingerprint = await requireAgentSourceSnapshotFingerprint(
                     projectScopedContext,
